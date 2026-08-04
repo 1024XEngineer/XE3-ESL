@@ -53,12 +53,12 @@ func (repository *PostgresRepository) Create(
 	if err := lockActiveOwner(ctx, tx, actor.UserID); err != nil {
 		return Memory{}, err
 	}
-	if command.Scope == ScopeMatter {
-		if err := requireOwnedMatter(
+	if command.Scope == ScopeGoal {
+		if err := requireOwnedGoal(
 			ctx,
 			tx,
 			actor.UserID,
-			command.MatterID,
+			command.GoalID,
 		); err != nil {
 			return Memory{}, err
 		}
@@ -72,7 +72,7 @@ INSERT INTO agent_memories (
     canonical_key,
     content,
     scope_type,
-    matter_id,
+    goal_id,
     status,
     version,
     policy_version,
@@ -92,7 +92,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -106,7 +106,7 @@ RETURNING
 		command.CanonicalKey,
 		command.Content,
 		command.Scope,
-		nullableUUID(command.MatterID),
+		nullableUUID(command.GoalID),
 		command.PolicyVersion,
 		command.ExpiresAt,
 	))
@@ -145,7 +145,7 @@ SELECT
     memories.canonical_key,
     memories.content,
     memories.scope_type,
-    coalesce(memories.matter_id::text, ''),
+    coalesce(memories.goal_id::text, ''),
     memories.status,
     memories.version,
     memories.policy_version,
@@ -184,7 +184,7 @@ SELECT
     memories.canonical_key,
     memories.content,
     memories.scope_type,
-    coalesce(memories.matter_id::text, ''),
+    coalesce(memories.goal_id::text, ''),
     memories.status,
     memories.version,
     memories.policy_version,
@@ -198,13 +198,13 @@ JOIN identity_users AS users
  AND users.account_status = 'active'
 WHERE memories.owner_user_id = $1
   AND memories.scope_type = 'user'
-  AND memories.matter_id IS NULL
+  AND memories.goal_id IS NULL
   AND memories.status = 'active'
   AND (memories.expires_at IS NULL OR memories.expires_at > CURRENT_TIMESTAMP)
 ORDER BY memories.updated_at DESC, memories.id DESC
 LIMIT $2`
 	arguments := []any{actor.UserID, filter.Limit}
-	if filter.Scope == ScopeMatter {
+	if filter.Scope == ScopeGoal {
 		query = `
 SELECT
     memories.id::text,
@@ -213,7 +213,7 @@ SELECT
     memories.canonical_key,
     memories.content,
     memories.scope_type,
-    coalesce(memories.matter_id::text, ''),
+    coalesce(memories.goal_id::text, ''),
     memories.status,
     memories.version,
     memories.policy_version,
@@ -226,13 +226,13 @@ JOIN identity_users AS users
   ON users.id = memories.owner_user_id
  AND users.account_status = 'active'
 WHERE memories.owner_user_id = $1
-  AND memories.scope_type = 'matter'
-  AND memories.matter_id = $2
+  AND memories.scope_type = 'goal'
+  AND memories.goal_id = $2
   AND memories.status = 'active'
   AND (memories.expires_at IS NULL OR memories.expires_at > CURRENT_TIMESTAMP)
 ORDER BY memories.updated_at DESC, memories.id DESC
 LIMIT $3`
-		arguments = []any{actor.UserID, filter.MatterID, filter.Limit}
+		arguments = []any{actor.UserID, filter.GoalID, filter.Limit}
 	}
 	rows, err := repository.database.Query(ctx, query, arguments...)
 	if err != nil {
@@ -274,7 +274,7 @@ SELECT
     memories.canonical_key,
     memories.content,
     memories.scope_type,
-    coalesce(memories.matter_id::text, ''),
+    coalesce(memories.goal_id::text, ''),
     memories.status,
     memories.version,
     memories.policy_version,
@@ -288,7 +288,7 @@ JOIN identity_users AS users
  AND users.account_status = 'active'
 WHERE memories.owner_user_id = $1
   AND memories.scope_type = 'user'
-  AND memories.matter_id IS NULL
+  AND memories.goal_id IS NULL
   AND memories.status = 'active'
   AND (memories.expires_at IS NULL OR memories.expires_at > CURRENT_TIMESTAMP)
   AND memories.canonical_key = ANY($2::text[])`,
@@ -311,7 +311,7 @@ WHERE memories.owner_user_id = $1
 			field.Type != item.Type ||
 			item.OwnerID != actor.UserID ||
 			item.Scope != ScopeUser ||
-			item.MatterID != "" ||
+			item.GoalID != "" ||
 			item.Status != StatusActive {
 			return nil, ErrRepository
 		}
@@ -438,7 +438,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -525,7 +525,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -775,20 +775,20 @@ SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 	return nil
 }
 
-func requireOwnedMatter(
+func requireOwnedGoal(
 	ctx context.Context,
 	tx pgx.Tx,
 	ownerID string,
-	matterID string,
+	goalID string,
 ) error {
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 SELECT EXISTS (
     SELECT 1
-    FROM matters
-    WHERE id = $1 AND owner_user_id = $2
+    FROM coaching_goals
+    WHERE goal_id = $1 AND owner_user_id = $2
 )`,
-		matterID,
+		goalID,
 		ownerID,
 	).Scan(&exists); err != nil {
 		return ErrRepository
@@ -878,7 +878,7 @@ func scanMemory(row rowScanner) (Memory, error) {
 		&item.CanonicalKey,
 		&item.Content,
 		&scope,
-		&item.MatterID,
+		&item.GoalID,
 		&status,
 		&item.Version,
 		&item.PolicyVersion,

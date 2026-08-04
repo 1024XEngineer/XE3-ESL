@@ -1,18 +1,21 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/features/conversation/conversation.dart';
-import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/practice/ielts_mock_progress_store.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/practice/practice_recording.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_client.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 void main() {
   testWidgets(
@@ -91,16 +94,15 @@ void main() {
         pollInterval: Duration.zero,
         maximumPollAttempts: 1,
       );
-      final practiceClient = _PracticeClient(
-        _practiceSnapshot(feedback.statusUrl),
-      );
+      final snapshot = _practiceSnapshot(feedback.statusUrl);
+      final practiceClient = _PracticeClient(snapshot);
       final practiceController = AgentController(
         client: FakeAgentClient(),
         practiceClient: practiceClient,
       );
       addTearDown(feedbackController.dispose);
       addTearDown(practiceController.dispose);
-      await practiceController.initialize();
+      await _restorePractice(practiceController, snapshot);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -165,20 +167,19 @@ void main() {
       pollInterval: Duration.zero,
       maximumPollAttempts: 1,
     );
+    final snapshot = _practiceSnapshot(
+      feedback.statusUrl,
+      sceneFamily: SceneFamily.exam,
+      sceneModel: SceneModel.ieltsSpeakingPart2,
+      turnLimit: 6,
+    );
     final practiceController = AgentController(
       client: FakeAgentClient(),
-      practiceClient: _PracticeClient(
-        _practiceSnapshot(
-          feedback.statusUrl,
-          scenarioType: 'EXAM',
-          scenarioModel: 'IELTS_SPEAKING_PART_2',
-          turnLimit: 6,
-        ),
-      ),
+      practiceClient: _PracticeClient(snapshot),
     );
     addTearDown(feedbackController.dispose);
     addTearDown(practiceController.dispose);
-    await practiceController.initialize();
+    await _restorePractice(practiceController, snapshot);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -232,8 +233,8 @@ void main() {
     );
     final snapshot = _practiceSnapshot(
       feedback.statusUrl,
-      scenarioType: 'EXAM',
-      scenarioModel: 'IELTS_SPEAKING_PART_2',
+      sceneFamily: SceneFamily.exam,
+      sceneModel: SceneModel.ieltsSpeakingPart2,
       turnLimit: 6,
     );
     final practiceController = AgentController(
@@ -241,10 +242,10 @@ void main() {
       practiceClient: _PracticeClient(
         PracticeSessionSnapshot(
           sessionId: snapshot.sessionId,
-          threadId: snapshot.threadId,
-          scenarioType: snapshot.scenarioType,
-          scenarioModel: snapshot.scenarioModel,
-          matter: snapshot.matter,
+          planId: snapshot.planId,
+          sceneFamily: snapshot.sceneFamily,
+          sceneModel: snapshot.sceneModel,
+          sessionVersion: snapshot.sessionVersion,
           completedTurns: snapshot.completedTurns,
           turnLimit: snapshot.turnLimit,
           sessionCompleted: snapshot.sessionCompleted,
@@ -272,7 +273,7 @@ void main() {
     );
     addTearDown(feedbackController.dispose);
     addTearDown(practiceController.dispose);
-    await practiceController.initialize();
+    await _restorePractice(practiceController, snapshot);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -489,18 +490,11 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
 
 PracticeSessionSnapshot _practiceSnapshot(
   String statusUrl, {
-  String scenarioType = 'WORKPLACE',
-  String scenarioModel = 'WORKPLACE_BASIC_DIALOGUE',
+  SceneFamily sceneFamily = SceneFamily.workplace,
+  SceneModel sceneModel = SceneModel.workplaceBasicDialogue,
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';
-  final scene = scenarioModel == 'IELTS_SPEAKING_PART_2'
-      ? const AgentScene(
-          id: 'scn_ielts_speaking_part_2',
-          title: 'IELTS Speaking Part 2',
-          description: 'Part 2 cue card with bound Part 3',
-        )
-      : agentScenes.first;
   const question = PracticeQuestion(
     id: 'practice_question_001',
     sessionId: sessionId,
@@ -508,10 +502,10 @@ PracticeSessionSnapshot _practiceSnapshot(
   );
   return PracticeSessionSnapshot(
     sessionId: sessionId,
-    threadId: 'thread_001',
-    scenarioType: scenarioType,
-    scenarioModel: scenarioModel,
-    matter: AgentMatter(id: 'matter_001', scene: scene),
+    planId: 'plan_practice_session_001',
+    sceneFamily: sceneFamily,
+    sceneModel: sceneModel,
+    sessionVersion: 2,
     completedTurns: 1,
     turnLimit: turnLimit,
     sessionCompleted: false,
@@ -538,6 +532,32 @@ PracticeSessionSnapshot _practiceSnapshot(
         ),
       ),
     ],
+  );
+}
+
+Future<void> _restorePractice(
+  AgentController controller,
+  PracticeSessionSnapshot snapshot,
+) async {
+  final scene = _practiceScene(snapshot.sceneFamily, snapshot.sceneModel);
+  await controller.initialize();
+  await controller.selectScene(scene);
+  await controller.restoreCreatedPractice(
+    sessionId: snapshot.sessionId,
+    scene: scene,
+  );
+}
+
+SceneDefinition _practiceScene(SceneFamily family, SceneModel model) {
+  return testScene(
+    id: model == SceneModel.ieltsSpeakingPart2
+        ? 'feedback-ielts-part-2'
+        : 'feedback-workplace',
+    family: family,
+    model: model,
+    name: model == SceneModel.ieltsSpeakingPart2
+        ? 'IELTS Speaking Part 2'
+        : 'Workplace feedback',
   );
 }
 
@@ -584,17 +604,25 @@ final class _PracticeClient
   Future<void> clearAccountState() async {}
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) async => snapshot;
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async {
+    if (sessionId != snapshot.sessionId) {
+      throw StateError('Unknown test Practice Session.');
+    }
+    return snapshot;
+  }
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
-  }) async => PracticeStartResult(snapshot: snapshot);
+  }) async {
+    if (sessionId != snapshot.sessionId || clientOperationId.trim().isEmpty) {
+      throw StateError('Unknown test Practice Session activation.');
+    }
+    return snapshot;
+  }
 
   @override
   Future<PracticeRetryRequest> requestSameQuestionRetry({

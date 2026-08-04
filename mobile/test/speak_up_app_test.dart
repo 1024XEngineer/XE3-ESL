@@ -1,3 +1,5 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -10,10 +12,11 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/conversation/conversation.dart';
-import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/features/preparation/preparation.dart';
-import 'package:speakup/features/review/review.dart';
+import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
   testWidgets('starts on the Agent home with four primary navigation entries', (
@@ -1052,9 +1055,9 @@ final class _DefiniteCreateFailureAgentClient
   );
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) => _delegate.startScene(
     threadId: threadId,
@@ -1071,42 +1074,5 @@ final class _DefiniteCreateFailureAgentClient
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
-  );
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) => _delegate.transcribeTurn(
-    threadId: threadId,
-    turnNumber: turnNumber,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) => _delegate.submitPracticeTurn(
-    threadId: threadId,
-    scene: scene,
-    turnNumber: turnNumber,
-    transcript: transcript,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) => _delegate.createReview(
-    threadId: threadId,
-    scene: scene,
-    clientReviewId: clientReviewId,
   );
 }

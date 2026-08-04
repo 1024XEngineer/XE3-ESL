@@ -9,7 +9,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestSearchServiceReranksDeterministicallyAndEnforcesMatter(
+func TestSearchServiceReranksDeterministicallyAndEnforcesGoal(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -26,16 +26,16 @@ func TestSearchServiceReranksDeterministicallyAndEnforcesMatter(
 		"",
 		now.Add(-24*time.Hour),
 	)
-	matterMemory := validSearchMemory(
+	goalMemory := validSearchMemory(
 		"20000000-0000-4000-8000-000000000001",
 		TypeGoal,
-		ScopeMatter,
-		integrationMatterA,
+		ScopeGoal,
+		integrationGoalA,
 		now.Add(-7*24*time.Hour),
 	)
 	repository := &fakeSearchRepository{candidates: []SearchCandidate{
 		{Memory: userMemory, Similarity: 0.90},
-		{Memory: matterMemory, Similarity: 0.82},
+		{Memory: goalMemory, Similarity: 0.82},
 	}}
 	service, err := NewSearchService(
 		repository,
@@ -47,28 +47,28 @@ func TestSearchServiceReranksDeterministicallyAndEnforcesMatter(
 		t.Fatalf("NewSearchService: %v", err)
 	}
 	hits, err := service.Search(context.Background(), SearchRequest{
-		Actor:    actor,
-		Query:    "Help with my interview goal",
-		MatterID: integrationMatterA,
-		Limit:    2,
+		Actor:  actor,
+		Query:  "Help with my interview goal",
+		GoalID: integrationGoalA,
+		Limit:  2,
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if len(hits) != 2 ||
-		hits[0].MemoryID != matterMemory.ID ||
+		hits[0].MemoryID != goalMemory.ID ||
 		hits[0].RetrievalPolicyVersion != "memory-retrieval-v1" {
 		t.Fatalf("hits = %#v", hits)
 	}
 
-	repository.candidates[1].Memory.MatterID = integrationMatterB
+	repository.candidates[1].Memory.GoalID = integrationGoalB
 	if _, err := service.Search(context.Background(), SearchRequest{
-		Actor:    actor,
-		Query:    "Help with my interview goal",
-		MatterID: integrationMatterA,
-		Limit:    2,
+		Actor:  actor,
+		Query:  "Help with my interview goal",
+		GoalID: integrationGoalA,
+		Limit:  2,
 	}); err != ErrRepository {
-		t.Fatalf("cross-Matter error = %v", err)
+		t.Fatalf("cross-Goal error = %v", err)
 	}
 }
 
@@ -167,7 +167,7 @@ func validSearchMemory(
 	id string,
 	memoryType Type,
 	scope ScopeType,
-	matterID string,
+	goalID string,
 	updatedAt time.Time,
 ) Memory {
 	return Memory{
@@ -177,7 +177,7 @@ func validSearchMemory(
 		CanonicalKey:  "goal.current",
 		Content:       "Prepare for product interview",
 		Scope:         scope,
-		MatterID:      matterID,
+		GoalID:        goalID,
 		Status:        StatusActive,
 		Version:       1,
 		PolicyVersion: "memory-policy-v1",

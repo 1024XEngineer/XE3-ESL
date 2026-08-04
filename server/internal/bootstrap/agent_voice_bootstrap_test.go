@@ -9,22 +9,22 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
-func TestBuildAgentVoiceMessageApplicationRequiresExplicitEnablementAndStore(
+func TestBuildAgentVoiceInputApplicationRequiresExplicitEnablementAndStore(
 	t *testing.T,
 ) {
-	application, err := buildAgentVoiceMessageApplication(
+	application, err := buildAgentVoiceInputApplication(
 		nil,
 		nil,
 		nil,
 		nil,
-		agent.RunConfiguration{},
+		agentrun.Configuration{},
 	)
 	if err != nil || application != nil {
 		t.Fatalf(
@@ -34,14 +34,14 @@ func TestBuildAgentVoiceMessageApplicationRequiresExplicitEnablementAndStore(
 		)
 	}
 
-	application, err = buildAgentVoiceMessageApplication(
+	application, err = buildAgentVoiceInputApplication(
 		[]VoiceConfiguration{{
-			AgentVoiceMessagesEnabled: true,
+			AgentVoiceInputEnabled: true,
 		}},
 		nil,
 		nil,
 		nil,
-		agent.RunConfiguration{},
+		agentrun.Configuration{},
 	)
 	if err == nil || application != nil {
 		t.Fatalf(
@@ -51,15 +51,15 @@ func TestBuildAgentVoiceMessageApplicationRequiresExplicitEnablementAndStore(
 		)
 	}
 
-	application, err = buildAgentVoiceMessageApplication(
+	application, err = buildAgentVoiceInputApplication(
 		[]VoiceConfiguration{{
-			AgentVoiceMessagesEnabled: true,
-			ObjectStore:               newVoiceObjectStore(),
+			AgentVoiceInputEnabled: true,
+			ObjectStore:            newVoiceObjectStore(),
 		}},
 		nil,
 		nil,
 		nil,
-		agent.RunConfiguration{},
+		agentrun.Configuration{},
 	)
 	if err == nil || application != nil {
 		t.Fatalf(
@@ -77,9 +77,9 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		nil,
 		"",
 		nil,
-		agent.RunConfiguration{},
+		agentrun.Configuration{},
 		emptyBootstrapMemorySearcher{},
-		VoiceConfiguration{AgentVoiceMessagesEnabled: true},
+		VoiceConfiguration{AgentVoiceInputEnabled: true},
 	); err == nil {
 		t.Fatal("legacy composition accepted Agent voice without cleanup")
 	}
@@ -91,7 +91,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		nil,
 		"",
 		&voiceTextGenerator{},
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
 			MaxOutputTokens:    256,
@@ -153,18 +153,17 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		Synthesizer: aifake.NewFailingSpeechSynthesizer(
 			context.Canceled,
 		),
-		TemporaryAudio:            newVoiceTestVault(t),
-		ObjectStore:               newVoiceObjectStore(),
-		AgentVoiceMessagesEnabled: true,
-		ScratchDirectory:          t.TempDir(),
+		TemporaryAudio:         newVoiceTestVault(t),
+		ObjectStore:            newVoiceObjectStore(),
+		AgentVoiceInputEnabled: true,
+		ScratchDirectory:       t.TempDir(),
 		ObjectReadAllowedHosts: []string{
 			"private-audio.example.invalid",
 		},
-		AudioStagedTTL:          time.Hour,
-		ASRLease:                5 * time.Second,
-		ReviewGenerationTimeout: 2 * time.Second,
-		AudioReadTimeout:        time.Second,
-		ReviewHistoryCursorKey:  make([]byte, 32),
+		AudioStagedTTL:         time.Hour,
+		ASRLease:               5 * time.Second,
+		AudioReadTimeout:       time.Second,
+		ReviewHistoryCursorKey: make([]byte, 32),
 	}
 	composition, err := buildIdentityAgentComposition(
 		context.Background(),
@@ -172,7 +171,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		nil,
 		"",
 		&voiceTextGenerator{},
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
 			MaxOutputTokens:    256,

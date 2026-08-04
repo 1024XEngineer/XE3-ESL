@@ -10,7 +10,7 @@ import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
-import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
 
 void main() {
   test('late upload result cannot cross the Thread fence', () async {

@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
 
 import 'agent_client.dart';
 import 'agent_models.dart';
@@ -1686,7 +1688,7 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
-      'actions',
+      'handoffs',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -1727,11 +1729,11 @@ AgentMessage _decodeMessageObject(
     'speech_feedback_status_url',
     max: 160,
   );
-  final actions = object['actions'] == null
-      ? const <AgentMessageAction>[]
-      : _decodeMessageActions(object['actions']);
+  final handoffs = object['handoffs'] == null
+      ? const <AgentHandoff>[]
+      : decodeAgentHandoffs(object['handoffs']);
   if ((role == AgentMessageRole.user &&
-          (clientId == null || producedBy != null || actions.isNotEmpty)) ||
+          (clientId == null || producedBy != null || handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
       (modality == AgentMessageModality.voice &&
@@ -1751,32 +1753,8 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
-    actions: actions,
+    handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
-  );
-}
-
-List<AgentMessageAction> _decodeMessageActions(Object? value) {
-  final values = _strictList(value, max: 4);
-  return List<AgentMessageAction>.unmodifiable(
-    values.map((item) {
-      final object = _strictObject(
-        item,
-        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
-        required: const <String>{'type', 'label', 'matter_id', 'title'},
-      );
-      final type = switch (_strictString(object['type'], min: 1, max: 64)) {
-        'open_interview_preparation' =>
-          AgentMessageActionType.openInterviewPreparation,
-        _ => throw const _InvalidVoiceResponse(),
-      };
-      return AgentMessageAction(
-        type: type,
-        label: _strictString(object['label'], min: 1, max: 64),
-        matterId: _strictUuid(object['matter_id']),
-        title: _strictString(object['title'], min: 1, max: 200),
-      );
-    }),
   );
 }
 

@@ -10,19 +10,20 @@ import (
 	"syscall"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -124,12 +125,6 @@ func run() int {
 	}
 	defer audioVault.Close()
 
-	preparationCatalog, err := preparation.NewBuiltinCatalog()
-	if err != nil {
-		logger.Error("preparation catalog startup failed", slog.Any("error", err))
-		return 1
-	}
-
 	storageConfig, err := config.LoadObjectStorage()
 	if err != nil {
 		logger.Error(
@@ -161,6 +156,11 @@ func run() int {
 		return 1
 	}
 	defer databasePool.Close()
+	sceneCatalog, err := scene.NewPostgresCatalog(databasePool.Native())
+	if err != nil {
+		logger.Error("Scene catalog startup failed", slog.Any("error", err))
+		return 1
+	}
 
 	resumeComposition, err := buildResumeComposition(
 		ctx,
@@ -185,10 +185,8 @@ func run() int {
 			MaxOutputTokens:   textConfig.MaxOutputTokens,
 			GenerationTimeout: 45 * time.Second,
 			LeaseDuration:     60 * time.Second,
+			RetryDelay:        5 * time.Second,
 			MaxAttempts:       3,
-			CursorSigningKey: []byte(
-				reviewHistoryConfig.CursorSigningKey.Reveal(),
-			),
 		},
 	)
 	if err != nil {
@@ -243,7 +241,7 @@ func run() int {
 			UploadLease: 2 * time.Minute,
 		}
 	}
-	var speechFeedbackAcoustics review.SpeechFeedbackAcousticProvider
+	var speechFeedbackAcoustics evaluation.SpeechFeedbackAcousticProvider
 	speechFeedbackLease := 30 * time.Second
 	if recordingStore != nil {
 		iseConfig, configurationErr := config.LoadISE()
@@ -255,27 +253,11 @@ func run() int {
 			return 1
 		}
 		speechFeedbackLease = iseConfig.Timeout + 30*time.Second
-		iseEvaluator, evaluatorErr := xfyun.NewEvaluator(
-			xfyun.ISEConfig{
-				Endpoint: iseConfig.Endpoint,
-				Timeout:  iseConfig.Timeout,
-			},
-			iseConfig.AppID.Reveal(),
-			iseConfig.APIKey.Reveal(),
-			iseConfig.APISecret.Reveal(),
-		)
-		if evaluatorErr != nil {
-			logger.Error(
-				"iFlytek ISE startup failed",
-				slog.String("error_kind", "dependency"),
-			)
-			return 1
-		}
 		speechFeedbackAcoustics, err =
 			bootstrap.NewSpeechFeedbackAcousticProvider(
 				databasePool.Native(),
 				recordingStore,
-				iseEvaluator,
+				iseConfig,
 			)
 		if err != nil {
 			logger.Error(
@@ -313,41 +295,34 @@ func run() int {
 			cfg.TrustedProxyCIDRs,
 			cfg.TrustedProxyHeader,
 			textGenerator,
-			agent.RunConfiguration{
+			agentrun.Configuration{
 				Provider:           textConfig.Provider,
 				Model:              textConfig.Model,
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
 			memoryIndexComposition.Searcher(),
-			preparationCatalog,
+			sceneCatalog,
 			bootstrap.AgentWorkerWakeups{
 				MemoryExtraction: memoryExtractionWakeup,
 				ThreadSummary:    threadSummaryWakeup,
 			},
 			agentImageConfig,
 			bootstrap.VoiceConfiguration{
-				Recognizer:                recognizer,
-				Synthesizer:               synthesizer,
-				TemporaryAudio:            audioVault,
-				ObjectStore:               recordingStore,
-				AgentVoiceMessagesEnabled: storageConfig.Enabled,
-				ScratchDirectory:          ttsConfig.TempDirectory,
-				ObjectReadAllowedHosts:    agentVoiceObjectReadHosts,
-				AudioStagedTTL:            24 * time.Hour,
-				AudioUploadLease:          2 * time.Minute,
-				ASRLease:                  asrConfig.Timeout + 15*time.Second,
-				// Keep report generation within the Review lease while allowing
-				// the same provider budget used by scene-level reports.
-				ReviewGenerationTimeout: 45 * time.Second,
-				AudioReadTimeout:        temporaryAudioConfig.ReadTimeout,
+				Recognizer:             recognizer,
+				Synthesizer:            synthesizer,
+				TemporaryAudio:         audioVault,
+				ObjectStore:            recordingStore,
+				AgentVoiceInputEnabled: storageConfig.Enabled,
+				ScratchDirectory:       ttsConfig.TempDirectory,
+				ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
+				AudioStagedTTL:         24 * time.Hour,
+				AudioUploadLease:       2 * time.Minute,
+				ASRLease:               asrConfig.Timeout + 15*time.Second,
+				AudioReadTimeout:       temporaryAudioConfig.ReadTimeout,
 				ReviewHistoryCursorKey: []byte(
 					reviewHistoryConfig.CursorSigningKey.Reveal(),
 				),
-				InterviewShadowCoordinator: evaluationComposition.
-					InterviewShadowCoordinator(),
-				IELTSSpeakingShadowCoordinator: evaluationComposition.
-					IELTSSpeakingShadowCoordinator(),
 				SpeechFeedbackCoordinator: speechFeedbackComposition.
 					Coordinator(),
 			},
@@ -576,10 +551,10 @@ func run() int {
 		},
 		preparation.New(),
 		practice.New(),
-		conversation.New(),
+		practiceinput.New(),
 		review.New(),
 	)
-	bootstrap.RegisterPreparationCatalog(router, preparationCatalog)
+	bootstrap.RegisterSceneCatalog(router, sceneCatalog)
 
 	server := &http.Server{
 		Addr:              cfg.Address(),

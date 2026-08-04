@@ -1,3 +1,8 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
+import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/coaching/goal/goal_client.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,11 +11,13 @@ import 'dart:typed_data';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 final class WireAgentClient
     implements
@@ -18,8 +25,8 @@ final class WireAgentClient
         AgentStreamingTextClient,
         AgentThreadHistoryClient,
         AgentThreadDeletionClient,
-        AgentMatterSelectionClient,
-        AgentPracticeAvailability,
+        GoalClient,
+        GoalSelectionClient,
         AgentMultimodalClient {
   factory WireAgentClient({
     required Uri baseUri,
@@ -81,12 +88,9 @@ final class WireAgentClient
   final Map<String, _FailedRun> _failedRuns = <String, _FailedRun>{};
   final Set<String> _ambiguousSubmissions = <String>{};
   _AmbiguousThreadCreation? _ambiguousThreadCreation;
-  final Map<_MatterActivationKey, _MatterActivation> _matterActivations =
-      <_MatterActivationKey, _MatterActivation>{};
+  final Map<_GoalActivationKey, _GoalActivation> _goalActivations =
+      <_GoalActivationKey, _GoalActivation>{};
   Future<void>? _cleanupFuture;
-
-  @override
-  bool get supportsPracticeFlow => false;
 
   @override
   Future<void> clearAccountState() {
@@ -108,7 +112,7 @@ final class WireAgentClient
     _failedRuns.clear();
     _ambiguousSubmissions.clear();
     _ambiguousThreadCreation = null;
-    _matterActivations.clear();
+    _goalActivations.clear();
     final staleOperations = List<Future<void>>.of(_inFlightOperations);
     if (_ownsTransport) {
       (_transport as _IoAgentHttpTransport).close(force: true);
@@ -267,12 +271,9 @@ final class WireAgentClient
     required int generation,
     required _WireThread thread,
   }) async {
-    final activeMatter = thread.activeMatterId == null
+    final activeGoal = thread.activeGoalId == null
         ? null
-        : await _loadMatter(
-            generation: generation,
-            matterId: thread.activeMatterId!,
-          );
+        : await _loadGoal(generation: generation, goalId: thread.activeGoalId!);
     final messagePage = await _fetchMessagePage(
       generation: generation,
       threadId: thread.id,
@@ -286,7 +287,7 @@ final class WireAgentClient
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      activeMatter: activeMatter,
+      activeGoal: activeGoal,
       textRecovery: recovery.failure,
       messages: <AgentMessage>[
         for (final message in messagePage.messages) message.presentation,
@@ -458,40 +459,56 @@ final class WireAgentClient
         error.kind == AgentClientFailureKind.unexpected;
   }
 
-  Future<AgentMatter> _loadMatter({
+  Future<Goal> _loadGoal({
     required int generation,
-    required String matterId,
+    required String goalId,
   }) async {
     final response = await _send(
       generation: generation,
       method: 'GET',
-      path: '/v1/matters/$matterId',
+      path: '/v1/goals/$goalId',
     );
     _requireStatus(response, const <int>{HttpStatus.ok});
-    final matter = _decodeMatter(response.body);
-    if (matter.id != matterId) {
+    final goal = _decodeGoal(response.body);
+    if (goal.id != goalId) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidResponse,
         retryable: true,
       );
     }
-    final knownScene = agentScenes
-        .where((scene) => scene.title == matter.title)
-        .firstOrNull;
-    return AgentMatter(
-      id: matter.id,
-      scene:
-          knownScene ??
-          AgentScene(
-            id: 'matter-${matter.id}',
-            title: matter.title,
-            description: '恢复的练习场景',
-          ),
-      status: matter.status,
-      version: matter.version,
-      createdAt: matter.createdAt,
-      updatedAt: matter.updatedAt,
-    );
+    return _goalFromWire(goal);
+  }
+
+  @override
+  Future<Goal> createGoal({required String title}) {
+    return _runAccountOperation((generation) async {
+      _requireContent(title);
+      final response = await _send(
+        generation: generation,
+        method: 'POST',
+        path: '/v1/goals',
+        body: <String, Object?>{'title': title},
+      );
+      _requireStatus(response, const <int>{HttpStatus.created});
+      return _goalFromWire(_decodeGoal(response.body));
+    });
+  }
+
+  @override
+  Future<Goal> getGoal(String goalId) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(goalId);
+      return _loadGoal(generation: generation, goalId: goalId);
+    });
+  }
+
+  @override
+  Future<List<Goal>> listGoals() {
+    return _runAccountOperation((generation) async {
+      return List<Goal>.unmodifiable(
+        (await _listGoals(generation)).map(_goalFromWire),
+      );
+    });
   }
 
   @override
@@ -1103,34 +1120,34 @@ final class WireAgentClient
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) {
     return _runAccountOperation((generation) async {
       _requireUuid(threadId);
       _requireClientIdentity(clientOperationId);
-      _requireContent(scene.title);
+      _requireContent(scene.name);
       final operationKey = (
         generation: generation,
         threadId: threadId,
         clientOperationId: clientOperationId,
       );
-      final existing = _matterActivations[operationKey];
+      final existing = _goalActivations[operationKey];
       final activation =
           existing ??
-          _MatterActivation(sceneId: scene.id, sceneTitle: scene.title);
+          _GoalActivation(sceneId: scene.id, sceneTitle: scene.name);
       if (existing == null) {
-        _matterActivations[operationKey] = activation;
+        _goalActivations[operationKey] = activation;
       } else if (existing.sceneId != scene.id ||
-          existing.sceneTitle != scene.title) {
+          existing.sceneTitle != scene.name) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.conflict,
           errorCode: 'idempotency_key_conflict',
         );
       }
-      final matter = await _resolveActivationMatter(
+      final goal = await _resolveActivationGoal(
         generation: generation,
         operationKey: operationKey,
         activation: activation,
@@ -1138,138 +1155,121 @@ final class WireAgentClient
       final linkResponse = await _send(
         generation: generation,
         method: 'PUT',
-        path: '/v1/agent-threads/$threadId/active-matter',
-        body: <String, Object?>{'matter_id': matter.id},
+        path: '/v1/agent-threads/$threadId/active-goal',
+        body: <String, Object?>{'goal_id': goal.id},
       );
       _requireStatus(linkResponse, const <int>{HttpStatus.ok});
-      _decodeMatterLink(
+      _decodeGoalLink(
         linkResponse.body,
         expectedThreadId: threadId,
-        expectedMatterId: matter.id,
+        expectedGoalId: goal.id,
       );
-      return AgentSceneStart(
-        activeMatter: AgentMatter(
-          id: matter.id,
-          scene: scene,
-          status: matter.status,
-          version: matter.version,
-          createdAt: matter.createdAt,
-          updatedAt: matter.updatedAt,
-        ),
-        assistantMessage: AgentMessage(
-          id: 'scene-$clientOperationId',
-          role: AgentMessageRole.assistant,
-          text: scene.title,
-        ),
-      );
+      return _goalFromWire(goal);
     });
   }
 
   @override
-  Future<AgentMatter> selectExistingMatter({
+  Future<Goal> selectExistingGoal({
     required String threadId,
-    required String matterId,
+    required String goalId,
   }) {
     return _runAccountOperation((generation) async {
       _requireUuid(threadId);
-      _requireUuid(matterId);
-      final matter = await _loadMatter(
-        generation: generation,
-        matterId: matterId,
-      );
-      if (matter.status != 'active') {
+      _requireUuid(goalId);
+      final goal = await _loadGoal(generation: generation, goalId: goalId);
+      if (goal.status != GoalStatus.active) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.conflict,
-          errorCode: 'matter_not_active',
+          errorCode: 'goal_not_active',
         );
       }
       final response = await _send(
         generation: generation,
         method: 'PUT',
-        path: '/v1/agent-threads/$threadId/active-matter',
-        body: <String, Object?>{'matter_id': matterId},
+        path: '/v1/agent-threads/$threadId/active-goal',
+        body: <String, Object?>{'goal_id': goalId},
       );
       _requireStatus(response, const <int>{HttpStatus.ok});
-      _decodeMatterLink(
+      _decodeGoalLink(
         response.body,
         expectedThreadId: threadId,
-        expectedMatterId: matterId,
+        expectedGoalId: goalId,
       );
-      return matter;
+      return goal;
     });
   }
 
-  Future<_WireMatter> _resolveActivationMatter({
+  Future<_WireGoal> _resolveActivationGoal({
     required int generation,
-    required _MatterActivationKey operationKey,
-    required _MatterActivation activation,
+    required _GoalActivationKey operationKey,
+    required _GoalActivation activation,
   }) {
-    final resolved = activation.matter;
+    final resolved = activation.goal;
     if (resolved != null) {
-      return Future<_WireMatter>.value(resolved);
+      return Future<_WireGoal>.value(resolved);
     }
-    final pending = activation.pendingMatter;
+    final pending = activation.pendingGoal;
     if (pending != null) {
       return pending;
     }
-    late final Future<_WireMatter> operation;
+    late final Future<_WireGoal> operation;
     operation =
-        _createOrRecoverActivationMatter(
+        _createOrRecoverActivationGoal(
               generation: generation,
               operationKey: operationKey,
               activation: activation,
             )
-            .then((matter) {
-              _requireMatterActivationCurrent(
+            .then((goal) {
+              _requireGoalActivationCurrent(
                 generation: generation,
                 operationKey: operationKey,
                 activation: activation,
               );
-              activation.matter = matter;
-              return matter;
+              activation.goal = goal;
+              return goal;
             })
             .whenComplete(() {
-              if (identical(activation.pendingMatter, operation)) {
-                activation.pendingMatter = null;
+              if (identical(activation.pendingGoal, operation)) {
+                activation.pendingGoal = null;
               }
             });
-    activation.pendingMatter = operation;
+    activation.pendingGoal = operation;
     return operation;
   }
 
-  Future<_WireMatter> _createOrRecoverActivationMatter({
+  Future<_WireGoal> _createOrRecoverActivationGoal({
     required int generation,
-    required _MatterActivationKey operationKey,
-    required _MatterActivation activation,
+    required _GoalActivationKey operationKey,
+    required _GoalActivation activation,
   }) async {
-    if (activation.baselineMatterIds == null) {
-      // Every Matter already visible when this client starts the operation is
+    if (activation.baselineGoalIds == null) {
+      // Every Goal already visible when this client starts the operation is
       // deliberately treated as unrelated. The frozen API has no durable
       // client operation identity, so a restarted client must create a fresh
-      // Matter instead of guessing from a same-title result.
-      final matters = await _listMatters(generation);
-      _requireMatterActivationCurrent(
+      // Goal instead of guessing from a same-title result.
+      final goals = await _listGoals(generation);
+      _requireGoalActivationCurrent(
         generation: generation,
         operationKey: operationKey,
         activation: activation,
       );
-      activation.baselineMatterIds = {
-        for (final matter in matters)
-          if (matter.title == activation.sceneTitle) matter.id,
+      activation.baselineGoalIds = {
+        for (final goal in goals)
+          if (goal.title == activation.sceneTitle) goal.id,
       };
     } else if (activation.createAmbiguous) {
-      final matters = await _listMatters(generation);
-      _requireMatterActivationCurrent(
+      final goals = await _listGoals(generation);
+      _requireGoalActivationCurrent(
         generation: generation,
         operationKey: operationKey,
         activation: activation,
       );
       final recovered = [
-        for (final matter in matters)
-          if (matter.title == activation.sceneTitle &&
-              matter.status == 'active' &&
-              !activation.baselineMatterIds!.contains(matter.id))
-            matter,
+        for (final goal in goals)
+          if (goal.title == activation.sceneTitle &&
+              goal.status == 'active' &&
+              !activation.baselineGoalIds!.contains(goal.id))
+            goal,
       ];
       if (recovered.length > 1) {
         throw const AgentClientException(
@@ -1277,8 +1277,8 @@ final class WireAgentClient
           errorCode: 'resource_conflict',
         );
       }
-      if (recovered case [final matter]) {
-        return matter;
+      if (recovered case [final goal]) {
+        return goal;
       }
       activation.createAmbiguous = false;
     }
@@ -1287,22 +1287,22 @@ final class WireAgentClient
       final createResponse = await _send(
         generation: generation,
         method: 'POST',
-        path: '/v1/matters',
+        path: '/v1/goals',
         body: <String, Object?>{'title': activation.sceneTitle},
       );
       _requireStatus(createResponse, const <int>{HttpStatus.created});
-      final matter = _decodeMatter(createResponse.body);
-      if (matter.title != activation.sceneTitle || matter.status != 'active') {
+      final goal = _decodeGoal(createResponse.body);
+      if (goal.title != activation.sceneTitle || goal.status != 'active') {
         throw const AgentClientException(
           kind: AgentClientFailureKind.invalidResponse,
           retryable: true,
         );
       }
-      return matter;
+      return goal;
     } on AgentClientException catch (error) {
       if (error.kind == AgentClientFailureKind.network ||
           error.kind == AgentClientFailureKind.invalidResponse) {
-        _requireMatterActivationCurrent(
+        _requireGoalActivationCurrent(
           generation: generation,
           operationKey: operationKey,
           activation: activation,
@@ -1313,54 +1313,25 @@ final class WireAgentClient
     }
   }
 
-  Future<List<_WireMatter>> _listMatters(int generation) async {
+  Future<List<_WireGoal>> _listGoals(int generation) async {
     final response = await _send(
       generation: generation,
       method: 'GET',
-      path: '/v1/matters',
+      path: '/v1/goals',
     );
     _requireStatus(response, const <int>{HttpStatus.ok});
-    return _decodeMatterList(response.body);
+    return _decodeGoalList(response.body);
   }
 
-  void _requireMatterActivationCurrent({
+  void _requireGoalActivationCurrent({
     required int generation,
-    required _MatterActivationKey operationKey,
-    required _MatterActivation activation,
+    required _GoalActivationKey operationKey,
+    required _GoalActivation activation,
   }) {
     _requireCurrentGeneration(generation);
-    if (!identical(_matterActivations[operationKey], activation)) {
+    if (!identical(_goalActivations[operationKey], activation)) {
       throw const AgentClientOperationCancelled();
     }
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    return Future<String>.error(_practiceUnavailable);
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    return Future<AgentExchange>.error(_practiceUnavailable);
-  }
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    return Future<AgentReview>.error(_practiceUnavailable);
   }
 
   Future<IdentityHttpResponse> _send({
@@ -1602,10 +1573,6 @@ final class WireAgentClient
   }
 }
 
-const AgentClientException _practiceUnavailable = AgentClientException(
-  kind: AgentClientFailureKind.unavailable,
-);
-
 const AgentClientException _ambiguousThreadCreationFailure =
     AgentClientException(
       kind: AgentClientFailureKind.network,
@@ -1639,25 +1606,25 @@ final class _FailedRun {
   final List<String> imageAssetIds;
 }
 
-typedef _MatterActivationKey = ({
+typedef _GoalActivationKey = ({
   int generation,
   String threadId,
   String clientOperationId,
 });
 
-final class _MatterActivation {
-  _MatterActivation({required this.sceneId, required this.sceneTitle});
+final class _GoalActivation {
+  _GoalActivation({required this.sceneId, required this.sceneTitle});
 
   final String sceneId;
   final String sceneTitle;
-  Set<String>? baselineMatterIds;
-  _WireMatter? matter;
-  Future<_WireMatter>? pendingMatter;
+  Set<String>? baselineGoalIds;
+  _WireGoal? goal;
+  Future<_WireGoal>? pendingGoal;
   bool createAmbiguous = false;
 }
 
-final class _WireMatter {
-  const _WireMatter({
+final class _WireGoal {
+  const _WireGoal({
     required this.id,
     required this.title,
     required this.status,
@@ -1674,25 +1641,41 @@ final class _WireMatter {
   final DateTime updatedAt;
 }
 
+Goal _goalFromWire(_WireGoal goal) => Goal(
+  id: goal.id,
+  title: goal.title,
+  status: _goalStatus(goal.status),
+  version: goal.version,
+  createdAt: goal.createdAt,
+  updatedAt: goal.updatedAt,
+);
+
+GoalStatus _goalStatus(String value) => switch (value) {
+  'active' => GoalStatus.active,
+  'completed' => GoalStatus.completed,
+  'archived' => GoalStatus.archived,
+  _ => throw const _InvalidAgentResponse(),
+};
+
 final class _WireThread {
   const _WireThread({
     required this.id,
     required this.createdAt,
     required this.updatedAt,
     this.title,
-    this.activeMatterId,
+    this.activeGoalId,
   });
 
   final String id;
   final String? title;
-  final String? activeMatterId;
+  final String? activeGoalId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   AgentThreadSummary get presentation => AgentThreadSummary(
     id: id,
     title: title,
-    activeMatterId: activeMatterId,
+    activeGoalId: activeGoalId,
     createdAt: createdAt,
     updatedAt: updatedAt,
   );
@@ -1730,7 +1713,7 @@ final class _WireMessage {
     this.producedByRunId,
     this.audio,
     this.images = const <AgentImageAsset>[],
-    this.actions = const <AgentMessageAction>[],
+    this.handoffs = const <AgentHandoff>[],
     this.speechFeedbackStatusUrl,
   });
 
@@ -1744,7 +1727,7 @@ final class _WireMessage {
   final String? producedByRunId;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
-  final List<AgentMessageAction> actions;
+  final List<AgentHandoff> handoffs;
   final String? speechFeedbackStatusUrl;
 
   AgentMessage get presentation => AgentMessage(
@@ -1756,7 +1739,7 @@ final class _WireMessage {
     modality: modality,
     audio: audio,
     images: images,
-    actions: actions,
+    handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -1811,29 +1794,29 @@ final class _WireRun {
       status == _WireRunStatus.completed || status == _WireRunStatus.failed;
 }
 
-List<_WireMatter> _decodeMatterList(String body) {
+List<_WireGoal> _decodeGoalList(String body) {
   return _decodeBody(body, (value) {
     final root = _strictObject(
       value,
-      allowed: const <String>{'matters'},
-      required: const <String>{'matters'},
+      allowed: const <String>{'goals'},
+      required: const <String>{'goals'},
     );
     return [
-      for (final item in _strictList(root['matters'], maxLength: 1000))
-        _decodeMatterObject(item),
+      for (final item in _strictList(root['goals'], maxLength: 1000))
+        _decodeGoalObject(item),
     ];
   });
 }
 
-_WireMatter _decodeMatter(String body) {
-  return _decodeBody(body, _decodeMatterObject);
+_WireGoal _decodeGoal(String body) {
+  return _decodeBody(body, _decodeGoalObject);
 }
 
-_WireMatter _decodeMatterObject(Object? value) {
+_WireGoal _decodeGoalObject(Object? value) {
   final object = _strictObject(
     value,
     allowed: const <String>{
-      'matter_id',
+      'goal_id',
       'title',
       'status',
       'version',
@@ -1841,7 +1824,7 @@ _WireMatter _decodeMatterObject(Object? value) {
       'updated_at',
     },
     required: const <String>{
-      'matter_id',
+      'goal_id',
       'title',
       'status',
       'version',
@@ -1855,8 +1838,8 @@ _WireMatter _decodeMatterObject(Object? value) {
   if (updatedAt.isBefore(createdAt)) {
     throw const _InvalidAgentResponse();
   }
-  return _WireMatter(
-    id: _strictUuid(object['matter_id']),
+  return _WireGoal(
+    id: _strictUuid(object['goal_id']),
     title: _strictString(object['title'], minLength: 1, maxLength: 256),
     status: _strictString(object['status'], minLength: 1, maxLength: 32),
     version: version,
@@ -1865,31 +1848,31 @@ _WireMatter _decodeMatterObject(Object? value) {
   );
 }
 
-void _decodeMatterLink(
+void _decodeGoalLink(
   String body, {
   required String expectedThreadId,
-  required String expectedMatterId,
+  required String expectedGoalId,
 }) {
   _decodeBody(body, (value) {
     final object = _strictObject(
       value,
       allowed: const <String>{
         'thread_id',
-        'matter_id',
+        'goal_id',
         'active',
         'linked_at',
         'updated_at',
       },
       required: const <String>{
         'thread_id',
-        'matter_id',
+        'goal_id',
         'active',
         'linked_at',
         'updated_at',
       },
     );
     if (_strictUuid(object['thread_id']) != expectedThreadId ||
-        _strictUuid(object['matter_id']) != expectedMatterId ||
+        _strictUuid(object['goal_id']) != expectedGoalId ||
         !_strictBool(object['active'])) {
       throw const _InvalidAgentResponse();
     }
@@ -1948,7 +1931,7 @@ _WireThread _decodeThreadObject(Object? value) {
     allowed: const <String>{
       'thread_id',
       'title',
-      'active_matter_id',
+      'active_goal_id',
       'created_at',
       'updated_at',
     },
@@ -1959,9 +1942,9 @@ _WireThread _decodeThreadObject(Object? value) {
   final title = titleValue == null
       ? null
       : _strictString(titleValue, minLength: 1, maxLength: 25);
-  final activeMatterId = _absentOnlyOptional(
+  final activeGoalId = _absentOnlyOptional(
     object,
-    'active_matter_id',
+    'active_goal_id',
     _strictUuid,
   );
   final createdAt = _strictDateTime(object['created_at']);
@@ -1972,7 +1955,7 @@ _WireThread _decodeThreadObject(Object? value) {
   return _WireThread(
     id: id,
     title: title,
-    activeMatterId: activeMatterId,
+    activeGoalId: activeGoalId,
     createdAt: createdAt,
     updatedAt: updatedAt,
   );
@@ -2031,7 +2014,7 @@ _WireMessage _decodeMessageObject(
       'content',
       'audio',
       'images',
-      'actions',
+      'handoffs',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -2092,9 +2075,9 @@ _WireMessage _decodeMessageObject(
     'produced_by_run_id',
     _strictUuid,
   );
-  final actions =
-      _absentOnlyOptional(object, 'actions', _decodeMessageActions) ??
-      const <AgentMessageAction>[];
+  final handoffs =
+      _absentOnlyOptional(object, 'handoffs', decodeAgentHandoffs) ??
+      const <AgentHandoff>[];
   final speechFeedbackStatusUrl = _absentOnlyOptional(
     object,
     'speech_feedback_status_url',
@@ -2109,7 +2092,7 @@ _WireMessage _decodeMessageObject(
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null ||
               producedByRunId != null ||
-              actions.isNotEmpty)) ||
+              handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
@@ -2136,7 +2119,7 @@ _WireMessage _decodeMessageObject(
     producedByRunId: producedByRunId,
     audio: audio,
     images: images,
-    actions: actions,
+    handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -2215,34 +2198,6 @@ List<AgentImageAsset> _decodeMessageImages(
         status: status,
         createdAt: _strictDateTime(object['created_at']),
         attachedAt: _absentOnlyOptional(object, 'attached_at', _strictDateTime),
-      );
-    }),
-  );
-}
-
-List<AgentMessageAction> _decodeMessageActions(Object? value) {
-  final values = _strictList(value, maxLength: 4);
-  return List<AgentMessageAction>.unmodifiable(
-    values.map((item) {
-      final object = _strictObject(
-        item,
-        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
-        required: const <String>{'type', 'label', 'matter_id', 'title'},
-      );
-      final type = switch (_strictString(
-        object['type'],
-        minLength: 1,
-        maxLength: 64,
-      )) {
-        'open_interview_preparation' =>
-          AgentMessageActionType.openInterviewPreparation,
-        _ => throw const _InvalidAgentResponse(),
-      };
-      return AgentMessageAction(
-        type: type,
-        label: _strictString(object['label'], minLength: 1, maxLength: 64),
-        matterId: _strictUuid(object['matter_id']),
-        title: _strictString(object['title'], minLength: 1, maxLength: 200),
       );
     }),
   );

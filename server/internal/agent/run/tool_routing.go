@@ -3,7 +3,7 @@ package run
 import (
 	"log/slog"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
@@ -55,7 +55,7 @@ func buildModelToolRouting(
 }
 
 func applyModelToolSnapshot(
-	manifest *core.ContextManifest,
+	manifest *agentcontext.Manifest,
 	routing modelToolRouting,
 ) {
 	manifest.ExposedTools = exposedToolNameList(routing.Definitions)

@@ -5,9 +5,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
-import 'package:speakup/review/ielts_speaking_report.dart';
-import 'package:speakup/review/ielts_speaking_report_client.dart';
-import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
 
 import 'ielts_speaking_report_fixture.dart';
 
@@ -53,41 +53,6 @@ void main() {
       transport.uri.path,
       '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report',
     );
-  });
-
-  test('wire client fetches the explicit IELTS report index', () async {
-    final transport = _Transport(
-      IdentityHttpResponse(
-        statusCode: HttpStatus.ok,
-        body: jsonEncode(ieltsSpeakingReportContractFixture()['index_page']),
-      ),
-    );
-    final client = _client(transport);
-
-    final result = await client.listReports(
-      cursor: 'eyJpZCI6ImlsdHNfMDAxIn0',
-      limit: 25,
-    );
-
-    expect(result.items, hasLength(1));
-    expect(transport.uri.path, '/v1/ielts-speaking-reports');
-    expect(transport.uri.queryParameters['limit'], '25');
-    expect(transport.uri.queryParameters['cursor'], 'eyJpZCI6ImlsdHNfMDAxIn0');
-    expect(transport.authorization, 'Bearer sess_ielts_report');
-  });
-
-  test('first index page omits rather than empties the cursor', () async {
-    final transport = _Transport(
-      IdentityHttpResponse(
-        statusCode: HttpStatus.ok,
-        body: jsonEncode(ieltsSpeakingReportContractFixture()['index_page']),
-      ),
-    );
-    final client = _client(transport);
-
-    await client.listReports();
-
-    expect(transport.uri.queryParameters, <String, String>{'limit': '20'});
   });
 
   test('wire client maps resource failures without fabricating data', () async {
@@ -161,7 +126,7 @@ void main() {
     );
   });
 
-  test('wire client rejects unsafe identifiers, cursors, and limits', () {
+  test('wire client rejects unsafe Practice session identifiers', () {
     final client = _client(
       _Transport(
         const IdentityHttpResponse(statusCode: HttpStatus.ok, body: '{}'),
@@ -170,14 +135,6 @@ void main() {
 
     expect(
       client.getReport('../other-account'),
-      throwsA(isA<IeltsSpeakingReportException>()),
-    );
-    expect(
-      client.listReports(cursor: 'short'),
-      throwsA(isA<IeltsSpeakingReportException>()),
-    );
-    expect(
-      client.listReports(limit: 101),
       throwsA(isA<IeltsSpeakingReportException>()),
     );
   });

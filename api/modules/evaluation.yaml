@@ -277,56 +277,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/ielts-speaking-reports:
-    get:
-      tags:
-        - Evaluation
-      summary: List current IELTS Speaking full-mock Shadow reports
-      description: |
-        Lists only the authenticated Actor's current, non-superseded
-        ielts-speaking-full-mock-shadow/v1 Evaluation revisions. Each item
-        identifies its report kind explicitly so clients never probe multiple
-        report endpoints or infer a scenario from a title.
-
-        The response is private. Servers must not log cursors together with
-        Actor credentials or include transcripts, evidence, audio locators,
-        prompts, provider output, or report findings in this index.
-      operationId: listIeltsSpeakingReports
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: cursor
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/IeltsSpeakingReportCursor'
-      responses:
-        '200':
-          description: Current IELTS Speaking report resources for this Actor.
-          headers:
-            Cache-Control:
-              required: true
-              description: Prevents shared or private storage of the index.
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IeltsSpeakingReportIndexPage'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-
 components:
   responses:
     EvaluationNotFound:
@@ -416,6 +366,208 @@ components:
         - INTERVIEW
         - OVERSEAS_DAILY_LIFE
         - OVERSEAS_WORKPLACE
+    EvaluationFormalReport:
+      type: object
+      additionalProperties: false
+      description: |
+        Canonical user-facing report projected from one READY Evaluation
+        revision. Review may query and present this resource but never creates
+        or stores a second scoring result.
+      required:
+        - report_id
+        - evaluation_id
+        - evaluation_revision_id
+        - practice_session_id
+        - revision
+        - schema_version
+        - scene_type
+        - scene_model
+        - scoreability_status
+        - summary
+        - dimensions
+        - priority_actions
+        - detail_schema
+        - detail
+        - created_at
+      properties:
+        report_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        revision:
+          type: integer
+          minimum: 1
+        schema_version:
+          type: string
+          const: evaluation-report/v1
+        scene_type:
+          $ref: '#/components/schemas/EvaluationSceneType'
+        scene_model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        scoreability_status:
+          $ref: '#/components/schemas/EvaluationReportScoreabilityStatus'
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        dimensions:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/EvaluationReportDimension'
+        priority_actions:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/EvaluationReportPriorityAction'
+        detail_schema:
+          $ref: '#/components/schemas/VersionReference'
+        detail:
+          type: object
+          description: Scene-specific report payload selected by detail_schema.
+        created_at:
+          type: string
+          format: date-time
+    EvaluationReportScoreabilityStatus:
+      type: string
+      enum:
+        - PROVISIONAL
+        - INSUFFICIENT
+    EvaluationReportScoreScale:
+      type: string
+      enum:
+        - PERCENTAGE_100
+        - IELTS_BAND
+    EvaluationReportDimension:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - scale
+        - coverage
+        - confidence
+        - reason_codes
+        - evidence_ref_ids
+        - strengths
+        - improvements
+        - recommended_examples
+      properties:
+        key:
+          $ref: '#/components/schemas/VersionReference'
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        scale:
+          $ref: '#/components/schemas/EvaluationReportScoreScale'
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        reason_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/VersionReference'
+        evidence_ref_ids:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        strengths:
+          $ref: '#/components/schemas/EvaluationReportFindings'
+        improvements:
+          $ref: '#/components/schemas/EvaluationReportFindings'
+        recommended_examples:
+          $ref: '#/components/schemas/EvaluationReportFindings'
+      allOf:
+        - if:
+            properties:
+              scale:
+                const: IELTS_BAND
+            required:
+              - scale
+          then:
+            properties:
+              score:
+                maximum: 9
+    EvaluationReportFindings:
+      type: array
+      maxItems: 5
+      items:
+        $ref: '#/components/schemas/EvaluationReportFinding'
+    EvaluationReportFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - finding_id
+        - message
+        - evidence
+      properties:
+        finding_id:
+          $ref: '#/components/schemas/VersionReference'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        suggestion:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        evidence:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/EvaluationReportEvidence'
+    EvaluationReportEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - evidence_ref_id
+        - turn_id
+        - start_utf8_byte
+        - end_utf8_byte
+        - original_excerpt
+      properties:
+        evidence_ref_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+        original_excerpt:
+          type: string
+          minLength: 1
+          maxLength: 16384
+    EvaluationReportPriorityAction:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_key
+        - finding_id
+      properties:
+        dimension_key:
+          $ref: '#/components/schemas/VersionReference'
+        finding_id:
+          $ref: '#/components/schemas/VersionReference'
     EvaluationStatus:
       type: string
       enum:
@@ -2127,71 +2279,6 @@ components:
       minLength: 1
       maxLength: 16384
       pattern: '^\S(?:[\s\S]*\S)?$'
-    IeltsSpeakingReportCursor:
-      type: string
-      minLength: 16
-      maxLength: 512
-      pattern: '^[A-Za-z0-9_-]+$'
-      description: Opaque, Actor-bound pagination cursor.
-    IeltsSpeakingReportIndexPage:
-      type: object
-      additionalProperties: false
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          maxItems: 100
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingReportIndexItem'
-        next_cursor:
-          $ref: '#/components/schemas/IeltsSpeakingReportCursor'
-    IeltsSpeakingReportIndexItem:
-      type: object
-      additionalProperties: false
-      required:
-        - report_kind
-        - practice_session_id
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - evaluation_status
-        - is_final
-        - status_url
-        - created_at
-        - updated_at
-      properties:
-        report_kind:
-          type: string
-          enum: [IELTS_SPEAKING_FULL_MOCK, INTERVIEW]
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        evaluation_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportEvaluationStatus'
-        is_final:
-          type: boolean
-          const: false
-        title:
-          type: string
-          minLength: 1
-          maxLength: 256
-        status_url:
-          type: string
-          maxLength: 184
-          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/(ielts-speaking-report|interview-report)$'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
     Evaluation:
       $ref: '#/components/schemas/EvaluationCommonProperties'
     EvaluationCommonProperties:

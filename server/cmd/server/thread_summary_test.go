@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 )
 
 func TestThreadSummaryWorkerWakesWithoutWaitingForRecoveryInterval(

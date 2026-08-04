@@ -6,15 +6,16 @@ import (
 	"errors"
 	"testing"
 
-	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
+	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -28,40 +29,53 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		SessionID: integrationSessionA,
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database, ids)
+	goalRepository, err := goal.NewPostgresRepository(database, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
-	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
+	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
-		t.Fatalf("new Agent repository: %v", err)
+		t.Fatalf("new Agent Conversation repository: %v", err)
 	}
-	agentService, err := agentapp.NewService(agentRepository, matterService)
+	contextRepository, err := contextpostgres.New(database)
+	if err != nil {
+		t.Fatalf("new Agent Context repository: %v", err)
+	}
+	runRepository, err := runpostgres.New(database, ids)
+	if err != nil {
+		t.Fatalf("new Agent Run repository: %v", err)
+	}
+	agentService, err := conversation.NewService(
+		conversationRepository,
+		goalService,
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
 	thread, err := agentService.CreateThread(
 		ctx,
 		actor,
-		integrationMatterA,
+		integrationGoalA,
 	)
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
 	assembler, err := agentcontext.NewAssembler(
-		agentRepository,
-		matterService,
+		contextRepository,
+		goalService,
+		emptyAgentLearningProfileReader{},
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
+		emptyAgentMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("NewContextAssembler: %v", err)
 	}
-	runConfiguration := core.RunConfiguration{
+	runConfiguration := agentrun.Configuration{
 		Provider:           "qianwen",
 		Model:              "qwen-plus",
 		MaxOutputTokens:    128,
@@ -80,7 +94,9 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		},
 	})
 	runService, err := agentrun.NewService(
-		agentRepository,
+		runRepository,
+		conversationRepository,
+		contextRepository,
 		assembler,
 		generator,
 		runConfiguration,
@@ -98,7 +114,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("SubmitText: %v", err)
 	}
-	if submission.Run.Status != core.RunStatusCompleted {
+	if submission.Run.Status != agentrun.StatusCompleted {
 		t.Fatalf("completed Run = %#v", submission.Run)
 	}
 
@@ -138,8 +154,8 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 				Type:         TypeGoal,
 				CanonicalKey: "goal.current",
 				Content:      "Prepare for backend interview",
-				Scope:        ScopeMatter,
-				MatterID:     integrationMatterA,
+				Scope:        ScopeGoal,
+				GoalID:       integrationGoalA,
 			},
 		},
 		Source: SourceInput{
@@ -166,22 +182,22 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("ListActive user: %v", err)
 	}
-	matterMemories, err := repository.ListActive(ctx, actor, ScopeFilter{
-		Scope:    ScopeMatter,
-		MatterID: integrationMatterA,
-		Limit:    10,
+	goalMemories, err := repository.ListActive(ctx, actor, ScopeFilter{
+		Scope:  ScopeGoal,
+		GoalID: integrationGoalA,
+		Limit:  10,
 	})
 	if err != nil {
-		t.Fatalf("ListActive matter: %v", err)
+		t.Fatalf("ListActive goal: %v", err)
 	}
 	if len(userMemories) != 1 ||
 		userMemories[0].CanonicalKey != "career.role" ||
-		len(matterMemories) != 1 ||
-		matterMemories[0].CanonicalKey != "goal.current" {
+		len(goalMemories) != 1 ||
+		goalMemories[0].CanonicalKey != "goal.current" {
 		t.Fatalf(
-			"user=%#v matter=%#v",
+			"user=%#v goal=%#v",
 			userMemories,
-			matterMemories,
+			goalMemories,
 		)
 	}
 	sources, err := repository.ListSources(
@@ -336,6 +352,15 @@ type emptyAgentMemorySearcher struct{}
 
 type emptyAgentStableProfileReader struct{}
 
+type emptyAgentLearningProfileReader struct{}
+
+func (emptyAgentLearningProfileReader) ReadLearningProfile(
+	context.Context,
+	agentcontext.LearningProfileReadRequest,
+) ([]agentcontext.LearningProfileDimension, error) {
+	return []agentcontext.LearningProfileDimension{}, nil
+}
+
 func (emptyAgentStableProfileReader) ReadStableProfile(
 	context.Context,
 	agentcontext.StableProfileReadRequest,
@@ -348,4 +373,17 @@ func (emptyAgentMemorySearcher) Search(
 	agentcontext.MemorySearchRequest,
 ) ([]agentcontext.MemorySearchHit, error) {
 	return []agentcontext.MemorySearchHit{}, nil
+}
+
+type emptyAgentMemoryExtractionBarrier struct{}
+
+func (emptyAgentMemoryExtractionBarrier) Await(
+	_ context.Context,
+	request agentcontext.MemoryExtractionBarrierRequest,
+) (agentcontext.MemoryExtractionBarrierResult, error) {
+	return agentcontext.MemoryExtractionBarrierResult{
+		PolicyVersion: agentcontext.MemoryExtractionBarrierPolicyV1,
+		Cutoff:        request.Cutoff,
+		Status:        agentcontext.MemoryExtractionBarrierReady,
+	}, nil
 }

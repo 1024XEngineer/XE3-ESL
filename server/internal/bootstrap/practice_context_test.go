@@ -4,17 +4,27 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 )
 
-func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
+const (
+	testProgrammerInterviewSceneID = "scn_programmer_interview"
+	testTechnicalInterviewerRoleID = "role_technical_interviewer"
+	testHRInterviewerRoleID        = "role_hr_interviewer"
+	testFullSimulationOptionID     = "option_full_simulation"
+	testTechnicalFocusOptionID     = "option_technical_focus"
+	testIELTSFullMockSceneID       = "scn_ielts_speaking_full"
+	testIELTSFullSimulationID      = "option_ielts_full_simulation"
+	testWorkplaceProgressSceneID   = "scn_workplace_progress_risk_update"
+	testDirectManagerRoleID        = "role_direct_manager"
+	testDirectManagerFocusOptionID = "option_direct_manager_focus"
+)
+
+func TestPreparationThreadReaderValidatesOwnedThread(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -22,61 +32,29 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 	actor := contextCompositionActor()
 	tests := []struct {
 		name        string
-		thread      agent.Thread
+		thread      agentconversation.Thread
 		threadError error
-		item        matter.Matter
-		matterError error
 		wantError   error
 	}{
 		{
-			name: "exact active anchor",
-			thread: agent.Thread{
-				ID:             "thread-1",
-				OwnerID:        actor.UserID,
-				ActiveMatterID: "matter-1",
-			},
-			item: matter.Matter{
-				ID:      "matter-1",
+			name: "owned Thread",
+			thread: agentconversation.Thread{
+				ID:      "thread-1",
 				OwnerID: actor.UserID,
-				Status:  matter.StatusActive,
 			},
 		},
 		{
-			name: "different active matter",
-			thread: agent.Thread{
-				ID:             "thread-1",
-				OwnerID:        actor.UserID,
-				ActiveMatterID: "matter-other",
+			name: "different owner",
+			thread: agentconversation.Thread{
+				ID:      "thread-1",
+				OwnerID: "user-other",
 			},
-			wantError: practicepersistence.ErrConflict,
+			wantError: preparation.ErrPlanNotFound,
 		},
 		{
-			name: "thread from different owner",
-			thread: agent.Thread{
-				ID:             "thread-1",
-				OwnerID:        "user-other",
-				ActiveMatterID: "matter-1",
-			},
-			wantError: practicepersistence.ErrNotFound,
-		},
-		{
-			name: "archived matter",
-			thread: agent.Thread{
-				ID:             "thread-1",
-				OwnerID:        actor.UserID,
-				ActiveMatterID: "matter-1",
-			},
-			item: matter.Matter{
-				ID:      "matter-1",
-				OwnerID: actor.UserID,
-				Status:  matter.StatusArchived,
-			},
-			wantError: practicepersistence.ErrConflict,
-		},
-		{
-			name:        "cross account thread is hidden",
-			threadError: agent.ErrNotFound,
-			wantError:   practicepersistence.ErrNotFound,
+			name:        "hidden Thread",
+			threadError: agentconversation.ErrNotFound,
+			wantError:   preparation.ErrPlanNotFound,
 		},
 	}
 
@@ -85,252 +63,36 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			reader, err := newAgentPracticeContextReader(
-				agentThreadReaderStub{
-					thread: test.thread,
-					err:    test.threadError,
-				},
-				matterReaderStub{
-					item: test.item,
-					err:  test.matterError,
-				},
-			)
+			reader, err := newPreparationThreadReader(agentThreadReaderStub{
+				thread: test.thread,
+				err:    test.threadError,
+			})
 			if err != nil {
-				t.Fatalf("newAgentPracticeContextReader: %v", err)
+				t.Fatalf("newPreparationThreadReader: %v", err)
 			}
-			anchor, err := reader.ValidatePracticeAnchor(
+			thread, err := reader.ReadOwnedThread(
 				context.Background(),
 				actor,
 				"thread-1",
-				"matter-1",
 			)
 			if test.wantError != nil {
 				if !errors.Is(err, test.wantError) {
-					t.Fatalf("ValidatePracticeAnchor error = %v", err)
+					t.Fatalf("ReadOwnedThread error = %v", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("ValidatePracticeAnchor: %v", err)
+				t.Fatalf("ReadOwnedThread: %v", err)
 			}
-			if anchor.ThreadID != "thread-1" ||
-				anchor.MatterID != "matter-1" {
-				t.Fatalf("anchor = %+v", anchor)
+			if thread.ID != "thread-1" {
+				t.Fatalf("thread = %+v", thread)
 			}
 		})
 	}
 }
 
-func TestPreparationPracticeContextReaderUsesPublicSnapshotPort(
-	t *testing.T,
-) {
-	t.Parallel()
-
-	actor := contextCompositionActor()
-	createdAt := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
-	reader, err := newPreparationPracticeContextReader(
-		preparationReaderStub{
-			profile: preparation.Profile{
-				ID:      "profile-1",
-				UserID:  actor.UserID,
-				Version: 3,
-			},
-			snapshot: preparation.Snapshot{
-				ID:                     "snapshot-1",
-				SourceProfileID:        "profile-1",
-				SourceVersion:          3,
-				ResumeSnapshot:         "resume",
-				JobDescriptionSnapshot: "job",
-				BackgroundSnapshot:     "background",
-				CreatedAt:              createdAt,
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("newPreparationPracticeContextReader: %v", err)
-	}
-
-	profile, err := reader.ReadPreparationProfile(
-		context.Background(),
-		actor,
-		"profile-1",
-	)
-	if err != nil || profile.ID != "profile-1" || profile.Version != 3 {
-		t.Fatalf("ReadPreparationProfile = (%+v, %v)", profile, err)
-	}
-	snapshot, err := reader.ReadPreparationSnapshot(
-		context.Background(),
-		actor,
-		"snapshot-1",
-	)
-	if err != nil {
-		t.Fatalf("ReadPreparationSnapshot: %v", err)
-	}
-	if snapshot.ID != "snapshot-1" ||
-		snapshot.SourceProfileID != "profile-1" ||
-		snapshot.SourceVersion != 3 ||
-		snapshot.BackgroundSnapshot != "background" ||
-		!snapshot.CreatedAt.Equal(createdAt) {
-		t.Fatalf("snapshot = %+v", snapshot)
-	}
-}
-
-func TestPracticeCatalogContextReaderRejectsStaleAndForgedSelections(
-	t *testing.T,
-) {
-	t.Parallel()
-
-	catalog, err := preparation.NewBuiltinCatalog()
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := newPracticeCatalogContextReader(catalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	validPlan := practice.PlanCatalogRequest{
-		ScenarioDefinitionID:      preparation.ProgrammerInterviewScenarioID,
-		ScenarioDefinitionVersion: 1,
-		ScenarioConfigID:          preparation.BackendEngineerConfigID,
-		ScenarioConfigVersion:     1,
-		SelectedRoleIDs: []string{
-			preparation.TechnicalInterviewerRoleID,
-		},
-	}
-	selection, err := reader.ReadPlanCatalog(validPlan)
-	if err != nil {
-		t.Fatalf("ReadPlanCatalog: %v", err)
-	}
-	if selection.ScenarioDefinition.ID !=
-		preparation.ProgrammerInterviewScenarioID ||
-		selection.ScenarioConfig.ID != preparation.BackendEngineerConfigID ||
-		len(selection.SelectedRoles) != 1 ||
-		selection.SelectedRoles[0].ID !=
-			preparation.TechnicalInterviewerRoleID {
-		t.Fatalf("selection = %+v", selection)
-	}
-
-	stale := validPlan
-	stale.ScenarioConfigVersion = 2
-	if _, err := reader.ReadPlanCatalog(stale); !errors.Is(
-		err,
-		practicepersistence.ErrConflict,
-	) {
-		t.Fatalf("stale catalog error = %v", err)
-	}
-	forged := validPlan
-	forged.SelectedRoleIDs = []string{"role_forged"}
-	if _, err := reader.ReadPlanCatalog(forged); !errors.Is(
-		err,
-		practicepersistence.ErrNotFound,
-	) {
-		t.Fatalf("forged role error = %v", err)
-	}
-	unknownOption := validPlan
-	unknownOption.PracticeOptionID = "option_forged"
-	unknownOption.PracticeOptionVersion = 1
-	if _, err := reader.ReadPlanCatalog(unknownOption); !errors.Is(
-		err,
-		practicepersistence.ErrNotFound,
-	) {
-		t.Fatalf("forged option error = %v", err)
-	}
-	staleOption := validPlan
-	staleOption.PracticeOptionID = preparation.TechnicalFocusOptionID
-	staleOption.PracticeOptionVersion = 2
-	if _, err := reader.ReadPlanCatalog(staleOption); !errors.Is(
-		err,
-		practicepersistence.ErrNotFound,
-	) {
-		t.Fatalf("stale option error = %v", err)
-	}
-
-	plan := practicepersistence.Plan{
-		ScenarioDefinitionID:      preparation.ProgrammerInterviewScenarioID,
-		ScenarioDefinitionVersion: 1,
-		ScenarioConfigID:          preparation.BackendEngineerConfigID,
-		ScenarioConfigVersion:     1,
-		SelectedRoleIDs: []string{
-			preparation.TechnicalInterviewerRoleID,
-		},
-	}
-	session, err := reader.ReadSessionCatalog(
-		practice.SessionCatalogRequest{
-			Plan:             plan,
-			PracticeOptionID: preparation.TechnicalFocusOptionID,
-			RoleDefinitionIDs: []string{
-				preparation.TechnicalInterviewerRoleID,
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("ReadSessionCatalog: %v", err)
-	}
-	if session.PracticeOption.ID != preparation.TechnicalFocusOptionID ||
-		session.PracticeOption.Version != 1 {
-		t.Fatalf("session selection = %+v", session)
-	}
-	if _, err := reader.ReadSessionCatalog(
-		practice.SessionCatalogRequest{
-			Plan:             plan,
-			PracticeOptionID: "option_forged",
-			RoleDefinitionIDs: []string{
-				preparation.TechnicalInterviewerRoleID,
-			},
-		},
-	); !errors.Is(err, practicepersistence.ErrNotFound) {
-		t.Fatalf("forged option error = %v", err)
-	}
-}
-
-func TestPracticeCatalogContextReaderAcceptsIELTSFullMockSelection(
-	t *testing.T,
-) {
-	t.Parallel()
-
-	catalog, err := preparation.NewBuiltinCatalog()
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := newPracticeCatalogContextReader(catalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, err := catalog.GetScenarioDetail(
-		preparation.IELTSSpeakingFullMockScenarioID,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roles, err := catalog.ListRoles(
-		preparation.IELTSSpeakingFullMockScenarioID,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(roles) != 1 {
-		t.Fatalf("IELTS full mock roles = %d, want 1", len(roles))
-	}
-
-	selection, err := reader.ReadPlanCatalog(practice.PlanCatalogRequest{
-		ScenarioDefinitionID:      detail.ScenarioDefinition.ID,
-		ScenarioDefinitionVersion: detail.ScenarioDefinition.Version,
-		ScenarioConfigID:          detail.ScenarioConfig.ID,
-		ScenarioConfigVersion:     detail.ScenarioConfig.Version,
-		SelectedRoleIDs:           []string{roles[0].ID},
-	})
-	if err != nil {
-		t.Fatalf("ReadPlanCatalog: %v", err)
-	}
-	if selection.ScenarioDefinition.ID !=
-		preparation.IELTSSpeakingFullMockScenarioID ||
-		selection.PracticeOption.Type != "FULL_SIMULATION" {
-		t.Fatalf("selection = %+v", selection)
-	}
-}
-
 type agentThreadReaderStub struct {
-	thread agent.Thread
+	thread agentconversation.Thread
 	err    error
 }
 
@@ -338,43 +100,107 @@ func (s agentThreadReaderStub) GetThread(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (agent.Thread, error) {
+) (agentconversation.Thread, error) {
 	return s.thread, s.err
 }
 
-type matterReaderStub struct {
-	item matter.Matter
-	err  error
+func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
+	t.Helper()
+	programmerRole := scene.RoleDefinition{
+		ID:               testTechnicalInterviewerRoleID,
+		SceneID:          testProgrammerInterviewSceneID,
+		Type:             "TECHNICAL_INTERVIEWER",
+		DisplayName:      "Technical interviewer",
+		Responsibilities: "Probe technical evidence and trade-offs.",
+		Style:            "Precise",
+		PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+			ID: "system_design", Description: "Explain a system design clearly.",
+		}},
+	}
+	ieltsRole := scene.RoleDefinition{
+		ID:               "role_ielts_examiner",
+		SceneID:          testIELTSFullMockSceneID,
+		Type:             "IELTS_EXAMINER",
+		DisplayName:      "IELTS examiner",
+		Responsibilities: "Run all speaking test parts.",
+		Style:            "Neutral",
+		PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+			ID: "fluency", Description: "Speak fluently throughout the response.",
+		}},
+	}
+	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
+		{
+			ID:               testProgrammerInterviewSceneID,
+			Family:           scene.SceneFamilyInterview,
+			Model:            scene.SceneModelProjectExperienceDeepDive,
+			Name:             "Technical interview",
+			Version:          1,
+			Status:           scene.SceneStatusActive,
+			TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef: "interview.project_deep_dive.session.v1",
+			Prompt:           bootstrapTestScenePrompt(),
+			Roles:            []scene.RoleDefinition{programmerRole},
+			PracticeOptions: []scene.PracticeOption{
+				{
+					ID:          testFullSimulationOptionID,
+					SceneID:     testProgrammerInterviewSceneID,
+					Type:        scene.PracticeOptionFullSimulation,
+					DisplayName: "Full simulation",
+				},
+				{
+					ID:               testTechnicalFocusOptionID,
+					SceneID:          testProgrammerInterviewSceneID,
+					RoleDefinitionID: testTechnicalInterviewerRoleID,
+					Type:             scene.PracticeOptionFocus,
+					DisplayName:      "Technical focus",
+				},
+			},
+		},
+		{
+			ID:               testIELTSFullMockSceneID,
+			Family:           scene.SceneFamilyExam,
+			Model:            scene.SceneModelIELTSSpeakingFullMock,
+			Name:             "IELTS Speaking full mock",
+			Version:          1,
+			Status:           scene.SceneStatusActive,
+			TurnPolicyRef:    "ielts.speaking_full_mock.turn.v1",
+			SessionPolicyRef: "ielts.speaking_full_mock.session.v1",
+			Prompt:           bootstrapTestScenePrompt(),
+			Roles:            []scene.RoleDefinition{ieltsRole},
+			PracticeOptions: []scene.PracticeOption{
+				{
+					ID:          testIELTSFullSimulationID,
+					SceneID:     testIELTSFullMockSceneID,
+					Type:        scene.PracticeOptionFullSimulation,
+					DisplayName: "Full mock",
+				},
+				{
+					ID:               "option_ielts_examiner_focus",
+					SceneID:          testIELTSFullMockSceneID,
+					RoleDefinitionID: ieltsRole.ID,
+					Type:             scene.PracticeOptionFocus,
+					DisplayName:      "Examiner focus",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("scene.NewCatalog: %v", err)
+	}
+	return catalog
 }
 
-func (s matterReaderStub) ReadOwned(
-	context.Context,
-	requestcontext.Actor,
-	string,
-) (matter.Matter, error) {
-	return s.item, s.err
-}
-
-type preparationReaderStub struct {
-	profile  preparation.Profile
-	snapshot preparation.Snapshot
-	err      error
-}
-
-func (s preparationReaderStub) ReadProfile(
-	context.Context,
-	requestcontext.Actor,
-	string,
-) (preparation.Profile, error) {
-	return s.profile, s.err
-}
-
-func (s preparationReaderStub) ReadSnapshot(
-	context.Context,
-	requestcontext.Actor,
-	string,
-) (preparation.Snapshot, error) {
-	return s.snapshot, s.err
+func bootstrapTestScenePrompt() scene.ScenePrompt {
+	return scene.ScenePrompt{
+		PublicSceneBrief:         "Practice one realistic spoken English exchange.",
+		PracticeGoal:             "Respond clearly with relevant evidence.",
+		UserRole:                 "Learner",
+		AIRole:                   "Facilitator",
+		PersonaSummary:           "A precise language coach.",
+		FocusAreas:               []string{"clarity"},
+		TurnBlueprints:           []string{"Ask one primary question."},
+		SuggestedDurationSeconds: 600,
+	}
 }
 
 func contextCompositionActor() requestcontext.Actor {

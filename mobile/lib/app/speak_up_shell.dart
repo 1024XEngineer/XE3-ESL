@@ -8,21 +8,22 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/conversation/conversation.dart';
-import 'package:speakup/features/practice/ielts_mock_practice.dart';
-import 'package:speakup/features/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_launch_controller.dart';
-import 'package:speakup/features/review/review.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/review_history_controller.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/resume/resume.dart';
 
 class SpeakUpShell extends StatefulWidget {
@@ -33,11 +34,11 @@ class SpeakUpShell extends StatefulWidget {
     this.authController,
     this.preparationController,
     this.preparationLaunchController,
+    this.practicePlanHandoffController,
     this.jobPreparationController,
     this.reviewHistoryController,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
-    this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
     this.resumeController,
     required this.agentController,
@@ -51,11 +52,11 @@ class SpeakUpShell extends StatefulWidget {
   final AgentController agentController;
   final PreparationController? preparationController;
   final PreparationLaunchController? preparationLaunchController;
+  final PracticePlanHandoffController? practicePlanHandoffController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
-  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
   final ResumeController? resumeController;
 
@@ -89,16 +90,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
-  bool _reviewPresented = false;
   bool _practiceRouteInFlight = false;
   int _navigationGeneration = 0;
-  int _openInterviewRequestGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     widget.agentController.addListener(_handleAgentState);
-    _restorePresentedReview();
   }
 
   @override
@@ -106,14 +104,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     super.didUpdateWidget(oldWidget);
     final agentControllerChanged =
         oldWidget.agentController != widget.agentController;
-    final historyControllerChanged =
-        oldWidget.reviewHistoryController != widget.reviewHistoryController;
     if (agentControllerChanged) {
       oldWidget.agentController.removeListener(_handleAgentState);
       widget.agentController.addListener(_handleAgentState);
-    }
-    if (agentControllerChanged || historyControllerChanged) {
-      _restorePresentedReview();
     }
   }
 
@@ -186,7 +179,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _refreshReviewIndexes() {
     unawaited(widget.reviewHistoryController?.refresh());
-    unawaited(widget.ieltsSpeakingReportIndexController?.refresh());
   }
 
   void _showMockNotice(String message) {
@@ -199,26 +191,23 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     unawaited(_openPracticeRoute());
   }
 
-  Future<void> _openAgentCreatedInterview(AgentMessageAction action) async {
-    if (action.type != AgentMessageActionType.openInterviewPreparation ||
+  Future<void> _confirmAgentHandoff(AgentHandoff handoff) async {
+    final controller = widget.practicePlanHandoffController;
+    if (handoff is! ConfirmPracticePlanHandoff ||
+        controller == null ||
+        controller.isBusy ||
         widget.agentController.isBusy) {
       return;
     }
-    final reloaded = await widget.agentController.reloadCurrentThread();
+    final confirmed = await controller.confirm(handoff);
     if (!mounted) {
       return;
     }
-    if (!reloaded ||
-        !await widget.agentController.prepareActiveMatterForScenario(
-          action.matterId,
-        )) {
-      _showMockNotice('这场面试暂时无法打开，请稍后重试');
+    if (!confirmed) {
+      _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
       return;
     }
-    setState(() {
-      _selectedIndex = 1;
-      _openInterviewRequestGeneration++;
-    });
+    await _openPracticeRoute();
   }
 
   Future<void> _openPracticeRoute() async {
@@ -253,10 +242,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           return;
         }
       }
-      if (widget.agentController.review != null) {
-        _selectDestination(2);
-        return;
-      }
       if (!widget.agentController.hasActivePractice) {
         _showMockNotice('请先从训练页选择一项练习');
         return;
@@ -288,27 +273,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     if (!mounted) {
       return;
     }
-    final review = widget.agentController.review;
-    final suppressReview = isIeltsSpeakingSession(widget.agentController);
-    if (review == null || suppressReview) {
-      _reviewPresented = false;
-    } else if (!_reviewPresented) {
-      _reviewPresented = true;
-      _selectedIndex = 2;
-      _refreshReviewIndexes();
-    }
     setState(() {});
-  }
-
-  void _restorePresentedReview() {
-    if (widget.agentController.review == null ||
-        isIeltsSpeakingSession(widget.agentController)) {
-      _reviewPresented = false;
-      return;
-    }
-    _reviewPresented = true;
-    _selectedIndex = 2;
-    _refreshReviewIndexes();
   }
 
   @override
@@ -342,8 +307,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
-        onMessageAction: (action) =>
-            unawaited(_openAgentCreatedInterview(action)),
+        onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
         onStartVoice: widget.agentController.supportsAgentVoice
             ? widget.agentController.startAgentVoiceRecording
             : null,
@@ -400,18 +364,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : _openJobPreparation,
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
-        openInterviewRequestGeneration: _openInterviewRequestGeneration,
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
-        interviewReportController: widget.interviewReportController,
-        ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
-        ieltsSpeakingReportIndexController:
-            widget.ieltsSpeakingReportIndexController,
-        agentController: widget.agentController,
         autoload: false,
       ),
       _ProfilePage(

@@ -6,26 +6,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 )
 
 func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	t.Parallel()
 
 	completedAt := time.Now().UTC()
-	repository := &fakeCompletedAgentRunRepository{
-		run: core.Run{
+	runs := &fakeCompletedAgentRunReader{
+		run: agentrun.Run{
 			ID:                 "10000000-0000-4000-8000-000000000001",
 			OwnerID:            "20000000-0000-4000-8000-000000000001",
 			ThreadID:           "30000000-0000-4000-8000-000000000001",
 			InputMessageID:     "40000000-0000-4000-8000-000000000001",
 			AssistantMessageID: "50000000-0000-4000-8000-000000000001",
 			Attempt:            1,
-			Status:             core.RunStatusCompleted,
+			Status:             agentrun.StatusCompleted,
 			CompletedAt:        completedAt,
 		},
-		messages: map[string]core.Message{
+	}
+	messages := &fakeCompletedAgentMessageReader{
+		messages: map[string]agentconversation.Message{
 			"40000000-0000-4000-8000-000000000001": {
 				ID:      "40000000-0000-4000-8000-000000000001",
 				Content: "I am a Java backend engineer.",
@@ -35,18 +39,24 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 				Content: "I will tailor the practice.",
 			},
 		},
-		manifest: core.ContextManifest{
-			ActiveMatterID: "60000000-0000-4000-8000-000000000001",
+	}
+	manifests := &fakeCompletedAgentManifestReader{
+		manifest: agentcontext.Manifest{
+			ActiveGoalID: "60000000-0000-4000-8000-000000000001",
 		},
 	}
-	reader, err := newAgentCompletedRunReader(repository)
+	reader, err := newAgentCompletedRunReader(
+		runs,
+		messages,
+		manifests,
+	)
 	if err != nil {
 		t.Fatalf("newAgentCompletedRunReader: %v", err)
 	}
 	source, err := reader.ReadCompletedRun(
 		context.Background(),
-		repository.run.OwnerID,
-		repository.run.ID,
+		runs.run.OwnerID,
+		runs.run.ID,
 	)
 	if err != nil {
 		t.Fatalf("ReadCompletedRun: %v", err)
@@ -54,7 +64,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	if !source.Valid() ||
 		source.UserText != "I am a Java backend engineer." ||
 		source.AssistantText != "I will tailor the practice." ||
-		source.MatterID != repository.manifest.ActiveMatterID {
+		source.GoalID != manifests.manifest.ActiveGoalID {
 		t.Fatalf("source = %#v", source)
 	}
 }
@@ -62,55 +72,82 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 func TestAgentCompletedRunReaderRejectsNonCompletedRun(t *testing.T) {
 	t.Parallel()
 
-	repository := &fakeCompletedAgentRunRepository{
-		run: core.Run{
+	runs := &fakeCompletedAgentRunReader{
+		run: agentrun.Run{
 			ID:      "10000000-0000-4000-8000-000000000001",
 			OwnerID: "20000000-0000-4000-8000-000000000001",
-			Status:  core.RunStatusRunning,
+			Status:  agentrun.StatusRunning,
 		},
 	}
-	reader, _ := newAgentCompletedRunReader(repository)
+	reader, _ := newAgentCompletedRunReader(
+		runs,
+		&fakeCompletedAgentMessageReader{},
+		&fakeCompletedAgentManifestReader{},
+	)
 	if _, err := reader.ReadCompletedRun(
 		context.Background(),
-		repository.run.OwnerID,
-		repository.run.ID,
+		runs.run.OwnerID,
+		runs.run.ID,
 	); !errors.Is(err, memory.ErrNotFound) {
 		t.Fatalf("ReadCompletedRun error = %v", err)
 	}
 }
 
-type fakeCompletedAgentRunRepository struct {
-	run      core.Run
-	messages map[string]core.Message
-	manifest core.ContextManifest
-	err      error
+func TestAgentCompletedRunReaderTreatsInvalidStoredManifestAsDependencyFailure(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	err := mapAgentMemorySourceError(agentcontext.ErrInvalidContext)
+	if errors.Is(err, memory.ErrInvalidArgument) ||
+		!errors.Is(err, agentcontext.ErrInvalidContext) {
+		t.Fatalf("mapped invalid stored Manifest error = %v", err)
+	}
 }
 
-func (repository *fakeCompletedAgentRunRepository) FindRun(
+type fakeCompletedAgentRunReader struct {
+	run agentrun.Run
+	err error
+}
+
+func (reader *fakeCompletedAgentRunReader) Find(
 	context.Context,
 	string,
 	string,
-) (core.Run, error) {
-	return repository.run, repository.err
+) (agentrun.Run, error) {
+	return reader.run, reader.err
 }
 
-func (repository *fakeCompletedAgentRunRepository) FindMessage(
+type fakeCompletedAgentMessageReader struct {
+	messages map[string]agentconversation.Message
+	err      error
+}
+
+func (reader *fakeCompletedAgentMessageReader) FindMessage(
 	_ context.Context,
 	_ string,
 	_ string,
 	messageID string,
-) (core.Message, error) {
-	message, ok := repository.messages[messageID]
+) (agentconversation.Message, error) {
+	if reader.err != nil {
+		return agentconversation.Message{}, reader.err
+	}
+	message, ok := reader.messages[messageID]
 	if !ok {
-		return core.Message{}, core.ErrNotFound
+		return agentconversation.Message{}, agentconversation.ErrNotFound
 	}
 	return message, nil
 }
 
-func (repository *fakeCompletedAgentRunRepository) FindContextManifest(
+type fakeCompletedAgentManifestReader struct {
+	manifest agentcontext.Manifest
+	err      error
+}
+
+func (reader *fakeCompletedAgentManifestReader) FindManifest(
 	context.Context,
 	string,
 	string,
-) (core.ContextManifest, error) {
-	return repository.manifest, repository.err
+) (agentcontext.Manifest, error) {
+	return reader.manifest, reader.err
 }

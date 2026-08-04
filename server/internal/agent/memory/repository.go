@@ -9,13 +9,19 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("memory: invalid argument")
-	ErrNotFound            = errors.New("memory: not found")
-	ErrConflict            = errors.New("memory: conflict")
-	ErrAccountDeleted      = errors.New("memory: account is not active")
-	ErrDeletionGeneration  = errors.New("memory: stale deletion generation")
-	ErrRepository          = errors.New("memory repository: operation failed")
-	ErrExtractionResponse  = errors.New("memory: invalid extraction response")
+	ErrInvalidArgument              = errors.New("memory: invalid argument")
+	ErrNotFound                     = errors.New("memory: not found")
+	ErrConflict                     = errors.New("memory: conflict")
+	ErrAccountDeleted               = errors.New("memory: account is not active")
+	ErrDeletionGeneration           = errors.New("memory: stale deletion generation")
+	ErrRepository                   = errors.New("memory repository: operation failed")
+	ErrExtractionResponse           = errors.New("memory: invalid extraction response")
+	ErrExtractionBarrierUnavailable = errors.New(
+		"memory: extraction barrier unavailable",
+	)
+	ErrExtractionBarrierRejected = errors.New(
+		"memory: extraction barrier rejected",
+	)
 	ErrExtractionExhausted = errors.New(
 		"memory: extraction attempts exhausted during recovery",
 	)
@@ -27,7 +33,7 @@ type CreateCommand struct {
 	CanonicalKey  string
 	Content       string
 	Scope         ScopeType
-	MatterID      string
+	GoalID        string
 	PolicyVersion string
 	ExpiresAt     *time.Time
 	Source        SourceInput
@@ -37,20 +43,20 @@ func (command CreateCommand) Valid() bool {
 	return command.Type.Valid() &&
 		validCanonicalKey(command.CanonicalKey) &&
 		validContent(command.Content) &&
-		validScope(command.Scope, command.MatterID) &&
+		validScope(command.Scope, command.GoalID) &&
 		validPolicyVersion(command.PolicyVersion) &&
 		validOptionalTime(command.ExpiresAt) &&
 		command.Source.Valid()
 }
 
 type ScopeFilter struct {
-	Scope    ScopeType
-	MatterID string
-	Limit    int
+	Scope  ScopeType
+	GoalID string
+	Limit  int
 }
 
 func (filter ScopeFilter) Valid() bool {
-	return validScope(filter.Scope, filter.MatterID) &&
+	return validScope(filter.Scope, filter.GoalID) &&
 		filter.Limit >= 1 &&
 		filter.Limit <= 100
 }

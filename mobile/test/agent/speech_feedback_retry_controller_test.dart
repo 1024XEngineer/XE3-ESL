@@ -1,11 +1,14 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/practice/practice_recording.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +23,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
+      await _restoreCompletedDailyPractice(controller);
 
       expect(controller.recordingState, PracticeRecordingState.completed);
       expect(controller.canStartSpeechFeedbackRetry, isTrue);
@@ -77,6 +81,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
+      await _restoreCompletedDailyPractice(controller);
 
       expect(await controller.startSpeechFeedbackRetry(_feedbackItem), isFalse);
 
@@ -85,6 +90,18 @@ void main() {
       expect(controller.errorMessage, contains('原题'));
       expect(practice.transcriptions, 0);
     },
+  );
+}
+
+Future<void> _restoreCompletedDailyPractice(AgentController controller) async {
+  await controller.activateGoalForScene(
+    threadId: controller.threadId!,
+    scene: _dailyScene,
+    clientOperationId: 'bind-daily-retry-scene',
+  );
+  await controller.restoreCreatedPractice(
+    sessionId: _completedDailySnapshot.sessionId,
+    scene: _dailyScene,
   );
 }
 
@@ -101,15 +118,13 @@ final class _RetryPracticeClient
   Future<void> clearAccountState() async {}
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
   }) async => snapshot;
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) {
     throw UnimplementedError();
@@ -250,31 +265,32 @@ final _failedRetryRequest = PracticeRetryRequest(
   completedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
 );
 
-const _review = AgentReview(
-  id: 'review_daily_001',
-  title: 'Daily review',
-  summary: 'Summary',
-  strength: 'Strength',
-  nextFocus: 'Next focus',
+final _dailyScene = testScene(
+  id: 'scene_daily_001',
+  family: SceneFamily.daily,
+  model: SceneModel.dailyBasicDialogue,
+  name: 'Daily',
+  prompt: const ScenePrompt(
+    publicSceneBrief: 'Daily practice',
+    practiceGoal: 'Complete the daily practice.',
+    userRole: 'Learner',
+    aiRole: 'Coach',
+    personaSummary: 'Supportive and focused.',
+    focusAreas: <String>['clarity'],
+    turnBlueprints: <String>['Ask one daily-life question.'],
+    suggestedDurationSeconds: 600,
+  ),
 );
 
 final _completedDailySnapshot = PracticeSessionSnapshot(
   sessionId: 'session_daily_001',
-  threadId: 'thread_daily_001',
-  scenarioType: 'DAILY',
-  scenarioModel: 'DAILY_BASIC_DIALOGUE',
-  matter: AgentMatter(
-    id: 'matter_daily_001',
-    scene: AgentScene(
-      id: 'scene_daily_001',
-      title: 'Daily',
-      description: 'Daily practice',
-    ),
-  ),
+  planId: 'plan_daily_001',
+  sceneFamily: SceneFamily.daily,
+  sceneModel: SceneModel.dailyBasicDialogue,
+  sessionVersion: 1,
   completedTurns: 3,
   turnLimit: 3,
   sessionCompleted: true,
-  review: _review,
   turnHistory: const [
     PracticeTurnExchange(
       question: PracticeQuestion(

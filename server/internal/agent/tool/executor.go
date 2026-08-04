@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 )
 
 type Executor struct {
@@ -73,6 +75,11 @@ func (executor *Executor) Execute(
 	if result.Content == nil {
 		result.Content = map[string]any{}
 	}
+	if err := agenthandoff.ValidateItems(result.Handoffs); err != nil {
+		executor.logFailure(call, definition, time.Since(startedAt), err)
+		return Result{}, ErrExecutionRejected
+	}
+	result.Handoffs = agenthandoff.CloneItems(result.Handoffs)
 	executor.logSucceeded(call, definition, result, time.Since(startedAt))
 	return result, nil
 }

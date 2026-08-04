@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -11,15 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
 func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
@@ -30,7 +32,7 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我把这句话说得委婉一点"),
 	)
 	if err != nil {
@@ -42,12 +44,12 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 	requests := generator.Requests()
 	gotTools := exposedToolNameList(requests[0].Tools)
 	wantTools := []string{
-		mocktool.MaterialSearchToolName,
-		mocktool.MistakeSearchToolName,
+		goalcapability.GoalCreateCapabilityName,
+		goalcapability.GoalSearchCapabilityName,
+		capabilityfixture.MaterialSearchToolName,
+		capabilityfixture.MistakeSearchToolName,
 		reviewtool.ReviewGetToolName,
 		reviewtool.ReviewSearchToolName,
-		mattertool.ScenarioCreateToolName,
-		mattertool.ScenarioSearchToolName,
 	}
 	if !reflect.DeepEqual(gotTools, wantTools) {
 		t.Fatalf("Tools = %#v, want %#v", gotTools, wantTools)
@@ -68,7 +70,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("请结合我的信息处理一下"),
 	)
 	if err != nil {
@@ -97,19 +99,94 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	toolMessage := second.Messages[len(second.Messages)-1]
 	if toolMessage.Role != ai.TextRoleTool ||
 		toolMessage.ToolCallID != "call-review-1" ||
-		!strings.Contains(toolMessage.Content, `"reviews"`) {
+		!strings.Contains(toolMessage.Content, `"reports"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
 	}
 }
 
-func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
+func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-sensitive-source-1",
+			loopSensitiveSourceToolName,
+			`{}`,
+		),
+		finalLoopResult("The audited capability completed."),
+	)
+	service := newLoopTestService(t, generator)
+	setLoopTools(
+		t,
+		service,
+		capabilityfixture.NewStore(),
+		loopSensitiveSourceTool{},
+	)
+	audit := &loopSourceRefRepository{}
+	service.repository = audit
+
+	if _, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("run the audited capability"),
+	); err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+
+	requests := generator.Requests()
+	if got, want := len(requests), 2; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	toolMessage := requests[1].Messages[len(requests[1].Messages)-1]
+	if toolMessage.Role != ai.TextRoleTool ||
+		toolMessage.ToolCallID != "call-sensitive-source-1" ||
+		!strings.Contains(toolMessage.Content, `"status":"ready"`) {
+		t.Fatalf("tool message = %#v", toolMessage)
+	}
+	for _, forbidden := range []string{
+		"source_refs",
+		"handoffs",
+		"confirm_practice_plan",
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		"Confirm this exact practice plan.",
+		"preparation_snapshot",
+		"snapshot-internal-1",
+		"preparation_profile",
+		"profile-internal-1",
+		"voice_config",
+		"config-internal-1",
+	} {
+		if strings.Contains(toolMessage.Content, forbidden) {
+			t.Fatalf("provider tool message leaked %q: %s", forbidden, toolMessage.Content)
+		}
+	}
+	wantRefs := []ToolSourceRef{
+		{Type: "preparation_snapshot", ID: "snapshot-internal-1"},
+		{Type: "preparation_profile", ID: "profile-internal-1"},
+		{Type: "voice_config", ID: "config-internal-1"},
+	}
+	if !reflect.DeepEqual(audit.sourceRefs, wantRefs) {
+		t.Fatalf("persisted SourceRefs = %#v, want %#v", audit.sourceRefs, wantRefs)
+	}
+	wantHandoffs := []agenthandoff.Item{loopPracticeHandoff()}
+	if !reflect.DeepEqual(audit.handoffs, wantHandoffs) {
+		t.Fatalf("persisted Handoffs = %#v, want %#v", audit.handoffs, wantHandoffs)
+	}
+}
+
+func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
+	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-latest-report-1",
+			evaluationtool.LatestPracticeReportToolName,
+			`{}`,
+		),
 		finalLoopResult("Here is your latest practice feedback."),
 	)
 	service := newLoopTestService(t, generator)
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	registry, err := tool.NewRegistry(append(
-		mocktool.Tools(store),
+		capabilityfixture.Tools(store),
 		evaluationtool.NewLatestPracticeReportTool(loopLatestReportPort{}),
 	)...)
 	if err != nil {
@@ -118,14 +195,13 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 	service.registry = registry
 	service.executor = tool.NewExecutor(registry)
 
+	input := "我刚完成了面试练习。请直接读取这次练习的真实评分与报告。"
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
-		loopRequest(
-			"我刚完成了面试练习。请直接读取这次练习的真实评分与报告。",
-		),
+		agentcontext.Manifest{},
+		loopRequest(input),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -134,21 +210,37 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 1; got != want {
+	if got, want := len(requests), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
-	request := requests[0]
-	if request.ToolChoice.Mode != ai.ToolChoiceAuto {
-		t.Fatalf("ToolChoice = %#v, want auto", request.ToolChoice)
+	initial := requests[0]
+	if initial.ToolChoice.Mode != ai.ToolChoiceAuto ||
+		!toolExposed(
+			exposedToolNames(initial.Tools),
+			evaluationtool.LatestPracticeReportToolName,
+		) {
+		t.Fatalf(
+			"initial routing = choice %#v, tools %#v",
+			initial.ToolChoice,
+			exposedToolNameList(initial.Tools),
+		)
 	}
-	if got, want := len(request.Messages), 4; got != want {
-		t.Fatalf("messages = %d, want %d", got, want)
+	if got, want := len(initial.Messages), 2; got != want ||
+		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Content != input {
+		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
 	}
-	assistant := request.Messages[2]
-	toolResult := request.Messages[3]
+	messages := requests[1].Messages
+	if got, want := len(messages), 4; got != want {
+		t.Fatalf("second request messages = %d, want %d", got, want)
+	}
+	assistant := messages[2]
+	toolResult := messages[3]
 	if len(assistant.ToolCalls) != 1 ||
+		assistant.ToolCalls[0].ID != "call-latest-report-1" ||
 		assistant.ToolCalls[0].Name != evaluationtool.LatestPracticeReportToolName ||
 		toolResult.Role != ai.TextRoleTool ||
+		toolResult.ToolCallID != "call-latest-report-1" ||
 		!strings.Contains(toolResult.Content, `"practice_report"`) {
 		t.Fatalf(
 			"latest report messages = assistant %#v, tool %#v",
@@ -203,7 +295,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("比较我两次面试评价"),
 	)
 	if err != nil {
@@ -230,7 +322,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		message := messages[index+3]
 		if message.Role != ai.TextRoleTool ||
 			message.ToolCallID != callID ||
-			!strings.Contains(message.Content, `"reviews"`) {
+			!strings.Contains(message.Content, `"reports"`) {
 			t.Fatalf("tool message %d = %#v", index, message)
 		}
 	}
@@ -245,7 +337,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		),
 		toolLoopResult(
 			"call-material-1",
-			mocktool.MaterialSearchToolName,
+			capabilityfixture.MaterialSearchToolName,
 			`{"query":"backend","limit":1}`,
 		),
 		finalLoopResult("I combined the review with your resume."),
@@ -256,7 +348,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("结合我的评价和简历准备下一轮面试"),
 	)
 	if err != nil {
@@ -287,7 +379,7 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我找一下上次 PM interview 的 review"),
 	)
 	if err != nil {
@@ -298,21 +390,24 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 	}
 }
 
-func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
-	generator := newScriptedGenerator(finalLoopResult("I found your review."))
+func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
+	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-review-from-model",
+			reviewtool.ReviewSearchToolName,
+			`{"query":"last interview","limit":1}`,
+		),
+		finalLoopResult("I found your review."),
+	)
 	service := newLoopTestService(t, generator)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
-	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
-	}
-	service.commands = command.NewRouter(commandRegistry)
 
+	input := "/查评价 last interview"
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
-		loopRequest("/查评价 last interview"),
+		agentcontext.Manifest{},
+		loopRequest(input),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -321,128 +416,43 @@ func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 1; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	request := requests[0]
-	if request.ToolChoice.Mode != ai.ToolChoiceAuto ||
-		len(request.Tools) != 6 {
-		t.Fatalf(
-			"command response routing = choice %#v, tools %d",
-			request.ToolChoice,
-			len(request.Tools),
-		)
-	}
-	if got, want := len(request.Messages), 4; got != want {
-		t.Fatalf("messages = %d, want %d", got, want)
-	}
-	assistant := request.Messages[2]
-	toolResult := request.Messages[3]
-	if len(assistant.ToolCalls) != 1 ||
-		assistant.ToolCalls[0].Name != reviewtool.ReviewSearchToolName ||
-		toolResult.Role != ai.TextRoleTool ||
-		toolResult.ToolCallID != "command-call" {
-		t.Fatalf(
-			"command messages = assistant %#v, tool %#v",
-			assistant,
-			toolResult,
-		)
-	}
-}
-
-func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
-	generator := newScriptedGenerator(
-		toolLoopResult(
-			"call-material-after-command",
-			mocktool.MaterialSearchToolName,
-			`{"query":"backend","limit":1}`,
-		),
-		finalLoopResult("I combined the command result with your material."),
-	)
-	service := newLoopTestService(t, generator)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
-	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
-	}
-	service.commands = command.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		core.ContextManifest{},
-		loopRequest("/查评价 last interview"),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if result.Content != "I combined the command result with your material." {
-		t.Fatalf("Content = %q", result.Content)
-	}
-	requests := generator.Requests()
 	if got, want := len(requests), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
+	initial := requests[0]
+	if initial.ToolChoice.Mode != ai.ToolChoiceAuto || len(initial.Tools) != 6 {
+		t.Fatalf(
+			"initial routing = choice %#v, tools %d",
+			initial.ToolChoice,
+			len(initial.Tools),
+		)
+	}
+	if got, want := len(initial.Messages), 2; got != want ||
+		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Content != input {
+		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
+	}
 	messages := requests[1].Messages
-	if got, want := len(messages), 6; got != want {
-		t.Fatalf("final request messages = %d, want %d", got, want)
-	}
-	if messages[3].ToolCallID != "command-call" ||
-		messages[5].ToolCallID != "call-material-after-command" {
-		t.Fatalf("command tool chain = %#v", messages)
+	if got, want := len(messages), 4; got != want ||
+		messages[3].ToolCallID != "call-review-from-model" {
+		t.Fatalf("model-selected tool chain = %#v", messages)
 	}
 }
 
-func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
-	store := mocktool.NewStore()
-	firstTitle := "explicit-write-first-unique"
-	secondTitle := "explicit-write-second-unique"
-	generator := newScriptedGenerator(toolLoopResult(
-		"call-create-after-command",
-		mattertool.ScenarioCreateToolName,
-		`{"title":"`+secondTitle+`"}`,
-	))
-	service := newLoopTestServiceWithStore(t, generator, store)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
-	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
-	}
-	service.commands = command.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		core.ContextManifest{},
-		loopRequest("/创建面试 "+firstTitle),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "写操作上限") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
-	if got, want := generator.CallCount(), 1; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	assertScenarioCreated(t, store, firstTitle)
-	assertScenarioNotCreated(t, store, secondTitle)
-}
-
-func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
+func TestRunLoopFeedsExplicitCapabilityFailureBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-material-1", mocktool.MaterialSearchToolName, `{"query":"backend"}`),
+		toolLoopResult("call-material-1", capabilityfixture.MaterialSearchToolName, `{"query":"backend"}`),
 		finalLoopResult("I could not read the material, so I will continue without it."),
 	)
-	store := mocktool.NewStore()
-	store.SetUnavailable(mocktool.MaterialSearchToolName, true)
+	store := capabilityfixture.NewStore()
+	store.SetUnavailable(capabilityfixture.MaterialSearchToolName, true)
 	service := newLoopTestServiceWithStore(t, generator, store)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("结合我的简历准备面试"),
 	)
 	if err != nil {
@@ -463,6 +473,33 @@ func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
 	}
 }
 
+func TestRunLoopReturnsExplicitModelFailure(t *testing.T) {
+	want := ai.NewGenerationError(
+		ai.ErrorProviderUnavailable,
+		0,
+		"",
+		"",
+		errors.New("provider unavailable"),
+	)
+	service := newLoopTestService(
+		t,
+		aifake.NewFailingTextGenerator(want),
+	)
+
+	_, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("请帮我继续准备面试"),
+	)
+	var generationError *ai.GenerationError
+	if !errors.As(err, &generationError) ||
+		generationError.Kind != ai.ErrorProviderUnavailable {
+		t.Fatalf("generate() error = %#v, want provider unavailable", err)
+	}
+}
+
 func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -478,7 +515,7 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("找评价"),
 	)
 	if err != nil {
@@ -507,7 +544,7 @@ func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("看看我面试评价"),
 	)
 	if err != nil {
@@ -532,7 +569,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我润色这句话"),
 	)
 	if err != nil {
@@ -551,7 +588,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-1", reviewtool.ReviewSearchToolName, `{"query":"one"}`),
-		toolLoopResult("call-2", mocktool.MaterialSearchToolName, `{"query":"two"}`),
+		toolLoopResult("call-2", capabilityfixture.MaterialSearchToolName, `{"query":"two"}`),
 	)
 	service := newLoopTestService(t, generator)
 	service.loopLimits.MaxIterations = 1
@@ -560,7 +597,7 @@ func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("先找评价，再找材料"),
 	)
 	if err != nil {
@@ -578,13 +615,13 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-create-1",
-			mattertool.ScenarioCreateToolName,
-			`{"title":"First scenario"}`,
+			goalcapability.GoalCreateCapabilityName,
+			`{"title":"First goal"}`,
 		),
 		toolLoopResult(
 			"call-create-1",
-			mattertool.ScenarioCreateToolName,
-			`{"title":"Repeated scenario"}`,
+			goalcapability.GoalCreateCapabilityName,
+			`{"title":"Repeated goal"}`,
 		),
 	)
 	service := newLoopTestService(t, generator)
@@ -594,7 +631,7 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("创建两个练习场景"),
 	)
 	if err != nil {
@@ -609,13 +646,13 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 }
 
 func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	runOnce := func() string {
 		generator := newScriptedGenerator(
 			toolLoopResult(
 				"call-create-stable",
-				mattertool.ScenarioCreateToolName,
-				`{"title":"Stable scenario"}`,
+				goalcapability.GoalCreateCapabilityName,
+				`{"title":"Stable goal"}`,
 			),
 			finalLoopResult("Created."),
 		)
@@ -624,7 +661,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 			context.Background(),
 			loopActor(),
 			loopRun(),
-			core.ContextManifest{},
+			agentcontext.Manifest{},
 			loopRequest("创建面试场景"),
 		); err != nil {
 			t.Fatalf("generate() error = %v", err)
@@ -644,7 +681,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 }
 
 func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	firstTitle := "write-budget-first-unique"
 	secondTitle := "write-budget-second-unique"
 	generator := newScriptedGenerator(ai.TextResult{
@@ -655,12 +692,12 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		ToolCalls: []ai.ToolCall{
 			{
 				ID:        "call-create-1",
-				Name:      mattertool.ScenarioCreateToolName,
+				Name:      goalcapability.GoalCreateCapabilityName,
 				Arguments: json.RawMessage(`{"title":"` + firstTitle + `"}`),
 			},
 			{
 				ID:        "call-create-2",
-				Name:      mattertool.ScenarioCreateToolName,
+				Name:      goalcapability.GoalCreateCapabilityName,
 				Arguments: json.RawMessage(`{"title":"` + secondTitle + `"}`),
 			},
 		},
@@ -672,7 +709,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我创建一个英文 PM 面试练习场景"),
 	)
 	if err != nil {
@@ -681,68 +718,12 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 	if !strings.Contains(result.Content, "写操作上限") {
 		t.Fatalf("fallback content = %q", result.Content)
 	}
-	assertScenarioNotCreated(t, store, firstTitle)
-	assertScenarioNotCreated(t, store, secondTitle)
-}
-
-func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
-	store := mocktool.NewStore()
-	conditional := &loopConditionalTool{}
-	generator := newScriptedGenerator(
-		toolLoopResult(
-			"call-conditional-write",
-			loopConditionalToolName,
-			`{"write_value":"persisted-value"}`,
-		),
-		toolLoopResult(
-			"call-create-after-conditional",
-			mattertool.ScenarioCreateToolName,
-			`{"title":"write-after-conditional-unique"}`,
-		),
-	)
-	service := newLoopTestServiceWithStore(t, generator, store)
-	setLoopTools(t, service, store, conditional)
-	commandRegistry, err := command.NewRegistry(command.Definition{
-		Name:        "条件查询",
-		Description: "Run the query-only form of a conditional tool.",
-		ToolName:    loopConditionalToolName,
-		BuildInput: func(_ string) (json.RawMessage, error) {
-			return command.JSONObjectInput(nil)
-		},
-	})
-	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
-	}
-	service.commands = command.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		core.ContextManifest{},
-		loopRequest("/条件查询"),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "写操作上限") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
-	if got, want := len(conditional.inputs), 2; got != want {
-		t.Fatalf("conditional calls = %d, want %d", got, want)
-	}
-	if conditional.inputs[0].WriteValue != "" ||
-		conditional.inputs[1].WriteValue == "" {
-		t.Fatalf("conditional inputs = %#v", conditional.inputs)
-	}
-	if got, want := generator.CallCount(), 2; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	assertScenarioNotCreated(t, store, "write-after-conditional-unique")
+	assertGoalNotCreated(t, store, firstTitle)
+	assertGoalNotCreated(t, store, secondTitle)
 }
 
 func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	conditional := &loopConditionalTool{}
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -764,7 +745,7 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("先查询，再执行一次条件写入"),
 	)
 	if err != nil {
@@ -809,14 +790,14 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := mocktool.NewStore()
+			store := capabilityfixture.NewStore()
 			conditional := &loopConditionalTool{}
 			title := "write-after-rejected-" + strings.ReplaceAll(test.name, " ", "-")
 			generator := newScriptedGenerator(
 				test.call,
 				toolLoopResult(
 					"call-create-after-rejected",
-					mattertool.ScenarioCreateToolName,
+					goalcapability.GoalCreateCapabilityName,
 					`{"title":"`+title+`"}`,
 				),
 			)
@@ -827,7 +808,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 				context.Background(),
 				loopActor(),
 				loopRun(),
-				core.ContextManifest{},
+				agentcontext.Manifest{},
 				loopRequest("attempt a guarded write"),
 			)
 			if err != nil {
@@ -842,7 +823,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 			if len(conditional.inputs) != 0 {
 				t.Fatalf("rejected invocation reached tool: %#v", conditional.inputs)
 			}
-			assertScenarioNotCreated(t, store, title)
+			assertGoalNotCreated(t, store, title)
 		})
 	}
 }
@@ -873,7 +854,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("看看我上次面试评价"),
 	)
 	if err != nil {
@@ -913,7 +894,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-material-1",
-			mocktool.MaterialSearchToolName,
+			capabilityfixture.MaterialSearchToolName,
 			`{"query":"简历正文请不要泄漏 Bearer token-123","limit":1}`,
 		),
 	)
@@ -930,7 +911,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest(secretInput),
 	)
 	if err != nil {
@@ -999,6 +980,56 @@ func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
 
 const loopConditionalToolName = "conditional.write.v1"
 
+const loopSensitiveSourceToolName = "sensitive.source.read.v1"
+
+type loopSensitiveSourceTool struct{}
+
+func (loopSensitiveSourceTool) Definition() tool.Definition {
+	return tool.Definition{
+		Name:        loopSensitiveSourceToolName,
+		Description: "Return public content with internal audit source references.",
+		InputSchema: tool.ObjectSchema(map[string]any{}, nil),
+		ReadOnly:    true,
+		Risk:        tool.RiskReadOnly,
+	}
+}
+
+func (loopSensitiveSourceTool) Execute(
+	context.Context,
+	tool.CallContext,
+	json.RawMessage,
+) (tool.Result, error) {
+	return tool.Result{
+		Content: map[string]any{"status": "ready"},
+		SourceRefs: []tool.SourceRef{
+			{Type: "preparation_snapshot", ID: "snapshot-internal-1"},
+			{Type: "preparation_profile", ID: "profile-internal-1"},
+			{Type: "voice_config", ID: "config-internal-1"},
+		},
+		Handoffs: []agenthandoff.Item{loopPracticeHandoff()},
+	}, nil
+}
+
+func loopPracticeHandoff() agenthandoff.Item {
+	return agenthandoff.Item{
+		Type:                     agenthandoff.ConfirmPracticePlanType,
+		Label:                    "Confirm practice",
+		PracticePlanID:           "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		PlanRevision:             2,
+		Target:                   "Backend interview",
+		SceneName:                "Project deep dive",
+		SceneFamily:              "INTERVIEW",
+		SceneModel:               "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Roles:                    []string{"Technical interviewer"},
+		PracticeScope:            "Full simulation",
+		SuggestedDurationSeconds: 600,
+		MinEffectiveTurns:        3,
+		MaxEffectiveTurns:        5,
+		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+		ConfirmationPrompt:       "Confirm this exact practice plan.",
+	}
+}
+
 type loopConditionalInput struct {
 	WriteValue string `json:"write_value,omitempty"`
 }
@@ -1058,11 +1089,11 @@ func parseLoopConditionalInput(
 func setLoopTools(
 	t *testing.T,
 	service *Service,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 	extra ...tool.Tool,
 ) {
 	t.Helper()
-	items := append(mocktool.Tools(store), extra...)
+	items := append(capabilityfixture.Tools(store), extra...)
 	registry, err := tool.NewRegistry(items...)
 	if err != nil {
 		t.Fatalf("tool.NewRegistry() error = %v", err)
@@ -1071,41 +1102,22 @@ func setLoopTools(
 	service.executor = tool.NewExecutor(registry)
 }
 
-func assertScenarioNotCreated(
+func assertGoalNotCreated(
 	t *testing.T,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 	title string,
 ) {
 	t.Helper()
-	items, err := store.SearchScenarios(
+	items, err := store.SearchGoals(
 		context.Background(),
 		tool.CallContext{},
-		mattertool.ScenarioSearchInput{Query: title},
+		goalcapability.GoalSearchInput{Query: title},
 	)
 	if err != nil {
-		t.Fatalf("SearchScenarios() error = %v", err)
+		t.Fatalf("SearchGoals() error = %v", err)
 	}
 	if len(items) != 0 {
-		t.Fatalf("scenario %q was created before batch rejection: %#v", title, items)
-	}
-}
-
-func assertScenarioCreated(
-	t *testing.T,
-	store *mocktool.Store,
-	title string,
-) {
-	t.Helper()
-	items, err := store.SearchScenarios(
-		context.Background(),
-		tool.CallContext{},
-		mattertool.ScenarioSearchInput{Query: title},
-	)
-	if err != nil {
-		t.Fatalf("SearchScenarios() error = %v", err)
-	}
-	if len(items) != 1 || items[0].Title != title {
-		t.Fatalf("scenario %q was not created: %#v", title, items)
+		t.Fatalf("goal %q was created before batch rejection: %#v", title, items)
 	}
 }
 
@@ -1167,22 +1179,24 @@ func newLoopTestService(
 	generator ai.TextGenerator,
 ) *Service {
 	t.Helper()
-	return newLoopTestServiceWithStore(t, generator, mocktool.NewStore())
+	return newLoopTestServiceWithStore(t, generator, capabilityfixture.NewStore())
 }
 
 func newLoopTestServiceWithStore(
 	t *testing.T,
 	generator ai.TextGenerator,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 ) *Service {
 	t.Helper()
-	registry, err := mocktool.NewRegistry(store)
+	registry, err := capabilityfixture.NewRegistry(store)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	return &Service{
-		generator: generator,
-		configuration: core.RunConfiguration{
+		repository: loopRepository{},
+		manifests:  loopManifestRepository{},
+		generator:  generator,
+		configuration: Configuration{
 			Provider:           "fake",
 			Model:              "configured-model",
 			MaxOutputTokens:    512,
@@ -1194,12 +1208,160 @@ func newLoopTestServiceWithStore(
 	}
 }
 
+type loopRepository struct{}
+
+type loopSourceRefRepository struct {
+	loopRepository
+	sourceRefs []ToolSourceRef
+	handoffs   []agenthandoff.Item
+}
+
+func (repository *loopSourceRefRepository) CompleteToolCall(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+	_ json.RawMessage,
+	sourceRefs []ToolSourceRef,
+	handoffs []agenthandoff.Item,
+) (ToolCall, error) {
+	repository.sourceRefs = append([]ToolSourceRef(nil), sourceRefs...)
+	repository.handoffs = agenthandoff.CloneItems(handoffs)
+	return ToolCall{
+		SourceRefs: repository.sourceRefs,
+		Handoffs:   repository.handoffs,
+	}, nil
+}
+
+func (loopRepository) CreateInitial(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	Configuration,
+) (Submission, error) {
+	panic("unexpected CreateInitial")
+}
+
+func (loopRepository) CreateRetry(
+	context.Context,
+	string,
+	string,
+	string,
+	Configuration,
+) (Retry, error) {
+	panic("unexpected CreateRetry")
+}
+
+func (loopRepository) Claim(context.Context, string, string) (Run, bool, error) {
+	panic("unexpected Claim")
+}
+
+func (loopRepository) Find(context.Context, string, string) (Run, error) {
+	panic("unexpected Find")
+}
+
+func (loopRepository) ProposeToolCall(
+	_ context.Context,
+	call ToolCall,
+) (ToolCall, error) {
+	return call, nil
+}
+
+func (loopRepository) StartToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) CompleteToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	json.RawMessage,
+	[]ToolSourceRef,
+	[]agenthandoff.Item,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) FailToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	ToolCallStatus,
+	string,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) ListToolCalls(context.Context, string, string) ([]ToolCall, error) {
+	panic("unexpected ListToolCalls")
+}
+
+func (loopRepository) Complete(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	ai.TextResult,
+) (Run, error) {
+	panic("unexpected Complete")
+}
+
+func (loopRepository) Fail(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	bool,
+) (Run, error) {
+	panic("unexpected Fail")
+}
+
+func (loopRepository) RecoverInterrupted(context.Context) (int64, error) {
+	panic("unexpected RecoverInterrupted")
+}
+
+type loopManifestRepository struct{}
+
+func (loopManifestRepository) SaveManifest(
+	context.Context,
+	agentcontext.Manifest,
+) (agentcontext.Manifest, error) {
+	panic("unexpected SaveManifest")
+}
+
+func (loopManifestRepository) FindManifest(
+	context.Context,
+	string,
+	string,
+) (agentcontext.Manifest, error) {
+	panic("unexpected FindManifest")
+}
+
+func (loopManifestRepository) SaveToolSnapshot(
+	_ context.Context,
+	manifest agentcontext.Manifest,
+) (agentcontext.Manifest, error) {
+	return manifest, nil
+}
+
 func loopActor() requestcontext.Actor {
 	return requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
 }
 
-func loopRun() core.Run {
-	return core.Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
+func loopRun() Run {
+	return Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
 }
 
 func loopRequest(input string) ai.TextRequest {

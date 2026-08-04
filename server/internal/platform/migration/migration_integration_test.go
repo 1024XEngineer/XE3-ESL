@@ -106,6 +106,173 @@ func TestRunnerAppliesIdempotentlyAndRevertsLatestMigration(t *testing.T) {
 	}
 }
 
+func TestGoalAuthorityMigrationSwitchesOnlyTheEmptyGoalSlice(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(48); err != nil {
+		t.Fatalf("apply migrations through version 48: %v", err)
+	}
+	assertMigrationStatus(t, runner, 48)
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to version 48 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close version 48 schema connection: %v", err)
+		}
+	})
+
+	const ownerID = "10000000-0000-4000-8000-000000000149"
+	const memoryID = "11000000-0000-4000-8000-000000000149"
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO identity_users (id, canonical_email)
+		VALUES ($1, 'goal-migration@example.com')
+	`, ownerID); err != nil {
+		t.Fatalf("seed Goal migration owner: %v", err)
+	}
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO agent_memories (
+		    id,
+		    owner_user_id,
+		    memory_type,
+		    canonical_key,
+		    content,
+		    scope_type,
+		    policy_version
+		) VALUES (
+		    $2,
+		    $1,
+		    'preference',
+		    'preference.response_style',
+		    'Prefer concise explanations',
+		    'user',
+		    'goal-migration.v1'
+		)
+	`, ownerID, memoryID); err != nil {
+		t.Fatalf("seed unrelated user-scoped data: %v", err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("apply Goal authority migration: %v", err)
+	}
+	assertMigrationStatus(t, runner, 49)
+	assertGoalAuthoritySchema(t, admin, schema, true)
+
+	var preserved bool
+	if err := scoped.QueryRow(context.Background(), `
+		SELECT scope_type = 'user' AND goal_id IS NULL
+		FROM agent_memories
+		WHERE id = $1
+	`, memoryID).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("unrelated Memory preserved = %t, error = %v", preserved, err)
+	}
+
+	changed, err := runner.DownOne()
+	if err != nil {
+		t.Fatalf("revert Goal authority migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("Goal authority down migration reported no change")
+	}
+	assertMigrationStatus(t, runner, 48)
+	assertGoalAuthoritySchema(t, admin, schema, false)
+
+	if err := scoped.QueryRow(context.Background(), `
+		SELECT scope_type = 'user' AND matter_id IS NULL
+		FROM agent_memories
+		WHERE id = $1
+	`, memoryID).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("Memory after down migration preserved = %t, error = %v", preserved, err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply Goal authority migration: %v", err)
+	}
+	assertMigrationStatus(t, runner, 49)
+	assertGoalAuthoritySchema(t, admin, schema, true)
+}
+
+func TestGoalAuthorityMigrationRejectsLegacyMatterData(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(48); err != nil {
+		t.Fatalf("apply migrations through version 48: %v", err)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to version 48 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close version 48 schema connection: %v", err)
+		}
+	})
+
+	const ownerID = "10000000-0000-4000-8000-000000000249"
+	const matterID = "11000000-0000-4000-8000-000000000249"
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO identity_users (id, canonical_email)
+		VALUES ($1, 'legacy-matter@example.com')
+	`, ownerID); err != nil {
+		t.Fatalf("seed legacy Matter owner: %v", err)
+	}
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO matters (id, owner_user_id, title)
+		VALUES ($2, $1, 'Legacy Matter')
+	`, ownerID, matterID); err != nil {
+		t.Fatalf("seed legacy Matter: %v", err)
+	}
+
+	err = runner.migrate.Steps(1)
+	if err == nil {
+		t.Fatal("Goal authority migration accepted legacy Matter data")
+	}
+	if !strings.Contains(
+		err.Error(),
+		"recreate the development or test database",
+	) {
+		t.Fatalf("Goal authority migration error = %q", err)
+	}
+
+	var oldTable, newTable *string
+	if err := admin.QueryRow(
+		context.Background(),
+		"SELECT to_regclass($1), to_regclass($2)",
+		schema+".matters",
+		schema+".coaching_goals",
+	).Scan(&oldTable, &newTable); err != nil {
+		t.Fatalf("inspect rolled-back Goal schema: %v", err)
+	}
+	if oldTable == nil || newTable != nil {
+		t.Fatalf(
+			"schema after rejected migration: matters=%v coaching_goals=%v",
+			oldTable,
+			newTable,
+		)
+	}
+}
+
 func TestConversationHardeningNormalizesLegacyFailureCodes(t *testing.T) {
 	migrationConfig, _, _ := isolatedMigrationConfig(t)
 	runner, err := openConfig(migrationConfig)
@@ -320,23 +487,12 @@ VALUES ($1, 'agent-data-upgrade@example.com')`,
 	assertAgentDataTables(t, admin, schema, false)
 	assertIdentityUserPreserved(t, scoped, existingUserID)
 
-	changed, err = runner.Up()
-	if err != nil {
+	if err := runner.migrate.Steps(1); err != nil {
 		t.Fatalf("reapply Agent data migration: %v", err)
 	}
-	if !changed {
-		t.Fatal("Agent data reapply reported no change")
-	}
+	assertMigrationStatus(t, runner, 3)
 	assertAgentDataTables(t, admin, schema, true)
 	assertIdentityUserPreserved(t, scoped, existingUserID)
-
-	changed, err = runner.Up()
-	if err != nil {
-		t.Fatalf("repeat Agent data migration: %v", err)
-	}
-	if changed {
-		t.Fatal("repeat Agent data migration unexpectedly changed the schema")
-	}
 }
 
 func assertAgentDataTables(
@@ -1722,6 +1878,177 @@ func assertMigrationStatus(t *testing.T, runner *Runner, version int) {
 			version,
 		)
 	}
+}
+
+func assertGoalAuthoritySchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+	wantGoal bool,
+) {
+	t.Helper()
+
+	goalTables := []string{
+		"coaching_goals",
+		"agent_thread_goal_links",
+		"goal_agent_create_requests",
+	}
+	matterTables := []string{
+		"matters",
+		"agent_thread_matter_links",
+		"matter_agent_create_requests",
+	}
+	for _, table := range append(goalTables, matterTables...) {
+		wantPresent := wantGoal
+		if slicesContain(matterTables, table) {
+			wantPresent = !wantGoal
+		}
+		var relation *string
+		if err := conn.QueryRow(
+			context.Background(),
+			"SELECT to_regclass($1)",
+			schema+"."+table,
+		).Scan(&relation); err != nil {
+			t.Fatalf("inspect table %s: %v", table, err)
+		}
+		if (relation != nil) != wantPresent {
+			t.Errorf(
+				"table %s present = %t, want %t",
+				table,
+				relation != nil,
+				wantPresent,
+			)
+		}
+	}
+
+	type columnExpectation struct {
+		table  string
+		goal   string
+		matter string
+	}
+	for _, expectation := range []columnExpectation{
+		{
+			table:  "agent_context_manifests",
+			goal:   "active_goal_id",
+			matter: "active_matter_id",
+		},
+		{
+			table:  "agent_context_manifests",
+			goal:   "active_goal_version",
+			matter: "active_matter_version",
+		},
+		{table: "agent_memories", goal: "goal_id", matter: "matter_id"},
+		{table: "practice_plans", goal: "goal_id", matter: "matter_id"},
+		{table: "practice_sessions", goal: "goal_id", matter: "matter_id"},
+	} {
+		for column, wantPresent := range map[string]bool{
+			expectation.goal:   wantGoal,
+			expectation.matter: !wantGoal,
+		} {
+			var exists bool
+			if err := conn.QueryRow(context.Background(), `
+				SELECT EXISTS (
+				    SELECT 1
+				    FROM information_schema.columns
+				    WHERE table_schema = $1
+				      AND table_name = $2
+				      AND column_name = $3
+				)
+			`, schema, expectation.table, column).Scan(&exists); err != nil {
+				t.Fatalf("inspect %s.%s: %v", expectation.table, column, err)
+			}
+			if exists != wantPresent {
+				t.Errorf(
+					"column %s.%s present = %t, want %t",
+					expectation.table,
+					column,
+					exists,
+					wantPresent,
+				)
+			}
+		}
+	}
+
+	goalConstraints := []string{
+		"agent_context_manifests_goal_owner_fkey",
+		"agent_context_manifests_goal_shape_check",
+		"agent_memories_goal_owner_fkey",
+		"practice_plans_goal_context_anchor_key",
+		"practice_plans_goal_owner_fkey",
+		"practice_plans_thread_goal_link_fkey",
+		"practice_sessions_goal_context_anchor_fkey",
+	}
+	matterConstraints := []string{
+		"agent_context_manifests_matter_owner_fkey",
+		"agent_context_manifests_matter_shape_check",
+		"agent_memories_matter_owner_fkey",
+		"practice_plans_context_anchor_key",
+		"practice_plans_matter_owner_fkey",
+		"practice_plans_thread_matter_link_fkey",
+		"practice_sessions_context_anchor_fkey",
+	}
+	for _, name := range append(goalConstraints, matterConstraints...) {
+		wantPresent := wantGoal
+		if slicesContain(matterConstraints, name) {
+			wantPresent = !wantGoal
+		}
+		var exists bool
+		if err := conn.QueryRow(context.Background(), `
+			SELECT EXISTS (
+			    SELECT 1
+			    FROM pg_constraint AS constraint_data
+			    JOIN pg_class AS relation_data
+			      ON relation_data.oid = constraint_data.conrelid
+			    JOIN pg_namespace AS namespace_data
+			      ON namespace_data.oid = relation_data.relnamespace
+			    WHERE namespace_data.nspname = $1
+			      AND constraint_data.conname = $2
+			)
+		`, schema, name).Scan(&exists); err != nil {
+			t.Fatalf("inspect constraint %s: %v", name, err)
+		}
+		if exists != wantPresent {
+			t.Errorf(
+				"constraint %s present = %t, want %t",
+				name,
+				exists,
+				wantPresent,
+			)
+		}
+	}
+
+	var scopeDefinition string
+	if err := conn.QueryRow(context.Background(), `
+		SELECT pg_get_constraintdef(constraint_data.oid)
+		FROM pg_constraint AS constraint_data
+		JOIN pg_class AS relation_data
+		  ON relation_data.oid = constraint_data.conrelid
+		JOIN pg_namespace AS namespace_data
+		  ON namespace_data.oid = relation_data.relnamespace
+		WHERE namespace_data.nspname = $1
+		  AND relation_data.relname = 'agent_memories'
+		  AND constraint_data.conname = 'agent_memories_scope_check'
+	`, schema).Scan(&scopeDefinition); err != nil {
+		t.Fatalf("inspect Memory scope constraint: %v", err)
+	}
+	wantScope := "'matter'"
+	forbiddenScope := "'goal'"
+	if wantGoal {
+		wantScope, forbiddenScope = forbiddenScope, wantScope
+	}
+	if !strings.Contains(scopeDefinition, wantScope) ||
+		strings.Contains(scopeDefinition, forbiddenScope) {
+		t.Errorf("Memory scope constraint = %q", scopeDefinition)
+	}
+}
+
+func slicesContain(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func assertVersionFourAgentSchema(

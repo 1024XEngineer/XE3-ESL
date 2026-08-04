@@ -8,19 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 const (
 	DemoUserID              = "user_demo"
-	DemoScenarioDefinition  = preparation.ProgrammerInterviewScenarioID
-	DemoRoleDefinition      = preparation.TechnicalInterviewerRoleID
-	DemoPracticeOption      = preparation.FullSimulationOptionID
-	demoInterviewerID       = "participant_interviewer_001"
-	demoCandidateID         = "participant_candidate_001"
+	DemoScene               = "scn_programmer_interview"
+	DemoRoleDefinition      = "role_technical_interviewer"
+	DemoPracticeOption      = "option_full_simulation"
+	demoFacilitatorID       = "participant_facilitator_001"
+	demoLearnerID           = "participant_learner_001"
 	demoPreparationProfile  = "profile_demo_001"
 	demoPreparationSnapshot = "preparation_snapshot_demo_001"
 	demoPracticePlan        = "plan_demo_001"
@@ -30,7 +30,7 @@ const (
 var (
 	ErrInvalidAnswer      = errors.New("answer_text must not be empty")
 	ErrRecoverableFailure = errors.New("deterministic provider temporarily unavailable")
-	ErrScenarioNotFound   = errors.New("scenario definition not found")
+	ErrSceneNotFound      = errors.New("Scene not found")
 	ErrProfileNotFound    = errors.New("preparation profile not found")
 	ErrSnapshotNotFound   = errors.New("preparation snapshot not found")
 	ErrPlanNotFound       = errors.New("practice plan not found")
@@ -47,25 +47,20 @@ var (
 	ErrResourceConflict   = errors.New("resource already exists")
 )
 
-type Question = conversation.Question
-type Turn = conversation.Turn
-type Event = conversation.Event
-type Analysis = review.Analysis
-type Feedback = review.Feedback
-type RetryRequest = review.RetryRequest
-type HistoryRecord = review.HistoryRecord
-
+type Question = practice.Question
+type Turn = practice.Turn
+type Event = practiceinput.Event
 type Runtime struct {
 	mu sync.Mutex
 
 	now     time.Time
-	catalog preparation.CatalogReader
+	catalog scene.CatalogReader
 
 	profileCreated  bool
 	snapshotCreated bool
-	planCreated     bool
+	plan            *preparation.PracticePlan
 	sessionCreated  bool
-	sessionStatus   string
+	sessionStatus   practice.SessionStatus
 	sessionVersion  int
 	effectiveTurns  int
 
@@ -79,24 +74,91 @@ type Runtime struct {
 
 	retryTurnByRequest     map[string]string
 	retryOriginalByRequest map[string]string
-	turnDecisions          map[string]practice.ApplyTurnOutcomeResult
+	turnDecisions          map[string]practiceTurnDecision
 	subscribers            map[chan Event]struct{}
 }
 
-func NewRuntime() *Runtime {
-	catalog, err := preparation.NewBuiltinCatalog()
-	if err != nil {
-		panic(fmt.Sprintf("build deterministic preparation catalog: %v", err))
+func NewRuntime(catalog scene.CatalogReader) *Runtime {
+	if catalog == nil {
+		panic("deterministic Scene catalog is required")
 	}
 	return &Runtime{
 		now:                    time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC),
 		catalog:                catalog,
 		retryTurnByRequest:     make(map[string]string),
 		retryOriginalByRequest: make(map[string]string),
-		turnDecisions:          make(map[string]practice.ApplyTurnOutcomeResult),
+		turnDecisions:          make(map[string]practiceTurnDecision),
 		subscribers:            make(map[chan Event]struct{}),
-		sessionStatus:          "not_started",
 	}
+}
+
+func newDeterministicSceneCatalog() scene.CatalogReader {
+	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
+		{
+			ID:               DemoScene,
+			Family:           scene.SceneFamilyInterview,
+			Model:            scene.SceneModelProjectExperienceDeepDive,
+			Name:             "项目经历深挖",
+			Version:          1,
+			Status:           scene.SceneStatusActive,
+			TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef: "interview.project_deep_dive.session.v1",
+			Prompt: scene.ScenePrompt{
+				PublicSceneBrief: "围绕一个真实项目说明个人职责、关键难点、技术取舍和结果。",
+				PracticeGoal:     "清楚表达个人贡献、决策依据、结果与反思。",
+				UserRole:         "候选人",
+				AIRole:           "技术面试官",
+				PersonaSummary:   "A precise technical interviewer who probes evidence and trade-offs.",
+				FocusAreas: []string{
+					"introduction",
+					"system_design",
+					"project_depth",
+					"collaboration",
+				},
+				TurnBlueprints:           []string{"追问项目证据与技术取舍"},
+				SuggestedDurationSeconds: 900,
+			},
+			Roles: []scene.RoleDefinition{
+				{
+					ID:               DemoRoleDefinition,
+					SceneID:          DemoScene,
+					Type:             "TECHNICAL_INTERVIEWER",
+					DisplayName:      "技术面试官",
+					Responsibilities: "Probe technical depth and engineering trade-offs.",
+					Style:            "Precise and evidence seeking.",
+					PracticeObjectives: []scene.PracticeObjectiveDefinition{
+						{ID: "introduction", Description: "Explain current experience clearly."},
+						{ID: "system_design", Description: "Explain a technical design and its trade-offs."},
+						{ID: "project_depth", Description: "Provide evidence of individual contribution."},
+						{ID: "collaboration", Description: "Explain cross-team communication and outcomes."},
+					},
+					DisplayOrder: 10,
+				},
+			},
+			PracticeOptions: []scene.PracticeOption{
+				{
+					ID:           DemoPracticeOption,
+					SceneID:      DemoScene,
+					Type:         scene.PracticeOptionFullSimulation,
+					DisplayName:  "完整模拟",
+					DisplayOrder: 10,
+				},
+				{
+					ID:               "option_technical_focus",
+					SceneID:          DemoScene,
+					RoleDefinitionID: DemoRoleDefinition,
+					Type:             scene.PracticeOptionFocus,
+					DisplayName:      "技术深挖",
+					DisplayOrder:     20,
+				},
+			},
+			DisplayOrder: 10,
+		},
+	})
+	if err != nil {
+		panic(fmt.Sprintf("build deterministic Scene catalog: %v", err))
+	}
+	return catalog
 }
 
 func (r *Runtime) timestamp(offset int) string {
@@ -136,68 +198,123 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 	}, nil
 }
 
-func (r *Runtime) createPlan(command practice.CreatePracticePlanCommand) (practice.PracticePlan, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.planCreated = true
-	createdAt := r.now.Add(3 * time.Second)
-	return practice.PracticePlan{
-		ID:                        demoPracticePlan,
-		UserID:                    DemoUserID,
-		AgentThreadID:             command.AgentThreadID,
-		MatterID:                  command.MatterID,
-		ScenarioDefinitionID:      DemoScenarioDefinition,
-		ScenarioDefinitionVersion: 1,
-		ScenarioType:              practice.ScenarioTypeInterview,
-		ScenarioModel:             practice.ScenarioModelProjectExperienceDeepDive,
-		ScenarioConfigID:          preparation.BackendEngineerConfigID,
-		ScenarioConfigVersion:     1,
-		PreparationProfileID:      demoPreparationProfile,
-		SelectedRoleIDs:           []string{DemoRoleDefinition},
-		Revision:                  1,
-		Status:                    practice.PracticePlanReady,
-		CreatedAt:                 createdAt,
-		UpdatedAt:                 createdAt,
-	}, nil
+func (r *Runtime) preparationSnapshotLocked() preparation.Snapshot {
+	return preparation.Snapshot{
+		ID:                     demoPreparationSnapshot,
+		SourceProfileID:        demoPreparationProfile,
+		SourceVersion:          1,
+		ResumeSnapshot:         "Go backend engineer; API reliability project.",
+		JobDescriptionSnapshot: "Build reliable APIs and explain engineering trade-offs.",
+		BackgroundSnapshot:     "Backend engineer preparing for an English technical interview.",
+		CreatedAt:              r.now.Add(2 * time.Second),
+	}
 }
 
-func (r *Runtime) createSession() (practice.CreatePracticeSessionResult, error) {
+func deterministicPracticeObjectives(
+	selection scene.SelectionSnapshot,
+) ([]preparation.PracticeObjective, error) {
+	roles, err := selection.SelectedRoles()
+	if err != nil {
+		return nil, err
+	}
+	objectives := make([]preparation.PracticeObjective, 0)
+	for _, role := range roles {
+		for _, definition := range role.PracticeObjectives {
+			objectives = append(objectives, preparation.PracticeObjective{
+				ID: definition.ID, Description: definition.Description,
+			})
+		}
+	}
+	return objectives, nil
+}
+
+func (r *Runtime) createPlan(
+	request preparation.CreatePlanRequest,
+	selection scene.SelectionSnapshot,
+	policy preparation.SessionPolicy,
+) (preparation.PracticePlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.planCreated {
-		return practice.CreatePracticeSessionResult{}, ErrResourceConflict
+	if !r.snapshotCreated {
+		return preparation.PracticePlan{}, ErrSnapshotNotFound
+	}
+	if r.plan != nil {
+		return preparation.PracticePlan{}, ErrResourceConflict
+	}
+	objectives, err := deterministicPracticeObjectives(selection)
+	if err != nil {
+		return preparation.PracticePlan{}, err
+	}
+	createdAt := r.now.Add(3 * time.Second)
+	plan := preparation.PracticePlan{
+		ID:                  demoPracticePlan,
+		UserID:              DemoUserID,
+		SourceThreadID:      request.SourceThreadID,
+		PreparationSnapshot: r.preparationSnapshotLocked(),
+		SceneSelection:      selection,
+		SessionPolicy:       policy,
+		PracticeObjectives:  objectives,
+		Revision:            1,
+		Status:              preparation.PlanStatusReady,
+		CreatedAt:           createdAt,
+		UpdatedAt:           createdAt,
+	}
+	if request.GoalID != "" {
+		plan.GoalSnapshot = &preparation.GoalSnapshot{
+			ID:      request.GoalID,
+			Title:   "Technical interview practice",
+			Version: 1,
+		}
+	}
+	r.plan = &plan
+	return plan, nil
+}
+
+func (r *Runtime) createSession() (
+	practice.SessionBootstrap,
+	error,
+) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.plan == nil {
+		return practice.SessionBootstrap{}, ErrResourceConflict
 	}
 	if r.sessionCreated {
-		return practice.CreatePracticeSessionResult{}, ErrResourceConflict
+		return practice.SessionBootstrap{}, ErrResourceConflict
 	}
 	r.sessionCreated = true
-	r.sessionStatus = string(practice.PracticeSessionStarting)
+	r.sessionStatus = practice.SessionStarting
 	r.sessionVersion = 1
-	return practice.CreatePracticeSessionResult{
+	return practice.SessionBootstrap{
 		Session:  r.sessionLocked(),
 		Snapshot: r.snapshotLocked(),
 	}, nil
 }
 
-func (r *Runtime) sessionLocked() practice.PracticeSession {
-	session := practice.PracticeSession{
-		ID:            demoPracticeSession,
-		PlanID:        demoPracticePlan,
-		ScenarioType:  practice.ScenarioTypeInterview,
-		ScenarioModel: practice.ScenarioModelProjectExperienceDeepDive,
-		SnapshotID:    "snapshot_session_demo_001",
-		Status:        practice.PracticeSessionStatus(r.sessionStatus),
-		Version:       r.sessionVersion,
-		CreatedAt:     r.now.Add(4 * time.Second),
+func (r *Runtime) sessionLocked() practice.Session {
+	if r.plan == nil {
+		panic("deterministic Practice Plan is required")
 	}
-	if r.sessionStatus != string(practice.PracticeSessionStarting) {
+	session := practice.Session{
+		ID:             demoPracticeSession,
+		PlanID:         r.plan.ID,
+		PlanRevision:   r.plan.Revision,
+		SceneFamily:    r.plan.SceneSelection.Scene.Family,
+		SceneModel:     r.plan.SceneSelection.Scene.Model,
+		SnapshotID:     "snapshot_session_demo_001",
+		Status:         r.sessionStatus,
+		EffectiveTurns: r.effectiveTurns,
+		Version:        r.sessionVersion,
+		CreatedAt:      r.now.Add(4 * time.Second),
+	}
+	if r.sessionStatus != practice.SessionStarting {
 		startedAt := r.now.Add(5 * time.Second)
 		session.StartedAt = &startedAt
 	}
-	if r.sessionStatus == string(practice.PracticeSessionCompleted) {
+	if r.sessionStatus == practice.SessionCompleted {
 		endedAt := r.now.Add(80 * time.Second)
 		session.EndedAt = &endedAt
-		session.EndReason = practice.PracticeSessionEndCoverageSatisfiedAtCheckpoint
+		session.EndReason = practice.EndReasonCoverageSatisfiedAtCheckpoint
 	}
 	return session
 }
@@ -226,7 +343,7 @@ func (r *Runtime) currentQuestion() (Question, error) {
 func (r *Runtime) saveQuestion(
 	sessionID string,
 	sequence int,
-	draft conversation.QuestionDraft,
+	draft practice.QuestionDraft,
 ) (Question, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -237,22 +354,24 @@ func (r *Runtime) saveQuestion(
 		return Question{}, ErrResourceConflict
 	}
 	question := Question{
-		ID:               fmt.Sprintf("question_demo_%03d", sequence),
-		SessionID:        demoPracticeSession,
-		SpeakerID:        demoInterviewerID,
-		AddresseeIDs:     []string{demoCandidateID},
-		ObjectiveID:      draft.ObjectiveID,
-		Type:             draft.Type,
-		ParentQuestionID: draft.ParentQuestionID,
-		Content:          draft.Content,
-		Sequence:         sequence,
-		CreatedAt:        r.timestamp(10 + sequence*12),
+		ID:                      fmt.Sprintf("question_demo_%03d", sequence),
+		SessionID:               demoPracticeSession,
+		SpeakerParticipantID:    demoFacilitatorID,
+		AddresseeParticipantIDs: []string{demoLearnerID},
+		ObjectiveID:             draft.ObjectiveID,
+		Type:                    draft.Type,
+		ParentQuestionID:        draft.ParentQuestionID,
+		Content:                 draft.Content,
+		Sequence:                sequence,
+		CreatedAt: r.now.Add(
+			time.Duration(10+sequence*12) * time.Second,
+		),
 	}
 	r.questions = append(r.questions, question)
 	payload := map[string]any{
 		"question_id":               question.ID,
-		"speaker_participant_id":    question.SpeakerID,
-		"addressee_participant_ids": question.AddresseeIDs,
+		"speaker_participant_id":    question.SpeakerParticipantID,
+		"addressee_participant_ids": question.AddresseeParticipantIDs,
 		"objective_id":              question.ObjectiveID,
 		"question_type":             question.Type,
 		"content":                   question.Content,
@@ -267,7 +386,7 @@ func (r *Runtime) saveQuestion(
 
 func (r *Runtime) prepareTurn(
 	questionID string,
-	request conversation.SubmitTurnRequest,
+	request practiceinput.SubmitTurnRequest,
 ) (Turn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -297,28 +416,39 @@ func (r *Runtime) prepareTurn(
 		turn.AudioAssetID = request.AudioAssetID
 		turn.InteractionMode = request.InteractionMode
 		turn.Status = "completed"
-		turn.SubmittedAt = r.timestamp(72 + len(r.retryTurnByRequest)*2)
-		turn.CompletedAt = r.timestamp(73 + len(r.retryTurnByRequest)*2)
+		turn.SubmittedAt = r.now.Add(
+			time.Duration(72+len(r.retryTurnByRequest)*2) * time.Second,
+		)
+		turn.CompletedAt = r.now.Add(
+			time.Duration(73+len(r.retryTurnByRequest)*2) * time.Second,
+		)
 	} else {
 		for _, existing := range r.turns {
-			if !existing.IsRetry && existing.QuestionID == questionID {
+			if existing.Kind != practice.TurnKindRetry &&
+				existing.QuestionID == questionID {
 				return Turn{}, ErrResourceConflict
 			}
 		}
 		turn = Turn{
-			ID:              fmt.Sprintf("turn_demo_%03d", turnNumber),
-			SessionID:       demoPracticeSession,
-			QuestionID:      question.ID,
-			RespondentID:    demoCandidateID,
-			Sequence:        question.Sequence,
-			InteractionMode: request.InteractionMode,
-			AnswerText:      answer,
-			AudioAssetID:    request.AudioAssetID,
-			Status:          "completed",
-			IsRetry:         false,
-			SubmittedAt:     r.timestamp(13 + question.Sequence*12),
-			CreatedAt:       r.timestamp(13 + question.Sequence*12),
-			CompletedAt:     r.timestamp(14 + question.Sequence*12),
+			ID:                      fmt.Sprintf("turn_demo_%03d", turnNumber),
+			SessionID:               demoPracticeSession,
+			QuestionID:              question.ID,
+			RespondentParticipantID: demoLearnerID,
+			Sequence:                question.Sequence,
+			InteractionMode:         request.InteractionMode,
+			AnswerText:              answer,
+			AudioAssetID:            request.AudioAssetID,
+			Status:                  "completed",
+			Kind:                    practice.TurnKindEffective,
+			SubmittedAt: r.now.Add(
+				time.Duration(13+question.Sequence*12) * time.Second,
+			),
+			CreatedAt: r.now.Add(
+				time.Duration(13+question.Sequence*12) * time.Second,
+			),
+			CompletedAt: r.now.Add(
+				time.Duration(14+question.Sequence*12) * time.Second,
+			),
 		}
 	}
 	return turn, nil
@@ -330,7 +460,7 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 	if _, ok := r.findQuestionLocked(turn.QuestionID); !ok {
 		return Turn{}, ErrQuestionNotFound
 	}
-	if turn.IsRetry {
+	if turn.Kind == practice.TurnKindRetry {
 		existing, ok := r.findTurnLocked(turn.ID)
 		if !ok || existing.Status != "answering" {
 			return Turn{}, ErrResourceConflict
@@ -338,7 +468,8 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 		r.replaceTurnLocked(turn)
 	} else {
 		for _, existing := range r.turns {
-			if !existing.IsRetry && existing.QuestionID == turn.QuestionID {
+			if existing.Kind != practice.TurnKindRetry &&
+				existing.QuestionID == turn.QuestionID {
 				return Turn{}, ErrResourceConflict
 			}
 		}
@@ -353,7 +484,7 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 	r.appendEventLocked("turn.completed", map[string]any{
 		"turn_id":                   turn.ID,
 		"question_id":               turn.QuestionID,
-		"respondent_participant_id": turn.RespondentID,
+		"respondent_participant_id": turn.RespondentParticipantID,
 		"turn_status":               "completed",
 		"completed_at":              turn.CompletedAt,
 	})
@@ -421,15 +552,17 @@ func (r *Runtime) createRetryTurn(retryID, originalTurnID string) (Turn, error) 
 	}
 	retryNumber := len(r.retryTurnByRequest) + 1
 	retryTurn := Turn{
-		ID:              fmt.Sprintf("turn_retry_demo_%03d", retryNumber),
-		SessionID:       original.SessionID,
-		QuestionID:      original.QuestionID,
-		RespondentID:    original.RespondentID,
-		Sequence:        original.Sequence,
-		InteractionMode: "PUSH_TO_TALK",
-		Status:          "answering",
-		IsRetry:         true,
-		CreatedAt:       r.timestamp(70 + retryNumber),
+		ID:                      fmt.Sprintf("turn_retry_demo_%03d", retryNumber),
+		SessionID:               original.SessionID,
+		QuestionID:              original.QuestionID,
+		RespondentParticipantID: original.RespondentParticipantID,
+		Sequence:                original.Sequence,
+		InteractionMode:         "PUSH_TO_TALK",
+		Status:                  "answering",
+		Kind:                    practice.TurnKindRetry,
+		CreatedAt: r.now.Add(
+			time.Duration(70+retryNumber) * time.Second,
+		),
 	}
 	r.turns = append(r.turns, retryTurn)
 	r.retryTurnByRequest[retryID] = retryTurn.ID
@@ -458,7 +591,7 @@ func (r *Runtime) eventsSnapshot() []Event {
 func (r *Runtime) effectiveTurnCountLocked() int {
 	count := 0
 	for _, turn := range r.turns {
-		if turn.Status == "completed" && !turn.IsRetry {
+		if turn.Status == "completed" && turn.Kind != practice.TurnKindRetry {
 			count++
 		}
 	}
@@ -475,119 +608,45 @@ func (r *Runtime) lastEventSequenceLocked() int {
 	return last
 }
 
-func (r *Runtime) snapshotLocked() practice.PracticeSessionSnapshot {
-	catalogSnapshot, err := r.catalog.GetCatalogSnapshot(
-		DemoScenarioDefinition,
-		1,
-		[]string{DemoRoleDefinition},
-		DemoPracticeOption,
-		1,
-	)
-	if err != nil {
-		panic(fmt.Sprintf("resolve deterministic catalog snapshot: %v", err))
+func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
+	if r.plan == nil {
+		panic("deterministic Practice Plan is required")
 	}
-	objectives := []practice.PracticeObjective{
-		{ID: "introduction", Description: "Explain current experience clearly."},
-		{ID: "system_design", Description: "Explain a technical design and its trade-offs."},
-		{ID: "project_depth", Description: "Provide evidence of individual contribution."},
-		{ID: "collaboration", Description: "Explain cross-team communication and outcomes."},
+	roles, err := r.plan.SceneSelection.SelectedRoles()
+	if err != nil || len(roles) != 1 {
+		panic("resolve deterministic Scene role")
 	}
-	roleSnapshot := practice.RoleSnapshot{
-		ID:                   catalogSnapshot.SelectedRoles[0].ID,
-		ScenarioDefinitionID: catalogSnapshot.SelectedRoles[0].ScenarioDefinitionID,
-		Type:                 catalogSnapshot.SelectedRoles[0].Type,
-		DisplayName:          catalogSnapshot.SelectedRoles[0].DisplayName,
-		Responsibilities:     catalogSnapshot.SelectedRoles[0].Responsibilities,
-		Style:                catalogSnapshot.SelectedRoles[0].Style,
-		FocusAreas:           catalogSnapshot.SelectedRoles[0].FocusAreas,
-		VoiceConfigRef:       catalogSnapshot.SelectedRoles[0].VoiceConfigRef,
-		Version:              catalogSnapshot.SelectedRoles[0].Version,
-	}
-	return practice.PracticeSessionSnapshot{
-		ID:            "snapshot_session_demo_001",
-		SessionID:     demoPracticeSession,
-		PlanRevision:  1,
-		ScenarioType:  practice.ScenarioTypeInterview,
-		ScenarioModel: practice.ScenarioModelProjectExperienceDeepDive,
-		ScenarioDefinition: practice.ScenarioDefinitionSnapshot{
-			ID:      catalogSnapshot.ScenarioDefinition.ID,
-			Type:    practice.ScenarioType(catalogSnapshot.ScenarioDefinition.Type),
-			Model:   practice.ScenarioModel(catalogSnapshot.ScenarioDefinition.Model),
-			Name:    catalogSnapshot.ScenarioDefinition.Name,
-			Version: catalogSnapshot.ScenarioDefinition.Version,
-			Status:  string(catalogSnapshot.ScenarioDefinition.Status),
-		},
-		ScenarioConfig: practice.ScenarioConfigSnapshot{
-			ID:                   catalogSnapshot.ScenarioConfig.ID,
-			ScenarioDefinitionID: catalogSnapshot.ScenarioConfig.ScenarioDefinitionID,
-			Type:                 practice.ScenarioType(catalogSnapshot.ScenarioConfig.Type),
-			Model:                practice.ScenarioModel(catalogSnapshot.ScenarioConfig.Model),
-			Version:              catalogSnapshot.ScenarioConfig.Version,
-			JobTitle:             catalogSnapshot.ScenarioConfig.JobTitle,
-			JobDescription:       catalogSnapshot.ScenarioConfig.JobDescription,
-			PromptModel: practice.ScenarioPromptModel{
-				PublicSceneBrief: catalogSnapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
-				PracticeGoal:     catalogSnapshot.ScenarioConfig.PromptModel.PracticeGoal,
-				UserRole:         catalogSnapshot.ScenarioConfig.PromptModel.UserRole,
-				AIRole:           catalogSnapshot.ScenarioConfig.PromptModel.AIRole,
-				PersonaSummary:   catalogSnapshot.ScenarioConfig.PromptModel.PersonaSummary,
-				FocusAreas: append(
-					[]string(nil),
-					catalogSnapshot.ScenarioConfig.PromptModel.FocusAreas...,
-				),
-				TurnBlueprints: append(
-					[]string(nil),
-					catalogSnapshot.ScenarioConfig.PromptModel.TurnBlueprints...,
-				),
-				SuggestedDurationSeconds: catalogSnapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds,
-			},
-		},
-		Preparation: practice.PreparationSnapshot{
-			ID:                     demoPreparationSnapshot,
-			SourceProfileID:        demoPreparationProfile,
-			SourceVersion:          1,
-			ResumeSnapshot:         "Go backend engineer; API reliability project.",
-			JobDescriptionSnapshot: "Build reliable APIs and explain engineering trade-offs.",
-			BackgroundSnapshot:     "Backend engineer preparing for an English technical interview.",
-			CreatedAt:              r.now.Add(2 * time.Second),
-		},
-		Participants: []practice.PracticeParticipant{
+	roleSnapshot := roles[0]
+	return practice.SessionSnapshot{
+		ID:             "snapshot_session_demo_001",
+		SessionID:      demoPracticeSession,
+		PlanRevision:   r.plan.Revision,
+		SceneFamily:    r.plan.SceneSelection.Scene.Family,
+		SceneModel:     r.plan.SceneSelection.Scene.Model,
+		SceneSelection: r.plan.SceneSelection,
+		Preparation:    r.plan.PreparationSnapshot,
+		Participants: []practice.Participant{
 			{
-				ID:               demoInterviewerID,
+				ID:               demoFacilitatorID,
 				SessionID:        demoPracticeSession,
-				ParticipantRole:  "INTERVIEWER",
-				SubjectRef:       practice.SubjectRef{Namespace: "mock.actor", SubjectID: "interviewer_technical"},
+				Role:             "FACILITATOR",
+				SubjectRef:       practice.SubjectRef{Namespace: "speakup.role", SubjectID: DemoRoleDefinition},
 				RoleDefinitionID: DemoRoleDefinition,
 				RoleSnapshot:     &roleSnapshot,
-				ParticipantOrder: 1,
+				Order:            1,
 			},
 			{
-				ID:               demoCandidateID,
-				SessionID:        demoPracticeSession,
-				ParticipantRole:  "CANDIDATE",
-				SubjectRef:       practice.SubjectRef{Namespace: "speakup.user", SubjectID: DemoUserID},
-				ParticipantOrder: 2,
+				ID:         demoLearnerID,
+				SessionID:  demoPracticeSession,
+				Role:       "LEARNER",
+				SubjectRef: practice.SubjectRef{Namespace: "speakup.user", SubjectID: DemoUserID},
+				Order:      2,
 			},
 		},
-		PracticeOption: practice.PracticeOptionSnapshot{
-			ID:                   catalogSnapshot.PracticeOption.ID,
-			ScenarioDefinitionID: catalogSnapshot.PracticeOption.ScenarioDefinitionID,
-			RoleDefinitionID:     catalogSnapshot.PracticeOption.RoleDefinitionID,
-			Type:                 string(catalogSnapshot.PracticeOption.Type),
-			DisplayName:          catalogSnapshot.PracticeOption.DisplayName,
-			Version:              catalogSnapshot.PracticeOption.Version,
-		},
-		SessionPolicy: practice.PracticeSessionPolicy{
-			SuggestedDurationSeconds: 900,
-			MinEffectiveTurns:        4,
-			MaxEffectiveTurns:        6,
-			CoverageCheckpointTurn:   4,
-			MaxFollowUpsPerQuestion:  1,
-			TargetObjectives:         objectives,
-			EarlyCompletionRule:      practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
-		},
-		PracticeFocuses: objectives,
-		CreatedAt:       r.now.Add(4 * time.Second),
+		SessionPolicy:      r.plan.SessionPolicy,
+		PracticeObjectives: append([]preparation.PracticeObjective(nil), r.plan.PracticeObjectives...),
+		IELTSAssignment:    r.plan.IELTSAssignment,
+		CreatedAt:          r.now.Add(4 * time.Second),
 	}
 }
 

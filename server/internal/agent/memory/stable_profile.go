@@ -82,7 +82,7 @@ func ValidStableProfileMemories(items []Memory, ownerID string) bool {
 		if !item.Valid() ||
 			item.OwnerID != ownerID ||
 			item.Scope != ScopeUser ||
-			item.MatterID != "" ||
+			item.GoalID != "" ||
 			item.Status != StatusActive {
 			return false
 		}

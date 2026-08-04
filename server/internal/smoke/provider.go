@@ -5,16 +5,15 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 )
 
 // MockProvider is the explicit external-capability boundary exercised by the
 // offline smoke flow. A production adapter can replace question generation and
-// review without taking ownership of Session, Turn, retry, or history state.
+// deterministic feedback without taking ownership of production resources.
 type MockProvider interface {
-	conversation.QuestionProvider
-	review.Provider
+	practice.QuestionProvider
+	reviewProvider
 	FailureController
 	FailureGate
 }
@@ -71,7 +70,7 @@ func (p *DeterministicProvider) CheckFailure(questionID string, answerText strin
 
 func (p *DeterministicProvider) BuildQuestion(
 	sequence int,
-) (conversation.QuestionDraft, error) {
+) (practice.QuestionDraft, error) {
 	objectives := []string{"introduction", "system_design", "project_depth", "collaboration"}
 	contents := []string{
 		"Please introduce yourself and the backend project you are most proud of.",
@@ -80,7 +79,7 @@ func (p *DeterministicProvider) BuildQuestion(
 		"How did you align the rollout with the teams that consumed the API?",
 	}
 	if sequence < 1 || sequence > len(contents) {
-		return conversation.QuestionDraft{},
+		return practice.QuestionDraft{},
 			fmt.Errorf("question sequence %d is outside the deterministic scenario", sequence)
 	}
 	questionType := "PRIMARY"
@@ -89,7 +88,7 @@ func (p *DeterministicProvider) BuildQuestion(
 		questionType = "FOLLOW_UP"
 		parentID = "question_demo_002"
 	}
-	return conversation.QuestionDraft{
+	return practice.QuestionDraft{
 		ObjectiveID:      objectives[sequence-1],
 		Type:             questionType,
 		ParentQuestionID: parentID,
@@ -98,9 +97,9 @@ func (p *DeterministicProvider) BuildQuestion(
 }
 
 func (p *DeterministicProvider) Evaluate(
-	turn review.TurnInput,
-) (review.Evaluation, error) {
-	return review.Evaluation{
+	turn turnEvaluationInput,
+) (evaluationResult, error) {
+	return evaluationResult{
 		Score:      80 + turn.EffectiveSequence,
 		Summary:    "Deterministic review completed for the submitted answer.",
 		Transcript: turn.AnswerText,

@@ -7,8 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
+
+import '../support/scene_fixtures.dart';
 
 void main() {
   group('WireAgentClient Thread restore', () {
@@ -39,12 +42,23 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
-                actions: const <Object?>[
+                handoffs: const <Object?>[
                   {
-                    'type': 'open_interview_preparation',
-                    'label': '配置并开始面试',
-                    'matter_id': _matterId,
-                    'title': 'Java Interview Practice',
+                    'type': 'confirm_practice_plan',
+                    'label': '确认并开始练习',
+                    'practice_plan_id': _practicePlanId,
+                    'plan_revision': 2,
+                    'target': 'Java Interview Practice',
+                    'scene_name': '项目经历深挖',
+                    'scene_family': 'INTERVIEW',
+                    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+                    'roles': ['面试官', '候选人'],
+                    'practice_scope': '围绕项目难点完成三轮追问',
+                    'suggested_duration_seconds': 720,
+                    'min_effective_turns': 3,
+                    'max_effective_turns': 5,
+                    'executable_status': 'ready',
+                    'confirmation_prompt': '请确认是否按此方案开始练习。',
                   },
                 ],
               ),
@@ -61,8 +75,14 @@ void main() {
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
-      expect(snapshot.messages.last.actions, hasLength(1));
-      expect(snapshot.messages.last.actions.single.matterId, _matterId);
+      expect(snapshot.messages.last.handoffs, hasLength(1));
+      final handoff = snapshot.messages.last.handoffs.single;
+      expect(handoff, isA<ConfirmPracticePlanHandoff>());
+      expect(
+        (handoff as ConfirmPracticePlanHandoff).practicePlanId,
+        _practicePlanId,
+      );
+      expect(handoff.planRevision, 2);
       expect(
         transport.calls.every(
           (call) =>
@@ -1476,7 +1496,7 @@ void main() {
   });
 
   test(
-    'owned transport sends Unicode Matter titles as UTF-8 JSON bytes',
+    'owned transport sends Unicode Goal titles as UTF-8 JSON bytes',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final received = <_LoopbackRequest>[];
@@ -1502,24 +1522,24 @@ void main() {
         late final int statusCode;
         late final Object body;
         switch ((request.method, request.uri.path)) {
-          case ('GET', '/v1/matters'):
+          case ('GET', '/v1/goals'):
             statusCode = HttpStatus.ok;
-            body = <String, Object?>{'matters': <Object?>[]};
-          case ('POST', '/v1/matters'):
+            body = <String, Object?>{'goals': <Object?>[]};
+          case ('POST', '/v1/goals'):
             statusCode = HttpStatus.created;
             body = <String, Object?>{
-              'matter_id': _matterId,
-              'title': agentScenes.first.title,
+              'goal_id': _goalId,
+              'title': testScenes.first.name,
               'status': 'active',
               'version': 1,
               'created_at': _createdAt,
               'updated_at': _updatedAt,
             };
-          case ('PUT', '/v1/agent-threads/$_threadId/active-matter'):
+          case ('PUT', '/v1/agent-threads/$_threadId/active-goal'):
             statusCode = HttpStatus.ok;
             body = <String, Object?>{
               'thread_id': _threadId,
-              'matter_id': _matterId,
+              'goal_id': _goalId,
               'active': true,
               'linked_at': _createdAt,
               'updated_at': _updatedAt,
@@ -1557,16 +1577,16 @@ void main() {
 
       final result = await client.startScene(
         threadId: _threadId,
-        scene: agentScenes.first,
+        scene: testScenes.first,
         clientOperationId: 'scene_unicode',
       );
 
       expect(
         received.map((request) => '${request.method} ${request.path}'),
         <String>[
-          'GET /v1/matters',
-          'POST /v1/matters',
-          'PUT /v1/agent-threads/$_threadId/active-matter',
+          'GET /v1/goals',
+          'POST /v1/goals',
+          'PUT /v1/agent-threads/$_threadId/active-goal',
         ],
       );
       final createRequest = received[1];
@@ -1581,51 +1601,50 @@ void main() {
       expect(
         createRequest.bodyBytes,
         utf8.encode(
-          jsonEncode(<String, Object?>{'title': agentScenes.first.title}),
+          jsonEncode(<String, Object?>{'title': testScenes.first.name}),
         ),
       );
       expect(
         jsonDecode(utf8.decode(createRequest.bodyBytes)),
         <String, Object?>{'title': '英文自我介绍'},
       );
-      expect(result.activeMatter.scene.title, '英文自我介绍');
-      expect(result.activeMatter.id, _matterId);
+      expect(result.title, '英文自我介绍');
+      expect(result.id, _goalId);
     },
   );
 
   test(
-    'new catalog activation never reuses an existing same-title Matter',
+    'new catalog activation never reuses an existing same-title Goal',
     () async {
-      const selectedScene = AgentScene(
+      final selectedScene = testScene(
         id: 'catalog-scene-new',
-        title: 'Technical interview',
-        description: 'A distinct catalog scenario with the same title.',
+        name: 'Technical interview',
       );
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(HttpStatus.ok, {
-            'matters': [_matterJson(id: _matterId, title: selectedScene.title)],
+            'goals': [_goalJson(id: _goalId, title: selectedScene.name)],
           }),
         ),
         _Step(
           method: 'POST',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(
             HttpStatus.created,
-            _matterJson(id: _matterBId, title: selectedScene.title),
+            _goalJson(id: _goalBId, title: selectedScene.name),
           ),
         ),
         _Step(
           method: 'PUT',
-          path: '/v1/agent-threads/$_threadId/active-matter',
+          path: '/v1/agent-threads/$_threadId/active-goal',
           verify: (call) {
-            expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+            expect(jsonDecode(call.body!), {'goal_id': _goalBId});
           },
           response: _jsonResponse(
             HttpStatus.ok,
-            _matterLinkJson(matterId: _matterBId),
+            _goalLinkJson(goalId: _goalBId),
           ),
         ),
       ]);
@@ -1637,81 +1656,75 @@ void main() {
         clientOperationId: 'scene_select',
       );
 
-      expect(result.activeMatter.id, _matterBId);
-      expect(result.activeMatter.scene.id, selectedScene.id);
+      expect(result.id, _goalBId);
+      expect(result.title, selectedScene.name);
       transport.expectDone();
     },
   );
 
-  test('selects an existing Matter without creating a duplicate', () async {
+  test('selects an existing Goal without creating a duplicate', () async {
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
-        path: '/v1/matters/$_matterId',
+        path: '/v1/goals/$_goalId',
         response: _jsonResponse(
           HttpStatus.ok,
-          _matterJson(id: _matterId, title: 'Saved interview'),
+          _goalJson(id: _goalId, title: 'Saved interview'),
         ),
       ),
       _Step(
         method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-matter',
+        path: '/v1/agent-threads/$_threadId/active-goal',
         verify: (call) {
-          expect(jsonDecode(call.body!), {'matter_id': _matterId});
+          expect(jsonDecode(call.body!), {'goal_id': _goalId});
         },
-        response: _jsonResponse(
-          HttpStatus.ok,
-          _matterLinkJson(matterId: _matterId),
-        ),
+        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalId)),
       ),
     ]);
     final harness = _Harness(transport);
 
-    final matter = await harness.client.selectExistingMatter(
+    final goal = await harness.client.selectExistingGoal(
       threadId: _threadId,
-      matterId: _matterId,
+      goalId: _goalId,
     );
 
-    expect(matter.id, _matterId);
-    expect(matter.scene.title, 'Saved interview');
+    expect(goal.id, _goalId);
+    expect(goal.title, 'Saved interview');
     transport.expectDone();
   });
 
-  test('recovers exactly one Matter after an ambiguous create', () async {
-    final scene = agentScenes.first;
+  test('recovers exactly one Goal after an ambiguous create', () async {
+    final scene = testScenes.first;
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [_matterJson(id: _matterId, title: scene.title)],
+          'goals': [_goalJson(id: _goalId, title: scene.name)],
         }),
       ),
       _Step(
         method: 'POST',
-        path: '/v1/matters',
+        path: '/v1/goals',
         error: const SocketException('response lost'),
       ),
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [
-            _matterJson(id: _matterId, title: scene.title),
-            _matterJson(id: _matterBId, title: scene.title),
+          'goals': [
+            _goalJson(id: _goalId, title: scene.name),
+            _goalJson(id: _goalBId, title: scene.name),
           ],
         }),
       ),
       _Step(
         method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-matter',
+        path: '/v1/agent-threads/$_threadId/active-goal',
         verify: (call) {
-          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
         },
-        response: _jsonResponse(
-          HttpStatus.ok,
-          _matterLinkJson(matterId: _matterBId),
-        ),
+        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
       ),
     ]);
     final harness = _Harness(transport);
@@ -1737,51 +1750,48 @@ void main() {
       clientOperationId: operationId,
     );
 
-    expect(result.activeMatter.id, _matterBId);
+    expect(result.id, _goalBId);
     expect(
       transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/matters',
+        (call) => call.method == 'POST' && call.path == '/v1/goals',
       ),
       hasLength(1),
     );
     transport.expectDone();
   });
 
-  test('recovers a committed Matter after a malformed 201 response', () async {
-    final scene = agentScenes.first;
+  test('recovers a committed Goal after a malformed 201 response', () async {
+    final scene = testScenes.first;
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [_matterJson(id: _matterId, title: scene.title)],
+          'goals': [_goalJson(id: _goalId, title: scene.name)],
         }),
       ),
       _Step(
         method: 'POST',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
       ),
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [
-            _matterJson(id: _matterId, title: scene.title),
-            _matterJson(id: _matterBId, title: scene.title),
+          'goals': [
+            _goalJson(id: _goalId, title: scene.name),
+            _goalJson(id: _goalBId, title: scene.name),
           ],
         }),
       ),
       _Step(
         method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-matter',
+        path: '/v1/agent-threads/$_threadId/active-goal',
         verify: (call) {
-          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
         },
-        response: _jsonResponse(
-          HttpStatus.ok,
-          _matterLinkJson(matterId: _matterBId),
-        ),
+        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
       ),
     ]);
     final harness = _Harness(transport);
@@ -1807,10 +1817,10 @@ void main() {
       clientOperationId: operationId,
     );
 
-    expect(result.activeMatter.id, _matterBId);
+    expect(result.id, _goalBId);
     expect(
       transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/matters',
+        (call) => call.method == 'POST' && call.path == '/v1/goals',
       ),
       hasLength(1),
     );
@@ -1818,49 +1828,49 @@ void main() {
   });
 
   test(
-    'after client restart creates fresh Matter instead of guessing a prior commit',
+    'after client restart creates fresh Goal instead of guessing a prior commit',
     () async {
-      final scene = agentScenes.first;
+      final scene = testScenes.first;
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(HttpStatus.ok, {
-            'matters': [_matterJson(id: _matterId, title: scene.title)],
+            'goals': [_goalJson(id: _goalId, title: scene.name)],
           }),
         ),
         _Step(
           method: 'POST',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
         ),
         _Step(
           method: 'GET',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(HttpStatus.ok, {
-            'matters': [
-              _matterJson(id: _matterId, title: scene.title),
-              _matterJson(id: _matterBId, title: scene.title),
+            'goals': [
+              _goalJson(id: _goalId, title: scene.name),
+              _goalJson(id: _goalBId, title: scene.name),
             ],
           }),
         ),
         _Step(
           method: 'POST',
-          path: '/v1/matters',
+          path: '/v1/goals',
           response: _jsonResponse(
             HttpStatus.created,
-            _matterJson(id: _matterCId, title: scene.title),
+            _goalJson(id: _goalCId, title: scene.name),
           ),
         ),
         _Step(
           method: 'PUT',
-          path: '/v1/agent-threads/$_threadId/active-matter',
+          path: '/v1/agent-threads/$_threadId/active-goal',
           verify: (call) {
-            expect(jsonDecode(call.body!), {'matter_id': _matterCId});
+            expect(jsonDecode(call.body!), {'goal_id': _goalCId});
           },
           response: _jsonResponse(
             HttpStatus.ok,
-            _matterLinkJson(matterId: _matterCId),
+            _goalLinkJson(goalId: _goalCId),
           ),
         ),
       ]);
@@ -1889,10 +1899,10 @@ void main() {
         clientOperationId: operationId,
       );
 
-      expect(result.activeMatter.id, _matterCId);
+      expect(result.id, _goalCId);
       expect(
         transport.calls.where(
-          (call) => call.method == 'POST' && call.path == '/v1/matters',
+          (call) => call.method == 'POST' && call.path == '/v1/goals',
         ),
         hasLength(2),
       );
@@ -1900,29 +1910,29 @@ void main() {
     },
   );
 
-  test('rejects multiple new Matters after an ambiguous create', () async {
-    final scene = agentScenes.first;
+  test('rejects multiple new Goals after an ambiguous create', () async {
+    final scene = testScenes.first;
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [_matterJson(id: _matterId, title: scene.title)],
+          'goals': [_goalJson(id: _goalId, title: scene.name)],
         }),
       ),
       _Step(
         method: 'POST',
-        path: '/v1/matters',
+        path: '/v1/goals',
         error: const SocketException('response lost'),
       ),
       _Step(
         method: 'GET',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(HttpStatus.ok, {
-          'matters': [
-            _matterJson(id: _matterId, title: scene.title),
-            _matterJson(id: _matterBId, title: scene.title),
-            _matterJson(id: _matterCId, title: scene.title),
+          'goals': [
+            _goalJson(id: _goalId, title: scene.name),
+            _goalJson(id: _goalBId, title: scene.name),
+            _goalJson(id: _goalCId, title: scene.name),
           ],
         }),
       ),
@@ -1967,37 +1977,34 @@ void main() {
     transport.expectDone();
   });
 
-  test('retries the Matter link with the same created Matter ID', () async {
-    final scene = agentScenes.first;
+  test('retries the Goal link with the same created Goal ID', () async {
+    final scene = testScenes.first;
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
-        path: '/v1/matters',
-        response: _jsonResponse(HttpStatus.ok, {'matters': <Object?>[]}),
+        path: '/v1/goals',
+        response: _jsonResponse(HttpStatus.ok, {'goals': <Object?>[]}),
       ),
       _Step(
         method: 'POST',
-        path: '/v1/matters',
+        path: '/v1/goals',
         response: _jsonResponse(
           HttpStatus.created,
-          _matterJson(id: _matterBId, title: scene.title),
+          _goalJson(id: _goalBId, title: scene.name),
         ),
       ),
       _Step(
         method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-matter',
+        path: '/v1/agent-threads/$_threadId/active-goal',
         error: const SocketException('link response lost'),
       ),
       _Step(
         method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-matter',
+        path: '/v1/agent-threads/$_threadId/active-goal',
         verify: (call) {
-          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
         },
-        response: _jsonResponse(
-          HttpStatus.ok,
-          _matterLinkJson(matterId: _matterBId),
-        ),
+        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
       ),
     ]);
     final harness = _Harness(transport);
@@ -2023,22 +2030,22 @@ void main() {
       clientOperationId: operationId,
     );
 
-    expect(result.activeMatter.id, _matterBId);
+    expect(result.id, _goalBId);
     expect(
       transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/matters',
+        (call) => call.method == 'POST' && call.path == '/v1/goals',
       ),
       hasLength(1),
     );
     transport.expectDone();
   });
 
-  test('logout fences and clears an in-flight Matter activation', () async {
+  test('logout fences and clears an in-flight Goal activation', () async {
     final transport = _ControlledTransport();
     final initialList = transport.enqueue();
     final staleCreate = transport.enqueue();
     final harness = _Harness(transport);
-    final scene = agentScenes.first;
+    final scene = testScenes.first;
     const operationId = 'scene_logout_race';
 
     final staleStart = harness.client.startScene(
@@ -2047,16 +2054,14 @@ void main() {
       clientOperationId: operationId,
     );
     await transport.waitForCalls(1);
-    initialList.complete(
-      _jsonResponse(HttpStatus.ok, {'matters': <Object?>[]}),
-    );
+    initialList.complete(_jsonResponse(HttpStatus.ok, {'goals': <Object?>[]}));
     await transport.waitForCalls(2);
 
     final cleanup = harness.client.clearAccountState();
     staleCreate.complete(
       _jsonResponse(
         HttpStatus.created,
-        _matterJson(id: _matterId, title: scene.title),
+        _goalJson(id: _goalId, title: scene.name),
       ),
     );
     await expectLater(
@@ -2080,24 +2085,24 @@ void main() {
     await transport.waitForCalls(3);
     freshList.complete(
       _jsonResponse(HttpStatus.ok, {
-        'matters': [_matterJson(id: _matterId, title: scene.title)],
+        'goals': [_goalJson(id: _goalId, title: scene.name)],
       }),
     );
     await transport.waitForCalls(4);
     freshCreate.complete(
       _jsonResponse(
         HttpStatus.created,
-        _matterJson(id: _matterBId, title: scene.title),
+        _goalJson(id: _goalBId, title: scene.name),
       ),
     );
     await transport.waitForCalls(5);
     freshLink.complete(
-      _jsonResponse(HttpStatus.ok, _matterLinkJson(matterId: _matterBId)),
+      _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
     );
 
     final result = await freshStart;
-    expect(result.activeMatter.id, _matterBId);
-    expect(jsonDecode(transport.calls.last.body!), {'matter_id': _matterBId});
+    expect(result.id, _goalBId);
+    expect(jsonDecode(transport.calls.last.body!), {'goal_id': _goalBId});
     expect(
       transport.calls.last.headers[HttpHeaders.authorizationHeader],
       'Bearer sess_account-b',
@@ -2297,24 +2302,24 @@ Map<String, Object?> _threadJson({
   String createdAt = _createdAt,
   String updatedAt = _updatedAt,
   String? title,
-  String? activeMatterId,
+  String? activeGoalId,
 }) {
   return {
     'thread_id': id,
     'title': title,
-    'active_matter_id': ?activeMatterId,
+    'active_goal_id': ?activeGoalId,
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
 }
 
-Map<String, Object?> _matterJson({
+Map<String, Object?> _goalJson({
   required String id,
   required String title,
   String status = 'active',
 }) {
   return {
-    'matter_id': id,
+    'goal_id': id,
     'title': title,
     'status': status,
     'version': 1,
@@ -2323,10 +2328,10 @@ Map<String, Object?> _matterJson({
   };
 }
 
-Map<String, Object?> _matterLinkJson({required String matterId}) {
+Map<String, Object?> _goalLinkJson({required String goalId}) {
   return {
     'thread_id': _threadId,
-    'matter_id': matterId,
+    'goal_id': goalId,
     'active': true,
     'linked_at': _createdAt,
     'updated_at': _updatedAt,
@@ -2340,7 +2345,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
-  List<Object?>? actions,
+  List<Object?>? handoffs,
   String? modality,
   List<Object?>? images,
 }) {
@@ -2351,7 +2356,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
-    'actions': ?actions,
+    'handoffs': ?handoffs,
     'modality': ?modality,
     'images': ?images,
     'content': content,
@@ -2415,9 +2420,10 @@ IdentityHttpResponse _jsonResponse(int statusCode, Object? body) {
 }
 
 const _threadId = '10000000-0000-4000-8000-000000000001';
-const _matterId = '40000000-0000-4000-8000-000000000001';
-const _matterBId = '40000000-0000-4000-8000-000000000002';
-const _matterCId = '40000000-0000-4000-8000-000000000003';
+const _practicePlanId = '50000000-0000-4000-8000-000000000001';
+const _goalId = '40000000-0000-4000-8000-000000000001';
+const _goalBId = '40000000-0000-4000-8000-000000000002';
+const _goalCId = '40000000-0000-4000-8000-000000000003';
 const _threadBId = '10000000-0000-4000-8000-000000000002';
 const _userMessageId = '20000000-0000-4000-8000-000000000001';
 const _assistantMessageId = '20000000-0000-4000-8000-000000000002';

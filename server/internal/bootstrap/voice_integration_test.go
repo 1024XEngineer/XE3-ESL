@@ -21,16 +21,15 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -42,7 +41,7 @@ var testReviewHistoryCursorKey = []byte(
 func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
 	text := &followUpVoiceTextGenerator{}
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -56,12 +55,11 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 			Synthesizer: fake.NewFailingSpeechSynthesizer(
 				fmt.Errorf("tts unavailable"),
 			),
-			TemporaryAudio:          newVoiceTestVault(t),
-			ObjectStore:             newVoiceObjectStore(),
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+			TemporaryAudio:         newVoiceTestVault(t),
+			ObjectStore:            newVoiceObjectStore(),
+			AudioStagedTTL:         time.Hour,
+			ASRLease:               5 * time.Second,
+			ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 		},
 	)
 
@@ -81,11 +79,11 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+formalContext.ThreadID+
-			"/voice-practice-sessions",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-activation",
 		"",
 		"start-follow-up-session",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	primary := state["current_question"].(map[string]any)
 	if primary["question_type"] != "PRIMARY" {
@@ -134,8 +132,8 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		`SELECT question.question_type,
 		        turn.counts_toward_effective_turn_limit,
 		        turn.effective_turns
-		 FROM conversation_confirmed_turns AS turn
-		 JOIN conversation_questions AS question
+		 FROM practice_turns AS turn
+		 JOIN practice_questions AS question
 		   ON question.owner_user_id = turn.owner_user_id
 		  AND question.question_id = turn.question_id
 		 WHERE turn.practice_session_id = $1
@@ -165,7 +163,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -175,35 +173,34 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		catalog,
 		text,
 		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          vault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+			Recognizer:             recognizer,
+			Synthesizer:            synthesizer,
+			TemporaryAudio:         vault,
+			ObjectStore:            objects,
+			AudioStagedTTL:         time.Hour,
+			ASRLease:               5 * time.Second,
+			ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 		},
 	)
 
 	token := registerAndLoginVoiceUser(t, server.URL, "voice-a@example.com")
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Customer renewal"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -212,29 +209,29 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		"primary",
 	)
 
-	startPath := "/v1/agent-threads/" + threadID +
-		"/voice-practice-sessions"
-	archivedMatterID := voiceJSONRequest(
+	startPath := "/v1/practice-sessions/" + formalContext.SessionID +
+		"/voice-activation"
+	archivedGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Archived scenario"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	archivedThreadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, archivedMatterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, archivedGoalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -243,7 +240,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		archivedThreadID,
-		archivedMatterID,
+		archivedGoalID,
 		"archived",
 	)
 	voiceJSONRequest(
@@ -251,7 +248,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPatch,
-		"/v1/matters/"+archivedMatterID,
+		"/v1/goals/"+archivedGoalID,
 		`{"status":"archived","expected_version":1}`,
 		"",
 		http.StatusOK,
@@ -260,8 +257,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+archivedThreadID+
-			"/voice-practice-sessions",
+		"/v1/practice-sessions/"+archivedContext.SessionID+
+			"/voice-activation",
 		nil,
 		"start-archived-session",
 		"",
@@ -270,32 +267,26 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = archivedStart.Body.Close()
-	if archivedStart.StatusCode != http.StatusNotFound {
-		t.Fatalf("archived Matter Start status = %d", archivedStart.StatusCode)
+	if archivedStart.StatusCode != http.StatusOK {
+		t.Fatalf("frozen Session Start status = %d", archivedStart.StatusCode)
 	}
-	assertNoLegacyVoiceSession(
-		t,
-		pool,
-		archivedContext.SessionID,
-		archivedThreadID,
-	)
-	replayMatterID := voiceJSONRequest(
+	replayGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Replay after archive"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	replayThreadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, replayMatterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, replayGoalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -304,11 +295,11 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		replayThreadID,
-		replayMatterID,
+		replayGoalID,
 		"archive-replay",
 	)
-	replayPath := "/v1/agent-threads/" + replayThreadID +
-		"/voice-practice-sessions"
+	replayPath := "/v1/practice-sessions/" + replayContext.SessionID +
+		"/voice-activation"
 	firstReplay := voiceJSONRequest(
 		t,
 		server.URL,
@@ -317,7 +308,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		replayPath,
 		"",
 		"start-replay-after-archive",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if firstReplay["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
@@ -330,7 +321,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPatch,
-		"/v1/matters/"+replayMatterID,
+		"/v1/goals/"+replayGoalID,
 		`{"status":"archived","expected_version":1}`,
 		"",
 		http.StatusOK,
@@ -343,11 +334,11 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		replayPath,
 		"",
 		"start-replay-after-archive",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedAfterArchive["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
-			"archived Matter replay lost original Session: %#v",
+			"archived Goal replay lost original Session: %#v",
 			replayedAfterArchive,
 		)
 	}
@@ -359,16 +350,19 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	sessionID := state["practice_session_id"].(string)
 	if sessionID != formalContext.SessionID ||
-		state["practice_plan_id"] != formalContext.PlanID ||
-		state["matter"].(map[string]any)["matter_id"] != matterID ||
-		state["thread_id"] != threadID {
+		state["practice_plan_id"] != formalContext.PlanID {
 		t.Fatalf("voice Session lost formal Context binding: %#v", state)
 	}
-	assertNoLegacyVoiceSession(t, pool, sessionID, threadID)
+	if _, found := state["goal"]; found {
+		t.Fatalf("voice state exposed Goal: %#v", state)
+	}
+	if _, found := state["thread_id"]; found {
+		t.Fatalf("voice state exposed Thread: %#v", state)
+	}
 	replayedStart := voiceJSONRequest(
 		t,
 		server.URL,
@@ -377,32 +371,32 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedStart["practice_session_id"] != sessionID {
 		t.Fatal("same Start idempotency key created a different Session")
 	}
-	nextMatterID := voiceJSONRequest(
+	nextGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Leadership transition"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPut,
-		"/v1/agent-threads/"+threadID+"/active-matter",
-		fmt.Sprintf(`{"matter_id":%q}`, nextMatterID),
+		"/v1/agent-threads/"+threadID+"/active-goal",
+		fmt.Sprintf(`{"goal_id":%q}`, nextGoalID),
 		"",
 		http.StatusOK,
 	)
-	replayedAfterMatterSwitch := voiceJSONRequest(
+	replayedAfterGoalSwitch := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
@@ -410,32 +404,28 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
-	if replayedAfterMatterSwitch["practice_session_id"] != sessionID ||
-		replayedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
-			matterID {
+	if replayedAfterGoalSwitch["practice_session_id"] != sessionID {
 		t.Fatalf(
-			"Start replay after active Matter switch = %#v",
-			replayedAfterMatterSwitch,
+			"Start replay after active Goal switch = %#v",
+			replayedAfterGoalSwitch,
 		)
 	}
-	resumedAfterMatterSwitch := voiceJSONRequest(
+	resumedAfterGoalSwitch := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
 	)
-	if resumedAfterMatterSwitch["practice_session_id"] != sessionID ||
-		resumedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
-			matterID {
+	if resumedAfterGoalSwitch["practice_session_id"] != sessionID {
 		t.Fatalf(
-			"GET recovery reinterpreted active Matter: %#v",
-			resumedAfterMatterSwitch,
+			"GET recovery reinterpreted active Goal: %#v",
+			resumedAfterGoalSwitch,
 		)
 	}
 	conflictingStart, err := voiceRawRequest(
@@ -451,7 +441,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = conflictingStart.Body.Close()
-	if conflictingStart.StatusCode != http.StatusNotFound {
+	if conflictingStart.StatusCode != http.StatusOK {
 		t.Fatalf(
 			"new key without exact Context status = %d",
 			conflictingStart.StatusCode,
@@ -462,8 +452,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPut,
-		"/v1/agent-threads/"+threadID+"/active-matter",
-		fmt.Sprintf(`{"matter_id":%q}`, matterID),
+		"/v1/agent-threads/"+threadID+"/active-goal",
+		fmt.Sprintf(`{"goal_id":%q}`, goalID),
 		"",
 		http.StatusOK,
 	)
@@ -490,7 +480,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -575,7 +565,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -681,28 +671,35 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
 	}
-	completedState := waitForVoicePracticeState(
+	completedState := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
-		threadID,
-		func(state map[string]any) bool {
-			sessionReview, ok := state["review"].(map[string]any)
-			return ok && sessionReview["status"] == "completed"
-		},
+		http.MethodGet,
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
+		"",
+		"",
+		http.StatusOK,
 	)
-	completedReview := completedState["review"].(map[string]any)
-	reviewID, _ := completedReview["review_id"].(string)
+	if completedState["effective_turns"] != float64(3) ||
+		completedState["session_completed"] != true {
+		t.Fatalf("completed Practice state = %#v", completedState)
+	}
+	if _, present := completedState["review"]; present {
+		t.Fatalf("Practice state leaked Review: %#v", completedState)
+	}
 	completedTurn := completedState["current_turn"].(map[string]any)
-	if reviewID == "" || completedTurn["review_id"] != reviewID {
-		t.Fatalf(
-			"async Review was not linked to completed Turn: %#v",
-			completedState,
-		)
+	if completedTurn["turn_id"] != thirdTurnID {
+		t.Fatalf("completed Practice lost final Turn: %#v", completedState)
 	}
-	if text.ReviewCalls() != 1 {
-		t.Fatalf("Review generator calls = %d, want 1", text.ReviewCalls())
+	if _, present := completedTurn["review_id"]; present {
+		t.Fatalf("Practice Turn leaked Review identity: %#v", completedTurn)
 	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+	if text.ReviewCalls() != 0 {
+		t.Fatalf("Practice confirmation invoked Review %d times", text.ReviewCalls())
+	}
+
 	replayedAfterCompletion := voiceJSONRequest(
 		t,
 		server.URL,
@@ -711,228 +708,21 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedAfterCompletion["practice_session_id"] != sessionID ||
 		replayedAfterCompletion["session_completed"] != true {
-		t.Fatalf(
-			"completed Start replay did not return original Session: %#v",
-			replayedAfterCompletion,
-		)
+		t.Fatalf("completed Start replay did not return original Session: %#v", replayedAfterCompletion)
 	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
 
-	reviewResult := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+reviewID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	if reviewResult["status"] != "completed" {
-		t.Fatalf("formal Review not completed: %#v", reviewResult)
-	}
-	if reviewResult["implementation_version"] != voiceReviewImplementation ||
-		reviewResult["source_turn_id"] != thirdTurnID ||
-		reviewResult["source_turn_version"] !=
-			"conversation-turn:evidence-v1" {
-		t.Fatalf("formal Review lost source identity: %#v", reviewResult)
-	}
-	var reviewOwnerID string
-	var reviewCreatedAt time.Time
-	if err := pool.QueryRow(context.Background(), `
-		SELECT owner_user_id::text, created_at
-		FROM reviews
-		WHERE id = $1
-	`, reviewID).Scan(&reviewOwnerID, &reviewCreatedAt); err != nil {
-		t.Fatalf("read formal Review history key: %v", err)
-	}
-	olderHistoryReview := completeBootstrapHistoryReview(
-		t,
-		pool,
-		reviewOwnerID,
-		"restart-cursor-older",
-	)
-	legacyHistorySummary := strings.Repeat("legacy summary ", 1100)
-	legacyHistoryResult := *olderHistoryReview.Result
-	legacyHistoryResult.Summary = legacyHistorySummary
-	legacyHistoryPayload, err := json.Marshal(legacyHistoryResult)
-	if err != nil {
-		t.Fatalf("marshal legacy HTTP Review: %v", err)
-	}
-	if len(legacyHistoryPayload) <= 12*1024 {
-		t.Fatalf(
-			"legacy HTTP Review bytes = %d, want over 12 KiB",
-			len(legacyHistoryPayload),
-		)
-	}
-	if _, err := pool.Exec(
-		context.Background(),
-		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
-		legacyHistoryPayload,
-		olderHistoryReview.ID,
-	); err != nil {
-		t.Fatalf("stage legacy HTTP Review: %v", err)
-	}
-	legacyHistoryItem := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+olderHistoryReview.ID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	legacyHistoryHTTPResult, ok :=
-		legacyHistoryItem["result"].(map[string]any)
-	if !ok ||
-		legacyHistoryHTTPResult["summary"] != legacyHistorySummary {
-		t.Fatalf(
-			"legacy HTTP Review result = %#v",
-			legacyHistoryItem,
-		)
-	}
-	oldestHistoryReview := completeBootstrapHistoryReview(
-		t,
-		pool,
-		reviewOwnerID,
-		"restart-cursor-oldest",
-	)
-	for index, item := range []review.FormalReview{
-		olderHistoryReview,
-		oldestHistoryReview,
-	} {
-		if _, err := pool.Exec(
-			context.Background(),
-			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
-			reviewCreatedAt.Add(-time.Duration(index+1)*time.Minute),
-			item.ID,
-		); err != nil {
-			t.Fatalf("set restart cursor Review %d key: %v", index, err)
-		}
-	}
-	historyResult := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1",
-		"",
-		"",
-		http.StatusOK,
-	)
-	historyItems, ok := historyResult["items"].([]any)
-	if !ok || len(historyItems) != 1 {
-		t.Fatalf("formal Review history items = %#v, want one", historyResult)
-	}
-	historyReview, ok := historyItems[0].(map[string]any)
-	if !ok || historyReview["review_id"] != reviewID ||
-		historyReview["source_turn_id"] != thirdTurnID {
-		t.Fatalf("formal Review history lost source identity: %#v", historyResult)
-	}
-	restartHistoryCursor, ok := historyResult["next_cursor"].(string)
-	if !ok || restartHistoryCursor == "" {
-		t.Fatalf(
-			"formal Review history omitted restart cursor: %#v",
-			historyResult,
-		)
-	}
-	var evidenceCount int
-	var matchedEvidenceCount int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT
-		    count(*)::int,
-		    count(*) FILTER (
-		        WHERE evidence.source_type = 'conversation_turn'
-		          AND evidence.target_kind IN ('conclusion', 'feedback_item')
-		          AND evidence.field = 'answer_text'
-		          AND evidence.anchor_kind = 'exact_quote'
-		          AND evidence.quote <> ''
-		          AND evidence.start_utf8_byte >= 0
-		          AND evidence.end_utf8_byte > evidence.start_utf8_byte
-		          AND evidence.source_checksum ~ '^[0-9a-f]{64}$'
-		          AND evidence.evidence_snapshot ? 'question_id'
-		          AND evidence.evidence_snapshot ? 'answer_text'
-		          AND EXISTS (
-		            SELECT 1
-		            FROM conversation_confirmed_turns turn
-		            WHERE turn.owner_user_id = evidence.owner_user_id
-		              AND turn.turn_id = evidence.source_id
-		              AND turn.practice_session_id = $2
-		              AND evidence.source_version =
-		                'conversation-turn:evidence-v' ||
-		                turn.evidence_version::text
-		          )
-		    )::int
-		 FROM review_evidence evidence
-		 WHERE evidence.review_id = $1`,
-		reviewID,
-		sessionID,
-	).Scan(&evidenceCount, &matchedEvidenceCount); err != nil {
-		t.Fatalf("read formal Review evidence: %v", err)
-	}
-	const expectedEvidenceCount = 6
-	if evidenceCount != expectedEvidenceCount ||
-		matchedEvidenceCount != expectedEvidenceCount {
-		t.Fatalf(
-			"formal Review evidence = %d/%d, want %d matched",
-			matchedEvidenceCount,
-			evidenceCount,
-			expectedEvidenceCount,
-		)
-	}
-	playback := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if !strings.HasPrefix(
-		playback["playback_url"].(string),
-		"https://private-audio.example.invalid/",
-	) {
+	playback := voiceJSONRequest(t, server.URL, token, http.MethodGet, "/v1/audio-assets/"+completedAudioAssetID+"/playback", "", "", http.StatusOK)
+	if !strings.HasPrefix(playback["playback_url"].(string), "https://private-audio.example.invalid/") {
 		t.Fatalf("unexpected protected playback capability: %#v", playback)
 	}
-	otherToken := registerAndLoginVoiceUser(
-		t,
-		server.URL,
-		"voice-b@example.com",
-	)
-	otherHistory := voiceJSONRequest(
-		t,
-		server.URL,
-		otherToken,
-		http.MethodGet,
-		"/v1/formal-reviews",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if items, ok := otherHistory["items"].([]any); !ok || len(items) != 0 {
-		t.Fatalf("foreign user history = %#v, want empty", otherHistory)
-	}
-	for _, path := range []string{
-		"/v1/agent-threads/" + threadID + "/voice-practice-session",
-		"/v1/formal-reviews/" + reviewID,
-		"/v1/audio-assets/" + completedAudioAssetID + "/playback",
-	} {
-		response, requestErr := voiceRawRequest(
-			server.URL,
-			otherToken,
-			http.MethodGet,
-			path,
-			nil,
-			"",
-			"",
-		)
+	otherToken := registerAndLoginVoiceUser(t, server.URL, "voice-b@example.com")
+	for _, path := range []string{"/v1/practice-sessions/" + sessionID + "/voice-state", "/v1/audio-assets/" + completedAudioAssetID + "/playback"} {
+		response, requestErr := voiceRawRequest(server.URL, otherToken, http.MethodGet, path, nil, "", "")
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
@@ -947,513 +737,52 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatalf("close first audio vault: %v", err)
 	}
 	restartedVault := newVoiceTestVault(t)
-	restartedServer := newVoiceProductionIntegrationServer(
-		t,
-		pool,
-		catalog,
-		text,
-		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          restartedVault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
-		},
-	)
-	recovered := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if recovered["practice_session_id"] != sessionID ||
-		recovered["effective_turns"] != float64(3) ||
-		recovered["session_completed"] != true {
+	restartedServer := newVoiceProductionIntegrationServer(t, pool, catalog, text, VoiceConfiguration{
+		Recognizer: recognizer, Synthesizer: synthesizer, TemporaryAudio: restartedVault,
+		ObjectStore: objects, AudioStagedTTL: time.Hour, ASRLease: 5 * time.Second,
+		ReviewHistoryCursorKey: testReviewHistoryCursorKey,
+	})
+	recovered := voiceJSONRequest(t, restartedServer.URL, token, http.MethodGet, "/v1/practice-sessions/"+sessionID+"/voice-state", "", "", http.StatusOK)
+	if recovered["practice_session_id"] != sessionID || recovered["effective_turns"] != float64(3) || recovered["session_completed"] != true {
 		t.Fatalf("restart recovery failed: %#v", recovered)
 	}
-	recoveredReview := recovered["review"].(map[string]any)
-	if recoveredReview["review_id"] != reviewID {
-		t.Fatalf("restart lost Review checkpoint: %#v", recovered)
-	}
-	recoveredFormalReview := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+reviewID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	if recoveredFormalReview["review_id"] != reviewID ||
-		recoveredFormalReview["source_turn_id"] != thirdTurnID ||
-		recoveredFormalReview["source_turn_version"] !=
-			reviewResult["source_turn_version"] ||
-		recoveredFormalReview["result"] == nil {
-		t.Fatalf(
-			"restart lost formal Review evidence identity: %#v",
-			recoveredFormalReview,
-		)
-	}
-	recoveredHistory := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews",
-		"",
-		"",
-		http.StatusOK,
-	)
-	recoveredHistoryItems, ok := recoveredHistory["items"].([]any)
-	if !ok || len(recoveredHistoryItems) != 3 {
-		t.Fatalf(
-			"restart lost formal Review history: %#v",
-			recoveredHistory,
-		)
-	}
-	recoveredHistoryReview, ok :=
-		recoveredHistoryItems[0].(map[string]any)
-	if !ok || recoveredHistoryReview["review_id"] != reviewID ||
-		recoveredHistoryReview["source_turn_id"] != thirdTurnID {
-		t.Fatalf(
-			"restart changed formal Review history: %#v",
-			recoveredHistory,
-		)
-	}
-	for index, reviewID := range []string{
-		olderHistoryReview.ID,
-		oldestHistoryReview.ID,
-	} {
-		item, ok := recoveredHistoryItems[index+1].(map[string]any)
-		if !ok || item["review_id"] != reviewID {
-			t.Fatalf(
-				"restart history item %d = %#v, want %s",
-				index+1,
-				recoveredHistoryItems[index+1],
-				reviewID,
-			)
-		}
-	}
-	restartedContinuation := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1&cursor="+
-			url.QueryEscape(restartHistoryCursor),
-		"",
-		"",
-		http.StatusOK,
-	)
-	continuationItems, ok :=
-		restartedContinuation["items"].([]any)
-	if !ok || len(continuationItems) != 1 {
-		t.Fatalf(
-			"restart cursor continuation = %#v",
-			restartedContinuation,
-		)
-	}
-	continuedReview, ok := continuationItems[0].(map[string]any)
-	if !ok ||
-		continuedReview["review_id"] != olderHistoryReview.ID {
-		t.Fatalf(
-			"restart cursor first continuation item = %#v",
-			restartedContinuation,
-		)
-	}
-	continuedResult, ok := continuedReview["result"].(map[string]any)
-	if !ok || continuedResult["summary"] != legacyHistorySummary {
-		t.Fatalf(
-			"restart cursor lost legacy Review result: %#v",
-			restartedContinuation,
-		)
-	}
-	restartedTailCursor, ok :=
-		restartedContinuation["next_cursor"].(string)
-	if !ok || restartedTailCursor == "" {
-		t.Fatalf(
-			"restart cursor first continuation omitted tail: %#v",
-			restartedContinuation,
-		)
-	}
-	restartedTail := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1&cursor="+
-			url.QueryEscape(restartedTailCursor),
-		"",
-		"",
-		http.StatusOK,
-	)
-	tailItems, ok := restartedTail["items"].([]any)
-	if !ok || len(tailItems) != 1 {
-		t.Fatalf("restart cursor tail = %#v", restartedTail)
-	}
-	tailReview, ok := tailItems[0].(map[string]any)
-	if !ok || tailReview["review_id"] != oldestHistoryReview.ID {
-		t.Fatalf("restart cursor tail item = %#v", restartedTail)
-	}
-	if _, present := restartedTail["next_cursor"]; present {
-		t.Fatalf(
-			"restart cursor tail exposed another cursor: %#v",
-			restartedTail,
-		)
+	if _, present := recovered["review"]; present {
+		t.Fatalf("restarted Practice state leaked Review: %#v", recovered)
 	}
 	recoveredTurn := recovered["current_turn"].(map[string]any)
-	if recoveredTurn["audio_asset_id"] != completedAudioAssetID {
-		t.Fatalf("restart lost AudioAsset checkpoint: %#v", recovered)
+	if recoveredTurn["turn_id"] != thirdTurnID || recoveredTurn["audio_asset_id"] != completedAudioAssetID {
+		t.Fatalf("restart lost final Turn or AudioAsset: %#v", recovered)
 	}
-	voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodDelete,
-		"/v1/audio-assets/"+completedAudioAssetID,
-		"",
-		"",
-		http.StatusNoContent,
-	)
-	deletedPlayback, err := voiceRawRequest(
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
-		nil,
-		"",
-		"",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = deletedPlayback.Body.Close()
-	if deletedPlayback.StatusCode != http.StatusNotFound {
-		t.Fatalf(
-			"deleted AudioAsset playback status = %d",
-			deletedPlayback.StatusCode,
-		)
-	}
-	replayedAfterAudioDelete := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		confirmPath,
-		"",
-		"confirm-round-3-shared",
-		http.StatusOK,
-	)
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+
+	voiceJSONRequest(t, restartedServer.URL, token, http.MethodDelete, "/v1/audio-assets/"+completedAudioAssetID, "", "", http.StatusNoContent)
+	replayedAfterAudioDelete := voiceJSONRequest(t, restartedServer.URL, token, http.MethodPost, confirmPath, "", "confirm-round-3-shared", http.StatusOK)
 	replayedDeletedTurn := replayedAfterAudioDelete["current_turn"].(map[string]any)
-	if replayedDeletedTurn["turn_id"] != thirdTurnID ||
-		replayedDeletedTurn["review_id"] != reviewID {
-		t.Fatalf(
-			"deleted recording replay changed durable Turn: %#v",
-			replayedAfterAudioDelete,
-		)
+	if replayedDeletedTurn["turn_id"] != thirdTurnID {
+		t.Fatalf("deleted recording replay changed durable Turn: %#v", replayedAfterAudioDelete)
 	}
 	if _, present := replayedDeletedTurn["audio_asset_id"]; present {
-		t.Fatalf(
-			"deleted recording replay exposed AudioAsset: %#v",
-			replayedAfterAudioDelete,
-		)
+		t.Fatalf("deleted recording replay exposed AudioAsset: %#v", replayedAfterAudioDelete)
 	}
-	afterAudioDelete := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if _, present := afterAudioDelete["current_turn"].(map[string]any)["audio_asset_id"]; present {
-		t.Fatalf("deleted AudioAsset remained in restored state: %#v", afterAudioDelete)
+	if _, present := replayedDeletedTurn["review_id"]; present {
+		t.Fatalf("deleted recording replay leaked Review: %#v", replayedDeletedTurn)
 	}
-	retryContext := createVoiceFormalThreadContext(
-		t,
-		restartedServer.URL,
-		token,
-		"Review retry",
-		"retry-review",
-	)
-	retryStartPath := "/v1/agent-threads/" + retryContext.ThreadID +
-		"/voice-practice-sessions"
-	nextSession := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		retryStartPath,
-		"",
-		"start-voice-session-0002",
-		http.StatusCreated,
-	)
-	if nextSession["practice_session_id"] != retryContext.SessionID {
-		t.Fatalf(
-			"voice Start did not use next formal Context Session: %#v",
-			nextSession,
-		)
-	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+}
 
-	text.FailNextReviews(1)
-	for round := 1; round <= 2; round++ {
-		nextSession = transcribeAndConfirmVoiceRound(
-			t,
-			restartedServer.URL,
-			token,
-			nextSession,
-			fmt.Sprintf("retry-review-round-%d", round),
-		)
+func assertSinglePracticeCompletion(t *testing.T, pool *pgxpool.Pool, sessionID string, finalTurnID string) {
+	t.Helper()
+	var count int
+	var storedFinalTurnID string
+	var completionToken string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)::int, COALESCE(max(final_turn_id), ''), COALESCE(max(completion_token), '')
+		FROM practice_completed WHERE session_id = $1
+	`, sessionID).Scan(&count, &storedFinalTurnID, &completionToken); err != nil {
+		t.Fatalf("read Practice completion: %v", err)
 	}
-	retryCandidate := createVoiceCandidate(
-		t,
-		restartedServer.URL,
-		token,
-		nextSession,
-		"retry-review-round-3",
-	)
-	failedConfirm := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		"/v1/transcription-candidates/"+
-			retryCandidate["candidate_id"].(string)+"/confirmations",
-		"",
-		"confirm-retry-review-round-3",
-		http.StatusOK,
-	)
-	if failedConfirm["session_completed"] != true {
-		t.Fatalf("failed Review blocked answer submission: %#v", failedConfirm)
-	}
-	retrySessionID := nextSession["practice_session_id"].(string)
-	var failedReviewID string
-	var failedReviewStatus string
-	var failedAttempts int
-	waitForVoiceCondition(t, "failed Review attempt", func() bool {
-		err := pool.QueryRow(
-			context.Background(),
-			`SELECT r.id::text, r.status, count(a.id)::int
-FROM reviews r
-JOIN review_generation_attempts a ON a.review_id = r.id
-WHERE r.practice_session_id = $1
-GROUP BY r.id, r.status`,
-			retrySessionID,
-		).Scan(
-			&failedReviewID,
-			&failedReviewStatus,
-			&failedAttempts,
-		)
-		return err == nil &&
-			failedReviewStatus == "failed" &&
-			failedAttempts == 1
-	})
-	if failedReviewStatus != "failed" || failedAttempts != 1 {
-		t.Fatalf(
-			"failed Review state = %s/%d attempts",
-			failedReviewStatus,
-			failedAttempts,
-		)
-	}
-	retried := waitForVoicePracticeState(
-		t,
-		restartedServer.URL,
-		token,
-		retryContext.ThreadID,
-		func(state map[string]any) bool {
-			sessionReview, ok := state["review"].(map[string]any)
-			return ok && sessionReview["status"] == "completed"
-		},
-	)
-	retriedReview := retried["review"].(map[string]any)
-	retriedTurn := retried["current_turn"].(map[string]any)
-	if retriedReview["review_id"] != failedReviewID ||
-		retriedReview["status"] != "completed" ||
-		retriedTurn["review_id"] != failedReviewID {
-		t.Fatalf("Resume did not recover failed Review: %#v", retried)
-	}
-	var recoveredAttempts int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT count(*)::int
-FROM review_generation_attempts
-WHERE review_id = $1`,
-		failedReviewID,
-	).Scan(&recoveredAttempts); err != nil {
-		t.Fatalf("count recovered Review attempts: %v", err)
-	}
-	if recoveredAttempts != 2 {
-		t.Fatalf("recovered Review attempts = %d, want 2", recoveredAttempts)
-	}
-
-	quotaContext := createVoiceFormalThreadContext(
-		t,
-		restartedServer.URL,
-		token,
-		"Quota terminal review",
-		"quota-review",
-	)
-	quotaStartPath := "/v1/agent-threads/" + quotaContext.ThreadID +
-		"/voice-practice-sessions"
-	quotaSession := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		quotaStartPath,
-		"",
-		"start-voice-session-quota",
-		http.StatusCreated,
-	)
-	if quotaSession["practice_session_id"] != quotaContext.SessionID {
-		t.Fatalf(
-			"quota voice Start did not use formal Context Session: %#v",
-			quotaSession,
-		)
-	}
-	for round := 1; round <= 2; round++ {
-		quotaSession = transcribeAndConfirmVoiceRound(
-			t,
-			restartedServer.URL,
-			token,
-			quotaSession,
-			fmt.Sprintf("quota-review-round-%d", round),
-		)
-	}
-	quotaCandidate := createVoiceCandidate(
-		t,
-		restartedServer.URL,
-		token,
-		quotaSession,
-		"quota-review-round-3",
-	)
-	text.FailNextQuotaReview()
-	quotaConfirm := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		"/v1/transcription-candidates/"+
-			quotaCandidate["candidate_id"].(string)+"/confirmations",
-		"",
-		"confirm-quota-review-round-3",
-		http.StatusOK,
-	)
-	if quotaConfirm["session_completed"] != true {
-		t.Fatalf("quota Review blocked answer submission: %#v", quotaConfirm)
-	}
-	waitForVoiceCondition(t, "terminal quota Review", func() bool {
-		var status string
-		var category string
-		err := pool.QueryRow(
-			context.Background(),
-			`SELECT status, coalesce(stable_error_category, '')
-FROM reviews
-WHERE practice_session_id = $1`,
-			quotaSession["practice_session_id"].(string),
-		).Scan(&status, &category)
-		return err == nil &&
-			status == "failed" &&
-			category == "quota_exhausted"
-	})
-	quotaReviewCalls := text.ReviewCalls()
-
-	// A fresh composition root exercises a real service restart. The failed
-	// Review row must remain terminal across every subsequent Resume without
-	// blocking access to the completed Practice Session.
-	restartedServer.Close()
-	if err := restartedVault.Close(); err != nil {
-		t.Fatalf("close retry audio vault: %v", err)
-	}
-	terminalVault := newVoiceTestVault(t)
-	terminalServer := newVoiceProductionIntegrationServer(
-		t,
-		pool,
-		catalog,
-		text,
-		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          terminalVault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
-		},
-	)
-	for resume := 0; resume < 3; resume++ {
-		resumed := voiceJSONRequest(
-			t,
-			terminalServer.URL,
-			token,
-			http.MethodGet,
-			"/v1/agent-threads/"+quotaContext.ThreadID+
-				"/voice-practice-session",
-			"",
-			"",
-			http.StatusOK,
-		)
-		if resumed["session_completed"] != true {
-			t.Fatalf(
-				"terminal Review Resume did not restore completed Session: %#v",
-				resumed,
-			)
-		}
-	}
-	if got := text.ReviewCalls(); got != quotaReviewCalls {
-		t.Fatalf(
-			"terminal Review Resume calls = %d, want unchanged %d",
-			got,
-			quotaReviewCalls,
-		)
-	}
-
-	if _, err := pool.Exec(context.Background(), `
-		UPDATE reviews
-		SET result = jsonb_set(
-			result,
-			'{summary}',
-			to_jsonb($1::text)
-		)
-		WHERE id = $2
-	`, " \t\n", reviewID); err != nil {
-		t.Fatalf("stage corrupt persisted Review for HTTP boundary: %v", err)
-	}
-	for _, path := range []string{
-		"/v1/formal-reviews/" + reviewID,
-		"/v1/formal-reviews",
-	} {
-		failure := voiceJSONRequest(
-			t,
-			terminalServer.URL,
-			token,
-			http.MethodGet,
-			path,
-			"",
-			"",
-			http.StatusInternalServerError,
-		)
-		errorObject, ok := failure["error"].(map[string]any)
-		if !ok ||
-			errorObject["code"] != "internal_error" ||
-			errorObject["retryable"] != true {
-			t.Fatalf(
-				"corrupt persisted Review response for %s = %#v",
-				path,
-				failure,
-			)
-		}
+	if count != 1 || storedFinalTurnID != finalTurnID || completionToken == "" {
+		t.Fatalf("Practice completion = (%d, %q, %q), want one for %q", count, storedFinalTurnID, completionToken, finalTurnID)
 	}
 }
 
@@ -1467,7 +796,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build cleanup-race Preparation catalog: %v", err)
 	}
@@ -1479,14 +808,13 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			catalog,
 			text,
 			VoiceConfiguration{
-				Recognizer:              recognizer,
-				Synthesizer:             synthesizer,
-				TemporaryAudio:          vault,
-				ObjectStore:             objects,
-				AudioStagedTTL:          time.Hour,
-				ASRLease:                5 * time.Second,
-				ReviewGenerationTimeout: 2 * time.Second,
-				ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+				Recognizer:             recognizer,
+				Synthesizer:            synthesizer,
+				TemporaryAudio:         vault,
+				ObjectStore:            objects,
+				AudioStagedTTL:         time.Hour,
+				ASRLease:               5 * time.Second,
+				ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 			},
 		)
 	}
@@ -1498,23 +826,23 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		"voice-cleanup-race@example.com",
 	)
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Cleanup race"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1523,7 +851,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		"cleanup-race",
 	)
 	state := voiceJSONRequest(
@@ -1531,10 +859,11 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/voice-practice-sessions",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-activation",
 		"",
 		"start-cleanup-race",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if state["practice_session_id"] != formalContext.SessionID ||
 		state["practice_plan_id"] != formalContext.PlanID {
@@ -1543,7 +872,6 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			state,
 		)
 	}
-	assertNoLegacyVoiceSession(t, pool, formalContext.SessionID, threadID)
 	candidate := createVoiceCandidate(
 		t,
 		server.URL,
@@ -1556,8 +884,8 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT assets.audio_asset_id
-		 FROM conversation_audio_assets AS assets
-		 JOIN conversation_transcript_candidates AS candidates
+		 FROM practice_audio_assets AS assets
+		 JOIN practice_transcript_candidates AS candidates
 		   ON candidates.owner_user_id = assets.owner_user_id
 		  AND candidates.reservation_id = assets.upload_request_id
 		 WHERE candidates.candidate_id = $1`,
@@ -1567,7 +895,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	}
 	if _, err := pool.Exec(
 		context.Background(),
-		`UPDATE conversation_audio_assets
+		`UPDATE practice_audio_assets
 		 SET created_at = transaction_timestamp() - interval '2 hours',
 		     updated_at = transaction_timestamp() - interval '2 hours',
 		     staged_until = transaction_timestamp() - interval '1 hour'
@@ -1637,11 +965,11 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			context.Background(),
 			`SELECT
 			    (SELECT count(*)::int
-			     FROM conversation_confirmed_turns
+			     FROM practice_turns
 			     WHERE candidate_id = $1),
 			    (SELECT count(*)::int
-			     FROM conversation_turn_confirmations confirmations
-			     JOIN conversation_confirmed_turns turns
+			     FROM practice_turn_confirmations confirmations
+			     JOIN practice_turns turns
 			       ON turns.owner_user_id = confirmations.owner_user_id
 			      AND turns.turn_id = confirmations.turn_id
 			     WHERE turns.candidate_id = $1)`,
@@ -1673,7 +1001,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		t.Fatalf("read database deletion time: %v", err)
 	}
 	deleted := claims[0].Asset
-	deleted.Status = conversation.AudioAssetDeleted
+	deleted.Status = practiceinput.AudioAssetDeleted
 	deleted.DeletedAt = deletedAt.UTC()
 	deleted.UpdatedAt = deleted.DeletedAt
 	deleted.Version++
@@ -1706,7 +1034,8 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		restartedServer.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -1725,13 +1054,13 @@ type voiceFormalContext struct {
 	PreparationSnapshotID string
 	SessionID             string
 	ThreadID              string
-	MatterID              string
+	GoalID                string
 }
 
 func newVoiceProductionIntegrationServer(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	generator ai.TextGenerator,
 	configuration VoiceConfiguration,
 ) *httptest.Server {
@@ -1742,7 +1071,7 @@ func newVoiceProductionIntegrationServer(
 		nil,
 		"",
 		generator,
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
 			MaxOutputTokens:    256,
@@ -1768,7 +1097,7 @@ func newVoiceProductionIntegrationServer(
 			protectedRoutes,
 		},
 	)
-	RegisterPreparationCatalog(router, catalog)
+	RegisterSceneCatalog(router, catalog)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	return server
@@ -1782,23 +1111,23 @@ func createVoiceFormalThreadContext(
 	key string,
 ) voiceFormalContext {
 	t.Helper()
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		fmt.Sprintf(`{"title":%q}`, title),
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1807,7 +1136,7 @@ func createVoiceFormalThreadContext(
 		baseURL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		key,
 	)
 }
@@ -1819,23 +1148,23 @@ func createVoiceInterviewFormalContext(
 	key string,
 ) voiceFormalContext {
 	t.Helper()
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		fmt.Sprintf(`{"title":"Interview %s"}`, key),
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1867,7 +1196,7 @@ func createVoiceInterviewFormalContext(
 	formalContext := voiceFormalContext{
 		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
 		ThreadID:              threadID,
-		MatterID:              matterID,
+		GoalID:                goalID,
 	}
 	plan := voiceJSONRequest(
 		t,
@@ -1876,21 +1205,20 @@ func createVoiceInterviewFormalContext(
 		http.MethodPost,
 		"/v1/practice-plans",
 		fmt.Sprintf(`{
-			"agent_thread_id":%q,
-			"matter_id":%q,
-			"scenario_definition_id":%q,
-			"scenario_definition_version":1,
-			"scenario_config_id":%q,
-			"scenario_config_version":1,
-			"preparation_profile_id":%q,
-			"selected_role_ids":[%q]
+			"source_thread_id":%q,
+			"goal_id":%q,
+			"preparation_snapshot_id":%q,
+			"scene_id":%q,
+			"scene_version":1,
+			"selected_role_ids":[%q],
+			"practice_option_id":%q
 		}`,
 			threadID,
-			matterID,
-			preparation.ProgrammerInterviewScenarioID,
-			preparation.BackendEngineerConfigID,
-			profileID,
-			preparation.TechnicalInterviewerRoleID,
+			goalID,
+			formalContext.PreparationSnapshotID,
+			testProgrammerInterviewSceneID,
+			testTechnicalInterviewerRoleID,
+			testTechnicalFocusOptionID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -1902,17 +1230,10 @@ func createVoiceInterviewFormalContext(
 		token,
 		http.MethodPost,
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
-		fmt.Sprintf(`{
+		`{
 			"expected_plan_revision":1,
-			"user_confirmed":true,
-			"preparation_snapshot_id":%q,
-			"practice_option_id":%q,
-			"role_definition_ids":[%q]
+			"user_confirmed":true
 		}`,
-			formalContext.PreparationSnapshotID,
-			preparation.TechnicalFocusOptionID,
-			preparation.TechnicalInterviewerRoleID,
-		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
 	)
@@ -1926,7 +1247,7 @@ func createVoiceFormalContext(
 	baseURL string,
 	token string,
 	threadID string,
-	matterID string,
+	goalID string,
 	key string,
 ) voiceFormalContext {
 	t.Helper()
@@ -1958,7 +1279,7 @@ func createVoiceFormalContext(
 	context := voiceFormalContext{
 		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
 		ThreadID:              threadID,
-		MatterID:              matterID,
+		GoalID:                goalID,
 	}
 	plan := voiceJSONRequest(
 		t,
@@ -1967,21 +1288,20 @@ func createVoiceFormalContext(
 		http.MethodPost,
 		"/v1/practice-plans",
 		fmt.Sprintf(`{
-			"agent_thread_id":%q,
-			"matter_id":%q,
-			"scenario_definition_id":%q,
-			"scenario_definition_version":1,
-			"scenario_config_id":%q,
-			"scenario_config_version":1,
-			"preparation_profile_id":%q,
-			"selected_role_ids":[%q]
+			"source_thread_id":%q,
+			"goal_id":%q,
+			"preparation_snapshot_id":%q,
+			"scene_id":%q,
+			"scene_version":1,
+			"selected_role_ids":[%q],
+			"practice_option_id":%q
 		}`,
 			threadID,
-			matterID,
-			preparation.WorkplaceProgressRiskScenarioID,
-			preparation.WorkplaceProgressRiskConfigID,
-			profileID,
-			preparation.DirectManagerRoleID,
+			goalID,
+			context.PreparationSnapshotID,
+			testWorkplaceProgressSceneID,
+			testDirectManagerRoleID,
+			testDirectManagerFocusOptionID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -2011,17 +1331,10 @@ func createVoiceFormalContextSession(
 		token,
 		http.MethodPost,
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
-		fmt.Sprintf(`{
+		`{
 			"expected_plan_revision":1,
-			"user_confirmed":true,
-			"preparation_snapshot_id":%q,
-			"practice_option_id":%q,
-			"role_definition_ids":[%q]
+			"user_confirmed":true
 		}`,
-			formalContext.PreparationSnapshotID,
-			preparation.DirectManagerFocusOptionID,
-			preparation.DirectManagerRoleID,
-		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
 	)
@@ -2034,105 +1347,6 @@ func createVoiceFormalContextSession(
 		t.Fatalf("formal Context bootstrap has no Session ID: %#v", bootstrap)
 	}
 	return sessionID
-}
-
-func assertNoLegacyVoiceSession(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	formalSessionID string,
-	threadID string,
-) {
-	t.Helper()
-	var formalCount, legacyCount int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT
-		    count(*) FILTER (
-		        WHERE session_id = $1
-		          AND context_plan_id IS NOT NULL
-		    )::int,
-		    count(*) FILTER (
-		        WHERE plan_id = $2
-		          AND context_plan_id IS NULL
-		    )::int
-		 FROM practice_sessions`,
-		formalSessionID,
-		"agent-thread:"+threadID,
-	).Scan(&formalCount, &legacyCount); err != nil {
-		t.Fatalf("read formal/legacy voice Sessions: %v", err)
-	}
-	if formalCount != 1 || legacyCount != 0 {
-		t.Fatalf(
-			"formal/legacy voice Sessions = %d/%d, want 1/0",
-			formalCount,
-			legacyCount,
-		)
-	}
-}
-
-func completeBootstrapHistoryReview(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	ownerUserID string,
-	sessionID string,
-) review.FormalReview {
-	t.Helper()
-	repository := review.NewPostgresRepository(pool)
-	actor := review.Actor{UserID: ownerUserID}
-	sourceTurnID := "turn-" + sessionID
-	sourceTurnVersion := "conversation-turn:evidence-v1"
-	pending, err := repository.EnsurePending(
-		context.Background(),
-		review.EnsureReviewCommand{
-			Actor:                     actor,
-			PracticeSessionID:         sessionID,
-			ImplementationVersion:     "qianwen-voice-review-v1",
-			SourceTurnID:              sourceTurnID,
-			SourceTurnVersion:         sourceTurnVersion,
-			SourceManifestFingerprint: "manifest-" + sessionID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("ensure bootstrap history Review %s: %v", sessionID, err)
-	}
-	_, claim, claimed, err := repository.ClaimGeneration(
-		context.Background(),
-		actor,
-		pending.ID,
-		time.Minute,
-	)
-	if err != nil || !claimed {
-		t.Fatalf(
-			"claim bootstrap history Review %s: claimed=%v err=%v",
-			sessionID,
-			claimed,
-			err,
-		)
-	}
-	completed, err := repository.CompleteGeneration(
-		context.Background(),
-		claim,
-		review.ReviewResult{
-			OverallScore: 80,
-			Summary:      "Persisted restart cursor fixture.",
-			Conclusions: []review.ReviewConclusion{{
-				Key:        "summary",
-				Category:   "clarity",
-				Message:    "The response is clear.",
-				Suggestion: "Add one concrete outcome.",
-			}},
-		},
-		[]review.ReviewEvidence{{
-			ConclusionKey: "summary",
-			SourceType:    review.SourceTypeConversationTurn,
-			SourceID:      sourceTurnID,
-			SourceVersion: sourceTurnVersion,
-		}},
-	)
-	if err != nil {
-		t.Fatalf("complete bootstrap history Review %s: %v", sessionID, err)
-	}
-	return completed
 }
 
 func registerAndLoginVoiceUser(
@@ -2264,7 +1478,7 @@ func waitForVoicePracticeState(
 	t *testing.T,
 	baseURL string,
 	token string,
-	threadID string,
+	sessionID string,
 	ready func(map[string]any) bool,
 ) map[string]any {
 	t.Helper()
@@ -2275,7 +1489,7 @@ func waitForVoicePracticeState(
 			baseURL,
 			token,
 			http.MethodGet,
-			"/v1/agent-threads/"+threadID+"/voice-practice-session",
+			"/v1/practice-sessions/"+sessionID+"/voice-state",
 			"",
 			"",
 			http.StatusOK,
@@ -2557,6 +1771,27 @@ func (recognizer *voiceRecognizer) Transcribe(
 		Model:      "fake-asr-v1",
 		Transcript: fmt.Sprintf("Confirmed answer number %d.", call),
 	}, nil
+}
+
+func (recognizer *voiceRecognizer) TranscribeStream(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
+) (ai.TranscriptionResult, error) {
+	result, err := recognizer.Transcribe(ctx, request)
+	if err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		ai.TranscriptionUpdate{
+			Transcript: result.Transcript,
+			Final:      true,
+		},
+	); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	return result, nil
 }
 
 type voiceObjectStore struct {

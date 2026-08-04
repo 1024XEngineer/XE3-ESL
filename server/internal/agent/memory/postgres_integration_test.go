@@ -23,8 +23,8 @@ const (
 	integrationUserB    = "b0000000-0000-4000-8000-000000000001"
 	integrationSessionA = "a1000000-0000-4000-8000-000000000001"
 	integrationSessionB = "b1000000-0000-4000-8000-000000000001"
-	integrationMatterA  = "a2000000-0000-4000-8000-000000000001"
-	integrationMatterB  = "b2000000-0000-4000-8000-000000000001"
+	integrationGoalA    = "a2000000-0000-4000-8000-000000000001"
+	integrationGoalB    = "b2000000-0000-4000-8000-000000000001"
 )
 
 func TestPostgresRepositoryLifecycleIsolationAndDeletionFence(
@@ -124,23 +124,23 @@ func TestPostgresRepositoryLifecycleIsolationAndDeletionFence(
 		t.Fatalf("stale Update error = %v", err)
 	}
 
-	matterCommand := createCommand("goal.current", "Prepare for PM interview")
-	matterCommand.Type = TypeGoal
-	matterCommand.Scope = ScopeMatter
-	matterCommand.MatterID = integrationMatterA
-	matterMemory, err := repository.Create(ctx, actorA, matterCommand)
+	goalCommand := createCommand("goal.current", "Prepare for PM interview")
+	goalCommand.Type = TypeGoal
+	goalCommand.Scope = ScopeGoal
+	goalCommand.GoalID = integrationGoalA
+	goalMemory, err := repository.Create(ctx, actorA, goalCommand)
 	if err != nil {
-		t.Fatalf("Create matter Memory: %v", err)
+		t.Fatalf("Create goal Memory: %v", err)
 	}
-	foreignMatterCommand := matterCommand
-	foreignMatterCommand.CanonicalKey = "goal.foreign"
-	foreignMatterCommand.MatterID = integrationMatterB
+	foreignGoalCommand := goalCommand
+	foreignGoalCommand.CanonicalKey = "goal.foreign"
+	foreignGoalCommand.GoalID = integrationGoalB
 	if _, err := repository.Create(
 		ctx,
 		actorA,
-		foreignMatterCommand,
+		foreignGoalCommand,
 	); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("foreign Matter Create error = %v", err)
+		t.Fatalf("foreign Goal Create error = %v", err)
 	}
 
 	userItems, err := repository.ListActive(ctx, actorA, ScopeFilter{
@@ -153,36 +153,36 @@ func TestPostgresRepositoryLifecycleIsolationAndDeletionFence(
 	if len(userItems) != 1 || userItems[0].ID != userMemory.ID {
 		t.Fatalf("user active Memories = %#v", userItems)
 	}
-	matterItems, err := repository.ListActive(ctx, actorA, ScopeFilter{
-		Scope:    ScopeMatter,
-		MatterID: integrationMatterA,
-		Limit:    10,
+	goalItems, err := repository.ListActive(ctx, actorA, ScopeFilter{
+		Scope:  ScopeGoal,
+		GoalID: integrationGoalA,
+		Limit:  10,
 	})
 	if err != nil {
-		t.Fatalf("ListActive matter: %v", err)
+		t.Fatalf("ListActive goal: %v", err)
 	}
-	if len(matterItems) != 1 || matterItems[0].ID != matterMemory.ID {
-		t.Fatalf("matter active Memories = %#v", matterItems)
+	if len(goalItems) != 1 || goalItems[0].ID != goalMemory.ID {
+		t.Fatalf("goal active Memories = %#v", goalItems)
 	}
 
 	if _, err := database.Exec(ctx, `
 UPDATE agent_memories
 SET expires_at = created_at + INTERVAL '1 microsecond'
 WHERE id = $1`,
-		matterMemory.ID,
+		goalMemory.ID,
 	); err != nil {
-		t.Fatalf("expire matter Memory: %v", err)
+		t.Fatalf("expire goal Memory: %v", err)
 	}
-	matterItems, err = repository.ListActive(ctx, actorA, ScopeFilter{
-		Scope:    ScopeMatter,
-		MatterID: integrationMatterA,
-		Limit:    10,
+	goalItems, err = repository.ListActive(ctx, actorA, ScopeFilter{
+		Scope:  ScopeGoal,
+		GoalID: integrationGoalA,
+		Limit:  10,
 	})
 	if err != nil {
-		t.Fatalf("ListActive expired matter: %v", err)
+		t.Fatalf("ListActive expired goal: %v", err)
 	}
-	if len(matterItems) != 0 {
-		t.Fatalf("expired matter Memories = %#v", matterItems)
+	if len(goalItems) != 0 {
+		t.Fatalf("expired goal Memories = %#v", goalItems)
 	}
 
 	inactive, err := repository.Inactivate(ctx, actorA, InactivateCommand{
@@ -292,10 +292,10 @@ SELECT count(*) FROM agent_memories WHERE owner_user_id = $1`,
 
 	if _, err := database.Exec(
 		ctx,
-		`DELETE FROM matters WHERE owner_user_id = $1`,
+		`DELETE FROM coaching_goals WHERE owner_user_id = $1`,
 		integrationUserA,
 	); err != nil {
-		t.Fatalf("delete owner Matters: %v", err)
+		t.Fatalf("delete owner Goals: %v", err)
 	}
 	if _, err := database.Exec(
 		ctx,
@@ -449,24 +449,24 @@ VALUES ($1, $2)`,
 		title   string
 	}{
 		{
-			id:      integrationMatterA,
+			id:      integrationGoalA,
 			ownerID: integrationUserA,
 			title:   "User A interview",
 		},
 		{
-			id:      integrationMatterB,
+			id:      integrationGoalB,
 			ownerID: integrationUserB,
 			title:   "User B interview",
 		},
 	} {
 		if _, err := pool.Exec(context.Background(), `
-INSERT INTO matters (id, owner_user_id, title)
+INSERT INTO coaching_goals (goal_id, owner_user_id, title)
 VALUES ($1, $2, $3)`,
 			item.id,
 			item.ownerID,
 			item.title,
 		); err != nil {
-			t.Fatalf("insert Matter: %v", err)
+			t.Fatalf("insert Goal: %v", err)
 		}
 	}
 	return pool

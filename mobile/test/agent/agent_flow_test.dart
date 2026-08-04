@@ -1,3 +1,4 @@
+import '../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -6,35 +7,27 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/features/preparation/preparation_client.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/scene/scene_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/identity/session_store.dart';
-import 'package:speakup/review/review_history_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
-
-import '../review/formal_review_fixture.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import '../support/practice_fixtures.dart';
 
 void main() {
-  testWidgets('uses one Agent Thread for text, 3 Practice turns, and Review', (
+  testWidgets('uses one Agent Thread for text and 3 Practice turns', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
     await tester.pumpWidget(
       SpeakUpApp.preview(agentController: agentController),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('practice-hub-interview')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('scene-self-introduction')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
@@ -130,13 +123,13 @@ void main() {
       }
     }
 
-    expect(find.byKey(const Key('practice-page')), findsNothing);
-    expect(
-      find.byKey(const Key('review-content')).hitTestable(),
-      findsOneWidget,
-    );
-    expect(find.textContaining('三轮复盘'), findsOneWidget);
+    expect(find.byKey(const Key('practice-page')), findsOneWidget);
+    expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
+    expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(agentController.recordingState, PracticeRecordingState.completed);
 
+    Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('primary-tab-profile')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('profile-page')), findsOneWidget);
@@ -148,7 +141,7 @@ void main() {
       final agentController = AgentController(client: FakeAgentClient());
       addTearDown(agentController.dispose);
       final preparationController = PreparationController(
-        client: _EmptyPreparationCatalogClient(),
+        client: _EmptySceneClient(),
       );
       addTearDown(preparationController.dispose);
       final authController = AuthController(
@@ -201,7 +194,7 @@ void main() {
     final agentController = AgentController(client: FakeAgentClient());
     addTearDown(agentController.dispose);
     final preparationController = PreparationController(
-      client: _EmptyPreparationCatalogClient(),
+      client: _EmptySceneClient(),
     );
     addTearDown(preparationController.dispose);
     final authController = AuthController(
@@ -241,8 +234,16 @@ void main() {
     'scene failure exposes a retry that completes the same operation',
     (tester) async {
       final client = _FailOnceSceneClient();
-      final agentController = AgentController(client: client);
+      final agentController = AgentController(
+        client: client,
+        practiceClient: FakePracticeClient(
+          sceneFamily: testScenes.first.family,
+          sceneModel: testScenes.first.model,
+        ),
+      );
       addTearDown(agentController.dispose);
+      await agentController.initialize();
+      await agentController.selectScene(testScenes.first);
       await tester.pumpWidget(
         SpeakUpApp.preview(agentController: agentController),
       );
@@ -251,8 +252,6 @@ void main() {
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('practice-hub-interview')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('scene-self-introduction')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('scene-operation-error')), findsOneWidget);
@@ -264,163 +263,24 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
-      expect(find.text('英文自我介绍'), findsOneWidget);
+      expect(agentController.scene, same(testScenes.first));
+      expect(find.byKey(const Key('scene-operation-error')), findsNothing);
       expect(client.sceneClientIds, hasLength(2));
       expect(client.sceneClientIds.toSet(), hasLength(1));
     },
   );
 
-  testWidgets('restored Review opens directly and an existing practice exits', (
+  testWidgets('completed root Practice route keeps its completion state', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
       await agentController.startRecording();
       await agentController.stopRecording();
       await agentController.confirmTranscript();
     }
-    expect(agentController.review, isNotNull);
-
-    await tester.pumpWidget(
-      SpeakUpApp.preview(agentController: agentController),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('review-content')), findsOneWidget);
-
-    final navigatorContext = tester.element(find.byType(SpeakUpShell));
-    Navigator.of(navigatorContext).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PracticePage(agentController: agentController),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('practice-page')), findsNothing);
-  });
-
-  testWidgets(
-    'late Review retries a blocked Practice exit before exposing the shell',
-    (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
-      addTearDown(agentController.dispose);
-      await agentController.initialize();
-      await agentController.selectScene(agentScenes.first);
-      final rejectedPops = ValueNotifier<int>(0);
-      addTearDown(rejectedPops.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: SpeakUpShell(
-            previewMode: true,
-            agentController: agentController,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      final navigatorContext = tester.element(find.byType(SpeakUpShell));
-      Navigator.of(navigatorContext).push(
-        MaterialPageRoute<void>(
-          builder: (_) => _RejectFirstPracticePop(
-            rejectedPops: rejectedPops,
-            child: PracticePage(agentController: agentController),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('practice-page')), findsOneWidget);
-
-      for (var turn = 0; turn < 3; turn++) {
-        await agentController.startRecording();
-        await agentController.stopRecording();
-        await agentController.confirmTranscript();
-        await tester.pump();
-      }
-      expect(agentController.review, isNotNull);
-
-      await tester.pumpAndSettle();
-
-      expect(rejectedPops.value, 1);
-      expect(find.byKey(const Key('practice-page')), findsNothing);
-      expect(
-        find.byKey(const Key('review-content')).hitTestable(),
-        findsOneWidget,
-      );
-      await tester.tap(find.byKey(const Key('primary-tab-profile')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('profile-page')), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'completed Practice refreshes persisted Review history before route exit',
-    (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
-      await agentController.initialize();
-      await agentController.selectScene(agentScenes.first);
-      final historyClient = _CurrentReviewHistoryClient(agentController);
-      final historyController = ReviewHistoryController(client: historyClient);
-      addTearDown(agentController.dispose);
-      addTearDown(historyController.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: SpeakUpShell(
-            previewMode: true,
-            agentController: agentController,
-            reviewHistoryController: historyController,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      final navigatorContext = tester.element(find.byType(SpeakUpShell));
-      Navigator.of(navigatorContext).push(
-        MaterialPageRoute<void>(
-          builder: (_) => PracticePage(agentController: agentController),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(historyClient.listCalls, 0);
-
-      for (var turn = 0; turn < 3; turn++) {
-        await agentController.startRecording();
-        await agentController.stopRecording();
-        await agentController.confirmTranscript();
-        await tester.pump();
-      }
-      await tester.pumpAndSettle();
-
-      final review = agentController.review;
-      expect(review, isNotNull);
-      final reviewId = review!.id;
-      expect(historyClient.listCalls, 1);
-      expect(historyController.items.single.review.id, reviewId);
-      expect(find.byKey(const Key('practice-page')), findsNothing);
-      expect(
-        find.byKey(Key('review-history-$reviewId')).hitTestable(),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets('completed root Practice route keeps a safe destination', (
-    tester,
-  ) async {
-    final agentController = AgentController(client: FakeAgentClient());
-    addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
-    for (var turn = 0; turn < 3; turn++) {
-      await agentController.startRecording();
-      await agentController.stopRecording();
-      await agentController.confirmTranscript();
-    }
-    expect(agentController.review, isNotNull);
+    expect(agentController.recordingState, PracticeRecordingState.completed);
 
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: agentController)),
@@ -429,17 +289,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
-    expect(find.text('复盘已生成，正在打开'), findsOneWidget);
+    expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
+    expect(find.byKey(const Key('review-content')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('late Review waits until Practice is the current route', (
-    tester,
-  ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+  testWidgets('completion does not replace a newer route', (tester) async {
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -469,7 +326,7 @@ void main() {
     }
     await tester.pump();
 
-    expect(agentController.review, isNotNull);
+    expect(agentController.recordingState, PracticeRecordingState.completed);
     expect(find.byKey(const Key('temporary-practice-overlay')), findsOneWidget);
     expect(
       find.byKey(const Key('practice-page'), skipOffstage: false),
@@ -483,12 +340,23 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('temporary-practice-overlay')), findsNothing);
-    expect(find.byKey(const Key('practice-page')), findsNothing);
-    expect(
-      find.byKey(const Key('review-content')).hitTestable(),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('practice-page')), findsOneWidget);
+    expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
   });
+}
+
+Future<AgentController> _startedAgentController() async {
+  final scene = testScenes.first;
+  final controller = AgentController(
+    client: FakeAgentClient(),
+    practiceClient: FakePracticeClient(
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+    ),
+  );
+  await controller.initialize();
+  await activateTestPractice(controller: controller, scene: scene);
+  return controller;
 }
 
 Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
@@ -498,78 +366,6 @@ Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
   expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
   await gesture.up();
   await tester.pumpAndSettle();
-}
-
-final class _CurrentReviewHistoryClient implements ReviewHistoryClient {
-  _CurrentReviewHistoryClient(this.agentController);
-
-  final AgentController agentController;
-  int listCalls = 0;
-
-  @override
-  Future<ReviewHistoryPage> list({String? cursor, int limit = 20}) async {
-    listCalls++;
-    final review = agentController.review;
-    final practiceSessionId = agentController.practiceSessionId;
-    if (review == null || practiceSessionId == null) {
-      throw StateError('Review history refreshed before Practice completed.');
-    }
-    final completedAt = DateTime.utc(2026, 7, 26, 12);
-    final createdAt = completedAt.subtract(const Duration(minutes: 5));
-    return ReviewHistoryPage(
-      items: <ReviewHistoryItem>[
-        ReviewHistoryItem(
-          review: review,
-          formalReview: legacyFormalReviewFixture(
-            review: review,
-            practiceSessionId: practiceSessionId,
-            createdAt: createdAt,
-            completedAt: completedAt,
-          ),
-          practiceSessionId: practiceSessionId,
-          createdAt: createdAt,
-          completedAt: completedAt,
-        ),
-      ],
-    );
-  }
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
-final class _RejectFirstPracticePop extends StatefulWidget {
-  const _RejectFirstPracticePop({
-    required this.rejectedPops,
-    required this.child,
-  });
-
-  final ValueNotifier<int> rejectedPops;
-  final Widget child;
-
-  @override
-  State<_RejectFirstPracticePop> createState() =>
-      _RejectFirstPracticePopState();
-}
-
-final class _RejectFirstPracticePopState
-    extends State<_RejectFirstPracticePop> {
-  bool _canPop = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope<void>(
-      canPop: _canPop,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop || _canPop) {
-          return;
-        }
-        widget.rejectedPops.value++;
-        setState(() => _canPop = true);
-      },
-      child: widget.child,
-    );
-  }
 }
 
 final class _AuthenticatedIdentityClient implements IdentityClient {
@@ -611,21 +407,17 @@ final class _MemorySessionStore implements SessionStore {
   }
 }
 
-final class _EmptyPreparationCatalogClient implements PreparationCatalogClient {
+final class _EmptySceneClient implements SceneClient {
   @override
-  Future<void> clearAccountState() async {}
-
-  @override
-  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+  Future<SceneDefinition> getScene(String sceneId) {
     throw UnimplementedError();
   }
 
   @override
-  Future<List<PreparationScenario>> listScenarios() async =>
-      const <PreparationScenario>[];
+  Future<List<SceneDefinition>> listScenes() async => const <SceneDefinition>[];
 
   @override
-  Future<List<PreparationRole>> listRoles(String scenarioId) {
+  Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError();
   }
 }
@@ -636,19 +428,6 @@ final class _FailOnceSceneClient implements AgentClient {
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    return _delegate.createReview(
-      threadId: threadId,
-      scene: scene,
-      clientReviewId: clientReviewId,
-    );
-  }
 
   @override
   Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
@@ -667,9 +446,9 @@ final class _FailOnceSceneClient implements AgentClient {
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) {
     sceneClientIds.add(clientOperationId);
@@ -680,36 +459,6 @@ final class _FailOnceSceneClient implements AgentClient {
       threadId: threadId,
       scene: scene,
       clientOperationId: clientOperationId,
-    );
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    return _delegate.submitPracticeTurn(
-      threadId: threadId,
-      scene: scene,
-      turnNumber: turnNumber,
-      transcript: transcript,
-      clientTurnId: clientTurnId,
-    );
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    return _delegate.transcribeTurn(
-      threadId: threadId,
-      turnNumber: turnNumber,
-      clientTurnId: clientTurnId,
     );
   }
 }

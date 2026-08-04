@@ -12,6 +12,7 @@ type Category string
 
 const (
 	InvalidArgument     Category = "invalid_argument"
+	PayloadTooLarge     Category = "payload_too_large"
 	Unauthenticated     Category = "unauthenticated"
 	PermissionDenied    Category = "permission_denied"
 	NotFound            Category = "not_found"
@@ -31,6 +32,7 @@ const (
 func (category Category) Valid() bool {
 	switch category {
 	case InvalidArgument,
+		PayloadTooLarge,
 		Unauthenticated,
 		PermissionDenied,
 		NotFound,

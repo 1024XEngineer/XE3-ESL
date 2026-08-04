@@ -34,5 +34,19 @@ import "embed"
 //go:embed 000046_agent_thread_sidebar_deletion.*.sql
 //go:embed 000047_practice_follow_up_turns.*.sql
 //go:embed 000048_follow_up_confirmed_turn_shape.*.sql
-//go:embed 000049_resumes.*.sql
+//go:embed 000049_goal_authority_models.*.sql
+//go:embed 000050_scene_authority_catalog.*.sql
+//go:embed 000051_preparation_plan_authority.*.sql
+//go:embed 000052_practice_runtime_authority.*.sql
+//go:embed 000053_evaluation_speech_feedback_authority.*.sql
+//go:embed 000054_review_repractice_requests.*.sql
+//go:embed 000055_practice_evaluation_handoff.*.sql
+//go:embed 000056_evaluation_reports_learning_profile.*.sql
+//go:embed 000057_agent_learning_profile_context_manifest.*.sql
+//go:embed 000058_evaluation_report_authority.*.sql
+//go:embed 000059_evaluation_general_scene_runtime.*.sql
+//go:embed 000060_resumes.*.sql
+//go:embed 000061_agent_practice_handoffs.*.sql
+//go:embed 000062_agent_memory_extraction_context_barrier.*.sql
+//go:embed 000063_speech_feedback_acoustic_provider_boundary.*.sql
 var Files embed.FS

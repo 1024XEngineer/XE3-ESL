@@ -2,44 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/image_picker_agent_image_picker.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_image_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/practice/immersive_roleplay_session.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/ielts_practice_history_store.dart';
-import 'package:speakup/features/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
-import 'package:speakup/features/preparation/preparation_launch_controller.dart';
-import 'package:speakup/features/preparation/preparation_launch_models.dart';
-import 'package:speakup/features/preparation/practice_launch_record_store.dart';
-import 'package:speakup/features/preparation/practice_workspace_controller.dart';
-import 'package:speakup/features/preparation/wire_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/ielts_practice_history_store.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
+import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
-import 'package:speakup/practice/ios_practice_recorder.dart';
-import 'package:speakup/practice/avatar/avatar.dart';
-import 'package:speakup/practice/practice_audio_player.dart';
-import 'package:speakup/practice/practice_media.dart';
-import 'package:speakup/practice/practice_recording.dart';
-import 'package:speakup/practice/wire_practice_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/wire_interview_report_client.dart';
-import 'package:speakup/review/wire_review_history_client.dart';
-import 'package:speakup/review/wire_turn_feedback_client.dart';
+import 'package:speakup/features/coaching/practice/ios_practice_recorder.dart';
+import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
+import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
+import 'package:speakup/features/coaching/evaluation/wire_turn_feedback_client.dart';
 import 'package:speakup/resume/resume.dart';
 
 void main() {
@@ -58,12 +57,11 @@ void main() {
       preparationController: dependencies.preparationController,
       jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
+      practicePlanHandoffController: dependencies.practicePlanHandoffController,
       reviewHistoryController: dependencies.reviewHistoryController,
       avatarControllerFactory: dependencies.avatarControllerFactory,
       interviewReportController: dependencies.interviewReportController,
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
-      ieltsSpeakingReportIndexController:
-          dependencies.ieltsSpeakingReportIndexController,
       speechFeedbackController: dependencies.speechFeedbackController,
       resumeController: dependencies.resumeController,
     ),
@@ -77,11 +75,11 @@ final class ProductionAppDependencies {
     required this.preparationController,
     required this.jobPreparationController,
     required this.preparationLaunchController,
+    required this.practicePlanHandoffController,
     required this.reviewHistoryController,
     required this.avatarControllerFactory,
     required this.interviewReportController,
     required this.ieltsSpeakingReportController,
-    required this.ieltsSpeakingReportIndexController,
     required this.speechFeedbackController,
     required this.resumeController,
   });
@@ -91,11 +89,11 @@ final class ProductionAppDependencies {
   final PreparationController preparationController;
   final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
+  final PracticePlanHandoffController practicePlanHandoffController;
   final ReviewHistoryController reviewHistoryController;
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController interviewReportController;
   final IeltsSpeakingReportController ieltsSpeakingReportController;
-  final IeltsSpeakingReportIndexController ieltsSpeakingReportIndexController;
   final SpeechFeedbackController speechFeedbackController;
   final ResumeController resumeController;
 }
@@ -275,7 +273,7 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: interviewReportTransport,
     ),
   );
-  final preparationCatalogClient = WirePreparationCatalogClient(
+  final preparationCatalogClient = WireSceneClient(
     baseUri: baseUri,
     transport: preparationTransport,
   );
@@ -292,9 +290,6 @@ ProductionAppDependencies createProductionAppDependencies({
     transport: ieltsSpeakingReportTransport,
   );
   final ieltsSpeakingReportController = IeltsSpeakingReportController(
-    client: ieltsSpeakingReportClient,
-  );
-  final ieltsSpeakingReportIndexController = IeltsSpeakingReportIndexController(
     client: ieltsSpeakingReportClient,
   );
   final speechFeedbackController = SpeechFeedbackController(
@@ -321,61 +316,68 @@ ProductionAppDependencies createProductionAppDependencies({
     recordStore:
         practiceLaunchRecordStore ?? const SecurePracticeLaunchRecordStore(),
   );
+  final preparationLaunchClient = WirePreparationLaunchClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: preparationLaunchTransport,
+  );
   final preparationLaunchController = PreparationLaunchController(
-    client: WirePreparationLaunchClient(
-      baseUri: baseUri,
-      credentialProvider: () => authController.currentCredential,
-      invalidateSession:
-          ({required expectedSessionToken, required expectedGeneration}) {
-            return authController.invalidateSession(
-              expectedSessionToken: expectedSessionToken,
-              expectedGeneration: expectedGeneration,
-            );
-          },
-      transport: preparationLaunchTransport,
-    ),
+    client: preparationLaunchClient,
     workspaceController: practiceWorkspaceController,
     contextProvider: () {
       final threadId = agentController.threadId;
-      final matterId = agentController.activeMatter?.id;
-      if (threadId == null || matterId == null) {
+      final goalId = agentController.activeGoal?.id;
+      if (threadId == null || goalId == null) {
         return null;
       }
-      return AgentPracticeContext(threadId: threadId, matterId: matterId);
+      return AgentPracticeContext(threadId: threadId, goalId: goalId);
     },
     threadIdProvider: () => agentController.threadId,
-    matterActivator:
+    goalActivator:
         ({
           required threadId,
           required selection,
           required clientOperationId,
         }) async {
-          final matter = await agentController.activateMatterForScenario(
+          final goal = await agentController.activateGoalForScene(
             threadId: threadId,
-            scene: AgentScene(
-              id: selection.scenarioDefinitionId,
-              title: selection.scenarioDisplayName,
-              description: selection.scenarioDescription,
-              scenarioType: selection.scenarioType,
-              presentationMode:
-                  selection.scenarioType == 'WORKPLACE' ||
-                      selection.scenarioType == 'DAILY'
-                  ? AgentScenePresentationMode.immersiveRoleplay
-                  : AgentScenePresentationMode.standard,
-            ),
+            scene: selection.scene,
             clientOperationId: clientOperationId,
           );
-          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+          return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
     voiceActivator:
-        ({required context, required bootstrap, required clientOperationId}) =>
-            agentController.activateCreatedPractice(
-              threadId: context.threadId,
-              matterId: context.matterId,
-              sessionId: bootstrap.session.id,
-              turnLimit: bootstrap.maxEffectiveTurns,
-              clientOperationId: clientOperationId,
-            ),
+        ({
+          required context,
+          required scene,
+          required bootstrap,
+          required clientOperationId,
+        }) => agentController.activateCreatedPractice(
+          threadId: context.threadId,
+          scene: scene,
+          sessionId: bootstrap.session.id,
+          planId: bootstrap.session.planId,
+          turnLimit: bootstrap.maxEffectiveTurns,
+          clientOperationId: clientOperationId,
+        ),
+  );
+  final practicePlanHandoffController = PracticePlanHandoffController(
+    agentController: agentController,
+    workspaceController: practiceWorkspaceController,
+    readPlan: preparationLaunchClient.getPlan,
+    confirmPlan: ({required plan, required input, required idempotencyKey}) =>
+        preparationLaunchClient.createSession(
+          plan: plan,
+          input: input,
+          idempotencyKey: idempotencyKey,
+        ),
   );
   final jobPreparationController = JobPreparationController(
     client: WireJobPreparationClient(
@@ -394,32 +396,39 @@ ProductionAppDependencies createProductionAppDependencies({
         jobPreparationDraftStore ?? const SecureJobPreparationDraftStore(),
     workspaceController: practiceWorkspaceController,
     threadIdProvider: () => agentController.threadId,
-    matterActivator:
+    goalActivator:
         ({
           required threadId,
           required candidate,
           required clientOperationId,
         }) async {
-          final matter = await agentController.activateMatterForScenario(
+          final scene = await preparationCatalogClient.getScene(
+            candidate.catalogRecommendation.sceneId,
+          );
+          if (scene.version != candidate.catalogRecommendation.sceneVersion) {
+            throw StateError('Scene catalog changed before Goal activation.');
+          }
+          final goal = await agentController.activateGoalForScene(
             threadId: threadId,
-            scene: AgentScene(
-              id: candidate.catalogRecommendation.scenarioDefinitionId,
-              title: '${candidate.jobTitle}英文面试',
-              description: candidate.scopeNotice,
-            ),
+            scene: scene,
             clientOperationId: clientOperationId,
           );
-          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+          return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
     voiceActivator:
-        ({required context, required bootstrap, required clientOperationId}) =>
-            agentController.activateCreatedPractice(
-              threadId: context.threadId,
-              matterId: context.matterId,
-              sessionId: bootstrap.session.id,
-              turnLimit: bootstrap.maxEffectiveTurns,
-              clientOperationId: clientOperationId,
-            ),
+        ({
+          required context,
+          required scene,
+          required bootstrap,
+          required clientOperationId,
+        }) => agentController.activateCreatedPractice(
+          threadId: context.threadId,
+          scene: scene,
+          sessionId: bootstrap.session.id,
+          planId: bootstrap.session.planId,
+          turnLimit: bootstrap.maxEffectiveTurns,
+          clientOperationId: clientOperationId,
+        ),
   );
   final identityClient = WireIdentityClient(
     baseUri: baseUri,
@@ -460,13 +469,12 @@ ProductionAppDependencies createProductionAppDependencies({
           .clearPrivateState();
       final ieltsSpeakingReportCleanup = ieltsSpeakingReportController
           .clearPrivateState();
-      final ieltsSpeakingReportIndexCleanup = ieltsSpeakingReportIndexController
-          .clearPrivateState();
       final speechFeedbackCleanup = speechFeedbackController
           .clearPrivateState();
       final resumeCleanup = resumeController.clearPrivateState();
       try {
         await preparationLaunchController.clearPrivateState();
+        await practicePlanHandoffController.clearAccountState();
         await clearAvatarPrivateState();
         await Future.wait<void>([
           agentController.clearPrivateState(),
@@ -478,7 +486,6 @@ ProductionAppDependencies createProductionAppDependencies({
         await Future.wait<void>([
           interviewReportCleanup,
           ieltsSpeakingReportCleanup,
-          ieltsSpeakingReportIndexCleanup,
           speechFeedbackCleanup,
           resumeCleanup,
         ]);
@@ -491,11 +498,11 @@ ProductionAppDependencies createProductionAppDependencies({
     preparationController: preparationController,
     jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
+    practicePlanHandoffController: practicePlanHandoffController,
     reviewHistoryController: reviewHistoryController,
     avatarControllerFactory: createAvatarController,
     interviewReportController: interviewReportController,
     ieltsSpeakingReportController: ieltsSpeakingReportController,
-    ieltsSpeakingReportIndexController: ieltsSpeakingReportIndexController,
     speechFeedbackController: speechFeedbackController,
     resumeController: resumeController,
   );

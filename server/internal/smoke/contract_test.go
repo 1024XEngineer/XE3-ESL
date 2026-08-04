@@ -48,12 +48,11 @@ func TestStrictRequestAndIdempotencyKeyValidation(t *testing.T) {
 		{"snapshot requires body", "/v1/preparation-profiles/" + demoPreparationProfile + "/snapshots", ``, "invalid_request"},
 		{"snapshot rejects zero version", "/v1/preparation-profiles/" + demoPreparationProfile + "/snapshots", `{"source_version":0}`, "invalid_request"},
 		{"plan rejects duplicate roles", "/v1/practice-plans", `{
-			"scenario_definition_id":"scn_programmer_interview",
-			"scenario_definition_version":1,
-			"scenario_config_id":"scfg_backend_engineer",
-			"scenario_config_version":1,
-			"preparation_profile_id":"profile_demo_001",
-			"selected_role_ids":["role_technical_interviewer","role_technical_interviewer"]
+			"preparation_snapshot_id":"preparation_snapshot_demo_001",
+			"scene_id":"scn_programmer_interview",
+			"scene_version":1,
+			"selected_role_ids":["role_technical_interviewer","role_technical_interviewer"],
+			"practice_option_id":"option_full_simulation"
 		}`, "invalid_request"},
 		{"session requires fields", "/v1/practice-plans/" + demoPracticePlan + "/practice-sessions", `{}`, "invalid_request"},
 		{"question rejects body", "/v1/practice-sessions/" + demoPracticeSession + "/questions", `{}`, "invalid_request"},
@@ -128,10 +127,10 @@ func TestAgentToolCapabilityDisplay(t *testing.T) {
 	if got, want := len(response.Tools), 6; got != want {
 		t.Fatalf("tool count = %d, want %d", got, want)
 	}
-	if response.Tools[0].Name != "material.search.v1" ||
-		response.Tools[4].Name != "scenario.create.v1" ||
-		response.Tools[4].Risk != "low_risk_write" ||
-		response.Tools[4].ReadOnly {
+	if response.Tools[0].Name != "goal.create.v1" ||
+		response.Tools[0].Risk != "low_risk_write" ||
+		response.Tools[0].ReadOnly ||
+		response.Tools[2].Name != "material.search.v1" {
 		t.Fatalf("unexpected tool summaries: %#v", response.Tools)
 	}
 }
@@ -245,19 +244,16 @@ func TestIdempotencyReplayScopeAndNoRepeatedSideEffects(t *testing.T) {
 		http.StatusCreated,
 	)
 	planBody := `{
-		"scenario_definition_id":"scn_programmer_interview",
-		"scenario_definition_version":1,
-		"scenario_config_id":"scfg_backend_engineer",
-		"scenario_config_version":1,
-		"preparation_profile_id":"profile_demo_001",
-		"selected_role_ids":["role_technical_interviewer"]
+		"preparation_snapshot_id":"preparation_snapshot_demo_001",
+		"scene_id":"scn_programmer_interview",
+		"scene_version":1,
+		"selected_role_ids":["role_technical_interviewer"],
+		"practice_option_id":"option_full_simulation"
 	}`
 	assertReplay(t, client, "/v1/practice-plans", planBody, "plan-replay-key", http.StatusCreated)
 	sessionBody := `{
 		"expected_plan_revision":1,
-		"preparation_snapshot_id":"preparation_snapshot_demo_001",
-		"practice_option_id":"option_full_simulation",
-		"role_definition_ids":["role_technical_interviewer"]
+		"user_confirmed":true
 	}`
 	sessionPath := "/v1/practice-plans/" + demoPracticePlan + "/practice-sessions"
 	firstSession := client.must(
@@ -491,7 +487,7 @@ func TestConcurrentIdempotencyCoalescesAndRejectsConflicts(t *testing.T) {
 	})
 }
 
-func TestPreparationReferencesGatePracticeResources(t *testing.T) {
+func TestPreparationSnapshotGatesPlanAndSessionUsesFrozenPlan(t *testing.T) {
 	client := newContractClient(t)
 
 	status, body := client.request(
@@ -499,9 +495,9 @@ func TestPreparationReferencesGatePracticeResources(t *testing.T) {
 		http.MethodPost,
 		"/v1/practice-plans",
 		validPlanBody(),
-		map[string]string{"Idempotency-Key": "plan-before-profile-key"},
+		map[string]string{"Idempotency-Key": "plan-before-snapshot-key"},
 	)
-	assertError(t, status, body, http.StatusNotFound, "preparation_profile_not_found")
+	assertError(t, status, body, http.StatusNotFound, "resource_not_found")
 
 	client.must(
 		t,
@@ -511,22 +507,12 @@ func TestPreparationReferencesGatePracticeResources(t *testing.T) {
 		map[string]string{"Idempotency-Key": "profile-for-plan-key"},
 		http.StatusCreated,
 	)
-	client.must(
+	status, body = client.request(
 		t,
 		http.MethodPost,
 		"/v1/practice-plans",
 		validPlanBody(),
-		map[string]string{"Idempotency-Key": "plan-with-profile-key"},
-		http.StatusCreated,
-	)
-
-	sessionPath := "/v1/practice-plans/" + demoPracticePlan + "/practice-sessions"
-	status, body = client.request(
-		t,
-		http.MethodPost,
-		sessionPath,
-		validSessionBody(),
-		map[string]string{"Idempotency-Key": "session-before-snapshot-key"},
+		map[string]string{"Idempotency-Key": "plan-before-snapshot-after-profile-key"},
 	)
 	assertError(t, status, body, http.StatusNotFound, "resource_not_found")
 
@@ -535,9 +521,18 @@ func TestPreparationReferencesGatePracticeResources(t *testing.T) {
 		http.MethodPost,
 		"/v1/preparation-profiles/"+demoPreparationProfile+"/snapshots",
 		`{"source_version":1}`,
-		map[string]string{"Idempotency-Key": "snapshot-for-session-key"},
+		map[string]string{"Idempotency-Key": "snapshot-for-plan-key"},
 		http.StatusCreated,
 	)
+	client.must(
+		t,
+		http.MethodPost,
+		"/v1/practice-plans",
+		validPlanBody(),
+		map[string]string{"Idempotency-Key": "plan-with-snapshot-key"},
+		http.StatusCreated,
+	)
+	sessionPath := "/v1/practice-plans/" + demoPracticePlan + "/practice-sessions"
 	client.must(
 		t,
 		http.MethodPost,
@@ -594,7 +589,7 @@ func TestPendingAnalysisOmitsCompletedFields(t *testing.T) {
 }
 
 func TestRetryRequiresCompletedOriginalTurn(t *testing.T) {
-	runtime := NewRuntime()
+	runtime := NewRuntime(newDeterministicSceneCatalog())
 	runtime.mu.Lock()
 	runtime.turns = append(runtime.turns, Turn{
 		ID:        "turn_answering",
@@ -644,7 +639,7 @@ func TestFailureInjectionRunsAfterResourceValidation(t *testing.T) {
 }
 
 func TestSlowSubscriberIsRemovedWithoutBlockingEventPublication(t *testing.T) {
-	runtime := NewRuntime()
+	runtime := NewRuntime(newDeterministicSceneCatalog())
 	_, live, unsubscribe := runtime.subscribe(0)
 
 	published := make(chan struct{})
@@ -705,8 +700,8 @@ func TestResourceAndQueryErrors(t *testing.T) {
 		status  int
 		code    string
 	}{
-		{http.MethodGet, "/v1/scenario-definitions/unknown", "", nil, 404, "scenario_definition_not_found"},
-		{http.MethodGet, "/v1/scenario-definitions/unknown/role-definitions", "", nil, 404, "scenario_definition_not_found"},
+		{http.MethodGet, "/v1/scenes/unknown", "", nil, 404, "scene_not_found"},
+		{http.MethodGet, "/v1/scenes/unknown/roles", "", nil, 404, "scene_not_found"},
 		{http.MethodPost, "/v1/preparation-profiles/unknown/snapshots", `{"source_version":1}`, map[string]string{"Idempotency-Key": "unknown-profile-key"}, 404, "preparation_profile_not_found"},
 		{http.MethodPost, "/v1/practice-plans/unknown/practice-sessions", validSessionBody(), map[string]string{"Idempotency-Key": "unknown-plan-key"}, 404, "practice_plan_not_found"},
 		{http.MethodGet, "/v1/practice-sessions/unknown", "", nil, 404, "practice_session_not_found"},
@@ -838,12 +833,11 @@ func seedThroughQuestion(t *testing.T, client contractClient) {
 		http.MethodPost,
 		"/v1/practice-plans",
 		`{
-			"scenario_definition_id":"scn_programmer_interview",
-			"scenario_definition_version":1,
-			"scenario_config_id":"scfg_backend_engineer",
-			"scenario_config_version":1,
-			"preparation_profile_id":"profile_demo_001",
-			"selected_role_ids":["role_technical_interviewer"]
+			"preparation_snapshot_id":"preparation_snapshot_demo_001",
+			"scene_id":"scn_programmer_interview",
+			"scene_version":1,
+			"selected_role_ids":["role_technical_interviewer"],
+			"practice_option_id":"option_full_simulation"
 		}`,
 		map[string]string{"Idempotency-Key": "seed-plan-key"},
 		http.StatusCreated,
@@ -869,20 +863,17 @@ func seedThroughQuestion(t *testing.T, client contractClient) {
 func validSessionBody() string {
 	return `{
 		"expected_plan_revision":1,
-		"preparation_snapshot_id":"preparation_snapshot_demo_001",
-		"practice_option_id":"option_full_simulation",
-		"role_definition_ids":["role_technical_interviewer"]
+		"user_confirmed":true
 	}`
 }
 
 func validPlanBody() string {
 	return `{
-		"scenario_definition_id":"scn_programmer_interview",
-		"scenario_definition_version":1,
-		"scenario_config_id":"scfg_backend_engineer",
-		"scenario_config_version":1,
-		"preparation_profile_id":"profile_demo_001",
-		"selected_role_ids":["role_technical_interviewer"]
+		"preparation_snapshot_id":"preparation_snapshot_demo_001",
+		"scene_id":"scn_programmer_interview",
+		"scene_version":1,
+		"selected_role_ids":["role_technical_interviewer"],
+		"practice_option_id":"option_full_simulation"
 	}`
 }
 

@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
 const (
@@ -23,7 +24,7 @@ type SessionReader interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (persistence.ContextSession, error)
+	) (practice.Session, error)
 }
 
 type TokenProvider interface {
@@ -111,8 +112,8 @@ func (service *Service) IssueSessionToken(
 		practiceSessionID,
 	)
 	if err != nil {
-		if errors.Is(err, persistence.ErrNotFound) ||
-			errors.Is(err, persistence.ErrInvalidArgument) {
+		if errors.Is(err, practice.ErrNotFound) ||
+			errors.Is(err, practice.ErrInvalidArgument) {
 			return SessionToken{}, sessionNotFoundError(err)
 		}
 		return SessionToken{}, apperror.New(
@@ -123,11 +124,11 @@ func (service *Service) IssueSessionToken(
 		)
 	}
 	if session.ID != practiceSessionID ||
-		(session.ScenarioType != persistence.ScenarioFamilyWorkplace &&
-			session.ScenarioType != persistence.ScenarioFamilyDaily &&
-			session.ScenarioType != persistence.ScenarioFamilyInterview) ||
-		(session.Status != persistence.ContextSessionStarting &&
-			session.Status != persistence.ContextSessionProgress) {
+		(session.SceneFamily != scene.SceneFamilyWorkplace &&
+			session.SceneFamily != scene.SceneFamilyDaily &&
+			session.SceneFamily != scene.SceneFamilyInterview) ||
+		(session.Status != practice.SessionStarting &&
+			session.Status != practice.SessionInProgress) {
 		return SessionToken{}, apperror.New(
 			apperror.Conflict,
 			"resource_conflict",

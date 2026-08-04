@@ -159,7 +159,6 @@ const validators = Object.fromEntries(
     'Evaluation',
     'InterviewReportEnvelope',
     'IeltsSpeakingReportEnvelope',
-    'IeltsSpeakingReportIndexPage',
     'SceneEvaluationResult',
     'CoreAbilityObservation',
     'EvidenceRef',
@@ -1446,38 +1445,7 @@ const assertIeltsSpeakingReportSemantics = (envelope) => {
   }
 };
 
-const assertIeltsSpeakingIndexSemantics = (page) => {
-  const practiceSessions = new Set();
-  const evaluationIds = new Set();
-  for (const item of page.items) {
-    assert.ok(
-      !practiceSessions.has(item.practice_session_id),
-      `Duplicate IELTS report Practice Session ${item.practice_session_id}`,
-    );
-    practiceSessions.add(item.practice_session_id);
-    assert.ok(
-      !evaluationIds.has(item.evaluation_id),
-      `Duplicate IELTS report Evaluation ${item.evaluation_id}`,
-    );
-    evaluationIds.add(item.evaluation_id);
-    assert.ok(
-      item.status_url ===
-          `/v1/practice-sessions/${item.practice_session_id}/ielts-speaking-report` ||
-        item.status_url ===
-          `/v1/practice-sessions/${item.practice_session_id}/interview-report`,
-      'IELTS index status_url must address its Practice Session report',
-    );
-    assert.ok(
-      Date.parse(item.created_at) <= Date.parse(item.updated_at),
-      'IELTS index updated_at precedes created_at',
-    );
-  }
-};
-
 for (const [name, value] of Object.entries(ieltsSpeakingReportFixture)) {
-  if (name === 'index_page') {
-    continue;
-  }
   assertValid(
     `IELTS Speaking report ${name}`,
     'IeltsSpeakingReportEnvelope',
@@ -1517,26 +1485,6 @@ assertValid(
   ieltsReportWithMissingOpportunity,
 );
 assertIeltsSpeakingReportSemantics(ieltsReportWithMissingOpportunity);
-
-assertValid(
-  'IELTS Speaking report index',
-  'IeltsSpeakingReportIndexPage',
-  ieltsSpeakingReportFixture.index_page,
-);
-assertIeltsSpeakingIndexSemantics(ieltsSpeakingReportFixture.index_page);
-const digitLeadingIeltsReportIndex = structuredClone(
-  ieltsSpeakingReportFixture.index_page,
-);
-digitLeadingIeltsReportIndex.items[0].practice_session_id =
-  '20000000-0000-4000-8000-000000000001';
-digitLeadingIeltsReportIndex.items[0].status_url =
-  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/ielts-speaking-report';
-assertValid(
-  'digit-leading Practice session IELTS Speaking report index',
-  'IeltsSpeakingReportIndexPage',
-  digitLeadingIeltsReportIndex,
-);
-assertIeltsSpeakingIndexSemantics(digitLeadingIeltsReportIndex);
 
 for (const reasonCode of [
   'POLICY_VIOLATION',
@@ -1704,20 +1652,4 @@ assertValid(
 assert.throws(
   () => assertIeltsSpeakingReportSemantics(mismatchedIeltsStatusUrl),
   /same Practice Session/,
-);
-
-const duplicateIeltsIndexItem = structuredClone(
-  ieltsSpeakingReportFixture.index_page,
-);
-duplicateIeltsIndexItem.items.push(
-  structuredClone(duplicateIeltsIndexItem.items[0]),
-);
-assertValid(
-  'schema-valid duplicate IELTS index item',
-  'IeltsSpeakingReportIndexPage',
-  duplicateIeltsIndexItem,
-);
-assert.throws(
-  () => assertIeltsSpeakingIndexSemantics(duplicateIeltsIndexItem),
-  /Duplicate IELTS report Practice Session/,
 );

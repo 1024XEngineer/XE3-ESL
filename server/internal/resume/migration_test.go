@@ -12,7 +12,7 @@ import (
 func TestResumeMigrationDefinesOwnedImmutableResources(t *testing.T) {
 	t.Parallel()
 
-	content, err := migrations.Files.ReadFile("000049_resumes.up.sql")
+	content, err := migrations.Files.ReadFile("000060_resumes.up.sql")
 	if err != nil {
 		t.Fatalf("read Resume migration: %v", err)
 	}

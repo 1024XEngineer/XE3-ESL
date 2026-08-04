@@ -116,7 +116,7 @@ type CompletedRunSource struct {
 	ThreadID           string
 	InputMessageID     string
 	AssistantMessageID string
-	MatterID           string
+	GoalID             string
 	UserText           string
 	AssistantText      string
 	Attempt            int
@@ -129,7 +129,7 @@ func (source CompletedRunSource) Valid() bool {
 		validUUID(source.ThreadID) &&
 		validUUID(source.InputMessageID) &&
 		validUUID(source.AssistantMessageID) &&
-		(source.MatterID == "" || validUUID(source.MatterID)) &&
+		(source.GoalID == "" || validUUID(source.GoalID)) &&
 		validContent(source.UserText) &&
 		validContent(source.AssistantText) &&
 		source.Attempt > 0 &&
@@ -182,7 +182,7 @@ type MemoryDecision struct {
 	CanonicalKey string
 	Content      string
 	Scope        ScopeType
-	MatterID     string
+	GoalID       string
 	ExpiresAt    *time.Time
 }
 
@@ -190,7 +190,7 @@ func (decision MemoryDecision) Valid() bool {
 	if !decision.Action.Valid() ||
 		!decision.Type.Valid() ||
 		!validCanonicalKey(decision.CanonicalKey) ||
-		!validScope(decision.Scope, decision.MatterID) ||
+		!validScope(decision.Scope, decision.GoalID) ||
 		!validOptionalTime(decision.ExpiresAt) {
 		return false
 	}
@@ -245,7 +245,7 @@ const (
 	RejectionInsufficientDurability       CandidateRejectionReason = "insufficient_durability"
 	RejectionSensitiveCandidate           CandidateRejectionReason = "sensitive_candidate"
 	RejectionGenderInteractionUseRequired CandidateRejectionReason = "gender_interaction_use_required"
-	RejectionMissingMatter                CandidateRejectionReason = "missing_matter"
+	RejectionMissingGoal                  CandidateRejectionReason = "missing_goal"
 	RejectionInvalidScope                 CandidateRejectionReason = "invalid_scope"
 	RejectionInvalidContent               CandidateRejectionReason = "invalid_content"
 	RejectionInactivateContentNotEmpty    CandidateRejectionReason = "inactivate_content_not_empty"
@@ -264,7 +264,7 @@ func (reason CandidateRejectionReason) Valid() bool {
 		RejectionInsufficientDurability,
 		RejectionSensitiveCandidate,
 		RejectionGenderInteractionUseRequired,
-		RejectionMissingMatter,
+		RejectionMissingGoal,
 		RejectionInvalidScope,
 		RejectionInvalidContent,
 		RejectionInactivateContentNotEmpty,

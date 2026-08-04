@@ -5,11 +5,12 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
-const defaultISETimeout = 90 * time.Second
+const (
+	defaultISEEndpoint = "wss://ise-api.xfyun.cn/v2/open-ise"
+	defaultISETimeout  = 90 * time.Second
+)
 
 type ISEConfig struct {
 	Endpoint  string
@@ -22,7 +23,7 @@ type ISEConfig struct {
 func LoadISE() (ISEConfig, error) {
 	endpoint := strings.TrimSpace(os.Getenv("XFYUN_ISE_ENDPOINT"))
 	if endpoint == "" {
-		endpoint = xfyun.DefaultISEEndpoint
+		endpoint = defaultISEEndpoint
 	}
 	timeout, err := durationOrDefault(
 		"XFYUN_ISE_TIMEOUT",

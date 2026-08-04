@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_card.dart';
 
 import 'agent_models.dart';
 import 'agent_voice_controller.dart';
@@ -11,7 +13,7 @@ class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.voiceController,
-    this.onAction,
+    this.onHandoff,
     this.onRefreshImage,
     this.polishedText,
     this.polishLoading = false,
@@ -20,7 +22,7 @@ class AgentMessageBubble extends StatefulWidget {
 
   final AgentMessage message;
   final AgentVoiceController? voiceController;
-  final ValueChanged<AgentMessageAction>? onAction;
+  final ValueChanged<AgentHandoff>? onHandoff;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
   final String? polishedText;
@@ -121,7 +123,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
           border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
         ),
-        child: message.actions.isEmpty
+        child: message.handoffs.isEmpty
             ? content
             : Column(
                 mainAxisSize: MainAxisSize.min,
@@ -129,13 +131,15 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                 children: [
                   content,
                   const SizedBox(height: 10),
-                  for (final action in message.actions)
-                    _InterviewPreparationAction(
-                      action: action,
-                      onPressed: widget.onAction == null
-                          ? null
-                          : () => widget.onAction!(action),
-                    ),
+                  for (final handoff in message.handoffs)
+                    switch (handoff) {
+                      ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
+                        handoff: handoff,
+                        onConfirm: widget.onHandoff == null
+                            ? null
+                            : () => widget.onHandoff!(handoff),
+                      ),
+                    },
                 ],
               ),
       ),
@@ -525,64 +529,6 @@ class _MessageImageThumbnail extends StatelessWidget {
                 errorBuilder: (_, _, _) => placeholder,
               ),
             ),
-    );
-  }
-}
-
-class _InterviewPreparationAction extends StatelessWidget {
-  const _InterviewPreparationAction({
-    required this.action,
-    required this.onPressed,
-  });
-
-  final AgentMessageAction action;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: SpeakUpDesign.surface,
-      shape: RoundedRectangleBorder(
-        side: const BorderSide(color: SpeakUpDesign.border),
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: Key('agent-action-interview-${action.matterId}'),
-        onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.work_outline_rounded,
-                size: 22,
-                color: SpeakUpDesign.primary,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      action.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: SpeakUpDesign.cardTitle,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(action.label, style: SpeakUpDesign.meta),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: SpeakUpDesign.secondary,
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

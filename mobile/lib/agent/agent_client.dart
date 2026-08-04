@@ -1,3 +1,7 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
+import 'package:speakup/features/coaching/goal/goal.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -16,9 +20,9 @@ abstract interface class AgentClient {
 
   Future<AgentThreadSnapshot> restoreThread();
 
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   });
 
@@ -26,26 +30,6 @@ abstract interface class AgentClient {
     required String threadId,
     required String text,
     required String clientMessageId,
-  });
-
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  });
-
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  });
-
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
   });
 }
 
@@ -126,21 +110,11 @@ abstract interface class AgentThreadDeletionClient {
   Future<void> deleteThread({required String threadId});
 }
 
-abstract interface class AgentMatterSelectionClient {
-  Future<AgentMatter> selectExistingMatter({
+abstract interface class GoalSelectionClient {
+  Future<Goal> selectExistingGoal({
     required String threadId,
-    required String matterId,
+    required String goalId,
   });
-}
-
-/// Optional capability declaration for the preview-only practice flow.
-///
-/// Clients that do not implement this interface retain the existing Fake/test
-/// behavior. Production clients must explicitly opt out when the accepted API
-/// cannot represent the scene, voice, and Review lifecycle without inventing
-/// fields.
-abstract interface class AgentPracticeAvailability {
-  bool get supportsPracticeFlow;
 }
 
 enum AgentClientFailureKind {
@@ -201,7 +175,7 @@ final class FakeAgentClient
         AgentClient,
         AgentThreadHistoryClient,
         AgentThreadDeletionClient,
-        AgentMatterSelectionClient,
+        GoalSelectionClient,
         AgentVoiceClient,
         AgentImageClient,
         AgentMultimodalClient {
@@ -215,13 +189,10 @@ final class FakeAgentClient
   String? _focusedThreadId;
   final Map<String, AgentThreadSummary> _threads = {};
   final Map<String, List<AgentMessage>> _threadMessages = {};
-  final Map<String, AgentMatter> _threadMatters = {};
-  final Map<String, AgentMatter> _matters = {};
-  final Map<String, AgentSceneStart> _sceneStarts = {};
+  final Map<String, Goal> _threadGoals = {};
+  final Map<String, Goal> _goals = {};
+  final Map<String, Goal> _goalStarts = {};
   final Map<String, AgentExchange> _textExchanges = {};
-  final Map<String, String> _transcripts = {};
-  final Map<String, AgentExchange> _practiceExchanges = {};
-  final Map<String, AgentReview> _reviews = {};
   final Map<String, AgentVoiceCandidate> _voiceCandidates = {};
   final Map<String, AgentVoiceConfirmation> _voiceConfirmations = {};
   final Map<String, AgentVoiceRun> _voiceRuns = {};
@@ -241,13 +212,10 @@ final class FakeAgentClient
     _focusedThreadId = null;
     _threads.clear();
     _threadMessages.clear();
-    _threadMatters.clear();
-    _matters.clear();
-    _sceneStarts.clear();
+    _threadGoals.clear();
+    _goals.clear();
+    _goalStarts.clear();
     _textExchanges.clear();
-    _transcripts.clear();
-    _practiceExchanges.clear();
-    _reviews.clear();
     _voiceCandidates.clear();
     _voiceConfirmations.clear();
     _voiceRuns.clear();
@@ -368,7 +336,7 @@ final class FakeAgentClient
       }
       _threads.remove(threadId);
       _threadMessages.remove(threadId);
-      _threadMatters.remove(threadId);
+      _threadGoals.remove(threadId);
       if (_focusedThreadId == threadId) {
         _focusedThreadId = null;
       }
@@ -409,50 +377,51 @@ final class FakeAgentClient
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) {
     return _runAccountOperation((generation) async {
       final key = _operationKey(threadId, clientOperationId);
       await _wait(generation);
       _requireCurrentGeneration(generation);
-      return _sceneStarts.putIfAbsent(key, () {
-        final activeMatter = AgentMatter(
-          id: 'matter_${scene.id}',
-          scene: scene,
+      return _goalStarts.putIfAbsent(key, () {
+        final activeGoal = Goal(
+          id: 'goal_${scene.id}',
+          title: scene.name,
+          status: GoalStatus.active,
+          version: 1,
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
         );
         final assistantMessage = AgentMessage(
           id: _nextMessageId(),
           role: AgentMessageRole.assistant,
-          text: '我们开始“${scene.title}”。第一轮：请先用英文回答，你希望面试官首先了解你的哪段经历？',
+          text: '我们开始“${scene.name}”。第一轮：请先用英文回答，你希望面试官首先了解你的哪段经历？',
         );
-        _matters[activeMatter.id] = activeMatter;
-        _threadMatters[threadId] = activeMatter;
+        _goals[activeGoal.id] = activeGoal;
+        _threadGoals[threadId] = activeGoal;
         _appendThreadMessages(threadId, <AgentMessage>[assistantMessage]);
-        return AgentSceneStart(
-          activeMatter: activeMatter,
-          assistantMessage: assistantMessage,
-        );
+        return activeGoal;
       });
     });
   }
 
   @override
-  Future<AgentMatter> selectExistingMatter({
+  Future<Goal> selectExistingGoal({
     required String threadId,
-    required String matterId,
+    required String goalId,
   }) {
     return _runAccountOperation((generation) async {
       await _wait(generation);
       _requireCurrentGeneration(generation);
-      final matter = _matters[matterId];
-      if (matter == null || !_threadMessages.containsKey(threadId)) {
+      final goal = _goals[goalId];
+      if (goal == null || !_threadMessages.containsKey(threadId)) {
         throw const AgentClientException(kind: AgentClientFailureKind.notFound);
       }
-      _threadMatters[threadId] = matter;
-      return matter;
+      _threadGoals[threadId] = goal;
+      return goal;
     });
   }
 
@@ -593,94 +562,6 @@ final class FakeAgentClient
       await _wait(generation);
       _requireCurrentGeneration(generation);
       _imageAssets.remove(imageAssetId);
-    });
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    return _runAccountOperation((generation) async {
-      final key = _operationKey(threadId, clientTurnId);
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      return _transcripts.putIfAbsent(
-        key,
-        () => switch (turnNumber) {
-          1 =>
-            'I led the backend migration and kept the rollout safe with staged checks.',
-          2 =>
-            'The main trade-off was delivery speed versus reliability, so I reduced the scope first.',
-          _ =>
-            'The result was a stable release, and I learned to communicate risks much earlier.',
-        },
-      );
-    });
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    return _runAccountOperation((generation) async {
-      final key = _operationKey(threadId, clientTurnId);
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      return _practiceExchanges.putIfAbsent(key, () {
-        final nextQuestion = switch (turnNumber) {
-          1 => '第二轮：当时最困难的取舍是什么？请说明你为什么这样决定。',
-          2 => '第三轮：结果如何？如果再做一次，你会改变什么？',
-          _ => null,
-        };
-        final exchange = AgentExchange(
-          userMessage: AgentMessage(
-            id: _nextMessageId(),
-            role: AgentMessageRole.user,
-            text: transcript,
-          ),
-          assistantMessage: nextQuestion == null
-              ? null
-              : AgentMessage(
-                  id: _nextMessageId(),
-                  role: AgentMessageRole.assistant,
-                  text: nextQuestion,
-                ),
-        );
-        _appendThreadMessages(threadId, <AgentMessage>[
-          exchange.userMessage,
-          ?exchange.assistantMessage,
-        ]);
-        return exchange;
-      });
-    });
-  }
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    return _runAccountOperation((generation) async {
-      final key = _operationKey(threadId, clientReviewId);
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      return _reviews.putIfAbsent(
-        key,
-        () => AgentReview(
-          id: 'review_$threadId',
-          title: '${scene.title} · 三轮复盘',
-          summary: '你已经能按“背景—行动—结果”组织回答，整体表达连贯。',
-          strength: '能够说明自己的责任，并给出具体取舍。',
-          nextFocus: '下一次把结果量化，同时缩短开场句。',
-        ),
-      );
     });
   }
 
@@ -1041,7 +922,7 @@ final class FakeAgentClient
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      activeMatter: _threadMatters[threadId],
+      activeGoal: _threadGoals[threadId],
       messages: List<AgentMessage>.unmodifiable(
         _threadMessages[threadId] ?? const <AgentMessage>[],
       ),
@@ -1066,7 +947,7 @@ final class FakeAgentClient
     _threads[threadId] = AgentThreadSummary(
       id: thread.id,
       title: thread.title,
-      activeMatterId: _threadMatters[threadId]?.id,
+      activeGoalId: _threadGoals[threadId]?.id,
       createdAt: thread.createdAt,
       updatedAt: now.isBefore(thread.updatedAt) ? thread.updatedAt : now,
     );

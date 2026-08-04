@@ -11,15 +11,15 @@ import (
 	"strings"
 	"testing"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
+	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
-	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,19 +27,18 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	t *testing.T,
 ) {
 	pool := voiceIntegrationDatabase(t)
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	composition := newPracticeContextIntegrationComposition(t, pool, catalog)
 	wantTools := map[string]bool{
-		matteragenttool.ScenarioCreateToolName:           true,
-		matteragenttool.ScenarioSearchToolName:           true,
-		reviewagenttool.ReviewSearchToolName:             true,
-		reviewagenttool.ReviewGetToolName:                true,
-		practiceagenttool.PracticePreviewToolName:        true,
-		practiceagenttool.PracticeStartToolName:          true,
-		evaluationagenttool.LatestPracticeReportToolName: true,
+		goalagentcapability.GoalCreateCapabilityName:       true,
+		goalagentcapability.GoalSearchCapabilityName:       true,
+		reviewagenttool.ReviewSearchToolName:               true,
+		reviewagenttool.ReviewGetToolName:                  true,
+		preparationagentcapability.PracticePreviewToolName: true,
+		evaluationagenttool.LatestPracticeReportToolName:   true,
 	}
 	if composition.productionTools == nil {
 		t.Fatal("production Agent Tool Registry is nil")
@@ -63,7 +62,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 			protectedRoutes,
 		},
 	)
-	RegisterPreparationCatalog(router, catalog)
+	RegisterSceneCatalog(router, catalog)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
@@ -122,23 +121,23 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	}
 	actor := requestcontext.Actor{UserID: userID, SessionID: sessionID}
 
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Backend interview"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -168,6 +167,9 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		http.StatusCreated,
 	)
 	snapshotID := snapshot["preparation_snapshot_id"].(string)
+	if profileID == "" || snapshotID == "" {
+		t.Fatalf("Preparation resources = %#v / %#v", profile, snapshot)
+	}
 
 	previewExecutor := tool.NewExecutor(composition.productionTools)
 	previewCall := tool.CallContext{
@@ -181,10 +183,10 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		context.Background(),
 		previewCall,
 		tool.Invocation{
-			Name: practiceagenttool.PracticePreviewToolName,
+			Name: preparationagentcapability.PracticePreviewToolName,
 			Input: json.RawMessage(fmt.Sprintf(
-				`{"scenario_query":%q,"max_effective_turns":4}`,
-				preparation.ProgrammerInterviewScenarioID,
+				`{"scene_query":%q,"max_effective_turns":4}`,
+				testProgrammerInterviewSceneID,
 			)),
 		},
 	)
@@ -194,7 +196,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	var planCount int
 	if err := pool.QueryRow(
 		context.Background(),
-		`SELECT count(*) FROM practice_plans WHERE owner_user_id = $1`,
+		`SELECT count(*) FROM preparation_practice_plans WHERE owner_user_id = $1`,
 		userID,
 	).Scan(&planCount); err != nil {
 		t.Fatalf("count plans after needs_input: %v", err)
@@ -205,39 +207,41 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 
 	previewCall.RequestID = "preview-ready-0001"
 	previewInput := json.RawMessage(fmt.Sprintf(`{
-		"matter_id":%q,
+		"goal_id":%q,
 		"background_summary":"Go engineer preparing for a backend interview.",
-		"scenario_definition_id":%q,
-		"scenario_definition_version":1,
-		"scenario_config_id":%q,
-		"scenario_config_version":1,
+		"scene_id":%q,
+		"scene_version":1,
 		"selected_role_ids":[%q],
 		"practice_option_id":%q,
-		"practice_option_version":1,
 		"max_effective_turns":4
 	}`,
-		matterID,
-		preparation.ProgrammerInterviewScenarioID,
-		preparation.BackendEngineerConfigID,
-		preparation.TechnicalInterviewerRoleID,
-		preparation.FullSimulationOptionID,
+		goalID,
+		testProgrammerInterviewSceneID,
+		testTechnicalInterviewerRoleID,
+		testFullSimulationOptionID,
 	))
 	ready, err := previewExecutor.Execute(
 		context.Background(),
 		previewCall,
 		tool.Invocation{
-			Name:  practiceagenttool.PracticePreviewToolName,
+			Name:  preparationagentcapability.PracticePreviewToolName,
 			Input: previewInput,
 		},
 	)
 	if err != nil || ready.Content["status"] != "preview_ready" {
 		t.Fatalf("ready Preview input=%s result=(%#v, %v)", previewInput, ready, err)
 	}
-	previewPlanID, ok := ready.Content["practice_plan_id"].(string)
-	if !ok {
-		t.Fatalf("ready Preview plan id = %#v", ready.Content["practice_plan_id"])
+	if ready.Content["practice_plan_id"] != nil {
+		t.Fatalf(
+			"ready Preview leaked plan id to model content = %#v",
+			ready.Content["practice_plan_id"],
+		)
 	}
-	storedPreviewPlan, err := composition.PracticeApplication().GetPlan(
+	if len(ready.Handoffs) != 1 {
+		t.Fatalf("ready Preview Handoffs = %#v", ready.Handoffs)
+	}
+	previewPlanID := ready.Handoffs[0].PracticePlanID
+	storedPreviewPlan, err := composition.PlanApplication().ReadPlan(
 		context.Background(),
 		actor,
 		previewPlanID,
@@ -245,24 +249,21 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	if err != nil {
 		t.Fatalf("get stored Preview plan: %v", err)
 	}
-	if storedPreviewPlan.SessionPolicy == nil ||
-		storedPreviewPlan.SessionPolicy.MaxEffectiveTurns != 4 ||
-		storedPreviewPlan.CatalogSnapshot == nil ||
-		storedPreviewPlan.CatalogSnapshot.PracticeOption.ID !=
-			preparation.FullSimulationOptionID {
+	if storedPreviewPlan.SessionPolicy.MaxEffectiveTurns != 4 ||
+		storedPreviewPlan.SceneSelection.PracticeOptionID !=
+			testFullSimulationOptionID {
 		t.Fatalf("stored Preview plan = %#v", storedPreviewPlan)
 	}
 	replayedPreview, err := previewExecutor.Execute(
 		context.Background(),
 		previewCall,
 		tool.Invocation{
-			Name:  practiceagenttool.PracticePreviewToolName,
+			Name:  preparationagentcapability.PracticePreviewToolName,
 			Input: previewInput,
 		},
 	)
-	if err != nil ||
-		replayedPreview.Content["practice_plan_id"] !=
-			ready.Content["practice_plan_id"] {
+	if err != nil || len(replayedPreview.Handoffs) != 1 ||
+		replayedPreview.Handoffs[0].PracticePlanID != previewPlanID {
 		t.Fatalf(
 			"replayed Preview = (%#v, %v), first %#v",
 			replayedPreview,
@@ -282,58 +283,18 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		t.Fatalf("Preview session count = %d, want 0", sessionCount)
 	}
 
-	planBody := fmt.Sprintf(`{
-		"agent_thread_id":%q,
-		"matter_id":%q,
-		"scenario_definition_id":%q,
-		"scenario_definition_version":1,
-		"scenario_config_id":%q,
-		"scenario_config_version":1,
-		"preparation_profile_id":%q,
-		"selected_role_ids":[%q]
-	}`,
-		threadID,
-		matterID,
-		preparation.ProgrammerInterviewScenarioID,
-		preparation.BackendEngineerConfigID,
-		profileID,
-		preparation.TechnicalInterviewerRoleID,
-	)
-	startInput := json.RawMessage(fmt.Sprintf(`{
-		"practice_plan_id":%q,
-		"expected_plan_revision":1,
-		"user_confirmed":true
-	}`, previewPlanID))
-	untrustedStart, err := previewExecutor.Execute(
-		context.Background(),
-		tool.CallContext{
-			Actor:      actor,
-			ThreadID:   threadID,
-			RunID:      "start-run-untrusted-0001",
-			ToolCallID: "start-call-untrusted-0001",
-			RequestID:  "start-request-untrusted-0001",
-		},
-		tool.Invocation{
-			Name:  practiceagenttool.PracticeStartToolName,
-			Input: startInput,
-		},
-	)
-	if err != nil || untrustedStart.Content["status"] !=
-		"confirmation_required" {
-		t.Fatalf("untrusted Start = (%#v, %v)", untrustedStart, err)
-	}
 	planID := previewPlanID
-	startBody := fmt.Sprintf(`{
-		"practice_plan_id":%q,
+	startBody := `{
 		"expected_plan_revision":1,
 		"user_confirmed":true
-	}`, planID)
+	}`
+	startPath := "/v1/practice-plans/" + planID + "/practice-sessions"
 	sessionBootstrap := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-0001",
 		http.StatusCreated,
@@ -345,7 +306,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-0001",
 		http.StatusCreated,
@@ -359,15 +320,13 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-active-conflict-0001",
 		http.StatusConflict,
 	)
 	if activeConflict["error"].(map[string]any)["code"] !=
-		"active_session_conflict" ||
-		activeConflict["practice_session"].(map[string]any)["practice_session_id"] !=
-			practiceSessionID {
+		"active_session_conflict" {
 		t.Fatalf("active Session conflict = %#v", activeConflict)
 	}
 	versionConflict := voiceJSONRequest(
@@ -375,12 +334,11 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
-		fmt.Sprintf(`{
-			"practice_plan_id":%q,
+		startPath,
+		`{
 			"expected_plan_revision":2,
 			"user_confirmed":true
-		}`, planID),
+		}`,
 		"session-create-version-conflict-0001",
 		http.StatusConflict,
 	)
@@ -389,13 +347,13 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		t.Fatalf("version conflict = %#v", versionConflict)
 	}
 
-	resolved, err := composition.ResolveSessionByThread(
+	resolved, err := composition.ResolveSessionByPlan(
 		context.Background(),
 		actor,
-		threadID,
+		planID,
 	)
 	if err != nil {
-		t.Fatalf("ResolveSessionByThread: %v", err)
+		t.Fatalf("ResolveSessionByPlan: %v", err)
 	}
 	if resolved.Session.ID != practiceSessionID ||
 		resolved.Session.PlanID != planID ||
@@ -404,41 +362,14 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	}
 
 	restarted := newPracticeContextIntegrationComposition(t, pool, catalog)
-	recovered, err := restarted.ResolveSessionByThread(
+	recovered, err := restarted.ResolveSessionByPlan(
 		context.Background(),
 		actor,
-		threadID,
+		planID,
 	)
 	if err != nil || recovered.Session.ID != practiceSessionID {
 		t.Fatalf("restart recovery = (%+v, %v)", recovered, err)
 	}
-
-	otherMatterID := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/matters",
-		`{"title":"Different active context"}`,
-		"",
-		http.StatusCreated,
-	)["matter_id"].(string)
-	wrongActiveBody := strings.Replace(
-		planBody,
-		fmt.Sprintf(`"matter_id":%q`, matterID),
-		fmt.Sprintf(`"matter_id":%q`, otherMatterID),
-		1,
-	)
-	voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/practice-plans",
-		wrongActiveBody,
-		"plan-wrong-active-0001",
-		http.StatusConflict,
-	)
 
 	otherToken := registerAndLoginVoiceUser(
 		t,
@@ -450,7 +381,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		otherToken,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-cross-user-0001",
 		http.StatusNotFound,
@@ -459,106 +390,12 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		"practice_plan_not_found" {
 		t.Fatalf("cross-user confirmation = %#v", crossUserConfirmation)
 	}
-	crossMatterID := voiceJSONRequest(
-		t,
-		server.URL,
-		otherToken,
-		http.MethodPost,
-		"/v1/matters",
-		`{"title":"Other account interview"}`,
-		"",
-		http.StatusCreated,
-	)["matter_id"].(string)
-	crossThreadID := voiceJSONRequest(
-		t,
-		server.URL,
-		otherToken,
-		http.MethodPost,
-		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, crossMatterID),
-		"",
-		http.StatusCreated,
-	)["thread_id"].(string)
-	crossAccountBody := strings.Replace(
-		strings.Replace(
-			planBody,
-			fmt.Sprintf(`"agent_thread_id":%q`, threadID),
-			fmt.Sprintf(`"agent_thread_id":%q`, crossThreadID),
-			1,
-		),
-		fmt.Sprintf(`"matter_id":%q`, matterID),
-		fmt.Sprintf(`"matter_id":%q`, crossMatterID),
-		1,
-	)
-	voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/practice-plans",
-		crossAccountBody,
-		"plan-cross-account-0001",
-		http.StatusNotFound,
-	)
-
-	staleCatalogBody := strings.Replace(
-		planBody,
-		`"scenario_config_version":1`,
-		`"scenario_config_version":2`,
-		1,
-	)
-	voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/practice-plans",
-		staleCatalogBody,
-		"plan-stale-catalog-0001",
-		http.StatusConflict,
-	)
-	forgedRoleBody := strings.Replace(
-		planBody,
-		fmt.Sprintf(`"selected_role_ids":[%q]`,
-			preparation.TechnicalInterviewerRoleID),
-		`"selected_role_ids":["role_forged"]`,
-		1,
-	)
-	voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/practice-plans",
-		forgedRoleBody,
-		"plan-forged-role-0001",
-		http.StatusNotFound,
-	)
-	voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodPost,
-		"/v1/practice-plans/"+planID+"/practice-sessions",
-		fmt.Sprintf(`{
-			"expected_plan_revision":1,
-			"user_confirmed":true,
-			"preparation_snapshot_id":%q,
-			"practice_option_id":"option_forged",
-			"role_definition_ids":[%q]
-		}`,
-			snapshotID,
-			preparation.TechnicalInterviewerRoleID,
-		),
-		"session-forged-option-0001",
-		http.StatusConflict,
-	)
 }
 
 func newPracticeContextIntegrationComposition(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 ) *IdentityAgentPracticeComposition {
 	t.Helper()
 	t.Setenv("AGENT_TOOL_MODE", "real")
@@ -570,7 +407,7 @@ func newPracticeContextIntegrationComposition(
 		nil,
 		"",
 		practiceContextTextGenerator{},
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "test",
 			Model:              "test-context-v1",
 			MaxOutputTokens:    128,

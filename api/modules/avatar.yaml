@@ -11,7 +11,7 @@ paths:
         short-lived Session Token. The API key is never returned to the client.
 
         The operation accepts an empty request body. Paused, terminal, and
-        unsupported scenario sessions must resume or continue without avatar
+        unsupported scene sessions must resume or continue without avatar
         rendering before another Token can be requested.
       operationId: createAvatarSessionToken
       parameters:

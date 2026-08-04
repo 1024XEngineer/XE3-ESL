@@ -8,6 +8,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -187,41 +188,54 @@ void main() {
     },
   );
 
-  test('restores an assistant Message carrying a scene action', () async {
-    final assistant = _assistantMessageJson()
-      ..['actions'] = <Object?>[
-        <String, Object?>{
-          'type': 'open_interview_preparation',
-          'label': '开始准备',
-          'matter_id': _matterId,
-          'title': '阿里高级 Java 开发面试',
-        },
-      ];
-    final transport = _ScriptedVoiceTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/agent-threads/$_threadId/messages?page_size=100',
-        response: _jsonResponse(HttpStatus.ok, {
-          'messages': [assistant],
-        }),
-      ),
-    ]);
-    final client = _client(transport);
-    addTearDown(client.dispose);
+  test(
+    'restores an assistant Message carrying a practice plan handoff',
+    () async {
+      final assistant = _assistantMessageJson()
+        ..['handoffs'] = <Object?>[
+          <String, Object?>{
+            'type': 'confirm_practice_plan',
+            'label': '确认并开始练习',
+            'practice_plan_id': _practicePlanId,
+            'plan_revision': 2,
+            'target': '阿里高级 Java 开发面试',
+            'scene_name': '项目经历深挖',
+            'scene_family': 'INTERVIEW',
+            'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+            'roles': <Object?>['面试官', '候选人'],
+            'practice_scope': '围绕项目难点完成三轮追问',
+            'suggested_duration_seconds': 720,
+            'min_effective_turns': 3,
+            'max_effective_turns': 5,
+            'executable_status': 'ready',
+            'confirmation_prompt': '请确认是否按此方案开始练习。',
+          },
+        ];
+      final transport = _ScriptedVoiceTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages?page_size=100',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [assistant],
+          }),
+        ),
+      ]);
+      final client = _client(transport);
+      addTearDown(client.dispose);
 
-    final message = await client.getMessage(
-      threadId: _threadId,
-      messageId: _assistantMessageId,
-    );
+      final message = await client.getMessage(
+        threadId: _threadId,
+        messageId: _assistantMessageId,
+      );
 
-    expect(message?.actions, hasLength(1));
-    expect(
-      message?.actions.single.type,
-      AgentMessageActionType.openInterviewPreparation,
-    );
-    expect(message?.actions.single.matterId, _matterId);
-    transport.expectDone();
-  });
+      expect(message?.handoffs, hasLength(1));
+      expect(
+        (message?.handoffs.single as ConfirmPracticePlanHandoff).practicePlanId,
+        _practicePlanId,
+      );
+      transport.expectDone();
+    },
+  );
 
   test(
     'loads private recording without forwarding Session auth to OSS',
@@ -492,7 +506,7 @@ const _messageId = '33333333-3333-4333-8333-333333333333';
 const _runId = '44444444-4444-4444-8444-444444444444';
 const _audioId = '55555555-5555-4555-8555-555555555555';
 const _assistantMessageId = '66666666-6666-4666-8666-666666666666';
-const _matterId = '77777777-7777-4777-8777-777777777777';
+const _practicePlanId = '77777777-7777-4777-8777-777777777777';
 const _timestamp = '2026-07-26T12:00:00Z';
 
 const _waveBytes = <int>[

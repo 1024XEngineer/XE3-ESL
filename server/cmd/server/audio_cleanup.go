@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
@@ -20,7 +20,7 @@ type audioCleanupFactories struct {
 	) (objectstore.Store, error)
 	newRepository func(
 		*pgxpool.Pool,
-	) (conversation.AudioAssetLifecycleRepository, error)
+	) (practiceinput.AudioAssetLifecycleRepository, error)
 }
 
 var productionAudioCleanupFactories = audioCleanupFactories{
@@ -36,7 +36,7 @@ var productionAudioCleanupFactories = audioCleanupFactories{
 	},
 	newRepository: func(
 		pool *pgxpool.Pool,
-	) (conversation.AudioAssetLifecycleRepository, error) {
+	) (practiceinput.AudioAssetLifecycleRepository, error) {
 		return conversationpostgres.NewAudioAssetRepository(pool)
 	},
 }
@@ -47,7 +47,7 @@ func buildAudioCleanupWorker(
 	databasePool *pgxpool.Pool,
 	logger *slog.Logger,
 	factories audioCleanupFactories,
-) (*conversation.AudioAssetCleanupWorker, error) {
+) (*practiceinput.AudioAssetCleanupWorker, error) {
 	if !storageConfig.Enabled {
 		logger.Info(
 			"audio cleanup disabled",
@@ -64,13 +64,13 @@ func buildAudioCleanupWorker(
 	if err != nil {
 		return nil, err
 	}
-	reclaimer, err := conversation.NewAudioAssetReclaimer(
+	reclaimer, err := practiceinput.NewAudioAssetReclaimer(
 		repository,
 		store,
-		conversation.NewAudioAssetSystemClock(),
+		practiceinput.NewAudioAssetSystemClock(),
 	)
 	if err != nil {
 		return nil, err
 	}
-	return conversation.NewAudioAssetCleanupWorker(reclaimer, logger)
+	return practiceinput.NewAudioAssetCleanupWorker(reclaimer, logger)
 }

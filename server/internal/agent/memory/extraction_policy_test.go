@@ -46,7 +46,7 @@ func TestExtractionPolicyAcceptsOnlyExplicitSupportedFacts(t *testing.T) {
 		},
 		{
 			Action:       CandidateUpsert,
-			Type:         TypeWeakness,
+			Type:         Type("weakness"),
 			CanonicalKey: "weakness.metrics",
 			Content:      "Lacks metrics",
 			Scope:        ScopeUser,
@@ -91,7 +91,7 @@ func TestExtractionPolicyAcceptsOnlyExplicitSupportedFacts(t *testing.T) {
 	}
 }
 
-func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
+func TestExtractionPolicyRequiresGoalAndGenderUse(t *testing.T) {
 	t.Parallel()
 
 	policy, err := NewExtractionPolicy(
@@ -103,7 +103,7 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 		t.Fatalf("NewExtractionPolicy: %v", err)
 	}
 	source := validCompletedRunSource()
-	source.MatterID = ""
+	source.GoalID = ""
 	source.UserText = "I am a woman. Please address me as Ms. I am preparing for a PM interview."
 	output := ExtractionOutput{Candidates: []ExtractedCandidate{
 		{
@@ -128,7 +128,7 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 			Type:         TypeGoal,
 			CanonicalKey: "goal.current",
 			Content:      "Prepare for a PM interview",
-			Scope:        ScopeMatter,
+			Scope:        ScopeGoal,
 			Evidence:     "preparing for a PM interview",
 		},
 	}}
@@ -145,7 +145,7 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 			CandidateIndex: 0,
 			Reason:         RejectionGenderInteractionUseRequired,
 		},
-		{CandidateIndex: 2, Reason: RejectionMissingMatter},
+		{CandidateIndex: 2, Reason: RejectionMissingGoal},
 	}
 	if !equalCandidateRejections(batch.Rejections, wantRejections) {
 		t.Fatalf(
@@ -260,7 +260,7 @@ func TestExtractionPolicyRejectsContextualFactsAndTransientPreferences(
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			source := validCompletedRunSource()
-			source.MatterID = ""
+			source.GoalID = ""
 			source.UserText = test.userText
 			batch, decideErr := policy.Decide(
 				source,
@@ -295,7 +295,7 @@ func TestExtractionPolicyAcceptsDurableGoalAndCoachingPreference(t *testing.T) {
 		t.Fatalf("NewExtractionPolicy: %v", err)
 	}
 	source := validCompletedRunSource()
-	source.MatterID = ""
+	source.GoalID = ""
 	source.UserText = "我正在准备产品经理英文面试。以后回答请先给结论。"
 	output := ExtractionOutput{Candidates: []ExtractedCandidate{
 		{
@@ -373,7 +373,7 @@ func TestExtractionPolicyClassifiesEveryCandidateRejection(t *testing.T) {
 		t.Fatalf("NewExtractionPolicy: %v", err)
 	}
 	baseSource := validCompletedRunSource()
-	baseSource.MatterID = ""
+	baseSource.GoalID = ""
 	baseSource.UserText = "Call me Alex."
 	baseCandidate := ExtractedCandidate{
 		Action:       CandidateUpsert,
@@ -398,7 +398,7 @@ func TestExtractionPolicyClassifiesEveryCandidateRejection(t *testing.T) {
 		"unsupported type": {
 			candidate: func() ExtractedCandidate {
 				item := baseCandidate
-				item.Type = TypeWeakness
+				item.Type = Type("weakness")
 				item.CanonicalKey = "weakness.name"
 				return item
 			}(),
@@ -444,13 +444,13 @@ func TestExtractionPolicyClassifiesEveryCandidateRejection(t *testing.T) {
 			}(),
 			want: RejectionGenderInteractionUseRequired,
 		},
-		"missing Matter": {
+		"missing Goal": {
 			candidate: func() ExtractedCandidate {
 				item := baseCandidate
-				item.Scope = ScopeMatter
+				item.Scope = ScopeGoal
 				return item
 			}(),
-			want: RejectionMissingMatter,
+			want: RejectionMissingGoal,
 		},
 		"invalid scope": {
 			candidate: func() ExtractedCandidate {
@@ -542,7 +542,7 @@ func validCompletedRunSource() CompletedRunSource {
 		ThreadID:           "a4000000-0000-4000-8000-000000000001",
 		InputMessageID:     "a5000000-0000-4000-8000-000000000001",
 		AssistantMessageID: "a6000000-0000-4000-8000-000000000001",
-		MatterID:           integrationMatterA,
+		GoalID:             integrationGoalA,
 		UserText:           "I am a Java backend engineer.",
 		AssistantText:      "Thanks for sharing.",
 		Attempt:            1,

@@ -91,6 +91,53 @@ func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackAcousticProviderBoundaryMigrationIsEmbedded(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000063_speech_feedback_acoustic_provider_boundary.up.sql",
+		"000063_speech_feedback_acoustic_provider_boundary.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf(
+				"read SpeechFeedback acoustic Provider migration %q: %v",
+				name,
+				err,
+			)
+		}
+	}
+
+	upContent, err := Files.ReadFile(
+		"000063_speech_feedback_acoustic_provider_boundary.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := string(upContent)
+	for _, required := range []string{
+		"octet_length(provider) BETWEEN 1 AND 128",
+		"provider ~ '^[A-Za-z0-9._:-]+$'",
+		"provider_session_id !~ '^[[:space:]]*$'",
+		"category IN ('read_word', 'read_sentence', 'topic')",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Provider boundary migration is missing %q", required)
+		}
+	}
+	downContent, err := Files.ReadFile(
+		"000063_speech_feedback_acoustic_provider_boundary.down.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := string(downContent)
+	if !strings.Contains(down, "provider = 'xfyun-ise'") {
+		t.Error("Provider boundary rollback must restore the XFYUN constraint")
+	}
+}
+
 func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 
@@ -186,12 +233,101 @@ func TestPracticeFollowUpMigrationsAreEmbedded(t *testing.T) {
 	}
 }
 
+func TestGoalAuthorityMigrationIsEmbeddedAndUsesExplicitDrops(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000049_goal_authority_models.up.sql",
+		"000049_goal_authority_models.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Goal authority migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+			if !strings.Contains(sql, "RECREATE THE DEVELOPMENT OR TEST DATABASE") {
+				t.Error("Goal authority migration must explain its empty-data requirement")
+			}
+		})
+	}
+}
+
+func TestSceneAuthorityMigrationIsEmbeddedAndHasOneVersionAuthority(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000050_scene_authority_catalog.up.sql",
+		"000050_scene_authority_catalog.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			if strings.Contains(sql, "SCENARIO_CONFIG") {
+				t.Error("Scene authority migration must not create ScenarioConfig identity")
+			}
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Scene authority migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+		})
+	}
+}
+
+func TestPreparationPlanAuthorityMigrationIsEmbeddedAndHasNoLegacyPlanTable(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000051_preparation_plan_authority.up.sql",
+		"000051_preparation_plan_authority.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Preparation Plan migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+			if !strings.Contains(sql, "RECREATE THE DEVELOPMENT OR TEST DATABASE") {
+				t.Error("Preparation Plan migration must explain its empty-data requirement")
+			}
+		})
+	}
+}
+
 func TestResumeMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{
-		"000049_resumes.up.sql",
-		"000049_resumes.down.sql",
+		"000060_resumes.up.sql",
+		"000060_resumes.down.sql",
 	} {
 		if _, err := Files.ReadFile(name); err != nil {
 			t.Fatalf("read Resume migration %q: %v", name, err)

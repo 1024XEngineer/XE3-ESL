@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 
 void main() {
   testWidgets('renders assistant emphasis instead of Markdown markers', (
@@ -142,16 +143,24 @@ void main() {
     expect(refreshCalls, 1);
   });
 
-  testWidgets('renders and dispatches an interview preparation action', (
-    tester,
-  ) async {
-    const action = AgentMessageAction(
-      type: AgentMessageActionType.openInterviewPreparation,
-      label: '配置并开始面试',
-      matterId: '10000000-0000-4000-8000-000000000001',
-      title: 'Java Interview Practice',
+  testWidgets('renders and dispatches a practice plan handoff', (tester) async {
+    const handoff = ConfirmPracticePlanHandoff(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000001',
+      planRevision: 2,
+      target: 'Java Interview Practice',
+      sceneName: '项目经历深挖',
+      sceneFamily: 'INTERVIEW',
+      sceneModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
+      roles: <String>['面试官', '候选人'],
+      practiceScope: '围绕项目难点完成三轮追问',
+      suggestedDuration: Duration(minutes: 12),
+      minEffectiveTurns: 3,
+      maxEffectiveTurns: 5,
+      executableStatus: 'ready',
+      confirmationPrompt: '请确认是否按此方案开始练习。',
     );
-    AgentMessageAction? selected;
+    AgentHandoff? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -160,24 +169,28 @@ void main() {
               id: 'assistant-interview',
               role: AgentMessageRole.assistant,
               text: '面试场景已创建。',
-              actions: <AgentMessageAction>[action],
+              handoffs: <AgentHandoff>[handoff],
             ),
-            onAction: (value) => selected = value,
+            onHandoff: (value) => selected = value,
           ),
         ),
       ),
     );
 
     expect(find.text('Java Interview Practice'), findsOneWidget);
-    expect(find.text('配置并开始面试'), findsOneWidget);
+    expect(find.text('场景：项目经历深挖'), findsOneWidget);
+    expect(find.text('角色：面试官、候选人'), findsOneWidget);
+    expect(find.text('预计 12 分钟 · 3–5 轮'), findsOneWidget);
+    expect(find.text('确认并开始练习'), findsOneWidget);
     await tester.tap(
       find.byKey(
         const Key(
-          'agent-action-interview-10000000-0000-4000-8000-000000000001',
+          'confirm-practice-plan-'
+          '10000000-0000-4000-8000-000000000001-2',
         ),
       ),
     );
-    expect(selected, same(action));
+    expect(selected, same(handoff));
   });
 }
 

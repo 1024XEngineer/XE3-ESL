@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -31,20 +29,22 @@ const (
 	streamReplayPollInterval = 100 * time.Millisecond
 	loopFallbackID           = "agent-loop-fallback"
 	toolSchemaVersionV1      = "tool-schema-v1"
+	maxImagesPerMessage      = 4
 )
 
 type Service struct {
-	repository    core.RunRepository
-	multimodal    core.MultimodalRunRepository
-	assembler     *agentcontext.Assembler
-	generator     ai.TextGenerator
-	configuration core.RunConfiguration
-	registry      *tool.Registry
-	executor      *tool.Executor
-	loopLimits    LoopLimits
-	commands      *command.Router
-	logger        *slog.Logger
-	logOptions    LogOptions
+	repository       Repository
+	messages         MessageReader
+	imageSubmissions ImageSubmissionRepository
+	manifests        agentcontext.ManifestRepository
+	assembler        *agentcontext.Assembler
+	generator        ai.TextGenerator
+	configuration    Configuration
+	registry         *tool.Registry
+	executor         *tool.Executor
+	loopLimits       LoopLimits
+	logger           *slog.Logger
+	logOptions       LogOptions
 }
 
 type LoopLimits struct {
@@ -65,26 +65,28 @@ type LogOptions struct {
 type Option func(*Service) error
 
 func NewService(
-	repository core.RunRepository,
+	repository Repository,
+	messages MessageReader,
+	manifests agentcontext.ManifestRepository,
 	assembler *agentcontext.Assembler,
 	generator ai.TextGenerator,
-	configuration core.RunConfiguration,
+	configuration Configuration,
 	options ...Option,
 ) (*Service, error) {
-	if repository == nil || assembler == nil || generator == nil ||
-		!core.ValidRunConfiguration(configuration) {
+	if repository == nil || messages == nil || manifests == nil ||
+		assembler == nil || generator == nil ||
+		!configuration.Valid() {
 		return nil, errors.New("agent: run dependency or configuration is invalid")
 	}
 	service := &Service{
 		repository:    repository,
+		messages:      messages,
+		manifests:     manifests,
 		assembler:     assembler,
 		generator:     generator,
 		configuration: configuration,
 		loopLimits:    defaultLoopLimits(),
 		logOptions:    normalizeLogOptions(LogOptions{}),
-	}
-	if multimodal, ok := repository.(core.MultimodalRunRepository); ok {
-		service.multimodal = multimodal
 	}
 	for _, option := range options {
 		if option == nil {
@@ -159,12 +161,12 @@ func WithLoopLimits(limits LoopLimits) Option {
 	}
 }
 
-func WithCommandRouter(router *command.Router) Option {
+func WithImageSubmissions(repository ImageSubmissionRepository) Option {
 	return func(service *Service) error {
-		if router == nil {
-			return errors.New("agent: command router is required")
+		if repository == nil {
+			return errors.New("agent: image submission repository is required")
 		}
-		service.commands = router
+		service.imageSubmissions = repository
 		return nil
 	}
 }
@@ -175,15 +177,15 @@ func (service *Service) SubmitText(
 	threadID string,
 	clientMessageID string,
 	content string,
-) (core.RunSubmission, error) {
-	if !actor.Valid() || !core.ValidUUID(threadID) {
-		return core.RunSubmission{}, core.ErrNotFound
+) (Submission, error) {
+	if !actor.Valid() || !ValidUUID(threadID) {
+		return Submission{}, ErrNotFound
 	}
-	if !core.ValidClientMessageID(clientMessageID) ||
-		!core.ValidMessageContent(content) {
-		return core.RunSubmission{}, core.ErrInvalidRequest
+	if !conversation.ValidClientMessageID(clientMessageID) ||
+		!conversation.ValidMessageContent(content) {
+		return Submission{}, ErrInvalidRequest
 	}
-	submission, err := service.repository.CreateInitialRun(
+	submission, err := service.repository.CreateInitial(
 		ctx,
 		actor.UserID,
 		threadID,
@@ -192,11 +194,11 @@ func (service *Service) SubmitText(
 		service.configuration,
 	)
 	if err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
 	submission.Run, err = service.process(ctx, actor, submission.Run, nil)
 	if err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
 	return submission, nil
 }
@@ -207,31 +209,31 @@ func (service *Service) SubmitTextStream(
 	threadID string,
 	clientMessageID string,
 	content string,
-	observer core.RunStreamObserver,
-) (core.RunSubmission, error) {
+	observer StreamObserver,
+) (Submission, error) {
 	if observer == nil {
-		return core.RunSubmission{}, core.ErrInvalidRequest
+		return Submission{}, ErrInvalidRequest
 	}
-	if !actor.Valid() || !core.ValidUUID(threadID) {
-		return core.RunSubmission{}, core.ErrNotFound
+	if !actor.Valid() || !ValidUUID(threadID) {
+		return Submission{}, ErrNotFound
 	}
-	if !core.ValidClientMessageID(clientMessageID) ||
-		!core.ValidMessageContent(content) {
-		return core.RunSubmission{}, core.ErrInvalidRequest
+	if !conversation.ValidClientMessageID(clientMessageID) ||
+		!conversation.ValidMessageContent(content) {
+		return Submission{}, ErrInvalidRequest
 	}
-	submission, err := service.repository.CreateInitialRun(
+	submission, err := service.repository.CreateInitial(
 		ctx, actor.UserID, threadID, clientMessageID, content,
 		service.configuration,
 	)
 	if err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
 	if err := observer.OnInputCommitted(ctx, submission); err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
-	if submission.Run.Status == core.RunStatusPending {
+	if submission.Run.Status == StatusPending {
 		if err := observer.OnAssistantStarted(ctx, submission.Run); err != nil {
-			return core.RunSubmission{}, err
+			return Submission{}, err
 		}
 	}
 	deltas := &countingDeltaObserver{delegate: observer}
@@ -246,24 +248,26 @@ func (service *Service) SubmitTextStream(
 	return submission, err
 }
 
-func (service *Service) SubmitMultimodal(
+func (service *Service) SubmitWithImages(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	threadID string,
 	clientMessageID string,
 	content string,
 	imageAssetIDs []string,
-) (core.RunSubmission, error) {
-	if !actor.Valid() || !core.ValidUUID(threadID) {
-		return core.RunSubmission{}, core.ErrNotFound
+) (Submission, error) {
+	if service == nil || service.imageSubmissions == nil {
+		return Submission{}, ErrInvalidRequest
 	}
-	if service.multimodal == nil ||
-		!core.ValidClientMessageID(clientMessageID) ||
-		!core.ValidMessageContent(content) ||
-		!validMultimodalImageIDs(imageAssetIDs) {
-		return core.RunSubmission{}, core.ErrInvalidRequest
+	if !actor.Valid() || !ValidUUID(threadID) {
+		return Submission{}, ErrNotFound
 	}
-	submission, err := service.multimodal.CreateInitialMultimodalRun(
+	if !conversation.ValidClientMessageID(clientMessageID) ||
+		!conversation.ValidMessageContent(content) ||
+		!validImageAssetIDs(imageAssetIDs) {
+		return Submission{}, ErrInvalidRequest
+	}
+	submission, err := service.imageSubmissions.CreateInitialWithImages(
 		ctx,
 		actor.UserID,
 		threadID,
@@ -273,23 +277,23 @@ func (service *Service) SubmitMultimodal(
 		service.configuration,
 	)
 	if err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
 	submission.Run, err = service.process(ctx, actor, submission.Run, nil)
 	if err != nil {
-		return core.RunSubmission{}, err
+		return Submission{}, err
 	}
 	return submission, nil
 }
 
-func validMultimodalImageIDs(imageAssetIDs []string) bool {
+func validImageAssetIDs(imageAssetIDs []string) bool {
 	if len(imageAssetIDs) < 1 ||
-		len(imageAssetIDs) > core.MaxImagesPerMessage {
+		len(imageAssetIDs) > maxImagesPerMessage {
 		return false
 	}
 	seen := make(map[string]struct{}, len(imageAssetIDs))
 	for _, assetID := range imageAssetIDs {
-		if !core.ValidUUID(assetID) {
+		if !ValidUUID(assetID) {
 			return false
 		}
 		if _, found := seen[assetID]; found {
@@ -305,14 +309,14 @@ func (service *Service) RetryText(
 	actor requestcontext.Actor,
 	runID string,
 	retryClientID string,
-) (core.RunRetry, error) {
-	if !actor.Valid() || !core.ValidUUID(runID) {
-		return core.RunRetry{}, core.ErrNotFound
+) (Retry, error) {
+	if !actor.Valid() || !ValidUUID(runID) {
+		return Retry{}, ErrNotFound
 	}
-	if !core.ValidClientMessageID(retryClientID) {
-		return core.RunRetry{}, core.ErrInvalidRequest
+	if !conversation.ValidClientMessageID(retryClientID) {
+		return Retry{}, ErrInvalidRequest
 	}
-	retry, err := service.repository.CreateRetryRun(
+	retry, err := service.repository.CreateRetry(
 		ctx,
 		actor.UserID,
 		runID,
@@ -320,11 +324,11 @@ func (service *Service) RetryText(
 		service.configuration,
 	)
 	if err != nil {
-		return core.RunRetry{}, err
+		return Retry{}, err
 	}
 	retry.Run, err = service.process(ctx, actor, retry.Run, nil)
 	if err != nil {
-		return core.RunRetry{}, err
+		return Retry{}, err
 	}
 	return retry, nil
 }
@@ -334,40 +338,40 @@ func (service *Service) RetryTextStream(
 	actor requestcontext.Actor,
 	runID string,
 	retryClientID string,
-	observer core.RunStreamObserver,
-) (core.RunRetry, error) {
+	observer StreamObserver,
+) (Retry, error) {
 	if observer == nil {
-		return core.RunRetry{}, core.ErrInvalidRequest
+		return Retry{}, ErrInvalidRequest
 	}
-	if !actor.Valid() || !core.ValidUUID(runID) {
-		return core.RunRetry{}, core.ErrNotFound
+	if !actor.Valid() || !ValidUUID(runID) {
+		return Retry{}, ErrNotFound
 	}
-	if !core.ValidClientMessageID(retryClientID) {
-		return core.RunRetry{}, core.ErrInvalidRequest
+	if !conversation.ValidClientMessageID(retryClientID) {
+		return Retry{}, ErrInvalidRequest
 	}
-	retry, err := service.repository.CreateRetryRun(
+	retry, err := service.repository.CreateRetry(
 		ctx, actor.UserID, runID, retryClientID, service.configuration,
 	)
 	if err != nil {
-		return core.RunRetry{}, err
+		return Retry{}, err
 	}
-	userMessage, err := service.repository.FindMessage(
+	userMessage, err := service.messages.FindMessage(
 		ctx,
 		actor.UserID,
 		retry.Run.ThreadID,
 		retry.Run.InputMessageID,
 	)
 	if err != nil {
-		return core.RunRetry{}, err
+		return Retry{}, err
 	}
-	if err := observer.OnInputCommitted(ctx, core.RunSubmission{
+	if err := observer.OnInputCommitted(ctx, Submission{
 		Run: retry.Run, UserMessage: userMessage, Created: retry.Created,
 	}); err != nil {
-		return core.RunRetry{}, err
+		return Retry{}, err
 	}
-	if retry.Run.Status == core.RunStatusPending {
+	if retry.Run.Status == StatusPending {
 		if err := observer.OnAssistantStarted(ctx, retry.Run); err != nil {
-			return core.RunRetry{}, err
+			return Retry{}, err
 		}
 	}
 	deltas := &countingDeltaObserver{delegate: observer}
@@ -385,9 +389,9 @@ func (service *Service) RetryTextStream(
 func (service *Service) waitForTerminalRun(
 	ctx context.Context,
 	ownerID string,
-	run core.Run,
-) (core.Run, error) {
-	if run.Status == core.RunStatusCompleted || run.Status == core.RunStatusFailed {
+	run Run,
+) (Run, error) {
+	if run.Status == StatusCompleted || run.Status == StatusFailed {
 		return run, nil
 	}
 	ticker := time.NewTicker(streamReplayPollInterval)
@@ -395,19 +399,19 @@ func (service *Service) waitForTerminalRun(
 	for {
 		select {
 		case <-ctx.Done():
-			return core.Run{}, ctx.Err()
+			return Run{}, ctx.Err()
 		case <-ticker.C:
-			current, err := service.repository.FindRun(ctx, ownerID, run.ID)
+			current, err := service.repository.Find(ctx, ownerID, run.ID)
 			if err != nil {
-				return core.Run{}, err
+				return Run{}, err
 			}
 			switch current.Status {
-			case core.RunStatusCompleted, core.RunStatusFailed:
+			case StatusCompleted, StatusFailed:
 				return current, nil
-			case core.RunStatusPending, core.RunStatusRunning:
+			case StatusPending, StatusRunning:
 				continue
 			default:
-				return core.Run{}, core.ErrInvalidContext
+				return Run{}, agentcontext.ErrInvalidContext
 			}
 		}
 	}
@@ -417,40 +421,40 @@ func (service *Service) GetRun(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	runID string,
-) (core.Run, error) {
-	if !actor.Valid() || !core.ValidUUID(runID) {
-		return core.Run{}, core.ErrNotFound
+) (Run, error) {
+	if !actor.Valid() || !ValidUUID(runID) {
+		return Run{}, ErrNotFound
 	}
-	return service.repository.FindRun(ctx, actor.UserID, runID)
+	return service.repository.Find(ctx, actor.UserID, runID)
 }
 
 func (service *Service) GetContextManifest(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	runID string,
-) (core.ContextManifest, error) {
-	if !actor.Valid() || !core.ValidUUID(runID) {
-		return core.ContextManifest{}, core.ErrNotFound
+) (agentcontext.Manifest, error) {
+	if !actor.Valid() || !ValidUUID(runID) {
+		return agentcontext.Manifest{}, ErrNotFound
 	}
-	if _, err := service.repository.FindRun(
+	if _, err := service.repository.Find(
 		ctx,
 		actor.UserID,
 		runID,
 	); err != nil {
-		return core.ContextManifest{}, err
+		return agentcontext.Manifest{}, err
 	}
-	return service.repository.FindContextManifest(ctx, actor.UserID, runID)
+	return service.manifests.FindManifest(ctx, actor.UserID, runID)
 }
 
 func (service *Service) GetToolCalls(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	runID string,
-) ([]core.ToolCallRecord, error) {
-	if !actor.Valid() || !core.ValidUUID(runID) {
-		return nil, core.ErrNotFound
+) ([]ToolCall, error) {
+	if !actor.Valid() || !ValidUUID(runID) {
+		return nil, ErrNotFound
 	}
-	if _, err := service.repository.FindRun(
+	if _, err := service.repository.Find(
 		ctx,
 		actor.UserID,
 		runID,
@@ -460,10 +464,10 @@ func (service *Service) GetToolCalls(
 	return service.repository.ListToolCalls(ctx, actor.UserID, runID)
 }
 
-func (service *Service) RecoverInterruptedRuns(
+func (service *Service) RecoverInterrupted(
 	ctx context.Context,
 ) (int64, error) {
-	return service.repository.RecoverInterruptedRuns(ctx)
+	return service.repository.RecoverInterrupted(ctx)
 }
 
 // ProcessPending resumes a Run that was atomically created by another
@@ -472,14 +476,14 @@ func (service *Service) RecoverInterruptedRuns(
 func (service *Service) ProcessPending(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run core.Run,
-) (core.Run, error) {
+	run Run,
+) (Run, error) {
 	if ctx == nil || !actor.Valid() ||
 		run.OwnerID != actor.UserID ||
-		!core.ValidUUID(run.ID) ||
-		!core.ValidUUID(run.ThreadID) ||
-		!core.ValidUUID(run.InputMessageID) {
-		return core.Run{}, core.ErrInvalidRequest
+		!ValidUUID(run.ID) ||
+		!ValidUUID(run.ThreadID) ||
+		!ValidUUID(run.InputMessageID) {
+		return Run{}, ErrInvalidRequest
 	}
 	return service.process(ctx, actor, run, nil)
 }
@@ -487,19 +491,19 @@ func (service *Service) ProcessPending(
 func (service *Service) process(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run core.Run,
+	run Run,
 	observer *countingDeltaObserver,
-) (core.Run, error) {
-	if run.Status != core.RunStatusPending {
+) (Run, error) {
+	if run.Status != StatusPending {
 		return run, nil
 	}
-	claimed, acquired, err := service.repository.ClaimRun(
+	claimed, acquired, err := service.repository.Claim(
 		ctx,
 		actor.UserID,
 		run.ID,
 	)
 	if err != nil {
-		return core.Run{}, err
+		return Run{}, err
 	}
 	if !acquired {
 		return claimed, nil
@@ -510,12 +514,12 @@ func (service *Service) process(
 			actor.UserID,
 			claimed.ID,
 			claimed.WorkerLeaseToken,
-			core.RunFailureConfigurationDrift,
+			FailureConfigurationDrift,
 			true,
 		)
 		service.logRunFailed(
 			claimed,
-			core.RunFailureConfigurationDrift,
+			FailureConfigurationDrift,
 			true,
 			claimed.StartedAt,
 		)
@@ -525,14 +529,29 @@ func (service *Service) process(
 	manifest, request, err := service.assembler.Assemble(
 		ctx,
 		actor,
-		claimed,
-		service.configuration,
+		agentcontext.AssembleCommand{
+			RunID:              claimed.ID,
+			OwnerID:            claimed.OwnerID,
+			ThreadID:           claimed.ThreadID,
+			InputMessageID:     claimed.InputMessageID,
+			RunCreatedAt:       claimed.CreatedAt.UTC(),
+			Provider:           service.configuration.Provider,
+			Model:              service.configuration.Model,
+			MaxOutputTokens:    service.configuration.MaxOutputTokens,
+			MaxInputCharacters: service.configuration.MaxInputCharacters,
+		},
 	)
 	if err != nil {
-		kind := core.RunFailureInternal
+		kind := FailureInternal
 		retryable := true
-		if errors.Is(err, core.ErrInvalidContext) {
-			kind = core.RunFailureInvalidContext
+		switch {
+		case errors.Is(err, agentcontext.ErrInvalidContext):
+			kind = FailureInvalidContext
+			retryable = false
+		case errors.Is(err, agentcontext.ErrMemoryConsistencyUnavailable):
+			kind = FailureMemoryConsistencyUnavailable
+		case errors.Is(err, agentcontext.ErrMemoryConsistencyRejected):
+			kind = FailureMemoryConsistencyUnavailable
 			retryable = false
 		}
 		failed, failErr := service.persistFailure(
@@ -546,7 +565,7 @@ func (service *Service) process(
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
 		return failed, failErr
 	}
-	if _, err := service.repository.SaveContextManifest(
+	if _, err := service.manifests.SaveManifest(
 		ctx,
 		manifest,
 	); err != nil {
@@ -555,11 +574,11 @@ func (service *Service) process(
 			actor.UserID,
 			claimed.ID,
 			claimed.WorkerLeaseToken,
-			core.RunFailureInternal,
+			FailureInternal,
 			true,
 		)
 		if failErr != nil {
-			return core.Run{}, err
+			return Run{}, err
 		}
 		return failed, nil
 	}
@@ -631,7 +650,7 @@ func (service *Service) process(
 	}
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
-	completed, err := service.repository.CompleteRun(
+	completed, err := service.repository.Complete(
 		persistContext,
 		actor.UserID,
 		claimed.ID,
@@ -645,8 +664,8 @@ func (service *Service) process(
 func (service *Service) generate(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run core.Run,
-	manifest core.ContextManifest,
+	run Run,
+	manifest agentcontext.Manifest,
 	request ai.TextRequest,
 ) (ai.TextResult, error) {
 	return service.generateObserved(ctx, actor, run, manifest, request, nil)
@@ -655,8 +674,8 @@ func (service *Service) generate(
 func (service *Service) generateObserved(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run core.Run,
-	manifest core.ContextManifest,
+	run Run,
+	manifest agentcontext.Manifest,
 	request ai.TextRequest,
 	observer *countingDeltaObserver,
 ) (ai.TextResult, error) {
@@ -674,26 +693,6 @@ func (service *Service) generateObserved(
 	input := lastUserContent(request)
 	service.logRunReceived(run, input, request)
 	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
-	parsed, explicitCommand, err := service.parseCommand(input)
-	if err != nil {
-		return fallbackResult(
-			service.configuration,
-			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
-		), nil
-	}
-	if !explicitCommand && requestsLatestPracticeReport(input) {
-		if _, available := service.toolDefinition(
-			command.ToolLatestPracticeReport,
-		); available {
-			parsed.Invocation = tool.Invocation{
-				Name:  command.ToolLatestPracticeReport,
-				Input: json.RawMessage(`{}`),
-			}
-			explicitCommand = true
-		}
-	}
-
-	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
@@ -707,38 +706,6 @@ func (service *Service) generateObserved(
 	modelIterations := 0
 	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
-	if explicitCommand {
-		// 显式命令只负责预先确定第一个工具，执行结果仍进入统一有界循环。
-		commandCall := ai.ToolCall{
-			ID:        "command-call",
-			Name:      parsed.Invocation.Name,
-			Arguments: parsed.Invocation.Input,
-		}
-		commandEffect := service.registry.InvocationEffect(parsed.Invocation)
-		if commandEffect.MayWrite() {
-			writeCalls++
-		}
-		if err := service.saveToolCallProposed(loopCtx, run, commandCall); err != nil {
-			return ai.TextResult{}, err
-		}
-		toolMessage, err := service.executeToolCall(
-			loopCtx,
-			actor,
-			run,
-			commandCall,
-		)
-		if err != nil {
-			return ai.TextResult{}, err
-		}
-		request.Messages = append(request.Messages, ai.TextMessage{
-			Role:      ai.TextRoleAssistant,
-			ToolCalls: []ai.ToolCall{commandCall},
-		}, toolMessage)
-		seenToolCallIDs[commandCall.ID] = struct{}{}
-		toolCalls = 1
-		toolIterations = 1
-		finalDecision = "tool_call_then_response"
-	}
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		result, err := service.generateModel(loopCtx, request, deltaObserver)
@@ -938,7 +905,7 @@ func (service *Service) generateModel(
 }
 
 type countingDeltaObserver struct {
-	delegate core.RunStreamObserver
+	delegate StreamObserver
 	count    int
 }
 
@@ -959,22 +926,20 @@ func (observer *countingDeltaObserver) OnTextDelta(
 func (service *Service) executeToolCall(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run core.Run,
+	run Run,
 	call ai.ToolCall,
 ) (ai.TextMessage, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
 	requestID := toolCallRequestID(run.ID, call.ID)
-	if service.repository != nil {
-		if _, err := service.repository.MarkToolCallRunning(
-			toolCtx,
-			actor.UserID,
-			run.ID,
-			call.ID,
-			requestID,
-		); err != nil {
-			return ai.TextMessage{}, err
-		}
+	if _, err := service.repository.StartToolCall(
+		toolCtx,
+		actor.UserID,
+		run.ID,
+		call.ID,
+		requestID,
+	); err != nil {
+		return ai.TextMessage{}, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -988,54 +953,49 @@ func (service *Service) executeToolCall(
 		tool.Invocation{Name: call.Name, Input: call.Arguments},
 	)
 	if err != nil {
-		if service.repository != nil {
-			persistCtx, persistCancel := runPersistenceContext(ctx)
-			defer persistCancel()
-			if _, persistErr := service.repository.MarkToolCallFailed(
-				persistCtx,
-				actor.UserID,
-				run.ID,
-				call.ID,
-				core.ToolCallStatusFailed,
-				tool.ErrorCategory(err),
-			); persistErr != nil {
-				return ai.TextMessage{}, persistErr
-			}
+		persistCtx, persistCancel := runPersistenceContext(ctx)
+		defer persistCancel()
+		if _, persistErr := service.repository.FailToolCall(
+			persistCtx,
+			actor.UserID,
+			run.ID,
+			call.ID,
+			ToolCallFailed,
+			tool.ErrorCategory(err),
+		); persistErr != nil {
+			return ai.TextMessage{}, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
 		return toolFailureMessage(call.ID, err), nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
-		if service.repository != nil {
-			persistCtx, persistCancel := runPersistenceContext(ctx)
-			defer persistCancel()
-			if _, persistErr := service.repository.MarkToolCallFailed(
-				persistCtx,
-				actor.UserID,
-				run.ID,
-				call.ID,
-				core.ToolCallStatusFailed,
-				"internal",
-			); persistErr != nil {
-				return ai.TextMessage{}, persistErr
-			}
-		}
-		return toolFailureMessage(call.ID, err), nil
-	}
-	if service.repository != nil {
 		persistCtx, persistCancel := runPersistenceContext(ctx)
 		defer persistCancel()
-		if _, err := service.repository.MarkToolCallSucceeded(
+		if _, persistErr := service.repository.FailToolCall(
 			persistCtx,
 			actor.UserID,
 			run.ID,
 			call.ID,
-			json.RawMessage(content),
-			toolSourceRefs(result.SourceRefs),
-		); err != nil {
-			return ai.TextMessage{}, err
+			ToolCallFailed,
+			"internal",
+		); persistErr != nil {
+			return ai.TextMessage{}, persistErr
 		}
+		return toolFailureMessage(call.ID, err), nil
+	}
+	persistCtx, persistCancel := runPersistenceContext(ctx)
+	defer persistCancel()
+	if _, err := service.repository.CompleteToolCall(
+		persistCtx,
+		actor.UserID,
+		run.ID,
+		call.ID,
+		json.RawMessage(content),
+		toolSourceRefs(result.SourceRefs),
+		result.Handoffs,
+	); err != nil {
+		return ai.TextMessage{}, err
 	}
 	return ai.TextMessage{
 		Role:       ai.TextRoleTool,
@@ -1046,15 +1006,12 @@ func (service *Service) executeToolCall(
 
 func (service *Service) saveToolCallProposed(
 	ctx context.Context,
-	run core.Run,
+	run Run,
 	call ai.ToolCall,
 ) error {
-	if service.repository == nil {
-		return nil
-	}
-	_, err := service.repository.SaveToolCallProposed(
+	_, err := service.repository.ProposeToolCall(
 		ctx,
-		core.ToolCallRecord{
+		ToolCall{
 			ID:            call.ID,
 			RunID:         run.ID,
 			OwnerID:       run.OwnerID,
@@ -1062,7 +1019,7 @@ func (service *Service) saveToolCallProposed(
 			Name:          call.Name,
 			SchemaVersion: toolSchemaVersionV1,
 			Input:         call.Arguments,
-			Status:        core.ToolCallStatusProposed,
+			Status:        ToolCallProposed,
 		},
 	)
 	return err
@@ -1070,19 +1027,16 @@ func (service *Service) saveToolCallProposed(
 
 func (service *Service) markToolCallRejected(
 	ctx context.Context,
-	run core.Run,
+	run Run,
 	toolCallID string,
 	errorCategory string,
 ) error {
-	if service.repository == nil {
-		return nil
-	}
-	_, err := service.repository.MarkToolCallFailed(
+	_, err := service.repository.FailToolCall(
 		ctx,
 		run.OwnerID,
 		run.ID,
 		toolCallID,
-		core.ToolCallStatusRejected,
+		ToolCallRejected,
 		errorCategory,
 	)
 	return err
@@ -1090,19 +1044,16 @@ func (service *Service) markToolCallRejected(
 
 func (service *Service) saveContextToolSnapshot(
 	ctx context.Context,
-	manifest core.ContextManifest,
+	manifest agentcontext.Manifest,
 ) error {
-	if service.repository == nil {
-		return nil
-	}
-	_, err := service.repository.SaveContextToolSnapshot(ctx, manifest)
+	_, err := service.manifests.SaveToolSnapshot(ctx, manifest)
 	return err
 }
 
-func toolSourceRefs(refs []tool.SourceRef) []core.ToolSourceRef {
-	result := make([]core.ToolSourceRef, 0, len(refs))
+func toolSourceRefs(refs []tool.SourceRef) []ToolSourceRef {
+	result := make([]ToolSourceRef, 0, len(refs))
 	for _, ref := range refs {
-		result = append(result, core.ToolSourceRef{
+		result = append(result, ToolSourceRef{
 			Type: ref.Type,
 			ID:   ref.ID,
 		})
@@ -1142,7 +1093,7 @@ func toolSchemaHashes(definitions []ai.ToolDefinition) map[string]string {
 }
 
 func (service *Service) logRunReceived(
-	run core.Run,
+	run Run,
 	input string,
 	request ai.TextRequest,
 ) {
@@ -1181,7 +1132,7 @@ func textRequestImageCount(request ai.TextRequest) int {
 }
 
 func (service *Service) logLoopIteration(
-	run core.Run,
+	run Run,
 	iteration int,
 	toolCallCount int,
 ) {
@@ -1199,7 +1150,7 @@ func (service *Service) logLoopIteration(
 }
 
 func (service *Service) logRoutingDecision(
-	run core.Run,
+	run Run,
 	decision string,
 	selectedTools []string,
 	reasonCode string,
@@ -1222,7 +1173,7 @@ func (service *Service) logRoutingDecision(
 }
 
 func (service *Service) logRunCompleted(
-	run core.Run,
+	run Run,
 	decision string,
 	iterations int,
 	toolCallCount int,
@@ -1245,7 +1196,7 @@ func (service *Service) logRunCompleted(
 }
 
 func (service *Service) logRunFailed(
-	run core.Run,
+	run Run,
 	kind string,
 	retryable bool,
 	startedAt time.Time,
@@ -1264,7 +1215,7 @@ func (service *Service) logRunFailed(
 }
 
 func (service *Service) logInvalidModelResult(
-	run core.Run,
+	run Run,
 	result ai.TextResult,
 ) {
 	if service.logger == nil {
@@ -1281,7 +1232,7 @@ func (service *Service) logInvalidModelResult(
 		"agent.loop.invalid_model_result",
 		"run_id", run.ID,
 		"thread_id", run.ThreadID,
-		"id_valid", core.ValidModelID(result.ID),
+		"id_valid", ValidModelID(result.ID),
 		"provider", result.Provider,
 		"provider_matches", result.Provider == service.configuration.Provider,
 		"model", result.Model,
@@ -1304,10 +1255,10 @@ func (service *Service) persistFailure(
 	workerLeaseToken string,
 	kind string,
 	retryable bool,
-) (core.Run, error) {
+) (Run, error) {
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
-	return service.repository.FailRun(
+	return service.repository.Fail(
 		persistContext,
 		ownerID,
 		runID,
@@ -1333,25 +1284,25 @@ func generationFailure(err error) (string, bool) {
 }
 
 func validFinalTextResult(result ai.TextResult) bool {
-	return core.ValidModelID(result.ID) &&
-		core.ValidProviderID(result.Provider) &&
-		core.ValidModelID(result.Model) &&
+	return ValidModelID(result.ID) &&
+		ValidProviderID(result.Provider) &&
+		ValidModelID(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
 		validTokenUsage(result.Usage) &&
-		core.ValidMessageContent(result.Content) &&
+		conversation.ValidMessageContent(result.Content) &&
 		len(result.ToolCalls) == 0
 }
 
 func validLoopTextResult(result ai.TextResult) bool {
-	if !core.ValidModelID(result.ID) ||
-		!core.ValidProviderID(result.Provider) ||
-		!core.ValidModelID(result.Model) ||
+	if !ValidModelID(result.ID) ||
+		!ValidProviderID(result.Provider) ||
+		!ValidModelID(result.Model) ||
 		!validTokenUsage(result.Usage) {
 		return false
 	}
 	switch result.FinishReason {
 	case "stop", "length":
-		return core.ValidMessageContent(result.Content) &&
+		return conversation.ValidMessageContent(result.Content) &&
 			len(result.ToolCalls) == 0
 	case "tool_calls":
 		if len(result.ToolCalls) == 0 {
@@ -1379,8 +1330,8 @@ func validTokenUsage(usage ai.TokenUsage) bool {
 }
 
 func runConfigurationMatches(
-	run core.Run,
-	configuration core.RunConfiguration,
+	run Run,
+	configuration Configuration,
 ) bool {
 	return run.RequestedProvider == configuration.Provider &&
 		run.RequestedModel == configuration.Model &&
@@ -1422,20 +1373,6 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	return limits
 }
 
-func (service *Service) parseCommand(input string) (command.Parsed, bool, error) {
-	if service.commands == nil {
-		return command.Parsed{}, false, nil
-	}
-	return service.commands.Parse(input)
-}
-
-func requestsLatestPracticeReport(input string) bool {
-	return strings.Contains(
-		input,
-		"请直接读取这次练习的真实评分与报告",
-	)
-}
-
 func (service *Service) toolDefinition(name string) (tool.Definition, bool) {
 	if service.registry == nil {
 		return tool.Definition{}, false
@@ -1469,7 +1406,7 @@ func (service *Service) writeToolCallCount(
 }
 
 func (service *Service) loopBudgetFallback(
-	run core.Run,
+	run Run,
 	content string,
 	modelIterations int,
 	toolCalls int,
@@ -1548,8 +1485,15 @@ func lastUserContent(request ai.TextRequest) string {
 	return ""
 }
 
+// providerToolResult is the only Tool result projection sent back to the
+// model. SourceRefs remain separate persistence metadata and must never enter
+// the Provider conversation.
+type providerToolResult struct {
+	Content map[string]any `json:"content"`
+}
+
 func marshalToolResult(result tool.Result, maxBytes int) (string, error) {
-	raw, err := json.Marshal(result)
+	raw, err := json.Marshal(providerToolResult{Content: result.Content})
 	if err != nil {
 		return "", err
 	}
@@ -1573,7 +1517,7 @@ func toolExposed(exposed map[string]struct{}, name string) bool {
 }
 
 func fallbackResult(
-	configuration core.RunConfiguration,
+	configuration Configuration,
 	content string,
 ) ai.TextResult {
 	return ai.TextResult{

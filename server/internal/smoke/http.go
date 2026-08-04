@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -33,57 +33,56 @@ const (
 
 type Server struct {
 	router       *gin.Engine
-	preparation  *preparation.Service
-	practice     *practice.Service
-	conversation *conversation.Service
-	review       *review.Service
+	preparation  *preparationBackend
+	practice     *practiceBackend
+	conversation *practiceinput.Service
+	review       *reviewService
 	application  *Application
 	idempotency  *idempotencyStore
 	identity     *mockIdentityStore
-	tools        []mocktool.CapabilitySummary
+	tools        []capabilityfixture.CapabilitySummary
 }
 
 func NewServer(logger *slog.Logger) *Server {
-	runtime := NewRuntime()
+	runtime := NewRuntime(newDeterministicSceneCatalog())
 	provider := NewDeterministicProvider()
-	preparationService := preparation.NewService(
-		preparationBackend{runtime: runtime},
-		runtime.catalog,
-	)
-	practiceService := practice.NewService(practiceBackend{runtime: runtime})
-	conversationService := conversation.NewService(
+	preparationStore := &preparationBackend{runtime: runtime}
+	practiceStore := &practiceBackend{runtime: runtime}
+	conversationService := practiceinput.NewService(
 		conversationBackend{runtime: runtime},
 		provider,
 	)
-	reviewService := review.NewService(reviewBackend{runtime: runtime}, provider)
-	toolRegistry, err := mocktool.NewRegistry(mocktool.NewStore())
+	reviewService := newReviewService(reviewBackend{runtime: runtime}, provider)
+	toolRegistry, err := capabilityfixture.NewRegistry(
+		capabilityfixture.NewStore(),
+	)
 	if err != nil {
 		panic("build mock tool registry: " + err.Error())
 	}
 	router := bootstrap.NewRouter(logger,
 		preparation.New(),
 		practice.New(),
-		conversation.New(),
+		practiceinput.New(),
 		review.New(),
 	)
 	server := &Server{
 		router:       router,
-		preparation:  preparationService,
-		practice:     practiceService,
+		preparation:  preparationStore,
+		practice:     practiceStore,
 		conversation: conversationService,
 		review:       reviewService,
 		application: NewApplication(
-			preparationService,
-			practiceService,
+			preparationStore,
+			practiceStore,
 			conversationService,
 			reviewService,
 			provider,
 		),
 		idempotency: newIdempotencyStore(),
 		identity:    newMockIdentityStore(),
-		tools:       mocktool.CapabilitySummaries(toolRegistry),
+		tools:       capabilityfixture.CapabilitySummaries(toolRegistry),
 	}
-	bootstrap.RegisterPreparationCatalog(router, preparationService)
+	bootstrap.RegisterSceneCatalog(router, runtime.catalog)
 	logger.Info("agent.tools.registered", slog.Any("tools", server.tools))
 	server.registerRoutes()
 	return server
@@ -237,17 +236,19 @@ func (s *Server) createPlan(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var command practice.CreatePracticePlanCommand
-		if err := decodeStrict(raw, &command); err != nil ||
-			!validID(command.ScenarioDefinitionID) ||
-			command.ScenarioDefinitionVersion < 1 ||
-			!validID(command.ScenarioConfigID) ||
-			command.ScenarioConfigVersion < 1 ||
-			!validID(command.PreparationProfileID) ||
-			!validUniqueIDs(command.SelectedRoleIDs) {
+		var request preparation.CreatePlanRequest
+		if err := decodeStrict(raw, &request); err != nil ||
+			(request.SourceThreadID != "" && !validID(request.SourceThreadID)) ||
+			(request.GoalID != "" && !validID(request.GoalID)) ||
+			!validID(request.PreparationSnapshotID) ||
+			!validID(request.SceneID) ||
+			request.SceneVersion < 1 ||
+			!validUniqueIDs(request.SelectedRoleIDs) ||
+			!validID(request.PracticeOptionID) ||
+			request.MaxEffectiveTurns < 0 {
 			return invalidRequest()
 		}
-		result, err := s.application.CreatePlan(command)
+		result, err := s.application.CreatePlan(c.Request.Context(), request)
 		if err != nil {
 			return serviceError(err)
 		}
@@ -261,16 +262,16 @@ func (s *Server) createSession(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var command practice.CreatePracticeSessionCommand
-		if err := decodeStrict(raw, &command); err != nil ||
-			command.ExpectedPlanRevision < 1 ||
-			!validID(command.PreparationSnapshotID) ||
-			!validID(command.PracticeOptionID) ||
-			!validUniqueIDs(command.RoleDefinitionIDs) {
+		var request practice.CreateSessionRequest
+		if err := decodeStrict(raw, &request); err != nil ||
+			request.ExpectedPlanRevision < 1 ||
+			!request.UserConfirmed {
 			return invalidRequest()
 		}
-		command.PracticePlanID = c.Param("practice_plan_id")
-		result, err := s.application.CreateSession(command)
+		result, err := s.application.CreateSession(
+			c.Param("practice_plan_id"),
+			request.ExpectedPlanRevision,
+		)
 		if err != nil {
 			return serviceError(err)
 		}
@@ -279,9 +280,7 @@ func (s *Server) createSession(c *gin.Context) {
 }
 
 func (s *Server) getSession(c *gin.Context) {
-	result, ok := s.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
-		PracticeSessionID: c.Param("practice_session_id"),
-	})
+	result, ok := s.practice.GetPracticeSession(c.Param("practice_session_id"))
 	if !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
 		return
@@ -291,9 +290,7 @@ func (s *Server) getSession(c *gin.Context) {
 
 func (s *Server) getSessionSnapshot(c *gin.Context) {
 	result, ok := s.practice.GetPracticeSessionSnapshot(
-		practice.GetPracticeSessionSnapshotQuery{
-			PracticeSessionID: c.Param("practice_session_id"),
-		},
+		c.Param("practice_session_id"),
 	)
 	if !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
@@ -334,7 +331,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var request conversation.SubmitTurnRequest
+		var request practiceinput.SubmitTurnRequest
 		if err := decodeStrict(raw, &request); err != nil {
 			return invalidRequest()
 		}
@@ -366,7 +363,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 		}
 		submitted := turn
 		submitted.Status = "submitted"
-		submitted.CompletedAt = ""
+		submitted.CompletedAt = time.Time{}
 		return apiResponse{status: http.StatusAccepted, payload: submitted}
 	})
 }
@@ -464,9 +461,7 @@ func (s *Server) listHistory(c *gin.Context) {
 
 func (s *Server) streamEvents(c *gin.Context) {
 	sessionID := c.Param("practice_session_id")
-	if _, ok := s.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
-		PracticeSessionID: sessionID,
-	}); !ok {
+	if _, ok := s.practice.GetPracticeSession(sessionID); !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
 		return
 	}

@@ -1,3 +1,8 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
+import 'package:speakup/features/coaching/goal/goal.dart';
+
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
@@ -7,11 +12,11 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
-import 'package:speakup/practice/wire_practice_client.dart';
-import 'package:speakup/review/review_history_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/review/review_history_client.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
-import '../review/formal_review_fixture.dart';
+import '../review/evaluation_report_fixture.dart';
 
 void main() {
   test(
@@ -19,17 +24,8 @@ void main() {
     () async {
       final transport = _PracticeTransport([
         _PracticeStep(
-          method: 'GET',
-          path: '/v1/agent-threads/$_threadId/voice-practice-session',
-          response: _errorResponse(
-            statusCode: HttpStatus.conflict,
-            code: 'resource_conflict',
-            retryable: false,
-          ),
-        ),
-        _PracticeStep(
           method: 'POST',
-          path: '/v1/agent-threads/$_threadId/voice-practice-sessions',
+          path: '/v1/practice-sessions/$_newSessionId/voice-activation',
           response: _jsonResponse(
             HttpStatus.created,
             _activeSessionJson(_newSessionId),
@@ -51,11 +47,10 @@ void main() {
       await controller.initialize();
 
       expect(controller.threadId, _threadId);
-      expect(controller.activeMatter?.id, _matterId);
+      expect(controller.activeGoal?.id, _goalId);
       expect(controller.messages, hasLength(1));
       expect(controller.practiceSessionId, isNull);
       expect(controller.hasActivePractice, isFalse);
-      expect(controller.review, isNull);
       expect(controller.canSelectScene, isTrue);
       expect(controller.canRetry, isFalse);
       expect(controller.errorMessage, isNull);
@@ -69,12 +64,12 @@ void main() {
         _firstCompletedSessionId,
         _secondCompletedSessionId,
       ]);
-      expect(controller.review, isNull);
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        scene: _scene,
         sessionId: _newSessionId,
+        planId: 'plan-new',
         turnLimit: 3,
         clientOperationId: 'voice-new-practice',
       );
@@ -86,7 +81,7 @@ void main() {
   );
 
   test(
-    'authentication network and in-progress restore failures are not ignored',
+    'explicit Session restore failures do not erase the Agent context',
     () async {
       final cases =
           <({String name, Object? error, PracticeWireResponse? response})>[
@@ -119,7 +114,7 @@ void main() {
         final transport = _PracticeTransport([
           _PracticeStep(
             method: 'GET',
-            path: '/v1/agent-threads/$_threadId/voice-practice-session',
+            path: '/v1/practice-sessions/$_newSessionId/voice-state',
             response: testCase.response,
             error: testCase.error,
           ),
@@ -131,13 +126,21 @@ void main() {
         addTearDown(controller.dispose);
 
         await controller.initialize();
+        await expectLater(
+          controller.restoreCreatedPractice(
+            sessionId: _newSessionId,
+            scene: _scene,
+          ),
+          throwsA(isA<AgentClientException>()),
+          reason: testCase.name,
+        );
 
-        expect(controller.threadId, isNull, reason: testCase.name);
-        expect(controller.activeMatter, isNull, reason: testCase.name);
+        expect(controller.threadId, _threadId, reason: testCase.name);
+        expect(controller.activeGoal?.id, _goalId, reason: testCase.name);
         expect(controller.practiceSessionId, isNull, reason: testCase.name);
-        expect(controller.canSelectScene, isFalse, reason: testCase.name);
-        expect(controller.canRetry, isTrue, reason: testCase.name);
-        expect(controller.errorMessage, isNotNull, reason: testCase.name);
+        expect(controller.canSelectScene, isTrue, reason: testCase.name);
+        expect(controller.canRetry, isFalse, reason: testCase.name);
+        expect(controller.errorMessage, isNull, reason: testCase.name);
         transport.expectDone();
       }
     },
@@ -177,17 +180,8 @@ Map<String, Object?> _activeSessionJson(String sessionId) {
   return {
     'practice_session_id': sessionId,
     'practice_plan_id': 'plan-new',
-    'thread_id': _threadId,
-    'scenario_type': 'INTERVIEW',
-    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-    'matter': {
-      'matter_id': _matterId,
-      'title': _matter.scene.title,
-      'status': 'active',
-      'version': 4,
-      'created_at': _timestamp,
-      'updated_at': _timestamp,
-    },
+    'scene_family': 'INTERVIEW',
+    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'session_version': 2,
     'effective_turns': 0,
     'turn_limit': 3,
@@ -211,10 +205,10 @@ final class _RestoredAgentClient implements AgentClient {
 
   @override
   Future<AgentThreadSnapshot> restoreThread() async {
-    return const AgentThreadSnapshot(
+    return AgentThreadSnapshot(
       threadId: _threadId,
-      activeMatter: _matter,
-      messages: [
+      activeGoal: _goal,
+      messages: const [
         AgentMessage(
           id: 'message-restored',
           role: AgentMessageRole.assistant,
@@ -246,39 +240,10 @@ final class _RestoredAgentClient implements AgentClient {
   }
 
   @override
-  Future<AgentReview> createReview({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<AgentSceneStart> startScene({
-    required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
   }) {
     throw UnimplementedError();
   }
@@ -310,10 +275,9 @@ final class _CompletedReviewHistoryClient implements ReviewHistoryClient {
     );
     return ReviewHistoryItem(
       review: review,
-      formalReview: legacyFormalReviewFixture(
+      report: evaluationReportFixture(
         review: review,
         practiceSessionId: sessionId,
-        createdAt: createdAt,
         completedAt: completedAt,
       ),
       practiceSessionId: sessionId,
@@ -370,16 +334,25 @@ const _credential = AuthSessionCredential(
   generation: 1,
 );
 const _threadId = '10000000-0000-4000-8000-000000000111';
-const _matterId = '20000000-0000-4000-8000-000000000111';
+const _goalId = '20000000-0000-4000-8000-000000000111';
 const _firstCompletedSessionId = '30000000-0000-4000-8000-000000000111';
 const _secondCompletedSessionId = '30000000-0000-4000-8000-000000000112';
 const _newSessionId = '30000000-0000-4000-8000-000000000113';
 const _timestamp = '2026-07-26T08:00:00Z';
-const _matter = AgentMatter(
-  id: _matterId,
-  scene: AgentScene(
-    id: 'programmer-interview',
-    title: 'Programmer interview',
-    description: 'Formal interview practice.',
+final _scene = testScene(
+  id: 'programmer-interview',
+  family: SceneFamily.interview,
+  model: SceneModel.projectExperienceDeepDive,
+  name: 'Programmer interview',
+  prompt: const ScenePrompt(
+    publicSceneBrief: 'Formal interview practice.',
+    practiceGoal: 'Complete the interview practice.',
+    userRole: 'Candidate',
+    aiRole: 'Interviewer',
+    personaSummary: 'Professional and focused.',
+    focusAreas: <String>['clarity'],
+    turnBlueprints: <String>['Ask one interview question.'],
+    suggestedDurationSeconds: 600,
   ),
 );
+final _goal = testGoal(id: _goalId, title: _scene.name);
