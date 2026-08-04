@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -50,20 +50,20 @@ type EvidencePracticeSource interface {
 	) (practice.SessionSnapshot, error)
 }
 
-type EvidenceConversationSource interface {
+type EvidenceVoiceSource interface {
 	ListSessionQuestions(
 		context.Context,
-		practiceinput.Actor,
+		practicevoice.Actor,
 		string,
 	) ([]practice.Question, error)
 	GetCandidate(
 		context.Context,
-		practiceinput.Actor,
+		practicevoice.Actor,
 		string,
-	) (practiceinput.StoredTranscriptCandidate, error)
+	) (practicevoice.StoredTranscriptCandidate, error)
 	ListSessionTurns(
 		context.Context,
-		practiceinput.Actor,
+		practicevoice.Actor,
 		string,
 	) ([]practice.Turn, error)
 	ListCompletedSessionQuestions(
@@ -75,7 +75,7 @@ type EvidenceConversationSource interface {
 		context.Context,
 		string,
 		string,
-	) (practiceinput.StoredTranscriptCandidate, error)
+	) (practicevoice.StoredTranscriptCandidate, error)
 	ListCompletedSessionTurns(
 		context.Context,
 		string,
@@ -88,30 +88,30 @@ type EvidenceAudioSource interface {
 		context.Context,
 		string,
 		string,
-	) (practiceinput.AudioAsset, error)
+	) (practicevoice.AudioAsset, error)
 }
 
 // EvidenceSourceReader composes Evaluation's immutable input from the
-// Practice and Conversation authorities. It deliberately exposes no Review
+// Practice and Voice authorities. It deliberately exposes no Review
 // types and never reads object bytes or storage locators.
 type EvidenceSourceReader struct {
-	practice     EvidencePracticeSource
-	conversation EvidenceConversationSource
-	audio        EvidenceAudioSource
+	practice EvidencePracticeSource
+	voice    EvidenceVoiceSource
+	audio    EvidenceAudioSource
 }
 
 func NewEvidenceSourceReader(
 	practiceSource EvidencePracticeSource,
-	conversationSource EvidenceConversationSource,
+	voiceSource EvidenceVoiceSource,
 	audioSource EvidenceAudioSource,
 ) (*EvidenceSourceReader, error) {
-	if practiceSource == nil || conversationSource == nil || audioSource == nil {
+	if practiceSource == nil || voiceSource == nil || audioSource == nil {
 		return nil, ErrInvalidRequest
 	}
 	return &EvidenceSourceReader{
-		practice:     practiceSource,
-		conversation: conversationSource,
-		audio:        audioSource,
+		practice: practiceSource,
+		voice:    voiceSource,
+		audio:    audioSource,
 	}, nil
 }
 
@@ -127,7 +127,7 @@ func (r *EvidenceSourceReader) Compose(
 ) (EnsureEvidenceSnapshotCommand, error) {
 	practiceSessionID = strings.TrimSpace(practiceSessionID)
 	trustedActor, ok := requestcontext.ActorFromContext(ctx)
-	if r == nil || r.practice == nil || r.conversation == nil ||
+	if r == nil || r.practice == nil || r.voice == nil ||
 		r.audio == nil || ctx == nil || !validActor(actor) || !ok ||
 		trustedActor != actor || !validIdentifier(practiceSessionID) ||
 		scope != ScopeSession || !validSceneType(sceneType) {
@@ -145,7 +145,7 @@ func (r *EvidenceSourceReader) Compose(
 				UserID:    actor.UserID,
 				SessionID: actor.SessionID,
 			},
-			conversationActor: practiceinput.Actor{
+			voiceActor: practicevoice.Actor{
 				UserID:    actor.UserID,
 				SessionID: actor.SessionID,
 			},
@@ -163,7 +163,7 @@ func (r *EvidenceSourceReader) ComposeCompleted(
 	sceneType SceneType,
 ) (EnsureEvidenceSnapshotCommand, error) {
 	practiceSessionID = strings.TrimSpace(practiceSessionID)
-	if r == nil || r.practice == nil || r.conversation == nil ||
+	if r == nil || r.practice == nil || r.voice == nil ||
 		r.audio == nil || ctx == nil || !validUUID(ownerUserID) ||
 		!validIdentifier(practiceSessionID) || scope != ScopeSession ||
 		!validSceneType(sceneType) {
@@ -187,13 +187,13 @@ type evidenceSourceAccess interface {
 	GetCandidate(
 		context.Context,
 		string,
-	) (practiceinput.StoredTranscriptCandidate, error)
+	) (practicevoice.StoredTranscriptCandidate, error)
 }
 
 type actorEvidenceSourceAccess struct {
-	reader            *EvidenceSourceReader
-	practiceActor     practice.Actor
-	conversationActor practiceinput.Actor
+	reader        *EvidenceSourceReader
+	practiceActor practice.Actor
+	voiceActor    practicevoice.Actor
 }
 
 func (access actorEvidenceSourceAccess) GetSession(
@@ -218,9 +218,9 @@ func (access actorEvidenceSourceAccess) ListSessionTurns(
 	ctx context.Context,
 	sessionID string,
 ) ([]practice.Turn, error) {
-	return access.reader.conversation.ListSessionTurns(
+	return access.reader.voice.ListSessionTurns(
 		ctx,
-		access.conversationActor,
+		access.voiceActor,
 		sessionID,
 	)
 }
@@ -229,9 +229,9 @@ func (access actorEvidenceSourceAccess) ListSessionQuestions(
 	ctx context.Context,
 	sessionID string,
 ) ([]practice.Question, error) {
-	return access.reader.conversation.ListSessionQuestions(
+	return access.reader.voice.ListSessionQuestions(
 		ctx,
-		access.conversationActor,
+		access.voiceActor,
 		sessionID,
 	)
 }
@@ -239,10 +239,10 @@ func (access actorEvidenceSourceAccess) ListSessionQuestions(
 func (access actorEvidenceSourceAccess) GetCandidate(
 	ctx context.Context,
 	candidateID string,
-) (practiceinput.StoredTranscriptCandidate, error) {
-	return access.reader.conversation.GetCandidate(
+) (practicevoice.StoredTranscriptCandidate, error) {
+	return access.reader.voice.GetCandidate(
 		ctx,
-		access.conversationActor,
+		access.voiceActor,
 		candidateID,
 	)
 }
@@ -278,7 +278,7 @@ func (access completedEvidenceSourceAccess) ListSessionTurns(
 	ctx context.Context,
 	sessionID string,
 ) ([]practice.Turn, error) {
-	return access.reader.conversation.ListCompletedSessionTurns(
+	return access.reader.voice.ListCompletedSessionTurns(
 		ctx,
 		access.ownerUserID,
 		sessionID,
@@ -289,7 +289,7 @@ func (access completedEvidenceSourceAccess) ListSessionQuestions(
 	ctx context.Context,
 	sessionID string,
 ) ([]practice.Question, error) {
-	return access.reader.conversation.ListCompletedSessionQuestions(
+	return access.reader.voice.ListCompletedSessionQuestions(
 		ctx,
 		access.ownerUserID,
 		sessionID,
@@ -299,8 +299,8 @@ func (access completedEvidenceSourceAccess) ListSessionQuestions(
 func (access completedEvidenceSourceAccess) GetCandidate(
 	ctx context.Context,
 	candidateID string,
-) (practiceinput.StoredTranscriptCandidate, error) {
-	return access.reader.conversation.GetCompletedCandidate(
+) (practicevoice.StoredTranscriptCandidate, error) {
+	return access.reader.voice.GetCompletedCandidate(
 		ctx,
 		access.ownerUserID,
 		candidateID,
@@ -340,7 +340,7 @@ func (r *EvidenceSourceReader) compose(
 	turns, err := access.ListSessionTurns(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{},
-			mapEvidenceConversationError(err)
+			mapEvidenceVoiceError(err)
 	}
 	slices.SortFunc(turns, func(left, right practice.Turn) int {
 		if left.Sequence != right.Sequence {
@@ -363,7 +363,7 @@ func (r *EvidenceSourceReader) compose(
 	questions, err := access.ListSessionQuestions(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{},
-			mapEvidenceConversationError(err)
+			mapEvidenceVoiceError(err)
 	}
 	slices.SortFunc(
 		questions,
@@ -576,7 +576,7 @@ func (r *EvidenceSourceReader) composeTurn(
 	}
 	candidate, err := access.GetCandidate(ctx, turn.CandidateID)
 	if err != nil {
-		return composedEvidenceTurn{}, mapEvidenceConversationError(err)
+		return composedEvidenceTurn{}, mapEvidenceVoiceError(err)
 	}
 	if !validEvidenceQuestionTurn(question, turn) ||
 		!validEvidenceCandidate(candidate, turn) {
@@ -661,7 +661,7 @@ func (r *EvidenceSourceReader) readEvidenceAudio(
 	turn practice.Turn,
 ) (evidenceAudio, uint64, error) {
 	asset, err := r.audio.GetByTurn(ctx, ownerUserID, turn.ID)
-	if errors.Is(err, practiceinput.ErrAudioAssetNotFound) {
+	if errors.Is(err, practicevoice.ErrAudioAssetNotFound) {
 		return evidenceAudio{
 			Availability: evidenceUnavailable,
 			Quality:      evidenceNotAssessed,
@@ -676,7 +676,7 @@ func (r *EvidenceSourceReader) readEvidenceAudio(
 	}
 	durationMS := int64((asset.Duration-1)/time.Millisecond) + 1
 	availability := evidenceUnavailable
-	if asset.Status == practiceinput.AudioAssetReadable {
+	if asset.Status == practicevoice.AudioAssetReadable {
 		availability = "AVAILABLE"
 	}
 	return evidenceAudio{
@@ -1370,7 +1370,7 @@ func evidenceOpportunityFromQuestion(
 }
 
 func validEvidenceCandidate(
-	candidate practiceinput.StoredTranscriptCandidate,
+	candidate practicevoice.StoredTranscriptCandidate,
 	turn practice.Turn,
 ) bool {
 	return candidate.ID == turn.CandidateID &&
@@ -1380,7 +1380,7 @@ func validEvidenceCandidate(
 			turn.RespondentParticipantID &&
 		candidate.EvidenceVersion == turn.EvidenceVersion &&
 		candidate.Text == turn.AnswerText &&
-		candidate.Status == practiceinput.CandidateConfirmed &&
+		candidate.Status == practicevoice.CandidateConfirmed &&
 		strings.TrimSpace(candidate.TranscriptID) != "" &&
 		strings.TrimSpace(candidate.Provider) != "" &&
 		strings.TrimSpace(candidate.Model) != "" &&
@@ -1388,14 +1388,14 @@ func validEvidenceCandidate(
 }
 
 func validEvidenceAudio(
-	asset practiceinput.AudioAsset,
+	asset practicevoice.AudioAsset,
 	ownerUserID string,
 	turn practice.Turn,
 ) bool {
 	switch asset.Status {
-	case practiceinput.AudioAssetReadable,
-		practiceinput.AudioAssetDeleting,
-		practiceinput.AudioAssetDeleted:
+	case practicevoice.AudioAssetReadable,
+		practicevoice.AudioAssetDeleting,
+		practicevoice.AudioAssetDeleted:
 	default:
 		return false
 	}
@@ -1575,13 +1575,13 @@ func mapEvidencePracticeError(err error) error {
 	}
 }
 
-func mapEvidenceConversationError(err error) error {
+func mapEvidenceVoiceError(err error) error {
 	switch {
-	case errors.Is(err, practiceinput.ErrPersistenceNotFound),
-		errors.Is(err, practiceinput.ErrActorDeleted):
+	case errors.Is(err, practicevoice.ErrPersistenceNotFound),
+		errors.Is(err, practicevoice.ErrActorDeleted):
 		return ErrNotFound
-	case errors.Is(err, practiceinput.ErrPersistenceInvalid),
-		errors.Is(err, practiceinput.ErrPersistenceConflict):
+	case errors.Is(err, practicevoice.ErrPersistenceInvalid),
+		errors.Is(err, practicevoice.ErrPersistenceConflict):
 		return ErrInvalidRequest
 	default:
 		return err

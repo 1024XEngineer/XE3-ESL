@@ -21,6 +21,7 @@ import (
 	agentimagehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/http"
 	imagepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/postgres"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	agentevaluationfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/evaluationfeedback"
 	agentvoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/http"
 	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
@@ -33,7 +34,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
@@ -387,12 +387,11 @@ func buildIdentityAgentComposition(
 	}
 	var voiceApplication *practicevoice.SessionApplication
 	var sameQuestionRetry *practicevoice.SameQuestionRetryApplication
-	var audioAssets *practiceinput.AudioAssetService
+	var audioAssets *practicevoice.AudioAssetService
 	if len(voiceConfigurations) == 1 {
 		voiceApplication, sameQuestionRetry, audioAssets, err =
 			buildProductionVoiceApplication(
 				database,
-				generator,
 				voiceConfigurations[0],
 			)
 		if err != nil {
@@ -641,11 +640,15 @@ func buildAgentVoiceInputApplication(
 	}
 	feedbackPorts := make([]agentvoice.FeedbackPort, 0, 1)
 	if configuration.SpeechFeedbackCoordinator != nil {
+		feedback, feedbackErr := agentevaluationfeedback.New(
+			configuration.SpeechFeedbackCoordinator,
+		)
+		if feedbackErr != nil {
+			return nil, feedbackErr
+		}
 		feedbackPorts = append(
 			feedbackPorts,
-			&voiceSpeechFeedbackAdapter{
-				coordinator: configuration.SpeechFeedbackCoordinator,
-			},
+			feedback,
 		)
 	}
 	return agentvoice.NewService(

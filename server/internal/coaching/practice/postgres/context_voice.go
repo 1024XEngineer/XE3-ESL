@@ -48,6 +48,25 @@ func (r *Repository) AdvanceTurn(
 	return result, nil
 }
 
+// AdvanceTurnInTransaction lets the Practice Voice PostgreSQL adapter advance
+// the authoritative Session inside its existing confirmation transaction.
+// The caller owns the active-account fence and transaction commit.
+func (r *Repository) AdvanceTurnInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	actor practice.Actor,
+	command practice.ConsumeTurnCommand,
+) (practice.TurnResult, error) {
+	if r == nil || r.pool == nil || ctx == nil || tx == nil ||
+		!validUserID(actor.UserID) ||
+		strings.TrimSpace(command.SessionID) == "" ||
+		strings.TrimSpace(command.TurnID) == "" ||
+		len(command.Payload) == 0 {
+		return practice.TurnResult{}, practice.ErrInvalidArgument
+	}
+	return r.advanceTurnInTransaction(ctx, tx, actor, command)
+}
+
 func (r *Repository) advanceTurnInTransaction(
 	ctx context.Context,
 	tx pgx.Tx,

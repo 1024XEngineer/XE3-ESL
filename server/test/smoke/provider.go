@@ -19,7 +19,7 @@ type MockProvider interface {
 }
 
 // FailureController is a smoke-transport test hook. It intentionally remains
-// outside the formal Conversation service contract.
+// outside the formal Practice Voice service contract.
 type FailureController interface {
 	ArmFailure(questionID string, answerText string)
 }

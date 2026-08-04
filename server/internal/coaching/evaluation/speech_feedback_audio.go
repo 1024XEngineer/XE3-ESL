@@ -11,20 +11,20 @@ import (
 	"strings"
 	"time"
 
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
 
 const maxSpeechFeedbackAudioBytes = 9_600_000
 
 type speechFeedbackAudioReader struct {
-	service *practiceinput.AudioAssetService
+	service *practicevoice.AudioAssetService
 	store   objectstore.Store
 	client  *http.Client
 }
 
 func NewSpeechFeedbackAudioReader(
-	service *practiceinput.AudioAssetService,
+	service *practicevoice.AudioAssetService,
 	store objectstore.Store,
 	client *http.Client,
 ) (SpeechFeedbackAudioReader, error) {
@@ -54,7 +54,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 	if audioObjectKey == "" {
 		playback, err = reader.service.Playback(
 			ctx,
-			practiceinput.AudioAssetActor{UserID: ownerUserID},
+			practicevoice.AudioAssetActor{UserID: ownerUserID},
 			audioAssetID,
 		)
 	} else {
@@ -68,7 +68,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		!strings.EqualFold(playbackURL.Scheme, "https") ||
 		playbackURL.Host == "" ||
 		playback.ExpiresAt.After(
-			time.Now().Add(practiceinput.MaxPlaybackURLTTL),
+			time.Now().Add(practicevoice.MaxPlaybackURLTTL),
 		) {
 		return nil, ErrSpeechFeedbackAcousticUnavailable
 	}

@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
@@ -20,7 +20,7 @@ type audioCleanupFactories struct {
 	) (objectstore.Store, error)
 	newRepository func(
 		*pgxpool.Pool,
-	) (practiceinput.AudioAssetLifecycleRepository, error)
+	) (practicevoice.AudioAssetLifecycleRepository, error)
 }
 
 var productionAudioCleanupFactories = audioCleanupFactories{
@@ -36,8 +36,8 @@ var productionAudioCleanupFactories = audioCleanupFactories{
 	},
 	newRepository: func(
 		pool *pgxpool.Pool,
-	) (practiceinput.AudioAssetLifecycleRepository, error) {
-		return conversationpostgres.NewAudioAssetRepository(pool)
+	) (practicevoice.AudioAssetLifecycleRepository, error) {
+		return practicevoicepostgres.NewAudioAssetRepository(pool)
 	},
 }
 
@@ -47,7 +47,7 @@ func buildAudioCleanupWorker(
 	databasePool *pgxpool.Pool,
 	logger *slog.Logger,
 	factories audioCleanupFactories,
-) (*practiceinput.AudioAssetCleanupWorker, error) {
+) (*practicevoice.AudioAssetCleanupWorker, error) {
 	if !storageConfig.Enabled {
 		logger.Info(
 			"audio cleanup disabled",
@@ -64,13 +64,13 @@ func buildAudioCleanupWorker(
 	if err != nil {
 		return nil, err
 	}
-	reclaimer, err := practiceinput.NewAudioAssetReclaimer(
+	reclaimer, err := practicevoice.NewAudioAssetReclaimer(
 		repository,
 		store,
-		practiceinput.NewAudioAssetSystemClock(),
+		practicevoice.NewAudioAssetSystemClock(),
 	)
 	if err != nil {
 		return nil, err
 	}
-	return practiceinput.NewAudioAssetCleanupWorker(reclaimer, logger)
+	return practicevoice.NewAudioAssetCleanupWorker(reclaimer, logger)
 }

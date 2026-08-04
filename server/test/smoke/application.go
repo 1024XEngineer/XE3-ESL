@@ -5,33 +5,32 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 )
 
 // Application is the smoke composition layer. It coordinates formal module
 // services while leaving every resource mutation with its owning module.
 type Application struct {
-	preparation  *preparationBackend
-	practice     *practiceBackend
-	conversation *practiceinput.Service
-	review       *reviewService
-	failures     FailureControl
+	preparation *preparationBackend
+	practice    *practiceBackend
+	voice       *voiceService
+	review      *reviewService
+	failures    FailureControl
 }
 
 func NewApplication(
 	preparationStore *preparationBackend,
 	practiceStore *practiceBackend,
-	conversationService *practiceinput.Service,
+	voiceService *voiceService,
 	reviewService *reviewService,
 	failures FailureControl,
 ) *Application {
 	return &Application{
-		preparation:  preparationStore,
-		practice:     practiceStore,
-		conversation: conversationService,
-		review:       reviewService,
-		failures:     failures,
+		preparation: preparationStore,
+		practice:    practiceStore,
+		voice:       voiceService,
+		review:      reviewService,
+		failures:    failures,
 	}
 }
 
@@ -64,7 +63,7 @@ func (a *Application) Bootstrap(sessionID string) (map[string]any, error) {
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
-	result, err := a.conversation.Bootstrap(sessionID)
+	result, err := a.voice.Bootstrap(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,17 +78,17 @@ func (a *Application) EnsureCurrentQuestion(sessionID string) (Question, error) 
 		return Question{}, err
 	}
 	if started {
-		a.conversation.PublishSessionStarted(sessionVersion)
+		a.voice.PublishSessionStarted(sessionVersion)
 	}
-	return a.conversation.EnsureCurrentQuestion(sessionID)
+	return a.voice.EnsureCurrentQuestion(sessionID)
 }
 
 func (a *Application) SubmitTurn(
 	questionID string,
-	request practiceinput.SubmitTurnRequest,
+	request SubmitTurnRequest,
 	failOnce bool,
 ) (Turn, error) {
-	question, ok := a.conversation.GetQuestion(questionID)
+	question, ok := a.voice.GetQuestion(questionID)
 	if !ok {
 		return Turn{}, ErrQuestionNotFound
 	}
@@ -99,7 +98,7 @@ func (a *Application) SubmitTurn(
 	); err != nil {
 		return Turn{}, err
 	}
-	turn, err := a.conversation.PrepareTurn(questionID, request)
+	turn, err := a.voice.PrepareTurn(questionID, request)
 	if err != nil {
 		return Turn{}, err
 	}
@@ -107,10 +106,10 @@ func (a *Application) SubmitTurn(
 		a.failures.ArmFailure(questionID, turn.AnswerText)
 	}
 	if err := a.failures.CheckFailure(questionID, turn.AnswerText); err != nil {
-		a.conversation.PublishProcessingFailure(questionID)
+		a.voice.PublishProcessingFailure(questionID)
 		return Turn{}, err
 	}
-	turn, err = a.conversation.CommitTurn(turn)
+	turn, err = a.voice.CommitTurn(turn)
 	if err != nil {
 		return Turn{}, err
 	}
@@ -124,12 +123,12 @@ func (a *Application) SubmitTurn(
 	}
 	if turn.Kind != practice.TurnKindRetry {
 		if decision.Completed {
-			a.conversation.PublishSessionCompleted(
+			a.voice.PublishSessionCompleted(
 				decision.SessionVersion,
 				decision.EndReason,
 			)
 		} else {
-			if _, err := a.conversation.CreateNextQuestion(
+			if _, err := a.voice.CreateNextQuestion(
 				turn.SessionID,
 				decision.NextQuestionNumber,
 			); err != nil {
@@ -141,7 +140,7 @@ func (a *Application) SubmitTurn(
 }
 
 func (a *Application) AnalyzeTurn(turnID string) (Analysis, error) {
-	turn, ok := a.conversation.GetTurn(turnID)
+	turn, ok := a.voice.GetTurn(turnID)
 	if !ok {
 		return Analysis{}, ErrTurnNotFound
 	}
@@ -160,7 +159,7 @@ func (a *Application) AnalyzeTurn(turnID string) (Analysis, error) {
 		return Analysis{}, err
 	}
 	if created {
-		a.conversation.PublishReviewCompleted(
+		a.voice.PublishReviewCompleted(
 			analysis.ID,
 			analysis.TurnID,
 			analysis.Score,
@@ -171,7 +170,7 @@ func (a *Application) AnalyzeTurn(turnID string) (Analysis, error) {
 }
 
 func (a *Application) ListAnalyses(turnID string) ([]Analysis, error) {
-	if _, ok := a.conversation.GetTurn(turnID); !ok {
+	if _, ok := a.voice.GetTurn(turnID); !ok {
 		return nil, ErrTurnNotFound
 	}
 	return a.review.ListAnalyses(turnID), nil
@@ -182,7 +181,7 @@ func (a *Application) CreateRetry(feedbackID string) (RetryRequest, error) {
 	if err != nil {
 		return RetryRequest{}, err
 	}
-	turn, err := a.conversation.CreateRetryTurn(retry.ID, retry.OriginalTurnID)
+	turn, err := a.voice.CreateRetryTurn(retry.ID, retry.OriginalTurnID)
 	if err != nil {
 		return RetryRequest{}, err
 	}

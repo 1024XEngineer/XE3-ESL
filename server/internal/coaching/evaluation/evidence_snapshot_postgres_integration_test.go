@@ -13,8 +13,8 @@ import (
 	"time"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
@@ -639,7 +639,7 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 		t.Fatal("EvidenceSnapshot did not reach its source fence")
 	}
 
-	conversationRepository, err := conversationpostgres.New(pool)
+	conversationRepository, err := practicevoicepostgres.New(pool)
 	if err != nil {
 		t.Fatalf("new Conversation repository: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 	go func() {
 		_, saveErr := conversationRepository.SaveQuestion(
 			context.Background(),
-			practiceinput.Actor{
+			practicevoice.Actor{
 				UserID:    command.OwnerUserID,
 				SessionID: "trusted-session",
 			},

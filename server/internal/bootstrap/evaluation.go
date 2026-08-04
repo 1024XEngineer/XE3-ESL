@@ -14,6 +14,7 @@ import (
 	evaluationtext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textprovider"
 	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/transport"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,14 +76,17 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
-	conversationRepository := practiceRepository
-	audioRepository, err := practicepostgres.NewAudioAssetRepository(database)
+	voiceRepository, err := practicevoicepostgres.New(database)
+	if err != nil {
+		return nil, err
+	}
+	audioRepository, err := practicevoicepostgres.NewAudioAssetRepository(database)
 	if err != nil {
 		return nil, err
 	}
 	evidenceSource, err := evaluation.NewEvidenceSourceReader(
 		practiceRepository,
-		conversationRepository,
+		voiceRepository,
 		audioRepository,
 	)
 	if err != nil {

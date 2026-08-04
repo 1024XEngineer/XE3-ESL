@@ -18,7 +18,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/gin-gonic/gin"
@@ -32,15 +32,15 @@ const (
 )
 
 type Server struct {
-	router       *gin.Engine
-	preparation  *preparationBackend
-	practice     *practiceBackend
-	conversation *practiceinput.Service
-	review       *reviewService
-	application  *Application
-	idempotency  *idempotencyStore
-	identity     *mockIdentityStore
-	tools        []capabilityfixture.CapabilitySummary
+	router      *gin.Engine
+	preparation *preparationBackend
+	practice    *practiceBackend
+	voice       *voiceService
+	review      *reviewService
+	application *Application
+	idempotency *idempotencyStore
+	identity    *mockIdentityStore
+	tools       []capabilityfixture.CapabilitySummary
 }
 
 func NewServer(logger *slog.Logger) *Server {
@@ -48,8 +48,8 @@ func NewServer(logger *slog.Logger) *Server {
 	provider := NewDeterministicProvider()
 	preparationStore := &preparationBackend{runtime: runtime}
 	practiceStore := &practiceBackend{runtime: runtime}
-	conversationService := practiceinput.NewService(
-		conversationBackend{runtime: runtime},
+	voiceService := newVoiceService(
+		voiceBackend{runtime: runtime},
 		provider,
 	)
 	reviewService := newReviewService(reviewBackend{runtime: runtime}, provider)
@@ -62,19 +62,19 @@ func NewServer(logger *slog.Logger) *Server {
 	router := bootstrap.NewRouter(logger,
 		preparation.New(),
 		practice.New(),
-		practiceinput.New(),
+		practicevoice.New(),
 		review.New(),
 	)
 	server := &Server{
-		router:       router,
-		preparation:  preparationStore,
-		practice:     practiceStore,
-		conversation: conversationService,
-		review:       reviewService,
+		router:      router,
+		preparation: preparationStore,
+		practice:    practiceStore,
+		voice:       voiceService,
+		review:      reviewService,
 		application: NewApplication(
 			preparationStore,
 			practiceStore,
-			conversationService,
+			voiceService,
 			reviewService,
 			provider,
 		),
@@ -103,7 +103,7 @@ func (s *Server) registerRoutes() {
 	s.router.POST("/v1/practice-plans/:practice_plan_id/practice-sessions", s.createSession)
 	s.router.GET("/v1/practice-sessions/:practice_session_id", s.getSession)
 	s.router.GET("/v1/practice-sessions/:practice_session_id/snapshot", s.getSessionSnapshot)
-	s.router.GET("/v1/practice-sessions/:practice_session_id/bootstrap", s.bootstrapConversation)
+	s.router.GET("/v1/practice-sessions/:practice_session_id/bootstrap", s.bootstrapVoice)
 	s.router.POST("/v1/practice-sessions/:practice_session_id/questions", s.ensureCurrentQuestion)
 	s.router.POST("/v1/questions/:question_id/turns", s.submitTurn)
 	s.router.GET("/v1/turns/:turn_id", s.getTurn)
@@ -299,7 +299,7 @@ func (s *Server) getSessionSnapshot(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-func (s *Server) bootstrapConversation(c *gin.Context) {
+func (s *Server) bootstrapVoice(c *gin.Context) {
 	result, err := s.application.Bootstrap(c.Param("practice_session_id"))
 	if err != nil {
 		writeAPIResponse(c, serviceError(err))
@@ -331,7 +331,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var request practiceinput.SubmitTurnRequest
+		var request SubmitTurnRequest
 		if err := decodeStrict(raw, &request); err != nil {
 			return invalidRequest()
 		}
@@ -369,7 +369,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 }
 
 func (s *Server) getTurn(c *gin.Context) {
-	turn, ok := s.conversation.GetTurn(c.Param("turn_id"))
+	turn, ok := s.voice.GetTurn(c.Param("turn_id"))
 	if !ok {
 		writeError(c, http.StatusNotFound, "turn_not_found", "Turn was not found.", false)
 		return
@@ -482,13 +482,13 @@ func (s *Server) streamEvents(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "unsupported_message", "The required WebSocket protocol was not offered.", false)
 		return
 	}
-	replay, live, unsubscribe, err := s.conversation.Subscribe(sessionID, afterSequence)
+	replay, live, unsubscribe, err := s.voice.Subscribe(sessionID, afterSequence)
 	if err != nil {
 		writeAPIResponse(c, serviceError(err))
 		return
 	}
 	defer unsubscribe()
-	ready, err := s.conversation.StreamReady(sessionID)
+	ready, err := s.voice.StreamReady(sessionID)
 	if err != nil {
 		writeAPIResponse(c, serviceError(err))
 		return
