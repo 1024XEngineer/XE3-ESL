@@ -203,17 +203,18 @@ func TestSpeechFeedbackAcousticProviderRejectsChineseBeforeReadingAudio(
 	}
 }
 
-func TestXFYUNSpeechFeedbackAcousticProviderAssessesEnglishInMixedSpeech(
+func TestSpeechFeedbackAcousticProviderAssessesEnglishInMixedSpeech(
 	t *testing.T,
 ) {
 	t.Parallel()
 	accuracy, fluency, integrity := 78.0, 75.0, 80.0
 	rejected := false
-	evaluator := &speechFeedbackISEEvaluatorStub{
-		result: xfyun.EvaluationResult{
-			SessionID: "ise-mixed-session",
-			RawXML:    "<xml_result/>",
-			Summary: xfyun.ScoreSummary{
+	evaluator := &acousticEvaluatorStub{
+		result: AcousticAssessmentResult{
+			Provider:  testSpeechFeedbackAcousticProvider,
+			SessionID: "mixed-session",
+			RawResult: "<result/>",
+			Summary: AcousticAssessmentSummary{
 				AccuracyScore:  &accuracy,
 				FluencyScore:   &fluency,
 				IntegrityScore: &integrity,
@@ -221,7 +222,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderAssessesEnglishInMixedSpeech(
 			},
 		},
 	}
-	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+	provider, err := NewSpeechFeedbackAcousticProvider(
 		&speechFeedbackAudioReaderStub{
 			audio: speechFeedbackTestWAV([]byte{1, 2, 3, 4}),
 		},
@@ -244,7 +245,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderAssessesEnglishInMixedSpeech(
 		t.Fatalf("evaluate mixed acoustics: %v", err)
 	}
 	if evaluator.request.ReferenceText != "I like AI, it helps me" ||
-		evaluator.request.Category != xfyun.CategoryReadSentence {
+		evaluator.request.Category != AcousticCategoryReadSentence {
 		t.Fatalf("mixed ISE request = %#v", evaluator.request)
 	}
 }
