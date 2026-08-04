@@ -30,13 +30,13 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
-	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
-	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/review/http"
@@ -358,14 +358,12 @@ func buildIdentityAgentComposition(
 	}
 	var voiceApplication *practicevoice.SessionApplication
 	var sameQuestionRetry *practicevoice.SameQuestionRetryApplication
-	var audioAssets *conversation.AudioAssetService
+	var audioAssets *practiceinput.AudioAssetService
 	if len(voiceConfigurations) == 1 {
 		voiceApplication, sameQuestionRetry, audioAssets, err =
 			buildProductionVoiceApplication(
 				database,
 				generator,
-				reviewRepository,
-				reviewHistory,
 				voiceConfigurations[0],
 			)
 		if err != nil {

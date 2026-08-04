@@ -11,8 +11,8 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 import '../support/practice_fixtures.dart';
 
@@ -20,7 +20,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'keeps one Thread through a scene and creates one Review after 3 turns',
+    'keeps one Thread through a scene and completes after 3 turns',
     () async {
       final client = _CountingPracticeClient(testScenes.first);
       final controller = AgentController(
@@ -56,7 +56,6 @@ void main() {
       }
 
       expect(controller.recordingState, PracticeRecordingState.completed);
-      expect(controller.review, isNotNull);
       expect(client.confirmationIds, hasLength(3));
       expect(client.confirmationIds.toSet(), hasLength(3));
 
@@ -80,7 +79,6 @@ void main() {
       expect(client.cleanupCalls, 1);
       expect(controller.threadId, isNull);
       expect(controller.messages, isEmpty);
-      expect(controller.review, isNull);
 
       client.sendResult.complete(
         const AgentExchange(
@@ -205,44 +203,39 @@ void main() {
     expect(client.confirmationIds.toSet(), hasLength(1));
   });
 
-  test(
-    'refreshes a server-owned Review and never confirms a fourth Turn',
-    () async {
-      final scene = testScene(
-        id: 'daily-review',
-        family: SceneFamily.daily,
-        model: SceneModel.dailyBasicDialogue,
-        name: 'Daily review',
-      );
-      final client = _PendingReviewPracticeClient(scene);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: client,
-      );
+  test('completes independently and never confirms a fourth Turn', () async {
+    final scene = testScene(
+      id: 'daily-review',
+      family: SceneFamily.daily,
+      model: SceneModel.dailyBasicDialogue,
+      name: 'Daily review',
+    );
+    final client = _CountingPracticeClient(scene);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: client,
+    );
 
-      await controller.initialize();
-      await activateTestPractice(controller: controller, scene: scene);
-      for (var turn = 1; turn <= 3; turn++) {
-        await controller.startRecording();
-        await controller.stopRecording();
-        await controller.confirmTranscript();
-      }
+    await controller.initialize();
+    await activateTestPractice(controller: controller, scene: scene);
+    for (var turn = 1; turn <= 3; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
 
-      expect(controller.completedTurns, 3);
-      expect(controller.review, isNull);
-      expect(controller.recordingState, PracticeRecordingState.reviewFailed);
-      expect(client.confirmationIds, hasLength(3));
-      expect(client.restoreCalls, 0);
+    expect(controller.completedTurns, 3);
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(client.confirmationIds, hasLength(3));
+    expect(client.restoreCalls, 0);
 
-      await controller.retryReview();
+    await controller.confirmTranscript();
 
-      expect(controller.completedTurns, 3);
-      expect(controller.review, isNotNull);
-      expect(controller.recordingState, PracticeRecordingState.completed);
-      expect(client.confirmationIds, hasLength(3));
-      expect(client.restoreCalls, 1);
-    },
-  );
+    expect(controller.completedTurns, 3);
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(client.confirmationIds, hasLength(3));
+    expect(client.restoreCalls, 0);
+  });
 
   test(
     'restores active Goal and continues from authoritative 2 of 3',
@@ -294,11 +287,11 @@ void main() {
       ]);
       await controller.confirmTranscript();
       expect(controller.completedTurns, 3);
-      expect(controller.review, isNotNull);
+      expect(controller.recordingState, PracticeRecordingState.completed);
     },
   );
 
-  test('restores a pending Review with its stable client identity', () async {
+  test('restores a completed Practice without a report retry state', () async {
     final scene = testScene(
       id: 'daily-restored-review',
       family: SceneFamily.daily,
@@ -311,9 +304,13 @@ void main() {
         activeGoal: testGoal(id: 'goal_server_2', title: scene.name),
       ),
     );
-    final practice = _ReviewBecomesReadyPracticeClient(
+    final practice = _CountingPracticeClient(
       scene,
-      sessionId: 'session_server_2',
+      initialSnapshot: testPracticeSnapshot(
+        scene: scene,
+        sessionId: 'session_server_2',
+        completedTurns: 3,
+      ),
     );
     final controller = AgentController(
       client: client,
@@ -327,11 +324,8 @@ void main() {
     );
 
     expect(controller.completedTurns, 3);
-    expect(controller.recordingState, PracticeRecordingState.reviewFailed);
-    await controller.retryReview();
-
-    expect(practice.restoreCalls, 2);
-    expect(controller.review, isNotNull);
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(practice.restoreCalls, 1);
   });
 
   test(
@@ -1481,7 +1475,6 @@ class _CountingPracticeClient implements PracticeClient {
     SceneDefinition scene, {
     PracticeSessionSnapshot? initialSnapshot,
     this.confirmationFailuresRemaining = 0,
-    this.omitFinalReviewFromConfirmation = false,
   }) : _delegate = FakePracticeClient(
          sceneFamily: scene.family,
          sceneModel: scene.model,
@@ -1492,7 +1485,6 @@ class _CountingPracticeClient implements PracticeClient {
   final List<String> confirmationIds = <String>[];
   final List<String> transcribedQuestionIds = <String>[];
   int confirmationFailuresRemaining;
-  final bool omitFinalReviewFromConfirmation;
   int restoreCalls = 0;
 
   @override
@@ -1533,31 +1525,11 @@ class _CountingPracticeClient implements PracticeClient {
       confirmationFailuresRemaining--;
       throw StateError('temporary Practice confirmation failure');
     }
-    final confirmation = await _delegate.confirm(
+    return _delegate.confirm(
       sessionId: sessionId,
       questionId: questionId,
       candidateId: candidateId,
       idempotencyKey: idempotencyKey,
-    );
-    if (!omitFinalReviewFromConfirmation || !confirmation.sessionCompleted) {
-      return confirmation;
-    }
-    return PracticeTurnConfirmation(
-      turnId: confirmation.turnId,
-      sessionId: confirmation.sessionId,
-      questionId: confirmation.questionId,
-      candidateId: confirmation.candidateId,
-      answer: confirmation.answer,
-      completedTurns: confirmation.completedTurns,
-      turnLimit: confirmation.turnLimit,
-      sessionCompleted: confirmation.sessionCompleted,
-      sceneFamily: confirmation.sceneFamily,
-      sceneModel: confirmation.sceneModel,
-      sessionVersion: confirmation.sessionVersion,
-      nextQuestion: confirmation.nextQuestion,
-      formalReview: confirmation.formalReview,
-      audioAssetId: confirmation.audioAssetId,
-      speechFeedbackStatusUrl: confirmation.speechFeedbackStatusUrl,
     );
   }
 
@@ -1579,50 +1551,6 @@ final class _FailOnceConfirmationPracticeClient
     extends _CountingPracticeClient {
   _FailOnceConfirmationPracticeClient(super.scene)
     : super(confirmationFailuresRemaining: 1);
-}
-
-final class _PendingReviewPracticeClient extends _CountingPracticeClient {
-  _PendingReviewPracticeClient(super.scene)
-    : super(omitFinalReviewFromConfirmation: true);
-}
-
-final class _ReviewBecomesReadyPracticeClient extends _CountingPracticeClient {
-  _ReviewBecomesReadyPracticeClient(this.scene, {required this.sessionId})
-    : super(
-        scene,
-        initialSnapshot: testPracticeSnapshot(
-          scene: scene,
-          sessionId: sessionId,
-          completedTurns: 3,
-        ),
-      );
-
-  final SceneDefinition scene;
-  final String sessionId;
-
-  @override
-  Future<PracticeSessionSnapshot> restorePractice({
-    required String sessionId,
-  }) async {
-    if (sessionId != this.sessionId) {
-      throw StateError('Unknown test Practice Session.');
-    }
-    restoreCalls++;
-    return testPracticeSnapshot(
-      scene: scene,
-      sessionId: sessionId,
-      completedTurns: 3,
-      review: restoreCalls == 1
-          ? null
-          : const AgentReview(
-              id: 'review-ready',
-              title: 'Review ready',
-              summary: 'Summary',
-              strength: 'Strength',
-              nextFocus: 'Next focus',
-            ),
-    );
-  }
 }
 
 final class _ControlledTranscriptionPracticeClient

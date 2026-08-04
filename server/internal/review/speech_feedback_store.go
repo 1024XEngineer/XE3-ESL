@@ -494,8 +494,8 @@ func ensureSpeechFeedbackTurnSnapshot(
 			audio.audio_asset_id,
 			audio.version,
 			audio.checksum_sha256
-		FROM conversation_confirmed_turns AS turn
-		JOIN conversation_transcript_candidates AS candidate
+		FROM practice_turns AS turn
+		JOIN practice_transcript_candidates AS candidate
 		  ON candidate.owner_user_id = turn.owner_user_id
 		 AND candidate.candidate_id = turn.candidate_id
 		 AND candidate.practice_session_id =
@@ -504,7 +504,7 @@ func ensureSpeechFeedbackTurnSnapshot(
 		JOIN practice_sessions AS session
 		  ON session.owner_user_id = turn.owner_user_id
 		 AND session.session_id = turn.practice_session_id
-		JOIN conversation_audio_assets AS audio
+		JOIN practice_audio_assets AS audio
 		  ON audio.owner_user_id = turn.owner_user_id
 		 AND audio.turn_id = turn.turn_id
 		 AND audio.candidate_id = turn.candidate_id

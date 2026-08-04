@@ -24,9 +24,9 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -56,12 +56,11 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 			Synthesizer: fake.NewFailingSpeechSynthesizer(
 				fmt.Errorf("tts unavailable"),
 			),
-			TemporaryAudio:          newVoiceTestVault(t),
-			ObjectStore:             newVoiceObjectStore(),
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+			TemporaryAudio:         newVoiceTestVault(t),
+			ObjectStore:            newVoiceObjectStore(),
+			AudioStagedTTL:         time.Hour,
+			ASRLease:               5 * time.Second,
+			ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 		},
 	)
 
@@ -134,8 +133,8 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		`SELECT question.question_type,
 		        turn.counts_toward_effective_turn_limit,
 		        turn.effective_turns
-		 FROM conversation_confirmed_turns AS turn
-		 JOIN conversation_questions AS question
+		 FROM practice_turns AS turn
+		 JOIN practice_questions AS question
 		   ON question.owner_user_id = turn.owner_user_id
 		  AND question.question_id = turn.question_id
 		 WHERE turn.practice_session_id = $1
@@ -175,14 +174,13 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		catalog,
 		text,
 		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          vault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+			Recognizer:             recognizer,
+			Synthesizer:            synthesizer,
+			TemporaryAudio:         vault,
+			ObjectStore:            objects,
+			AudioStagedTTL:         time.Hour,
+			ASRLease:               5 * time.Second,
+			ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 		},
 	)
 
@@ -674,28 +672,35 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
 	}
-	completedState := waitForVoicePracticeState(
+	completedState := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
-		sessionID,
-		func(state map[string]any) bool {
-			sessionReview, ok := state["review"].(map[string]any)
-			return ok && sessionReview["status"] == "completed"
-		},
+		http.MethodGet,
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
+		"",
+		"",
+		http.StatusOK,
 	)
-	completedReview := completedState["review"].(map[string]any)
-	reviewID, _ := completedReview["review_id"].(string)
+	if completedState["effective_turns"] != float64(3) ||
+		completedState["session_completed"] != true {
+		t.Fatalf("completed Practice state = %#v", completedState)
+	}
+	if _, present := completedState["review"]; present {
+		t.Fatalf("Practice state leaked Review: %#v", completedState)
+	}
 	completedTurn := completedState["current_turn"].(map[string]any)
-	if reviewID == "" || completedTurn["review_id"] != reviewID {
-		t.Fatalf(
-			"async Review was not linked to completed Turn: %#v",
-			completedState,
-		)
+	if completedTurn["turn_id"] != thirdTurnID {
+		t.Fatalf("completed Practice lost final Turn: %#v", completedState)
 	}
-	if text.ReviewCalls() != 1 {
-		t.Fatalf("Review generator calls = %d, want 1", text.ReviewCalls())
+	if _, present := completedTurn["review_id"]; present {
+		t.Fatalf("Practice Turn leaked Review identity: %#v", completedTurn)
 	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+	if text.ReviewCalls() != 0 {
+		t.Fatalf("Practice confirmation invoked Review %d times", text.ReviewCalls())
+	}
+
 	replayedAfterCompletion := voiceJSONRequest(
 		t,
 		server.URL,
@@ -708,224 +713,17 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 	if replayedAfterCompletion["practice_session_id"] != sessionID ||
 		replayedAfterCompletion["session_completed"] != true {
-		t.Fatalf(
-			"completed Start replay did not return original Session: %#v",
-			replayedAfterCompletion,
-		)
+		t.Fatalf("completed Start replay did not return original Session: %#v", replayedAfterCompletion)
 	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
 
-	reviewResult := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+reviewID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	if reviewResult["status"] != "completed" {
-		t.Fatalf("formal Review not completed: %#v", reviewResult)
-	}
-	if reviewResult["implementation_version"] != voiceReviewImplementation ||
-		reviewResult["source_turn_id"] != thirdTurnID ||
-		reviewResult["source_turn_version"] !=
-			"conversation-turn:evidence-v1" {
-		t.Fatalf("formal Review lost source identity: %#v", reviewResult)
-	}
-	var reviewOwnerID string
-	var reviewCreatedAt time.Time
-	if err := pool.QueryRow(context.Background(), `
-		SELECT owner_user_id::text, created_at
-		FROM reviews
-		WHERE id = $1
-	`, reviewID).Scan(&reviewOwnerID, &reviewCreatedAt); err != nil {
-		t.Fatalf("read formal Review history key: %v", err)
-	}
-	olderHistoryReview := completeBootstrapHistoryReview(
-		t,
-		pool,
-		reviewOwnerID,
-		"restart-cursor-older",
-	)
-	legacyHistorySummary := strings.Repeat("legacy summary ", 1100)
-	legacyHistoryResult := *olderHistoryReview.Result
-	legacyHistoryResult.Summary = legacyHistorySummary
-	legacyHistoryPayload, err := json.Marshal(legacyHistoryResult)
-	if err != nil {
-		t.Fatalf("marshal legacy HTTP Review: %v", err)
-	}
-	if len(legacyHistoryPayload) <= 12*1024 {
-		t.Fatalf(
-			"legacy HTTP Review bytes = %d, want over 12 KiB",
-			len(legacyHistoryPayload),
-		)
-	}
-	if _, err := pool.Exec(
-		context.Background(),
-		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
-		legacyHistoryPayload,
-		olderHistoryReview.ID,
-	); err != nil {
-		t.Fatalf("stage legacy HTTP Review: %v", err)
-	}
-	legacyHistoryItem := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+olderHistoryReview.ID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	legacyHistoryHTTPResult, ok :=
-		legacyHistoryItem["result"].(map[string]any)
-	if !ok ||
-		legacyHistoryHTTPResult["summary"] != legacyHistorySummary {
-		t.Fatalf(
-			"legacy HTTP Review result = %#v",
-			legacyHistoryItem,
-		)
-	}
-	oldestHistoryReview := completeBootstrapHistoryReview(
-		t,
-		pool,
-		reviewOwnerID,
-		"restart-cursor-oldest",
-	)
-	for index, item := range []review.FormalReview{
-		olderHistoryReview,
-		oldestHistoryReview,
-	} {
-		if _, err := pool.Exec(
-			context.Background(),
-			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
-			reviewCreatedAt.Add(-time.Duration(index+1)*time.Minute),
-			item.ID,
-		); err != nil {
-			t.Fatalf("set restart cursor Review %d key: %v", index, err)
-		}
-	}
-	historyResult := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1",
-		"",
-		"",
-		http.StatusOK,
-	)
-	historyItems, ok := historyResult["items"].([]any)
-	if !ok || len(historyItems) != 1 {
-		t.Fatalf("formal Review history items = %#v, want one", historyResult)
-	}
-	historyReview, ok := historyItems[0].(map[string]any)
-	if !ok || historyReview["review_id"] != reviewID ||
-		historyReview["source_turn_id"] != thirdTurnID {
-		t.Fatalf("formal Review history lost source identity: %#v", historyResult)
-	}
-	restartHistoryCursor, ok := historyResult["next_cursor"].(string)
-	if !ok || restartHistoryCursor == "" {
-		t.Fatalf(
-			"formal Review history omitted restart cursor: %#v",
-			historyResult,
-		)
-	}
-	var evidenceCount int
-	var matchedEvidenceCount int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT
-		    count(*)::int,
-		    count(*) FILTER (
-		        WHERE evidence.source_type = 'conversation_turn'
-		          AND evidence.target_kind IN ('conclusion', 'feedback_item')
-		          AND evidence.field = 'answer_text'
-		          AND evidence.anchor_kind = 'exact_quote'
-		          AND evidence.quote <> ''
-		          AND evidence.start_utf8_byte >= 0
-		          AND evidence.end_utf8_byte > evidence.start_utf8_byte
-		          AND evidence.source_checksum ~ '^[0-9a-f]{64}$'
-		          AND evidence.evidence_snapshot ? 'question_id'
-		          AND evidence.evidence_snapshot ? 'answer_text'
-		          AND EXISTS (
-		            SELECT 1
-		            FROM conversation_confirmed_turns turn
-		            WHERE turn.owner_user_id = evidence.owner_user_id
-		              AND turn.turn_id = evidence.source_id
-		              AND turn.practice_session_id = $2
-		              AND evidence.source_version =
-		                'conversation-turn:evidence-v' ||
-		                turn.evidence_version::text
-		          )
-		    )::int
-		 FROM review_evidence evidence
-		 WHERE evidence.review_id = $1`,
-		reviewID,
-		sessionID,
-	).Scan(&evidenceCount, &matchedEvidenceCount); err != nil {
-		t.Fatalf("read formal Review evidence: %v", err)
-	}
-	const expectedEvidenceCount = 6
-	if evidenceCount != expectedEvidenceCount ||
-		matchedEvidenceCount != expectedEvidenceCount {
-		t.Fatalf(
-			"formal Review evidence = %d/%d, want %d matched",
-			matchedEvidenceCount,
-			evidenceCount,
-			expectedEvidenceCount,
-		)
-	}
-	playback := voiceJSONRequest(
-		t,
-		server.URL,
-		token,
-		http.MethodGet,
-		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if !strings.HasPrefix(
-		playback["playback_url"].(string),
-		"https://private-audio.example.invalid/",
-	) {
+	playback := voiceJSONRequest(t, server.URL, token, http.MethodGet, "/v1/audio-assets/"+completedAudioAssetID+"/playback", "", "", http.StatusOK)
+	if !strings.HasPrefix(playback["playback_url"].(string), "https://private-audio.example.invalid/") {
 		t.Fatalf("unexpected protected playback capability: %#v", playback)
 	}
-	otherToken := registerAndLoginVoiceUser(
-		t,
-		server.URL,
-		"voice-b@example.com",
-	)
-	otherHistory := voiceJSONRequest(
-		t,
-		server.URL,
-		otherToken,
-		http.MethodGet,
-		"/v1/formal-reviews",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if items, ok := otherHistory["items"].([]any); !ok || len(items) != 0 {
-		t.Fatalf("foreign user history = %#v, want empty", otherHistory)
-	}
-	for _, path := range []string{
-		"/v1/practice-sessions/" + sessionID + "/voice-state",
-		"/v1/formal-reviews/" + reviewID,
-		"/v1/audio-assets/" + completedAudioAssetID + "/playback",
-	} {
-		response, requestErr := voiceRawRequest(
-			server.URL,
-			otherToken,
-			http.MethodGet,
-			path,
-			nil,
-			"",
-			"",
-		)
+	otherToken := registerAndLoginVoiceUser(t, server.URL, "voice-b@example.com")
+	for _, path := range []string{"/v1/practice-sessions/" + sessionID + "/voice-state", "/v1/audio-assets/" + completedAudioAssetID + "/playback"} {
+		response, requestErr := voiceRawRequest(server.URL, otherToken, http.MethodGet, path, nil, "", "")
 		if requestErr != nil {
 			t.Fatal(requestErr)
 		}
@@ -940,513 +738,52 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatalf("close first audio vault: %v", err)
 	}
 	restartedVault := newVoiceTestVault(t)
-	restartedServer := newVoiceProductionIntegrationServer(
-		t,
-		pool,
-		catalog,
-		text,
-		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          restartedVault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
-		},
-	)
-	recovered := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/practice-sessions/"+sessionID+"/voice-state",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if recovered["practice_session_id"] != sessionID ||
-		recovered["effective_turns"] != float64(3) ||
-		recovered["session_completed"] != true {
+	restartedServer := newVoiceProductionIntegrationServer(t, pool, catalog, text, VoiceConfiguration{
+		Recognizer: recognizer, Synthesizer: synthesizer, TemporaryAudio: restartedVault,
+		ObjectStore: objects, AudioStagedTTL: time.Hour, ASRLease: 5 * time.Second,
+		ReviewHistoryCursorKey: testReviewHistoryCursorKey,
+	})
+	recovered := voiceJSONRequest(t, restartedServer.URL, token, http.MethodGet, "/v1/practice-sessions/"+sessionID+"/voice-state", "", "", http.StatusOK)
+	if recovered["practice_session_id"] != sessionID || recovered["effective_turns"] != float64(3) || recovered["session_completed"] != true {
 		t.Fatalf("restart recovery failed: %#v", recovered)
 	}
-	recoveredReview := recovered["review"].(map[string]any)
-	if recoveredReview["review_id"] != reviewID {
-		t.Fatalf("restart lost Review checkpoint: %#v", recovered)
-	}
-	recoveredFormalReview := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews/"+reviewID,
-		"",
-		"",
-		http.StatusOK,
-	)
-	if recoveredFormalReview["review_id"] != reviewID ||
-		recoveredFormalReview["source_turn_id"] != thirdTurnID ||
-		recoveredFormalReview["source_turn_version"] !=
-			reviewResult["source_turn_version"] ||
-		recoveredFormalReview["result"] == nil {
-		t.Fatalf(
-			"restart lost formal Review evidence identity: %#v",
-			recoveredFormalReview,
-		)
-	}
-	recoveredHistory := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews",
-		"",
-		"",
-		http.StatusOK,
-	)
-	recoveredHistoryItems, ok := recoveredHistory["items"].([]any)
-	if !ok || len(recoveredHistoryItems) != 3 {
-		t.Fatalf(
-			"restart lost formal Review history: %#v",
-			recoveredHistory,
-		)
-	}
-	recoveredHistoryReview, ok :=
-		recoveredHistoryItems[0].(map[string]any)
-	if !ok || recoveredHistoryReview["review_id"] != reviewID ||
-		recoveredHistoryReview["source_turn_id"] != thirdTurnID {
-		t.Fatalf(
-			"restart changed formal Review history: %#v",
-			recoveredHistory,
-		)
-	}
-	for index, reviewID := range []string{
-		olderHistoryReview.ID,
-		oldestHistoryReview.ID,
-	} {
-		item, ok := recoveredHistoryItems[index+1].(map[string]any)
-		if !ok || item["review_id"] != reviewID {
-			t.Fatalf(
-				"restart history item %d = %#v, want %s",
-				index+1,
-				recoveredHistoryItems[index+1],
-				reviewID,
-			)
-		}
-	}
-	restartedContinuation := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1&cursor="+
-			url.QueryEscape(restartHistoryCursor),
-		"",
-		"",
-		http.StatusOK,
-	)
-	continuationItems, ok :=
-		restartedContinuation["items"].([]any)
-	if !ok || len(continuationItems) != 1 {
-		t.Fatalf(
-			"restart cursor continuation = %#v",
-			restartedContinuation,
-		)
-	}
-	continuedReview, ok := continuationItems[0].(map[string]any)
-	if !ok ||
-		continuedReview["review_id"] != olderHistoryReview.ID {
-		t.Fatalf(
-			"restart cursor first continuation item = %#v",
-			restartedContinuation,
-		)
-	}
-	continuedResult, ok := continuedReview["result"].(map[string]any)
-	if !ok || continuedResult["summary"] != legacyHistorySummary {
-		t.Fatalf(
-			"restart cursor lost legacy Review result: %#v",
-			restartedContinuation,
-		)
-	}
-	restartedTailCursor, ok :=
-		restartedContinuation["next_cursor"].(string)
-	if !ok || restartedTailCursor == "" {
-		t.Fatalf(
-			"restart cursor first continuation omitted tail: %#v",
-			restartedContinuation,
-		)
-	}
-	restartedTail := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/formal-reviews?limit=1&cursor="+
-			url.QueryEscape(restartedTailCursor),
-		"",
-		"",
-		http.StatusOK,
-	)
-	tailItems, ok := restartedTail["items"].([]any)
-	if !ok || len(tailItems) != 1 {
-		t.Fatalf("restart cursor tail = %#v", restartedTail)
-	}
-	tailReview, ok := tailItems[0].(map[string]any)
-	if !ok || tailReview["review_id"] != oldestHistoryReview.ID {
-		t.Fatalf("restart cursor tail item = %#v", restartedTail)
-	}
-	if _, present := restartedTail["next_cursor"]; present {
-		t.Fatalf(
-			"restart cursor tail exposed another cursor: %#v",
-			restartedTail,
-		)
+	if _, present := recovered["review"]; present {
+		t.Fatalf("restarted Practice state leaked Review: %#v", recovered)
 	}
 	recoveredTurn := recovered["current_turn"].(map[string]any)
-	if recoveredTurn["audio_asset_id"] != completedAudioAssetID {
-		t.Fatalf("restart lost AudioAsset checkpoint: %#v", recovered)
+	if recoveredTurn["turn_id"] != thirdTurnID || recoveredTurn["audio_asset_id"] != completedAudioAssetID {
+		t.Fatalf("restart lost final Turn or AudioAsset: %#v", recovered)
 	}
-	voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodDelete,
-		"/v1/audio-assets/"+completedAudioAssetID,
-		"",
-		"",
-		http.StatusNoContent,
-	)
-	deletedPlayback, err := voiceRawRequest(
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
-		nil,
-		"",
-		"",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = deletedPlayback.Body.Close()
-	if deletedPlayback.StatusCode != http.StatusNotFound {
-		t.Fatalf(
-			"deleted AudioAsset playback status = %d",
-			deletedPlayback.StatusCode,
-		)
-	}
-	replayedAfterAudioDelete := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		confirmPath,
-		"",
-		"confirm-round-3-shared",
-		http.StatusOK,
-	)
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+
+	voiceJSONRequest(t, restartedServer.URL, token, http.MethodDelete, "/v1/audio-assets/"+completedAudioAssetID, "", "", http.StatusNoContent)
+	replayedAfterAudioDelete := voiceJSONRequest(t, restartedServer.URL, token, http.MethodPost, confirmPath, "", "confirm-round-3-shared", http.StatusOK)
 	replayedDeletedTurn := replayedAfterAudioDelete["current_turn"].(map[string]any)
-	if replayedDeletedTurn["turn_id"] != thirdTurnID ||
-		replayedDeletedTurn["review_id"] != reviewID {
-		t.Fatalf(
-			"deleted recording replay changed durable Turn: %#v",
-			replayedAfterAudioDelete,
-		)
+	if replayedDeletedTurn["turn_id"] != thirdTurnID {
+		t.Fatalf("deleted recording replay changed durable Turn: %#v", replayedAfterAudioDelete)
 	}
 	if _, present := replayedDeletedTurn["audio_asset_id"]; present {
-		t.Fatalf(
-			"deleted recording replay exposed AudioAsset: %#v",
-			replayedAfterAudioDelete,
-		)
+		t.Fatalf("deleted recording replay exposed AudioAsset: %#v", replayedAfterAudioDelete)
 	}
-	afterAudioDelete := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodGet,
-		"/v1/practice-sessions/"+sessionID+"/voice-state",
-		"",
-		"",
-		http.StatusOK,
-	)
-	if _, present := afterAudioDelete["current_turn"].(map[string]any)["audio_asset_id"]; present {
-		t.Fatalf("deleted AudioAsset remained in restored state: %#v", afterAudioDelete)
+	if _, present := replayedDeletedTurn["review_id"]; present {
+		t.Fatalf("deleted recording replay leaked Review: %#v", replayedDeletedTurn)
 	}
-	retryContext := createVoiceFormalThreadContext(
-		t,
-		restartedServer.URL,
-		token,
-		"Review retry",
-		"retry-review",
-	)
-	retryStartPath := "/v1/practice-sessions/" + retryContext.SessionID +
-		"/voice-activation"
-	nextSession := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		retryStartPath,
-		"",
-		"start-voice-session-0002",
-		http.StatusOK,
-	)
-	if nextSession["practice_session_id"] != retryContext.SessionID {
-		t.Fatalf(
-			"voice Start did not use next formal Context Session: %#v",
-			nextSession,
-		)
-	}
+	assertSinglePracticeCompletion(t, pool, sessionID, thirdTurnID)
+}
 
-	text.FailNextReviews(1)
-	for round := 1; round <= 2; round++ {
-		nextSession = transcribeAndConfirmVoiceRound(
-			t,
-			restartedServer.URL,
-			token,
-			nextSession,
-			fmt.Sprintf("retry-review-round-%d", round),
-		)
+func assertSinglePracticeCompletion(t *testing.T, pool *pgxpool.Pool, sessionID string, finalTurnID string) {
+	t.Helper()
+	var count int
+	var storedFinalTurnID string
+	var completionToken string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)::int, COALESCE(max(final_turn_id), ''), COALESCE(max(completion_token), '')
+		FROM practice_completed WHERE session_id = $1
+	`, sessionID).Scan(&count, &storedFinalTurnID, &completionToken); err != nil {
+		t.Fatalf("read Practice completion: %v", err)
 	}
-	retryCandidate := createVoiceCandidate(
-		t,
-		restartedServer.URL,
-		token,
-		nextSession,
-		"retry-review-round-3",
-	)
-	failedConfirm := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		"/v1/transcription-candidates/"+
-			retryCandidate["candidate_id"].(string)+"/confirmations",
-		"",
-		"confirm-retry-review-round-3",
-		http.StatusOK,
-	)
-	if failedConfirm["session_completed"] != true {
-		t.Fatalf("failed Review blocked answer submission: %#v", failedConfirm)
-	}
-	retrySessionID := nextSession["practice_session_id"].(string)
-	var failedReviewID string
-	var failedReviewStatus string
-	var failedAttempts int
-	waitForVoiceCondition(t, "failed Review attempt", func() bool {
-		err := pool.QueryRow(
-			context.Background(),
-			`SELECT r.id::text, r.status, count(a.id)::int
-FROM reviews r
-JOIN review_generation_attempts a ON a.review_id = r.id
-WHERE r.practice_session_id = $1
-GROUP BY r.id, r.status`,
-			retrySessionID,
-		).Scan(
-			&failedReviewID,
-			&failedReviewStatus,
-			&failedAttempts,
-		)
-		return err == nil &&
-			failedReviewStatus == "failed" &&
-			failedAttempts == 1
-	})
-	if failedReviewStatus != "failed" || failedAttempts != 1 {
-		t.Fatalf(
-			"failed Review state = %s/%d attempts",
-			failedReviewStatus,
-			failedAttempts,
-		)
-	}
-	retried := waitForVoicePracticeState(
-		t,
-		restartedServer.URL,
-		token,
-		retryContext.SessionID,
-		func(state map[string]any) bool {
-			sessionReview, ok := state["review"].(map[string]any)
-			return ok && sessionReview["status"] == "completed"
-		},
-	)
-	retriedReview := retried["review"].(map[string]any)
-	retriedTurn := retried["current_turn"].(map[string]any)
-	if retriedReview["review_id"] != failedReviewID ||
-		retriedReview["status"] != "completed" ||
-		retriedTurn["review_id"] != failedReviewID {
-		t.Fatalf("Resume did not recover failed Review: %#v", retried)
-	}
-	var recoveredAttempts int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT count(*)::int
-FROM review_generation_attempts
-WHERE review_id = $1`,
-		failedReviewID,
-	).Scan(&recoveredAttempts); err != nil {
-		t.Fatalf("count recovered Review attempts: %v", err)
-	}
-	if recoveredAttempts != 2 {
-		t.Fatalf("recovered Review attempts = %d, want 2", recoveredAttempts)
-	}
-
-	quotaContext := createVoiceFormalThreadContext(
-		t,
-		restartedServer.URL,
-		token,
-		"Quota terminal review",
-		"quota-review",
-	)
-	quotaStartPath := "/v1/practice-sessions/" + quotaContext.SessionID +
-		"/voice-activation"
-	quotaSession := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		quotaStartPath,
-		"",
-		"start-voice-session-quota",
-		http.StatusOK,
-	)
-	if quotaSession["practice_session_id"] != quotaContext.SessionID {
-		t.Fatalf(
-			"quota voice Start did not use formal Context Session: %#v",
-			quotaSession,
-		)
-	}
-	for round := 1; round <= 2; round++ {
-		quotaSession = transcribeAndConfirmVoiceRound(
-			t,
-			restartedServer.URL,
-			token,
-			quotaSession,
-			fmt.Sprintf("quota-review-round-%d", round),
-		)
-	}
-	quotaCandidate := createVoiceCandidate(
-		t,
-		restartedServer.URL,
-		token,
-		quotaSession,
-		"quota-review-round-3",
-	)
-	text.FailNextQuotaReview()
-	quotaConfirm := voiceJSONRequest(
-		t,
-		restartedServer.URL,
-		token,
-		http.MethodPost,
-		"/v1/transcription-candidates/"+
-			quotaCandidate["candidate_id"].(string)+"/confirmations",
-		"",
-		"confirm-quota-review-round-3",
-		http.StatusOK,
-	)
-	if quotaConfirm["session_completed"] != true {
-		t.Fatalf("quota Review blocked answer submission: %#v", quotaConfirm)
-	}
-	waitForVoiceCondition(t, "terminal quota Review", func() bool {
-		var status string
-		var category string
-		err := pool.QueryRow(
-			context.Background(),
-			`SELECT status, coalesce(stable_error_category, '')
-FROM reviews
-WHERE practice_session_id = $1`,
-			quotaSession["practice_session_id"].(string),
-		).Scan(&status, &category)
-		return err == nil &&
-			status == "failed" &&
-			category == "quota_exhausted"
-	})
-	quotaReviewCalls := text.ReviewCalls()
-
-	// A fresh composition root exercises a real service restart. The failed
-	// Review row must remain terminal across every subsequent Resume without
-	// blocking access to the completed Practice Session.
-	restartedServer.Close()
-	if err := restartedVault.Close(); err != nil {
-		t.Fatalf("close retry audio vault: %v", err)
-	}
-	terminalVault := newVoiceTestVault(t)
-	terminalServer := newVoiceProductionIntegrationServer(
-		t,
-		pool,
-		catalog,
-		text,
-		VoiceConfiguration{
-			Recognizer:              recognizer,
-			Synthesizer:             synthesizer,
-			TemporaryAudio:          terminalVault,
-			ObjectStore:             objects,
-			AudioStagedTTL:          time.Hour,
-			ASRLease:                5 * time.Second,
-			ReviewGenerationTimeout: 2 * time.Second,
-			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
-		},
-	)
-	for resume := 0; resume < 3; resume++ {
-		resumed := voiceJSONRequest(
-			t,
-			terminalServer.URL,
-			token,
-			http.MethodGet,
-			"/v1/practice-sessions/"+quotaContext.SessionID+
-				"/voice-state",
-			"",
-			"",
-			http.StatusOK,
-		)
-		if resumed["session_completed"] != true {
-			t.Fatalf(
-				"terminal Review Resume did not restore completed Session: %#v",
-				resumed,
-			)
-		}
-	}
-	if got := text.ReviewCalls(); got != quotaReviewCalls {
-		t.Fatalf(
-			"terminal Review Resume calls = %d, want unchanged %d",
-			got,
-			quotaReviewCalls,
-		)
-	}
-
-	if _, err := pool.Exec(context.Background(), `
-		UPDATE reviews
-		SET result = jsonb_set(
-			result,
-			'{summary}',
-			to_jsonb($1::text)
-		)
-		WHERE id = $2
-	`, " \t\n", reviewID); err != nil {
-		t.Fatalf("stage corrupt persisted Review for HTTP boundary: %v", err)
-	}
-	for _, path := range []string{
-		"/v1/formal-reviews/" + reviewID,
-		"/v1/formal-reviews",
-	} {
-		failure := voiceJSONRequest(
-			t,
-			terminalServer.URL,
-			token,
-			http.MethodGet,
-			path,
-			"",
-			"",
-			http.StatusInternalServerError,
-		)
-		errorObject, ok := failure["error"].(map[string]any)
-		if !ok ||
-			errorObject["code"] != "internal_error" ||
-			errorObject["retryable"] != true {
-			t.Fatalf(
-				"corrupt persisted Review response for %s = %#v",
-				path,
-				failure,
-			)
-		}
+	if count != 1 || storedFinalTurnID != finalTurnID || completionToken == "" {
+		t.Fatalf("Practice completion = (%d, %q, %q), want one for %q", count, storedFinalTurnID, completionToken, finalTurnID)
 	}
 }
 
@@ -1472,14 +809,13 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			catalog,
 			text,
 			VoiceConfiguration{
-				Recognizer:              recognizer,
-				Synthesizer:             synthesizer,
-				TemporaryAudio:          vault,
-				ObjectStore:             objects,
-				AudioStagedTTL:          time.Hour,
-				ASRLease:                5 * time.Second,
-				ReviewGenerationTimeout: 2 * time.Second,
-				ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+				Recognizer:             recognizer,
+				Synthesizer:            synthesizer,
+				TemporaryAudio:         vault,
+				ObjectStore:            objects,
+				AudioStagedTTL:         time.Hour,
+				ASRLease:               5 * time.Second,
+				ReviewHistoryCursorKey: testReviewHistoryCursorKey,
 			},
 		)
 	}
@@ -1549,8 +885,8 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT assets.audio_asset_id
-		 FROM conversation_audio_assets AS assets
-		 JOIN conversation_transcript_candidates AS candidates
+		 FROM practice_audio_assets AS assets
+		 JOIN practice_transcript_candidates AS candidates
 		   ON candidates.owner_user_id = assets.owner_user_id
 		  AND candidates.reservation_id = assets.upload_request_id
 		 WHERE candidates.candidate_id = $1`,
@@ -1560,7 +896,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	}
 	if _, err := pool.Exec(
 		context.Background(),
-		`UPDATE conversation_audio_assets
+		`UPDATE practice_audio_assets
 		 SET created_at = transaction_timestamp() - interval '2 hours',
 		     updated_at = transaction_timestamp() - interval '2 hours',
 		     staged_until = transaction_timestamp() - interval '1 hour'
@@ -1630,11 +966,11 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			context.Background(),
 			`SELECT
 			    (SELECT count(*)::int
-			     FROM conversation_confirmed_turns
+			     FROM practice_turns
 			     WHERE candidate_id = $1),
 			    (SELECT count(*)::int
-			     FROM conversation_turn_confirmations confirmations
-			     JOIN conversation_confirmed_turns turns
+			     FROM practice_turn_confirmations confirmations
+			     JOIN practice_turns turns
 			       ON turns.owner_user_id = confirmations.owner_user_id
 			      AND turns.turn_id = confirmations.turn_id
 			     WHERE turns.candidate_id = $1)`,
@@ -1666,7 +1002,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		t.Fatalf("read database deletion time: %v", err)
 	}
 	deleted := claims[0].Asset
-	deleted.Status = conversation.AudioAssetDeleted
+	deleted.Status = practiceinput.AudioAssetDeleted
 	deleted.DeletedAt = deletedAt.UTC()
 	deleted.UpdatedAt = deleted.DeletedAt
 	deleted.Version++

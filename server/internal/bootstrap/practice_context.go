@@ -11,15 +11,14 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
+	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
-	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -267,8 +266,12 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
+	practiceRepository, err := practicepostgres.New(database)
+	if err != nil {
+		return nil, err
+	}
 	practiceApplication, err := practice.NewContextApplication(
-		practicepostgres.New(database),
+		practiceRepository,
 		base.ids,
 		planApplication,
 	)
@@ -413,10 +416,10 @@ func (c *IdentityAgentPracticeComposition) ResolveSessionByPlan(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	planID string,
-) (practicepersistence.ContextSessionBootstrap, error) {
+) (practice.SessionBootstrap, error) {
 	if c == nil || c.practiceApplication == nil {
-		return practicepersistence.ContextSessionBootstrap{},
-			practicepersistence.ErrInvalidArgument
+		return practice.SessionBootstrap{},
+			practice.ErrInvalidArgument
 	}
 	return c.practiceApplication.ResolveSessionByPlan(ctx, actor, planID)
 }

@@ -36,9 +36,7 @@ tags:
   - name: Preparation
     description: User materials, immutable snapshots, and versioned practice plans.
   - name: Practice
-    description: Practice session lifecycle, participants, and immutable session snapshots.
-  - name: Conversation
-    description: Questions, effective Turns, and ordered session events.
+    description: Session lifecycle, frozen context, Questions, Answers, Turns, and completion facts.
   - name: Review
     description: Analysis, evidence feedback, same-question retry, and history projections.
   - name: Evaluation
@@ -144,25 +142,25 @@ paths:
   /v1/agent-runs/{run_id}/context-manifest:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1context-manifest
   /v1/practice-sessions/{practice_session_id}/voice-activation:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-activation
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-activation
   /v1/practice-sessions/{practice_session_id}/voice-state:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-state
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-state
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
   /v1/retry-turns/{retry_turn_id}/transcription-candidates:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates
   /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates~1{candidate_id}~1confirmations
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
   /v1/transcription-candidates/{candidate_id}/confirmations:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-questions/{question_id}/speech:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-questions~1{question_id}~1speech
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1speech
   /v1/formal-reviews:
     $ref: ./modules/review.yaml#/paths/~1v1~1formal-reviews
   /v1/formal-reviews/{review_id}:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1formal-reviews~1{review_id}
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1formal-reviews~1{review_id}
   /v1/evaluations:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations
   /v1/evaluations/{evaluation_id}:
@@ -214,19 +212,19 @@ paths:
   /v1/practice-sessions/{practice_session_id}/end-early:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1end-early
   /v1/practice-sessions/{practice_session_id}/bootstrap:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1bootstrap
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1bootstrap
   /v1/practice-sessions/{practice_session_id}/questions:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions
   /v1/questions/{question_id}/turns:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1questions~1{question_id}~1turns
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1questions~1{question_id}~1turns
   /v1/turns/{turn_id}:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1turns~1{turn_id}
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1turns~1{turn_id}
   /v1/audio-assets/{audio_asset_id}:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}
   /v1/audio-assets/{audio_asset_id}/playback:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}~1playback
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}~1playback
   /v1/practice-sessions/{practice_session_id}/events:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
   /v1/speech-feedback/{speech_feedback_id}:
     $ref: ./modules/review.yaml#/paths/~1v1~1speech-feedback~1{speech_feedback_id}
   /v1/feedback-items/{feedback_item_id}/retry-requests:
@@ -343,27 +341,27 @@ components:
     PracticeSessionPolicy:
       $ref: ./modules/preparation.yaml#/components/schemas/PracticeSessionPolicy
     Question:
-      $ref: ./modules/conversation.yaml#/components/schemas/Question
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/Question
     Turn:
-      $ref: ./modules/conversation.yaml#/components/schemas/Turn
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/Turn
     TranscriptSnapshot:
-      $ref: ./modules/conversation.yaml#/components/schemas/TranscriptSnapshot
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/TranscriptSnapshot
     AudioReference:
-      $ref: ./modules/conversation.yaml#/components/schemas/AudioReference
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/AudioReference
     AudioAssetPlayback:
-      $ref: ./modules/conversation.yaml#/components/schemas/AudioAssetPlayback
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/AudioAssetPlayback
     TurnReviewSource:
-      $ref: ./modules/conversation.yaml#/components/schemas/TurnReviewSource
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/TurnReviewSource
     CreateRetryTurnCommand:
-      $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnCommand
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/CreateRetryTurnCommand
     CreateRetryTurnResult:
-      $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnResult
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/CreateRetryTurnResult
     RetryTranscriptionCandidate:
-      $ref: ./modules/conversation.yaml#/components/schemas/RetryTranscriptionCandidate
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/RetryTranscriptionCandidate
     ConfirmedRetryTurn:
-      $ref: ./modules/conversation.yaml#/components/schemas/ConfirmedRetryTurn
-    ConversationBootstrap:
-      $ref: ./modules/conversation.yaml#/components/schemas/ConversationBootstrap
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/ConfirmedRetryTurn
+    PracticeBootstrap:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/PracticeBootstrap
     SpeechFeedback:
       $ref: ./modules/review.yaml#/components/schemas/SpeechFeedback
     SpeechFeedbackSource:

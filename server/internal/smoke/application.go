@@ -2,11 +2,11 @@ package smoke
 
 import (
 	"context"
+	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -15,7 +15,7 @@ import (
 type Application struct {
 	preparation  *preparationBackend
 	practice     *practiceBackend
-	conversation *conversation.Service
+	conversation *practiceinput.Service
 	review       *review.Service
 	failures     FailureControl
 }
@@ -23,7 +23,7 @@ type Application struct {
 func NewApplication(
 	preparationStore *preparationBackend,
 	practiceStore *practiceBackend,
-	conversationService *conversation.Service,
+	conversationService *practiceinput.Service,
 	reviewService *review.Service,
 	failures FailureControl,
 ) *Application {
@@ -46,12 +46,12 @@ func (a *Application) CreatePlan(
 func (a *Application) CreateSession(
 	planID string,
 	expectedPlanRevision int,
-) (practicepersistence.ContextSessionBootstrap, error) {
+) (practice.SessionBootstrap, error) {
 	if !a.preparation.PracticePlanExists(
 		planID,
 		expectedPlanRevision,
 	) {
-		return practicepersistence.ContextSessionBootstrap{}, ErrPlanNotFound
+		return practice.SessionBootstrap{}, ErrPlanNotFound
 	}
 	return a.practice.CreatePracticeSession()
 }
@@ -87,7 +87,7 @@ func (a *Application) EnsureCurrentQuestion(sessionID string) (Question, error) 
 
 func (a *Application) SubmitTurn(
 	questionID string,
-	request conversation.SubmitTurnRequest,
+	request practiceinput.SubmitTurnRequest,
 	failOnce bool,
 ) (Turn, error) {
 	question, ok := a.conversation.GetQuestion(questionID)
@@ -118,12 +118,12 @@ func (a *Application) SubmitTurn(
 	decision, err := a.practice.ApplyTurnOutcome(practice.TurnOutcome{
 		SessionID: turn.SessionID,
 		TurnID:    turn.ID,
-		IsRetry:   turn.IsRetry,
+		IsRetry:   turn.Kind == practice.TurnKindRetry,
 	})
 	if err != nil {
 		return Turn{}, err
 	}
-	if !turn.IsRetry {
+	if turn.Kind != practice.TurnKindRetry {
 		if decision.Completed {
 			a.conversation.PublishSessionCompleted(
 				decision.SessionVersion,
@@ -155,7 +155,7 @@ func (a *Application) AnalyzeTurn(turnID string) (Analysis, error) {
 		QuestionID:        turn.QuestionID,
 		AnswerText:        turn.AnswerText,
 		EffectiveSequence: turn.Sequence,
-		CompletedAt:       turn.CompletedAt,
+		CompletedAt:       turn.CompletedAt.Format(time.RFC3339),
 	})
 	if err != nil {
 		return Analysis{}, err

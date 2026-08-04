@@ -37,4 +37,5 @@ import "embed"
 //go:embed 000049_goal_authority_models.*.sql
 //go:embed 000050_scene_authority_catalog.*.sql
 //go:embed 000051_preparation_plan_authority.*.sql
+//go:embed 000052_practice_runtime_authority.*.sql
 var Files embed.FS

@@ -535,8 +535,8 @@ func selectSpeechFeedbackAcousticPrompt(
 		var promptText string
 		err := database.QueryRow(ctx, `
 			SELECT question.content
-			FROM conversation_confirmed_turns AS turn
-			JOIN conversation_questions AS question
+			FROM practice_turns AS turn
+			JOIN practice_questions AS question
 			  ON question.owner_user_id = turn.owner_user_id
 			 AND question.practice_session_id =
 			     turn.practice_session_id
@@ -585,12 +585,12 @@ func verifyStoredSpeechFeedbackSource(
 				snapshot.evidence_ref_id,
 				question.content
 			FROM review_speech_feedback_turn_snapshots AS snapshot
-			JOIN conversation_confirmed_turns AS turn
+			JOIN practice_turns AS turn
 			  ON turn.owner_user_id = snapshot.owner_user_id
 			 AND turn.practice_session_id =
 			     snapshot.practice_session_id
 			 AND turn.turn_id = snapshot.turn_id
-			JOIN conversation_questions AS question
+			JOIN practice_questions AS question
 			  ON question.owner_user_id = turn.owner_user_id
 			 AND question.practice_session_id =
 			     turn.practice_session_id

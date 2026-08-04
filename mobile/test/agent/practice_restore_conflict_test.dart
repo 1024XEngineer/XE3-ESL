@@ -12,7 +12,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
-import 'package:speakup/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
@@ -51,7 +51,6 @@ void main() {
       expect(controller.messages, hasLength(1));
       expect(controller.practiceSessionId, isNull);
       expect(controller.hasActivePractice, isFalse);
-      expect(controller.review, isNull);
       expect(controller.canSelectScene, isTrue);
       expect(controller.canRetry, isFalse);
       expect(controller.errorMessage, isNull);
@@ -65,7 +64,6 @@ void main() {
         _firstCompletedSessionId,
         _secondCompletedSessionId,
       ]);
-      expect(controller.review, isNull);
 
       await controller.activateCreatedPractice(
         threadId: _threadId,

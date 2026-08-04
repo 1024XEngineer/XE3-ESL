@@ -9,7 +9,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
-import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
 void main() {
@@ -110,16 +110,23 @@ void main() {
       controller: dependencies.agentController,
       validateAudioMedia: validateAudioMedia,
     );
-    final completedReviewId = dependencies.agentController.review?.id;
-    if (completedReviewId == null) {
-      fail('The completed Practice did not expose its server Review identity.');
+    final completedSessionId = dependencies.agentController.practiceSessionId;
+    if (completedSessionId == null) {
+      fail('The completed Practice did not retain its Session identity.');
     }
-    await _waitForPersistedReview(
+    Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await _waitForPersistedSessionReview(
       tester,
       controller: dependencies.reviewHistoryController,
-      reviewId: completedReviewId,
+      practiceSessionId: completedSessionId,
       timeout: const Duration(seconds: 15),
     );
+    final completedReviewId = dependencies.reviewHistoryController.items
+        .firstWhere((item) => item.practiceSessionId == completedSessionId)
+        .review
+        .id;
     final reviewScreenshot = await binding.takeScreenshot(
       'ios-real-voice-review-e2e',
     );
@@ -128,10 +135,10 @@ void main() {
     await _signOut(tester);
     await _signIn(tester, email: email, password: password);
     await tester.tap(find.byKey(const Key('primary-tab-review')));
-    await _waitForPersistedReview(
+    await _waitForPersistedSessionReview(
       tester,
       controller: dependencies.reviewHistoryController,
-      reviewId: completedReviewId,
+      practiceSessionId: completedSessionId,
       timeout: const Duration(seconds: 20),
       additionalCondition: () =>
           find
@@ -507,7 +514,20 @@ Future<void> _completeRealVoicePractice(
       _failOnPracticeError(tester, 'confirm turn $turn');
       expect(find.text('$turn / 3'), findsOneWidget);
     } else {
-      await _waitForRealReview(tester);
+      await _waitUntil(
+        tester,
+        () =>
+            find
+                .byKey(const Key('practice-completed-actions'))
+                .evaluate()
+                .isNotEmpty ||
+            find
+                .byKey(const Key('practice-error-message'))
+                .evaluate()
+                .isNotEmpty,
+        const Duration(seconds: 90),
+      );
+      _failOnPracticeError(tester, 'complete turn 3');
     }
     if (validateAudioMedia) {
       expect(controller.recordings, hasLength(turn));
@@ -518,9 +538,8 @@ Future<void> _completeRealVoicePractice(
     }
   }
 
-  expect(find.byKey(const Key('practice-page')), findsNothing);
-  expect(find.byKey(const Key('review-content')).hitTestable(), findsOneWidget);
-  expect(find.byKey(const Key('review-title')).hitTestable(), findsOneWidget);
+  expect(find.byKey(const Key('practice-page')), findsOneWidget);
+  expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
   if (validateAudioMedia) {
     final audioAssetIds = [
       for (final recording in controller.recordings) recording.audioAssetId,
@@ -680,68 +699,28 @@ Future<void> _validateRecordingPlayback(
   await controller.stopPracticeAudio();
 }
 
-Future<void> _waitForRealReview(WidgetTester tester) async {
-  for (var attempt = 0; attempt < 4; attempt++) {
-    await _waitUntil(
-      tester,
-      () =>
-          find.byKey(const Key('review-content')).evaluate().isNotEmpty ||
-          find
-              .byKey(const Key('practice-retry-review'))
-              .evaluate()
-              .isNotEmpty ||
-          find.byKey(const Key('practice-confirm-turn')).evaluate().isNotEmpty,
-      const Duration(seconds: 90),
-    );
-    if (find.byKey(const Key('review-content')).evaluate().isNotEmpty) {
-      await _waitUntil(
-        tester,
-        () =>
-            find.byKey(const Key('practice-page')).evaluate().isEmpty &&
-            find
-                .byKey(const Key('review-content'))
-                .hitTestable()
-                .evaluate()
-                .isNotEmpty,
-        const Duration(seconds: 5),
-      );
-      await tester.pumpAndSettle();
-      return;
-    }
-    if (find.byKey(const Key('practice-confirm-turn')).evaluate().isNotEmpty) {
-      _failOnPracticeError(tester, 'confirm turn 3');
-      fail('The third confirmation did not advance the Practice Session.');
-    }
-    if (attempt == 3) {
-      break;
-    }
-    await tester.tap(find.byKey(const Key('practice-retry-review')));
-    await tester.pump();
-  }
-  _failOnPracticeError(tester, 'restore the Review');
-  fail('The real service did not return a Review after retrying.');
-}
-
-Future<void> _waitForPersistedReview(
+Future<void> _waitForPersistedSessionReview(
   WidgetTester tester, {
   required ReviewHistoryController controller,
-  required String reviewId,
+  required String practiceSessionId,
   required Duration timeout,
   bool Function()? additionalCondition,
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
-    final loaded = controller.items.any((item) => item.review.id == reviewId);
+    final loaded = controller.items.any(
+      (item) => item.practiceSessionId == practiceSessionId,
+    );
     if (loaded && (additionalCondition?.call() ?? true)) {
       return;
     }
     final error = controller.errorMessage;
     if (error != null && error.isNotEmpty) {
-      fail('Failed to load persisted Review $reviewId: $error');
+      fail('Failed to load persisted Review for $practiceSessionId: $error');
     }
     await tester.pump(const Duration(milliseconds: 250));
   }
-  fail('Timed out waiting for persisted Review $reviewId.');
+  fail('Timed out waiting for persisted Review for $practiceSessionId.');
 }
 
 void _failOnPracticeError(WidgetTester tester, String operation) {

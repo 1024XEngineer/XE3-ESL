@@ -141,7 +141,7 @@ func TestPostgresRetryRequestAcceptsOnlyCompletedSameQuestionItem(
 }
 
 const retryRequestIntegrationSchema = `
-	ALTER TABLE conversation_confirmed_turns
+	ALTER TABLE practice_turns
 		ADD COLUMN turn_kind text NOT NULL DEFAULT 'EFFECTIVE',
 		ADD COLUMN counts_toward_effective_turn_limit boolean
 			NOT NULL DEFAULT true;

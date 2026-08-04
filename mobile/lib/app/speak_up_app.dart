@@ -8,9 +8,9 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/practice/immersive_roleplay.dart';
-import 'package:speakup/features/practice/immersive_roleplay_session.dart';
-import 'package:speakup/features/practice/practice.dart';
+import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/practice/practice.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
@@ -20,7 +20,7 @@ import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
-import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
@@ -286,7 +286,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
             ieltsSpeakingReportIndexController:
                 widget.ieltsSpeakingReportIndexController,
-            agentController: _agentController,
           ),
           _ => null,
         };

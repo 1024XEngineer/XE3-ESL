@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -134,7 +133,7 @@ type practiceTurnDecision struct {
 }
 
 func (b practiceBackend) CreatePracticeSession() (
-	practicepersistence.ContextSessionBootstrap,
+	practice.SessionBootstrap,
 	error,
 ) {
 	return b.runtime.createSession()
@@ -142,22 +141,22 @@ func (b practiceBackend) CreatePracticeSession() (
 
 func (b practiceBackend) GetPracticeSession(
 	sessionID string,
-) (practicepersistence.ContextSession, bool) {
+) (practice.Session, bool) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
 	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
-		return practicepersistence.ContextSession{}, false
+		return practice.Session{}, false
 	}
 	return b.runtime.sessionLocked(), true
 }
 
 func (b practiceBackend) GetPracticeSessionSnapshot(
 	sessionID string,
-) (practicepersistence.ContextSessionSnapshot, bool) {
+) (practice.SessionSnapshot, bool) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
 	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
-		return practicepersistence.ContextSessionSnapshot{}, false
+		return practice.SessionSnapshot{}, false
 	}
 	return b.runtime.snapshotLocked(), true
 }
@@ -171,12 +170,12 @@ func (b practiceBackend) StartPracticeSession(
 		return 0, false, ErrSessionNotFound
 	}
 	switch b.runtime.sessionStatus {
-	case practicepersistence.ContextSessionStarting:
-		b.runtime.sessionStatus = practicepersistence.ContextSessionProgress
+	case practice.SessionStarting:
+		b.runtime.sessionStatus = practice.SessionInProgress
 		b.runtime.sessionVersion = 2
 		return 2, true, nil
-	case practicepersistence.ContextSessionProgress,
-		practicepersistence.ContextSessionCompleted:
+	case practice.SessionInProgress,
+		practice.SessionCompleted:
 		return b.runtime.sessionVersion, false, nil
 	default:
 		return 0, false, ErrResourceConflict
@@ -194,14 +193,14 @@ func (b practiceBackend) AuthorizePracticeTurn(
 	}
 	if isRetry {
 		switch b.runtime.sessionStatus {
-		case practicepersistence.ContextSessionProgress,
-			practicepersistence.ContextSessionCompleted:
+		case practice.SessionInProgress,
+			practice.SessionCompleted:
 			return nil
 		default:
 			return ErrResourceConflict
 		}
 	}
-	if b.runtime.sessionStatus != practicepersistence.ContextSessionProgress {
+	if b.runtime.sessionStatus != practice.SessionInProgress {
 		return ErrSessionCompleted
 	}
 	return nil
@@ -222,13 +221,13 @@ func (b practiceBackend) ApplyTurnOutcome(
 		decision := practiceTurnDecision{
 			EffectiveTurns: b.runtime.effectiveTurns,
 			Completed: b.runtime.sessionStatus ==
-				practicepersistence.ContextSessionCompleted,
+				practice.SessionCompleted,
 			SessionVersion: b.runtime.sessionVersion,
 		}
 		b.runtime.turnDecisions[outcome.TurnID] = decision
 		return decision, nil
 	}
-	if b.runtime.sessionStatus != practicepersistence.ContextSessionProgress {
+	if b.runtime.sessionStatus != practice.SessionInProgress {
 		return practiceTurnDecision{}, ErrSessionCompleted
 	}
 	b.runtime.effectiveTurns++
@@ -240,7 +239,7 @@ func (b practiceBackend) ApplyTurnOutcome(
 		NextAction:         practice.NextActionMoveToNextObjective,
 	}
 	if b.runtime.effectiveTurns == 4 {
-		b.runtime.sessionStatus = practicepersistence.ContextSessionCompleted
+		b.runtime.sessionStatus = practice.SessionCompleted
 		b.runtime.sessionVersion = 6
 		decision.Completed = true
 		decision.NextQuestionNumber = 0
@@ -279,14 +278,14 @@ func (b conversationBackend) CurrentQuestion(
 func (b conversationBackend) SaveQuestion(
 	sessionID string,
 	sequence int,
-	draft conversation.QuestionDraft,
+	draft practice.QuestionDraft,
 ) (Question, error) {
 	return b.runtime.saveQuestion(sessionID, sequence, draft)
 }
 
 func (b conversationBackend) PrepareTurn(
 	questionID string,
-	request conversation.SubmitTurnRequest,
+	request practiceinput.SubmitTurnRequest,
 ) (Turn, error) {
 	return b.runtime.prepareTurn(questionID, request)
 }

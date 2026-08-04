@@ -8,12 +8,11 @@ import (
 	"testing"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	domainconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
 const evidenceTestOwner = "11111111-1111-4111-8111-111111111111"
@@ -208,7 +207,7 @@ func TestEvidenceSourceComposePreservesUnansweredOfferedOpportunity(
 ) {
 	fixture := newEvidenceSourceFixture(t)
 	fixture.conversation.questions["question-3"] =
-		conversation.PersistentQuestion{
+		practice.Question{
 			ID:                      "question-3",
 			SessionID:               "session-1",
 			SpeakerParticipantID:    "participant-facilitator",
@@ -256,7 +255,7 @@ func TestEvidenceSourceComposePreservesUnansweredOfferedOpportunity(
 func TestEvidenceSourceComposeMarksDeletedAudioUnavailable(t *testing.T) {
 	fixture := newEvidenceSourceFixture(t)
 	asset := fixture.audio.assets["turn-1"]
-	asset.Status = domainconversation.AudioAssetDeleted
+	asset.Status = practiceinput.AudioAssetDeleted
 	fixture.audio.assets["turn-1"] = asset
 
 	command, err := fixture.reader.Compose(
@@ -275,7 +274,7 @@ func TestEvidenceSourceComposeMarksDeletedAudioUnavailable(t *testing.T) {
 	}
 	audio := payload.ConfirmedTurns[0].Audio
 	if audio.Availability != evidenceUnavailable ||
-		audio.Status != string(domainconversation.AudioAssetDeleted) ||
+		audio.Status != string(practiceinput.AudioAssetDeleted) ||
 		audio.AudioAssetID != asset.ID ||
 		payload.EvidenceRefs[0].AudioSpan != nil {
 		t.Fatalf("deleted audio evidence = %#v", audio)
@@ -314,7 +313,7 @@ func TestEvidenceSourceComposeRejectsUntrustedOrUnsupportedRequest(
 		{
 			name: "unfinished session",
 			mutate: func(f *evidenceSourceFixture) {
-				f.practice.session.Status = practice.ContextSessionProgress
+				f.practice.session.Status = practice.SessionInProgress
 				f.practice.session.EndedAt = nil
 				f.practice.session.EndReason = ""
 			},
@@ -369,7 +368,7 @@ func TestEvidenceSourceComposeRejectsInconsistentAuthorities(t *testing.T) {
 			name: "candidate is not confirmed",
 			mutate: func(f *evidenceSourceFixture) {
 				candidate := f.conversation.candidates["candidate-1"]
-				candidate.Status = conversation.CandidateReady
+				candidate.Status = practiceinput.CandidateReady
 				f.conversation.candidates["candidate-1"] = candidate
 			},
 		},
@@ -401,7 +400,7 @@ func TestEvidenceSourceComposeRejectsInconsistentAuthorities(t *testing.T) {
 			name: "audio is not bound and readable",
 			mutate: func(f *evidenceSourceFixture) {
 				asset := f.audio.assets["turn-1"]
-				asset.Status = domainconversation.AudioAssetMetadataCommitted
+				asset.Status = practiceinput.AudioAssetMetadataCommitted
 				f.audio.assets["turn-1"] = asset
 			},
 		},
@@ -452,7 +451,7 @@ func TestEvidenceSourceComposeMapsCrossOwnerAndDeletionToNotFound(
 		{
 			name: "conversation is deletion fenced",
 			mutate: func(f *evidenceSourceFixture) {
-				f.conversation.turnsErr = conversation.ErrActorDeleted
+				f.conversation.turnsErr = practiceinput.ErrActorDeleted
 			},
 		},
 	}
@@ -517,13 +516,13 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 		SessionID: "auth-session",
 	}
 	practiceSource := &fakeEvidencePracticeSource{
-		session: practice.ContextSession{
+		session: practice.Session{
 			ID:             "session-1",
 			PlanID:         "plan-1",
 			SceneFamily:    scene.SceneFamilyDaily,
 			SceneModel:     scene.SceneModelHotelCheckinAndIssueHandling,
 			SnapshotID:     "snapshot-1",
-			Status:         practice.ContextSessionCompleted,
+			Status:         practice.SessionCompleted,
 			Version:        3,
 			EffectiveTurns: 2,
 			StartedAt:      &started,
@@ -531,7 +530,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			EndReason:      "COVERAGE_SATISFIED_AT_CHECKPOINT",
 			CreatedAt:      started,
 		},
-		snapshot: practice.ContextSessionSnapshot{
+		snapshot: practice.SessionSnapshot{
 			ID:           "snapshot-1",
 			SessionID:    "session-1",
 			PlanRevision: 2,
@@ -610,7 +609,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				BackgroundSnapshot:     "sensitive background snapshot",
 				JobDescriptionSnapshot: "confirmed job description snapshot",
 			},
-			Participants: []practice.ContextParticipant{
+			Participants: []practice.Participant{
 				{
 					ID:        "participant-facilitator",
 					SessionID: "session-1",
@@ -666,7 +665,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			CreatedAt: started,
 		},
 	}
-	turns := []conversation.ConfirmedTurn{
+	turns := []practice.Turn{
 		{
 			ID:                      "turn-1",
 			SessionID:               "session-1",
@@ -702,7 +701,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 	}
 	conversationSource := &fakeEvidenceConversationSource{
 		turns: turns,
-		questions: map[string]conversation.PersistentQuestion{
+		questions: map[string]practice.Question{
 			"question-1": {
 				ID:                      "question-1",
 				SessionID:               "session-1",
@@ -727,13 +726,13 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				CreatedAt:               now.Add(-90 * time.Second),
 			},
 		},
-		candidates: map[string]conversation.TranscriptCandidate{
+		candidates: map[string]practiceinput.StoredTranscriptCandidate{
 			"candidate-1": evidenceCandidate(turns[0], "transcript-1", "asr-1"),
 			"candidate-2": evidenceCandidate(turns[1], "transcript-2", "asr-2"),
 		},
 	}
 	audioSource := &fakeEvidenceAudioSource{
-		assets: map[string]domainconversation.AudioAsset{
+		assets: map[string]practiceinput.AudioAsset{
 			"turn-1": {
 				ID:              "audio-1",
 				OwnerID:         evidenceTestOwner,
@@ -746,7 +745,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				ChecksumSHA256:  strings.Repeat("a", 64),
 				Duration:        1501 * time.Millisecond,
 				ETag:            "private-etag",
-				Status:          domainconversation.AudioAssetReadable,
+				Status:          practiceinput.AudioAssetReadable,
 				Version:         3,
 			},
 		},
@@ -770,11 +769,11 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 }
 
 func evidenceCandidate(
-	turn conversation.ConfirmedTurn,
+	turn practice.Turn,
 	transcriptID string,
 	providerRequestID string,
-) conversation.TranscriptCandidate {
-	return conversation.TranscriptCandidate{
+) practiceinput.StoredTranscriptCandidate {
+	return practiceinput.StoredTranscriptCandidate{
 		ID:                      turn.CandidateID,
 		QuestionID:              turn.QuestionID,
 		SessionID:               turn.SessionID,
@@ -785,52 +784,52 @@ func evidenceCandidate(
 		Model:                   "paraformer-v2",
 		ProviderRequestID:       providerRequestID,
 		Text:                    turn.AnswerText,
-		Status:                  conversation.CandidateConfirmed,
+		Status:                  practiceinput.CandidateConfirmed,
 		CreatedAt:               turn.CreatedAt,
 	}
 }
 
 type fakeEvidencePracticeSource struct {
-	session     practice.ContextSession
+	session     practice.Session
 	sessionErr  error
-	snapshot    practice.ContextSessionSnapshot
+	snapshot    practice.SessionSnapshot
 	snapshotErr error
 }
 
-func (s *fakeEvidencePracticeSource) GetContextSession(
+func (s *fakeEvidencePracticeSource) GetSession(
 	context.Context,
 	practice.Actor,
 	string,
-) (practice.ContextSession, error) {
+) (practice.Session, error) {
 	return s.session, s.sessionErr
 }
 
-func (s *fakeEvidencePracticeSource) GetContextSessionSnapshot(
+func (s *fakeEvidencePracticeSource) GetSessionSnapshot(
 	context.Context,
 	practice.Actor,
 	string,
-) (practice.ContextSessionSnapshot, error) {
+) (practice.SessionSnapshot, error) {
 	return s.snapshot, s.snapshotErr
 }
 
 type fakeEvidenceConversationSource struct {
-	turns        []conversation.ConfirmedTurn
+	turns        []practice.Turn
 	turnsErr     error
-	questions    map[string]conversation.PersistentQuestion
+	questions    map[string]practice.Question
 	questionErr  error
-	candidates   map[string]conversation.TranscriptCandidate
+	candidates   map[string]practiceinput.StoredTranscriptCandidate
 	candidateErr error
 }
 
 func (s *fakeEvidenceConversationSource) ListSessionQuestions(
 	_ context.Context,
-	_ conversation.Actor,
+	_ practiceinput.Actor,
 	sessionID string,
-) ([]conversation.PersistentQuestion, error) {
+) ([]practice.Question, error) {
 	if s.questionErr != nil {
 		return nil, s.questionErr
 	}
-	result := make([]conversation.PersistentQuestion, 0, len(s.questions))
+	result := make([]practice.Question, 0, len(s.questions))
 	for _, item := range s.questions {
 		if item.SessionID == sessionID {
 			result = append(result, item)
@@ -841,30 +840,30 @@ func (s *fakeEvidenceConversationSource) ListSessionQuestions(
 
 func (s *fakeEvidenceConversationSource) GetCandidate(
 	_ context.Context,
-	_ conversation.Actor,
+	_ practiceinput.Actor,
 	id string,
-) (conversation.TranscriptCandidate, error) {
+) (practiceinput.StoredTranscriptCandidate, error) {
 	if s.candidateErr != nil {
-		return conversation.TranscriptCandidate{}, s.candidateErr
+		return practiceinput.StoredTranscriptCandidate{}, s.candidateErr
 	}
 	item, ok := s.candidates[id]
 	if !ok {
-		return conversation.TranscriptCandidate{},
-			conversation.ErrPersistenceNotFound
+		return practiceinput.StoredTranscriptCandidate{},
+			practiceinput.ErrPersistenceNotFound
 	}
 	return item, nil
 }
 
 func (s *fakeEvidenceConversationSource) ListSessionTurns(
 	context.Context,
-	conversation.Actor,
+	practiceinput.Actor,
 	string,
-) ([]conversation.ConfirmedTurn, error) {
+) ([]practice.Turn, error) {
 	return slicesClone(s.turns), s.turnsErr
 }
 
 type fakeEvidenceAudioSource struct {
-	assets map[string]domainconversation.AudioAsset
+	assets map[string]practiceinput.AudioAsset
 	err    error
 }
 
@@ -872,14 +871,14 @@ func (s *fakeEvidenceAudioSource) GetByTurn(
 	_ context.Context,
 	_ string,
 	turnID string,
-) (domainconversation.AudioAsset, error) {
+) (practiceinput.AudioAsset, error) {
 	if s.err != nil {
-		return domainconversation.AudioAsset{}, s.err
+		return practiceinput.AudioAsset{}, s.err
 	}
 	item, ok := s.assets[turnID]
 	if !ok {
-		return domainconversation.AudioAsset{},
-			domainconversation.ErrAudioAssetNotFound
+		return practiceinput.AudioAsset{},
+			practiceinput.ErrAudioAssetNotFound
 	}
 	return item, nil
 }

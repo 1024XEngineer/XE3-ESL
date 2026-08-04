@@ -17,9 +17,16 @@ func TestRetryTurnMigrationFreezesNonEffectiveSameQuestionSaga(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sql := strings.ToLower(string(content))
+	authority, err := migrations.Files.ReadFile(
+		"000052_practice_runtime_authority.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retrySQL := strings.ToLower(string(content))
+	sql := retrySQL + "\n" + strings.ToLower(string(authority))
 	for _, required := range []string{
-		"conversation_retry_turn_drafts",
+		"practice_retry_turn_drafts",
 		"'answering'",
 		"turn_kind",
 		"'effective'",
@@ -40,7 +47,7 @@ func TestRetryTurnMigrationFreezesNonEffectiveSameQuestionSaga(
 		"signed_url",
 		"overall_score",
 	} {
-		if strings.Contains(sql, forbidden) {
+		if strings.Contains(retrySQL, forbidden) {
 			t.Errorf("retry Turn migration contains forbidden %q", forbidden)
 		}
 	}

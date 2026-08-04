@@ -11,9 +11,9 @@ import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/conversation/conversation.dart';
-import 'package:speakup/practice/practice_audio_player.dart';
-import 'package:speakup/practice/practice_media.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
 
 void main() {
   testWidgets(

@@ -2664,6 +2664,9 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(speechFeedbackUp)); err != nil {
 		t.Fatalf("apply SpeechFeedback migration: %v", err)
 	}
+	if _, err := pool.Exec(ctx, practiceReviewSourceAuthorityFixtureSQL); err != nil {
+		t.Fatalf("apply Practice source authority fixture: %v", err)
+	}
 	return pool
 }
 

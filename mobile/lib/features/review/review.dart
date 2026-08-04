@@ -4,13 +4,11 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/features/review/ielts_speaking_report_view.dart';
-import 'package:speakup/practice/practice_recordings.dart';
 import 'package:speakup/review/formal_review.dart';
 import 'package:speakup/review/interview_report_client.dart';
 import 'package:speakup/review/interview_report_controller.dart';
@@ -27,7 +25,6 @@ class ReviewPage extends StatefulWidget {
     this.previewMode = false,
     this.practiceAvailable = true,
     this.historyController,
-    this.agentController,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
@@ -39,7 +36,6 @@ class ReviewPage extends StatefulWidget {
   final bool previewMode;
   final bool practiceAvailable;
   final ReviewHistoryController? historyController;
-  final AgentController? agentController;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
@@ -55,7 +51,6 @@ class _ReviewPageState extends State<ReviewPage> {
     super.initState();
     widget.historyController?.addListener(_rebuild);
     widget.ieltsSpeakingReportIndexController?.addListener(_rebuild);
-    widget.agentController?.addListener(_rebuild);
     if (widget.autoload) {
       unawaited(_refresh());
     }
@@ -72,10 +67,6 @@ class _ReviewPageState extends State<ReviewPage> {
         unawaited(widget.historyController?.refresh());
       }
     }
-    if (oldWidget.agentController != widget.agentController) {
-      oldWidget.agentController?.removeListener(_rebuild);
-      widget.agentController?.addListener(_rebuild);
-    }
     if (oldWidget.ieltsSpeakingReportIndexController !=
         widget.ieltsSpeakingReportIndexController) {
       oldWidget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
@@ -90,8 +81,6 @@ class _ReviewPageState extends State<ReviewPage> {
   void dispose() {
     widget.historyController?.removeListener(_rebuild);
     widget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
-    widget.agentController?.removeListener(_rebuild);
-    unawaited(widget.agentController?.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
@@ -166,33 +155,10 @@ class _ReviewPageState extends State<ReviewPage> {
     final ieltsMockItems = ieltsItems
         .where((item) => item.reportKind != IeltsSpeakingReportKind.interview)
         .toList(growable: false);
-    final currentReview = widget.agentController?.review;
-    final showCurrentReview =
-        controller != null &&
-        currentReview != null &&
-        !controller.items.any((item) => item.review.id == currentReview.id);
     final entries = <_ReviewListEntry>[
-      if (showCurrentReview)
-        _ReviewListEntry.current(
-          review: currentReview,
-          formalReview: widget.agentController?.formalReview,
-          agentController: widget.agentController!,
-        ),
       if (controller != null)
         for (final item in controller.items)
-          _ReviewListEntry.history(
-            item: item,
-            agentController:
-                widget.agentController?.review?.id == item.review.id
-                ? widget.agentController
-                : null,
-          ),
-      if (controller == null && currentReview != null)
-        _ReviewListEntry.current(
-          review: currentReview,
-          formalReview: widget.agentController?.formalReview,
-          agentController: widget.agentController!,
-        ),
+          _ReviewListEntry.history(item: item),
     ];
     final hasReviewEntries = entries.isNotEmpty;
     final hasIeltsEntries = ieltsItems.isNotEmpty;
@@ -396,32 +362,14 @@ final class _ReviewListEntry {
     required this.isCurrent,
     this.formalReview,
     this.completedAt,
-    this.agentController,
   });
 
-  factory _ReviewListEntry.current({
-    required AgentReview review,
-    FormalReview? formalReview,
-    required AgentController agentController,
-  }) {
-    return _ReviewListEntry._(
-      review: review,
-      formalReview: formalReview,
-      isCurrent: true,
-      agentController: agentController,
-    );
-  }
-
-  factory _ReviewListEntry.history({
-    required ReviewHistoryItem item,
-    AgentController? agentController,
-  }) {
+  factory _ReviewListEntry.history({required ReviewHistoryItem item}) {
     return _ReviewListEntry._(
       review: item.review,
       formalReview: item.formalReview,
       completedAt: item.completedAt,
       isCurrent: false,
-      agentController: agentController,
     );
   }
 
@@ -429,7 +377,6 @@ final class _ReviewListEntry {
   final FormalReview? formalReview;
   final DateTime? completedAt;
   final bool isCurrent;
-  final AgentController? agentController;
 
   String get statusLabel {
     final eligibility = formalReview?.result?.eligibility;
@@ -880,32 +827,21 @@ class _ReviewDetailPage extends StatefulWidget {
 }
 
 class _ReviewDetailPageState extends State<_ReviewDetailPage> {
-  String? _visibleMediaError;
-  String? _ignoredInitialMediaError;
-
   @override
   void initState() {
     super.initState();
-    widget.entry.agentController?.addListener(_rebuild);
     widget.interviewReportController?.addListener(_rebuild);
-    _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
     _loadInterviewReport();
   }
 
   @override
   void didUpdateWidget(covariant _ReviewDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.entry.agentController != widget.entry.agentController) {
-      oldWidget.entry.agentController?.removeListener(_rebuild);
-      widget.entry.agentController?.addListener(_rebuild);
-    }
     if (oldWidget.interviewReportController !=
         widget.interviewReportController) {
       oldWidget.interviewReportController?.removeListener(_rebuild);
       widget.interviewReportController?.addListener(_rebuild);
     }
-    _visibleMediaError = null;
-    _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
     if (_interviewSessionId(oldWidget.entry) !=
             _interviewSessionId(widget.entry) ||
         oldWidget.interviewReportController !=
@@ -920,10 +856,7 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
 
   @override
   void dispose() {
-    final attachedController = widget.entry.agentController;
-    attachedController?.removeListener(_rebuild);
     widget.interviewReportController?.removeListener(_rebuild);
-    unawaited(_matchingController()?.stopPracticeAudio(notify: false));
     final sessionId = _interviewSessionId(widget.entry);
     if (sessionId != null) {
       widget.interviewReportController?.cancel(sessionId);
@@ -942,32 +875,13 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
     if (!mounted) {
       return;
     }
-    final controller = _matchingController();
-    final error = controller != null && controller.recordings.isNotEmpty
-        ? controller.mediaErrorMessage
-        : null;
-    if (error == null) {
-      _visibleMediaError = null;
-      _ignoredInitialMediaError = null;
-    } else if (error != _ignoredInitialMediaError) {
-      _visibleMediaError = error;
-    }
     setState(() {});
-  }
-
-  AgentController? _matchingController() {
-    final controller = widget.entry.agentController;
-    return controller?.review?.id == widget.entry.review.id ? controller : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
     final review = entry.review;
-    final controller = _matchingController();
-    final hasRecordingControls =
-        controller != null && controller.recordings.isNotEmpty;
-    final mediaError = _visibleMediaError;
     final formalReview = entry.formalReview;
     final sceneReview = formalReview?.schema == FormalReviewSchema.sceneV2
         ? formalReview
@@ -1041,18 +955,6 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
                   body: review.nextFocus,
                 ),
               ],
-            ],
-            if (hasRecordingControls) ...[
-              const SizedBox(height: 12),
-              PracticeRecordingsCard(controller: controller, title: '练习录音'),
-            ],
-            if (hasRecordingControls && mediaError != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                mediaError,
-                key: const Key('review-detail-media-error'),
-                style: const TextStyle(color: SpeakUpDesign.error),
-              ),
             ],
           ],
         ),
