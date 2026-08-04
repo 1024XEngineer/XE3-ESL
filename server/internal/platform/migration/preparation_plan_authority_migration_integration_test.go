@@ -217,9 +217,10 @@ func TestPreparationPlanAuthorityEnforcesExactExecutableRevision(
 			t.Errorf("close migration runner: %v", err)
 		}
 	})
-	if changed, err := runner.Up(); err != nil || !changed {
-		t.Fatalf("apply migrations: changed=%t err=%v", changed, err)
+	if err := runner.migrate.Steps(52); err != nil {
+		t.Fatalf("apply migrations through version 52: %v", err)
 	}
+	assertMigrationStatus(t, runner, 52)
 
 	database, err := pgx.ConnectConfig(context.Background(), migrationConfig)
 	if err != nil {
