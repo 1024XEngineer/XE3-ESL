@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )

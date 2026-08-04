@@ -79,16 +79,16 @@ benchmark_database_created=1
 print "执行隔离数据库迁移..."
 (cd "$server_dir" && DATABASE_URL="$benchmark_database_url" go run ./cmd/migrate up)
 
-print "构建本地后端..."
-(cd "$server_dir" && go build -o "$server_binary" ./cmd/server)
+print "构建 Agent Routing Benchmark 专用后端..."
+(cd "$server_dir" && go build -o "$server_binary" \
+  ./test/agent/cmd/routing-benchmark-server)
 
-print "启动本地后端（AGENT_TOOL_FIXTURES=1，端口 $server_port）..."
+print "启动 Agent Routing Benchmark 专用后端（端口 $server_port）..."
 (
   cd "$server_dir"
   SERVER_HOST=127.0.0.1 \
   SERVER_PORT="$server_port" \
   LOG_LEVEL=debug \
-  AGENT_TOOL_FIXTURES=1 \
   DATABASE_URL="$benchmark_database_url" \
   "$server_binary"
 ) >"$server_log" 2>&1 &

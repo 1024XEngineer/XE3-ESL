@@ -5,11 +5,11 @@ package routing
 import (
 	"encoding/json"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
 const (
