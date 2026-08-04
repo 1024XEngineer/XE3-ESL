@@ -20,6 +20,7 @@ type Session struct {
 	SceneVersion             int
 	SceneFamily              string
 	SceneModel               string
+	TurnPolicyRef            string
 	Prompt                   scene.ScenePrompt
 	PreviousUserResponse     string
 	PreviousQuestion         string
@@ -238,6 +239,7 @@ func (application *SessionApplication) state(
 		session.PlanID == "" ||
 		session.SceneID == "" ||
 		session.SceneVersion < 1 ||
+		!validVoiceTurnPolicy(session.TurnPolicyRef) ||
 		!validVoiceScenePrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
@@ -403,6 +405,11 @@ func (application *SessionApplication) restoreTurnHistory(
 		return nil, ErrInvalidContext
 	}
 	return history, nil
+}
+
+func validVoiceTurnPolicy(reference string) bool {
+	_, err := resolveTurnPolicy(reference)
+	return err == nil
 }
 
 func validVoiceScenePrompt(session Session) bool {

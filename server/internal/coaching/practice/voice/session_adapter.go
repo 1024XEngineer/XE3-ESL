@@ -164,6 +164,7 @@ func mapPracticeSession(
 		selection.Scene.Version < 1 ||
 		selection.Scene.Family != session.SceneFamily ||
 		selection.Scene.Model != session.SceneModel ||
+		!validVoiceTurnPolicy(selection.Scene.TurnPolicyRef) ||
 		len(selection.SelectedRoleIDs) == 0 {
 		return Session{}, ErrInvalidContext
 	}
@@ -174,6 +175,7 @@ func mapPracticeSession(
 		SceneVersion:            selection.Scene.Version,
 		SceneFamily:             string(snapshot.SceneFamily),
 		SceneModel:              string(snapshot.SceneModel),
+		TurnPolicyRef:           selection.Scene.TurnPolicyRef,
 		Prompt:                  cloneScenePrompt(selection.Scene.Prompt),
 		SessionVersion:          session.Version,
 		EffectiveTurns:          session.EffectiveTurns,

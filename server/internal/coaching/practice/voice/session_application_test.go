@@ -111,12 +111,13 @@ func (checkpointPortStub) ListTurnHistory(
 
 func sessionFixture() Session {
 	return Session{
-		ID:           "session-1",
-		PlanID:       "plan-1",
-		SceneID:      "scene-1",
-		SceneVersion: 1,
-		SceneFamily:  "INTERVIEW",
-		SceneModel:   "INTERVIEW_STANDARD",
+		ID:            "session-1",
+		PlanID:        "plan-1",
+		SceneID:       "scene-1",
+		SceneVersion:  1,
+		SceneFamily:   "INTERVIEW",
+		SceneModel:    "INTERVIEW_STANDARD",
+		TurnPolicyRef: interviewProjectDeepDiveTurnPolicy,
 		Prompt: scene.ScenePrompt{
 			PublicSceneBrief: "Interview practice",
 			PracticeGoal:     "Answer clearly",

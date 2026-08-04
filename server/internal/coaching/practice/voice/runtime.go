@@ -12,6 +12,7 @@ import (
 type RuntimeRepository interface {
 	sessionRepository
 	PersistenceStore
+	questionRepository
 	RecordingConfirmationStore
 	RetryTurnStore
 	practice.RetryTurnRepository

@@ -16,11 +16,21 @@ import (
 const voiceQuestionObjective = "targeted-english-practice"
 
 type questionAdapter struct {
-	repository PersistenceStore
+	repository questionRepository
 	generator  QuestionGenerator
 }
 
-type sessionQuestionLister interface {
+type questionRepository interface {
+	SaveQuestion(
+		context.Context,
+		Actor,
+		practice.Question,
+	) (practice.Question, error)
+	GetQuestion(
+		context.Context,
+		Actor,
+		string,
+	) (practice.Question, error)
 	ListSessionQuestions(
 		context.Context,
 		Actor,
@@ -39,33 +49,35 @@ func (adapter *questionAdapter) EnsureQuestion(
 	session Session,
 	sequence int,
 ) (practice.Question, error) {
+	policy, err := resolveTurnPolicy(session.TurnPolicyRef)
+	if err != nil {
+		return practice.Question{}, err
+	}
 	questionID := fmt.Sprintf(
 		"%s_%d",
 		stableID("voice_question", session.ID),
 		sequence,
 	)
 	persistenceActor := persistenceActor(actor)
-	existing, err := adapter.repository.GetQuestion(
+	existing, getErr := adapter.repository.GetQuestion(
 		ctx,
 		persistenceActor,
 		questionID,
 	)
-	if err == nil {
+	if getErr == nil {
 		return mapVoiceQuestion(existing), nil
 	}
-	if !errors.Is(err, ErrPersistenceNotFound) {
-		return practice.Question{}, mapPersistenceError(err)
+	if !errors.Is(getErr, ErrPersistenceNotFound) {
+		return practice.Question{}, mapPersistenceError(getErr)
 	}
 	var request QuestionGenerationRequest
+	var generationErr error
 	parentQuestionID := ""
 	followUpAllowed := false
-	if session.SceneFamily == "INTERVIEW" &&
-		session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
-		lister, ok := adapter.repository.(sessionQuestionLister)
-		if !ok {
-			return practice.Question{}, ErrInvalidContext
-		}
-		questions, listErr := lister.ListSessionQuestions(
+	interviewDecision := policy == turnPolicyInterview &&
+		session.MaxFollowUpsPerQuestion > 0 && sequence > 1
+	if interviewDecision {
+		questions, listErr := adapter.repository.ListSessionQuestions(
 			ctx,
 			persistenceActor,
 			session.ID,
@@ -77,26 +89,25 @@ func (adapter *questionAdapter) EnsureQuestion(
 			questions,
 			session.MaxFollowUpsPerQuestion,
 		)
-		request, err = interviewQuestionGenerationRequest(
+		request, generationErr = interviewQuestionGenerationRequest(
 			session,
 			sequence,
 			followUpAllowed,
 		)
-	} else {
-		request, err = questionGenerationRequest(session, sequence)
+	} else if policy != turnPolicyFrozenIELTS {
+		request, generationErr = questionGenerationRequest(session, sequence)
 	}
-	if err != nil {
-		return practice.Question{}, err
+	if generationErr != nil {
+		return practice.Question{}, generationErr
 	}
 	content := ""
 	questionType := "PRIMARY"
-	if isFrozenIELTSSpeakingModel(session.SceneModel) {
-		content, err = frozenIELTSFullMockQuestion(session, sequence)
+	if policy == turnPolicyFrozenIELTS {
+		content, generationErr = frozenIELTSQuestion(session, sequence)
 	} else {
-		content, err = adapter.generator.GenerateQuestion(ctx, request)
+		content, generationErr = adapter.generator.GenerateQuestion(ctx, request)
 		content = strings.TrimSpace(content)
-		if err == nil && session.SceneFamily == "INTERVIEW" &&
-			session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
+		if generationErr == nil && interviewDecision {
 			var decision generatedInterviewQuestion
 			if decodeErr := json.Unmarshal([]byte(content), &decision); decodeErr != nil {
 				return practice.Question{}, ErrInvalidContext
@@ -108,8 +119,8 @@ func (adapter *questionAdapter) EnsureQuestion(
 			}
 		}
 	}
-	if err != nil {
-		return practice.Question{}, err
+	if generationErr != nil {
+		return practice.Question{}, generationErr
 	}
 	if strings.TrimSpace(content) == "" {
 		return practice.Question{}, ErrInvalidContext
@@ -175,19 +186,7 @@ func followUpParent(
 	return "", false
 }
 
-func isFrozenIELTSSpeakingModel(model string) bool {
-	switch model {
-	case "IELTS_SPEAKING_PART_1",
-		"IELTS_SPEAKING_PART_2",
-		"IELTS_SPEAKING_PART_3",
-		"IELTS_SPEAKING_FULL_MOCK":
-		return true
-	default:
-		return false
-	}
-}
-
-func frozenIELTSFullMockQuestion(
+func frozenIELTSQuestion(
 	session Session,
 	sequence int,
 ) (string, error) {
