@@ -715,49 +715,85 @@ class _ResumeContentView extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     children: [
       _ContentSection(
+        key: const Key('resume-content-target'),
         icon: Icons.work_outline_rounded,
         title: '目标岗位',
         body: content.targetPosition.isEmpty ? '暂未填写' : content.targetPosition,
+        onTap: () => _showResumeContentSheet(
+          context,
+          icon: Icons.work_outline_rounded,
+          title: '目标岗位',
+          child: _TextDetail(value: content.targetPosition),
+        ),
       ),
       const SizedBox(height: SpeakUpDesign.space12),
       _ContentSection(
+        key: const Key('resume-content-summary'),
         icon: Icons.person_outline_rounded,
         title: '个人简介',
         body: content.professionalSummary.isEmpty
             ? '暂未填写'
             : content.professionalSummary,
+        onTap: () => _showResumeContentSheet(
+          context,
+          icon: Icons.person_outline_rounded,
+          title: '个人简介',
+          child: _TextDetail(value: content.professionalSummary),
+        ),
       ),
       const SizedBox(height: SpeakUpDesign.space12),
       _ContentSection(
+        key: const Key('resume-content-skills'),
         icon: Icons.auto_awesome_rounded,
         title: '技能',
         body: content.skills.isEmpty ? '暂未填写' : content.skills.join(' · '),
+        onTap: () => _showResumeContentSheet(
+          context,
+          icon: Icons.auto_awesome_rounded,
+          title: '技能',
+          child: _SkillDetails(skills: content.skills),
+        ),
       ),
       if (content.workExperiences.isNotEmpty) ...[
         const SizedBox(height: SpeakUpDesign.space12),
         _ContentSection(
+          key: const Key('resume-content-work'),
           icon: Icons.business_center_outlined,
           title: '工作经历',
           body: _summarize(content.workExperiences, const [
             'company',
             'position',
           ]),
+          onTap: () => _showResumeContentSheet(
+            context,
+            icon: Icons.business_center_outlined,
+            title: '工作经历',
+            child: _WorkDetails(items: content.workExperiences),
+          ),
         ),
       ],
       if (content.projectExperiences.isNotEmpty) ...[
         const SizedBox(height: SpeakUpDesign.space12),
         _ContentSection(
+          key: const Key('resume-content-projects'),
           icon: Icons.rocket_launch_outlined,
           title: '项目经历',
           body: _summarize(content.projectExperiences, const [
             'project_name',
             'role',
           ]),
+          onTap: () => _showResumeContentSheet(
+            context,
+            icon: Icons.rocket_launch_outlined,
+            title: '项目经历',
+            child: _ProjectDetails(items: content.projectExperiences),
+          ),
         ),
       ],
       if (content.educationExperiences.isNotEmpty) ...[
         const SizedBox(height: SpeakUpDesign.space12),
         _ContentSection(
+          key: const Key('resume-content-education'),
           icon: Icons.school_outlined,
           title: '教育经历',
           body: _summarize(content.educationExperiences, const [
@@ -765,6 +801,12 @@ class _ResumeContentView extends StatelessWidget {
             'major',
             'degree',
           ]),
+          onTap: () => _showResumeContentSheet(
+            context,
+            icon: Icons.school_outlined,
+            title: '教育经历',
+            child: _EducationDetails(items: content.educationExperiences),
+          ),
         ),
       ],
     ],
@@ -773,30 +815,115 @@ class _ResumeContentView extends StatelessWidget {
 
 class _ContentSection extends StatelessWidget {
   const _ContentSection({
+    super.key,
     required this.icon,
     required this.title,
     required this.body,
+    required this.onTap,
   });
   final IconData icon;
   final String title;
   final String body;
+  final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(SpeakUpDesign.space16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 20, color: SpeakUpDesign.primary),
+            const SizedBox(width: SpeakUpDesign.space12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: SpeakUpDesign.space8),
+                  Text(body),
+                ],
+              ),
+            ),
+            const SizedBox(width: SpeakUpDesign.space8),
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                size: 22,
+                color: SpeakUpDesign.secondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _showResumeContentSheet(
+  BuildContext context, {
+  required IconData icon,
+  required String title,
+  required Widget child,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (context) => FractionallySizedBox(
+      heightFactor: 0.84,
+      child: Column(
         children: [
-          Icon(icon, size: 20, color: SpeakUpDesign.primary),
-          const SizedBox(width: SpeakUpDesign.space12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: SpeakUpDesign.space8),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: SpeakUpDesign.border,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              SpeakUpDesign.space20,
+              SpeakUpDesign.space20,
+              SpeakUpDesign.space20,
+              SpeakUpDesign.space16,
+            ),
+            child: Row(
               children: [
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: SpeakUpDesign.space8),
-                Text(body),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: SpeakUpDesign.primaryMuted,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: SpeakUpDesign.primary),
+                ),
+                const SizedBox(width: SpeakUpDesign.space12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
               ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(SpeakUpDesign.space20),
+              child: Align(alignment: Alignment.topLeft, child: child),
             ),
           ),
         ],
@@ -804,6 +931,283 @@ class _ContentSection extends StatelessWidget {
     ),
   );
 }
+
+class _TextDetail extends StatelessWidget {
+  const _TextDetail({required this.value});
+  final String value;
+  @override
+  Widget build(BuildContext context) => Text(
+    value.isEmpty ? '暂未填写' : value,
+    style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.65),
+  );
+}
+
+class _SkillDetails extends StatelessWidget {
+  const _SkillDetails({required this.skills});
+  final List<String> skills;
+  @override
+  Widget build(BuildContext context) => skills.isEmpty
+      ? const Text('暂未填写')
+      : Wrap(
+          spacing: SpeakUpDesign.space8,
+          runSpacing: SpeakUpDesign.space8,
+          children: skills
+              .map(
+                (skill) => Chip(
+                  avatar: const Icon(Icons.check_rounded, size: 16),
+                  label: Text(skill),
+                  backgroundColor: SpeakUpDesign.primaryMuted,
+                  side: BorderSide.none,
+                ),
+              )
+              .toList(growable: false),
+        );
+}
+
+class _ProjectDetails extends StatelessWidget {
+  const _ProjectDetails({required this.items});
+  final List<Map<String, Object?>> items;
+  @override
+  Widget build(BuildContext context) => _DetailCardList(
+    children: items
+        .map((item) {
+          final technologies = _stringValues(item, 'technologies');
+          return _ExperienceCard(
+            title: _stringValue(item, 'project_name', fallback: '未命名项目'),
+            subtitle: _stringValue(item, 'role'),
+            children: [
+              if (_stringValue(item, 'description').isNotEmpty)
+                _DetailBlock(
+                  title: '项目介绍',
+                  text: _stringValue(item, 'description'),
+                ),
+              if (technologies.isNotEmpty)
+                _TagBlock(title: '技术栈', values: technologies),
+              _BulletBlock(
+                title: '主要职责',
+                values: _stringValues(item, 'duties'),
+              ),
+              _BulletBlock(
+                title: '项目成果',
+                values: _stringValues(item, 'achievements'),
+              ),
+            ],
+          );
+        })
+        .toList(growable: false),
+  );
+}
+
+class _WorkDetails extends StatelessWidget {
+  const _WorkDetails({required this.items});
+  final List<Map<String, Object?>> items;
+  @override
+  Widget build(BuildContext context) => _DetailCardList(
+    children: items
+        .map((item) {
+          return _ExperienceCard(
+            title: _stringValue(item, 'company', fallback: '未填写公司'),
+            subtitle: _joinNonEmpty([
+              _stringValue(item, 'position'),
+              _dateRange(item),
+            ]),
+            children: [
+              _BulletBlock(
+                title: '主要职责',
+                values: _stringValues(item, 'duties'),
+              ),
+              _BulletBlock(
+                title: '工作成果',
+                values: _stringValues(item, 'achievements'),
+              ),
+            ],
+          );
+        })
+        .toList(growable: false),
+  );
+}
+
+class _EducationDetails extends StatelessWidget {
+  const _EducationDetails({required this.items});
+  final List<Map<String, Object?>> items;
+  @override
+  Widget build(BuildContext context) => _DetailCardList(
+    children: items
+        .map((item) {
+          return _ExperienceCard(
+            title: _stringValue(item, 'school', fallback: '未填写学校'),
+            subtitle: _joinNonEmpty([
+              _stringValue(item, 'major'),
+              _stringValue(item, 'degree'),
+            ]),
+            children: [
+              if (_dateRange(item).isNotEmpty)
+                _DetailBlock(title: '就读时间', text: _dateRange(item)),
+            ],
+          );
+        })
+        .toList(growable: false),
+  );
+}
+
+class _DetailCardList extends StatelessWidget {
+  const _DetailCardList({required this.children});
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (var index = 0; index < children.length; index++) ...[
+        if (index > 0) const SizedBox(height: SpeakUpDesign.space16),
+        children[index],
+      ],
+    ],
+  );
+}
+
+class _ExperienceCard extends StatelessWidget {
+  const _ExperienceCard({
+    required this.title,
+    required this.subtitle,
+    required this.children,
+  });
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(SpeakUpDesign.space20),
+    decoration: BoxDecoration(
+      color: SpeakUpDesign.surface,
+      border: Border.all(color: SpeakUpDesign.border),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        if (subtitle.isNotEmpty) ...[
+          const SizedBox(height: SpeakUpDesign.space8),
+          Text(subtitle, style: SpeakUpDesign.meta),
+        ],
+        for (final child in children) child,
+      ],
+    ),
+  );
+}
+
+class _DetailBlock extends StatelessWidget {
+  const _DetailBlock({required this.title, required this.text});
+  final String title;
+  final String text;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: SpeakUpDesign.space20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: SpeakUpDesign.space8),
+        Text(text, style: const TextStyle(height: 1.6)),
+      ],
+    ),
+  );
+}
+
+class _TagBlock extends StatelessWidget {
+  const _TagBlock({required this.title, required this.values});
+  final String title;
+  final List<String> values;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: SpeakUpDesign.space20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: SpeakUpDesign.space8),
+        Wrap(
+          spacing: SpeakUpDesign.space8,
+          runSpacing: SpeakUpDesign.space8,
+          children: values
+              .map(
+                (value) => Chip(
+                  label: Text(value),
+                  backgroundColor: SpeakUpDesign.primaryMuted,
+                  side: BorderSide.none,
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ],
+    ),
+  );
+}
+
+class _BulletBlock extends StatelessWidget {
+  const _BulletBlock({required this.title, required this.values});
+  final String title;
+  final List<String> values;
+  @override
+  Widget build(BuildContext context) {
+    if (values.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: SpeakUpDesign.space20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: SpeakUpDesign.space8),
+          for (final value in values)
+            Padding(
+              padding: const EdgeInsets.only(bottom: SpeakUpDesign.space8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 7),
+                    child: Icon(
+                      Icons.circle,
+                      size: 6,
+                      color: SpeakUpDesign.primary,
+                    ),
+                  ),
+                  const SizedBox(width: SpeakUpDesign.space8),
+                  Expanded(
+                    child: Text(value, style: const TextStyle(height: 1.55)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _stringValue(
+  Map<String, Object?> item,
+  String key, {
+  String fallback = '',
+}) {
+  final value = item[key];
+  return value is String && value.isNotEmpty ? value : fallback;
+}
+
+List<String> _stringValues(Map<String, Object?> item, String key) {
+  final value = item[key];
+  return value is List<Object?>
+      ? value.whereType<String>().where((item) => item.isNotEmpty).toList()
+      : const <String>[];
+}
+
+String _dateRange(Map<String, Object?> item) => _joinNonEmpty([
+  _stringValue(item, 'start_date'),
+  _stringValue(item, 'end_date'),
+], separator: ' – ');
+
+String _joinNonEmpty(List<String> values, {String separator = ' · '}) =>
+    values.where((value) => value.isNotEmpty).join(separator);
 
 class _ErrorCard extends StatelessWidget {
   const _ErrorCard({required this.message, required this.onRetry});

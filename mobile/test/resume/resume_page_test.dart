@@ -71,12 +71,53 @@ void main() {
     expect(find.textContaining('图片型 PDF'), findsOneWidget);
     expect(find.textContaining('带可选中文本'), findsOneWidget);
   });
+
+  testWidgets('project summary opens the complete parsed project details', (
+    tester,
+  ) async {
+    final ready = _resume('ready', ResumeParseStatus.ready);
+    final controller = _controller(
+      <ResumeItem>[ready],
+      content: const ResumeContent(
+        projectExperiences: <Map<String, Object?>>[
+          <String, Object?>{
+            'project_name': '杭电 Ragent 工程平台',
+            'role': '后端开发',
+            'description': '面向校园知识库的企业级 RAG 系统。',
+            'technologies': <Object?>['SpringBoot', 'Milvus'],
+            'duties': <Object?>['设计混合检索与重排序链路。'],
+            'achievements': <Object?>['Top-5 命中率提升至 91%。'],
+          },
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      _app(ResumeDetailPage(controller: controller, resumeId: ready.id)),
+    );
+    await tester.pumpAndSettle();
+
+    final projectCard = find.byKey(const Key('resume-content-projects'));
+    await tester.ensureVisible(projectCard);
+    await tester.drag(find.byType(ListView), const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(projectCard);
+    await tester.pumpAndSettle();
+
+    expect(find.text('项目介绍'), findsOneWidget);
+    expect(find.text('面向校园知识库的企业级 RAG 系统。'), findsOneWidget);
+    expect(find.text('SpringBoot'), findsOneWidget);
+    expect(find.text('设计混合检索与重排序链路。'), findsOneWidget);
+    expect(find.text('Top-5 命中率提升至 91%。'), findsOneWidget);
+  });
 }
 
 Widget _app(Widget home) => MaterialApp(theme: SpeakUpTheme.light, home: home);
 
-ResumeController _controller(List<ResumeItem> items) => ResumeController(
-  client: _PageClient(items),
+ResumeController _controller(
+  List<ResumeItem> items, {
+  ResumeContent? content,
+}) => ResumeController(
+  client: _PageClient(items, content),
   filePicker: _NoopPicker(),
   urlOpener: _NoopOpener(),
 );
@@ -102,8 +143,9 @@ final class _NoopOpener implements ResumeUrlOpener {
 }
 
 final class _PageClient implements ResumeClient {
-  _PageClient(this.items);
+  _PageClient(this.items, this.content);
   final List<ResumeItem> items;
+  final ResumeContent? content;
   @override
   Future<List<ResumeItem>> list() async => items;
   @override
@@ -116,8 +158,10 @@ final class _PageClient implements ResumeClient {
   @override
   Future<void> delete(ResumeItem resume) => throw UnimplementedError();
   @override
-  Future<ResumeDetail> get(String resumeId) async =>
-      ResumeDetail(resume: items.singleWhere((item) => item.id == resumeId));
+  Future<ResumeDetail> get(String resumeId) async => ResumeDetail(
+    resume: items.singleWhere((item) => item.id == resumeId),
+    content: content,
+  );
   @override
   Future<Uri> getContentUrl(String resumeId) => throw UnimplementedError();
   @override
