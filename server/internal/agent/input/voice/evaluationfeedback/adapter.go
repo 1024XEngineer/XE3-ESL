@@ -5,17 +5,19 @@ import (
 	"errors"
 
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 // Adapter translates Evaluation's coordinator into the narrow Agent Voice
 // feedback port.
 type Adapter struct {
-	coordinator *evaluation.SpeechFeedbackCoordinator
+	coordinator *speechfeedback.SpeechFeedbackCoordinator
 }
 
-func New(coordinator *evaluation.SpeechFeedbackCoordinator) (*Adapter, error) {
+func New(
+	coordinator *speechfeedback.SpeechFeedbackCoordinator,
+) (*Adapter, error) {
 	if coordinator == nil {
 		return nil, agentvoice.ErrInvalidContext
 	}
@@ -37,7 +39,7 @@ func (adapter *Adapter) EnsureMessage(
 		threadID,
 		messageID,
 	)
-	if errors.Is(err, evaluation.ErrSpeechFeedbackNotApplicable) {
+	if errors.Is(err, speechfeedback.ErrSpeechFeedbackNotApplicable) {
 		return agentvoice.FeedbackReference{}, nil
 	}
 	if err != nil {

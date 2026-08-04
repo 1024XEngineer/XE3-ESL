@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 
@@ -14,14 +15,24 @@ type EnsureCommand struct {
 	RootIdempotencyKey  [sha256.Size]byte
 	RootFingerprint     [sha256.Size]byte
 	RevisionFingerprint [sha256.Size]byte
-	Input               createInput
+	Input               CreateInput
+}
+
+func (command EnsureCommand) Valid() bool {
+	return validUUID(command.OwnerUserID) && command.Input.Valid()
 }
 
 type ReevaluateCommand struct {
 	OwnerUserID         string
 	EvaluationID        string
 	RevisionFingerprint [sha256.Size]byte
-	Config              revisionConfig
+	Config              RevisionConfig
+}
+
+func (command ReevaluateCommand) Valid() bool {
+	return validUUID(command.OwnerUserID) &&
+		validUUID(command.EvaluationID) &&
+		command.Config.Valid()
 }
 
 type Repository interface {
@@ -40,147 +51,40 @@ type Repository interface {
 	) (Evaluation, error)
 }
 
-type EvidenceSnapshotComposer interface {
-	Compose(
-		ctx context.Context,
-		actor requestcontext.Actor,
-		practiceSessionID string,
-		scope Scope,
-		sceneType SceneType,
-	) (EnsureEvidenceSnapshotCommand, error)
-	ComposeCompleted(
-		ctx context.Context,
-		ownerUserID string,
-		practiceSessionID string,
-		scope Scope,
-		sceneType SceneType,
-	) (EnsureEvidenceSnapshotCommand, error)
+type EvidenceReference struct {
+	ID                string
+	OwnerUserID       string
+	PracticeSessionID string
+	InputRevision     int
+	Scope             Scope
+	SceneType         SceneType
 }
 
-type EvidenceSnapshotReader interface {
-	GetEvidenceSnapshot(
-		ctx context.Context,
-		ownerUserID string,
-		snapshotID string,
-	) (EvidenceSnapshot, error)
+func (reference EvidenceReference) Valid() bool {
+	return validIdentifier(reference.ID) &&
+		validUUID(reference.OwnerUserID) &&
+		validIdentifier(reference.PracticeSessionID) &&
+		reference.InputRevision > 0 &&
+		validScope(reference.Scope) &&
+		validSceneType(reference.SceneType)
 }
 
-type EvidenceSnapshotService struct {
-	composer   EvidenceSnapshotComposer
-	repository EvidenceSnapshotRepository
-}
-
-func NewEvidenceSnapshotService(
-	composer EvidenceSnapshotComposer,
-	repository EvidenceSnapshotRepository,
-) *EvidenceSnapshotService {
-	return &EvidenceSnapshotService{
-		composer:   composer,
-		repository: repository,
-	}
-}
-
-func (s *EvidenceSnapshotService) Freeze(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	practiceSessionID string,
-	scope Scope,
-	sceneType SceneType,
-) (EvidenceSnapshot, bool, error) {
-	if s == nil || s.composer == nil || s.repository == nil ||
-		ctx == nil || !validActor(actor) {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	trustedActor, ok := requestcontext.ActorFromContext(ctx)
-	if !ok || trustedActor != actor {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	command, err := s.composer.Compose(
-		ctx,
-		actor,
-		practiceSessionID,
-		scope,
-		sceneType,
-	)
-	if err != nil {
-		return EvidenceSnapshot{}, false, err
-	}
-	command, err = normalizeEvidenceSnapshotCommand(command)
-	if err != nil {
-		return EvidenceSnapshot{}, false, err
-	}
-	if command.OwnerUserID != actor.UserID ||
-		command.PracticeSessionID != practiceSessionID ||
-		command.Scope != scope ||
-		command.SceneType != sceneType {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	snapshot, replayed, err := s.repository.EnsureEvidenceSnapshot(ctx, command)
-	if err != nil {
-		return EvidenceSnapshot{}, false, err
-	}
-	if !snapshot.Valid() ||
-		snapshot.ID != command.SnapshotID ||
-		snapshot.OwnerUserID != command.OwnerUserID ||
-		snapshot.PracticeSessionID != command.PracticeSessionID ||
-		snapshot.Scope != command.Scope ||
-		snapshot.SceneType != command.SceneType ||
-		snapshot.SourceManifestHash != command.SourceManifestHash {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	return snapshot, replayed, nil
-}
-
-func (s *EvidenceSnapshotService) FreezeCompleted(
-	ctx context.Context,
-	ownerUserID string,
-	practiceSessionID string,
-	scope Scope,
-	sceneType SceneType,
-) (EvidenceSnapshot, bool, error) {
-	if s == nil || s.composer == nil || s.repository == nil ||
-		ctx == nil || !validUUID(ownerUserID) {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	command, err := s.composer.ComposeCompleted(
-		ctx,
-		ownerUserID,
-		practiceSessionID,
-		scope,
-		sceneType,
-	)
-	if err != nil {
-		return EvidenceSnapshot{}, false, err
-	}
-	command, err = normalizeEvidenceSnapshotCommand(command)
-	if err != nil || command.OwnerUserID != ownerUserID ||
-		command.PracticeSessionID != practiceSessionID ||
-		command.Scope != scope || command.SceneType != sceneType {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	snapshot, replayed, err := s.repository.EnsureEvidenceSnapshot(ctx, command)
-	if err != nil {
-		return EvidenceSnapshot{}, false, err
-	}
-	if !snapshot.Valid() || snapshot.ID != command.SnapshotID ||
-		snapshot.OwnerUserID != command.OwnerUserID ||
-		snapshot.PracticeSessionID != command.PracticeSessionID ||
-		snapshot.Scope != command.Scope ||
-		snapshot.SceneType != command.SceneType ||
-		snapshot.SourceManifestHash != command.SourceManifestHash {
-		return EvidenceSnapshot{}, false, ErrInvalidRequest
-	}
-	return snapshot, replayed, nil
+type EvidenceReader interface {
+	GetEvaluationEvidence(
+		context.Context,
+		string,
+		string,
+	) (EvidenceReference, error)
 }
 
 type Service struct {
 	repository        Repository
-	evidenceSnapshots EvidenceSnapshotReader
+	evidenceSnapshots EvidenceReader
 }
 
 func NewService(
 	repository Repository,
-	evidenceSnapshots EvidenceSnapshotReader,
+	evidenceSnapshots EvidenceReader,
 ) *Service {
 	return &Service{
 		repository:        repository,
@@ -225,7 +129,7 @@ func (s *Service) create(
 	if err != nil {
 		return Evaluation{}, false, err
 	}
-	snapshot, err := s.evidenceSnapshots.GetEvidenceSnapshot(
+	snapshot, err := s.evidenceSnapshots.GetEvaluationEvidence(
 		ctx,
 		ownerUserID,
 		input.InputSnapshotID,
@@ -244,7 +148,7 @@ func (s *Service) create(
 	}
 	rootFingerprint, err := digest(struct {
 		OwnerUserID string      `json:"owner_user_id"`
-		Input       createInput `json:"input"`
+		Input       CreateInput `json:"input"`
 	}{
 		OwnerUserID: ownerUserID,
 		Input:       input,
@@ -317,4 +221,25 @@ func digest(value any) ([sha256.Size]byte, error) {
 		return [sha256.Size]byte{}, errors.Join(ErrInvalidRequest, err)
 	}
 	return sha256.Sum256(encoded), nil
+}
+
+func DeriveChannelKey(
+	rootKey [sha256.Size]byte,
+	revision int,
+	channel Channel,
+	strategyRef string,
+) [sha256.Size]byte {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte("evaluation-channel:v1\x00"))
+	_, _ = hasher.Write(rootKey[:])
+	var revisionBytes [8]byte
+	binary.BigEndian.PutUint64(revisionBytes[:], uint64(revision))
+	_, _ = hasher.Write(revisionBytes[:])
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(channel))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(strategyRef))
+	var result [sha256.Size]byte
+	copy(result[:], hasher.Sum(nil))
+	return result
 }

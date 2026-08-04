@@ -2,7 +2,6 @@ package evaluation
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
@@ -11,30 +10,11 @@ import (
 )
 
 const (
-	testOwnerA = "10000000-0000-4000-8000-000000000001"
-	testOwnerB = "20000000-0000-4000-8000-000000000002"
-	testEvalID = "30000000-0000-4000-8000-000000000003"
-	testRevID  = "40000000-0000-4000-8000-000000000004"
-)
-
-var testSnapshotSourceManifestHash = func() [sha256.Size]byte {
-	hash, err := evidenceSourceManifestHash(
-		evidenceSnapshotPayloadForMetadata(
-			"snapshot_provisional",
-			"session-1",
-		),
-	)
-	if err != nil {
-		panic(err)
-	}
-	return hash
-}()
-
-var testSnapshotID = deriveEvidenceSnapshotID(
-	testOwnerA,
-	"session-1",
-	ScopeSession,
-	testSnapshotSourceManifestHash,
+	testOwnerA     = "10000000-0000-4000-8000-000000000001"
+	testOwnerB     = "20000000-0000-4000-8000-000000000002"
+	testEvalID     = "30000000-0000-4000-8000-000000000003"
+	testRevID      = "40000000-0000-4000-8000-000000000004"
+	testSnapshotID = "snapshot_provisional"
 )
 
 func TestServiceCreateCanonicalizesAndDerivesServerIdentity(t *testing.T) {
@@ -78,7 +58,7 @@ func TestServiceCreateCanonicalizesAndDerivesServerIdentity(t *testing.T) {
 		t.Fatal("client request ID changed server idempotency identity")
 	}
 
-	ownerBSnapshot := validEvidenceSnapshot(testOwnerB)
+	ownerBSnapshot := validEvidenceReference(testOwnerB)
 	reader.snapshot = ownerBSnapshot
 	request.InputSnapshotID = ownerBSnapshot.ID
 	_, _, err = service.Create(
@@ -173,7 +153,7 @@ func TestServiceRejectsInvalidPolicyShapes(t *testing.T) {
 func TestServiceCreateRejectsUntrustedEvidenceBeforeWriting(t *testing.T) {
 	tests := []struct {
 		name      string
-		mutate    func(*EvidenceSnapshot)
+		mutate    func(*EvidenceReference)
 		readerErr error
 		wantErr   error
 	}{
@@ -184,57 +164,50 @@ func TestServiceCreateRejectsUntrustedEvidenceBeforeWriting(t *testing.T) {
 		},
 		{
 			name: "snapshot id mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.ID = "snapshot_other"
 			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name: "owner mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.OwnerUserID = testOwnerB
 			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name: "session mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.PracticeSessionID = "session-other"
 			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name: "revision mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.InputRevision = 2
 			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name: "scope mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.Scope = ScopeTurn
 			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name: "scene mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
+			mutate: func(snapshot *EvidenceReference) {
 				snapshot.SceneType = SceneIELTSSpeaking
-			},
-			wantErr: ErrInvalidRequest,
-		},
-		{
-			name: "payload hash mismatch",
-			mutate: func(snapshot *EvidenceSnapshot) {
-				snapshot.SnapshotHash[0] ^= 0xff
 			},
 			wantErr: ErrInvalidRequest,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			snapshot := validEvidenceSnapshot(testOwnerA)
+			snapshot := validEvidenceReference(testOwnerA)
 			if test.mutate != nil {
 				test.mutate(&snapshot)
 			}
@@ -258,65 +231,6 @@ func TestServiceCreateRejectsUntrustedEvidenceBeforeWriting(t *testing.T) {
 				)
 			}
 		})
-	}
-}
-
-func TestEvidenceSnapshotServiceFreezesOnlyTrustedComposition(t *testing.T) {
-	actor := testActor(testOwnerA)
-	command := validEvidenceCommand(
-		testOwnerA,
-		"session-1",
-		ScopeSession,
-		SceneInterview,
-	)
-	composer := &evidenceSnapshotComposerStub{command: command}
-	repository := &evidenceSnapshotRepositoryStub{
-		snapshot: evidenceSnapshotFromCommand(command),
-	}
-	service := NewEvidenceSnapshotService(composer, repository)
-	ctx := requestcontext.WithActor(context.Background(), actor)
-
-	snapshot, replayed, err := service.Freeze(
-		ctx,
-		actor,
-		"session-1",
-		ScopeSession,
-		SceneInterview,
-	)
-	if err != nil {
-		t.Fatalf("Freeze: %v", err)
-	}
-	if replayed || snapshot.ID != command.SnapshotID ||
-		len(repository.ensureCommands) != 1 {
-		t.Fatalf("Freeze result = %#v, replayed = %v", snapshot, replayed)
-	}
-
-	untrusted := testActor(testOwnerB)
-	if _, _, err := service.Freeze(
-		ctx,
-		untrusted,
-		"session-1",
-		ScopeSession,
-		SceneInterview,
-	); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("untrusted Freeze error = %v", err)
-	}
-	if len(repository.ensureCommands) != 1 {
-		t.Fatal("untrusted Freeze reached the repository")
-	}
-
-	composer.command.OwnerUserID = testOwnerB
-	if _, _, err := service.Freeze(
-		ctx,
-		actor,
-		"session-1",
-		ScopeSession,
-		SceneInterview,
-	); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("spoofed composition error = %v", err)
-	}
-	if len(repository.ensureCommands) != 1 {
-		t.Fatal("spoofed composition reached the repository")
 	}
 }
 
@@ -422,11 +336,11 @@ func TestServiceReevaluateDomainSeparatesCreateAndIgnoresTraceAndOwner(t *testin
 func TestChannelKeysAreRevisionChannelAndStrategyScoped(t *testing.T) {
 	var root [32]byte
 	root[0] = 1
-	first := deriveChannelKey(root, 1, ChannelScene, "scene/v1")
+	first := DeriveChannelKey(root, 1, ChannelScene, "scene/v1")
 	tests := [][32]byte{
-		deriveChannelKey(root, 2, ChannelScene, "scene/v1"),
-		deriveChannelKey(root, 1, ChannelCore4D, "scene/v1"),
-		deriveChannelKey(root, 1, ChannelScene, "scene/v2"),
+		DeriveChannelKey(root, 2, ChannelScene, "scene/v1"),
+		DeriveChannelKey(root, 1, ChannelCore4D, "scene/v1"),
+		DeriveChannelKey(root, 1, ChannelScene, "scene/v2"),
 	}
 	for index, candidate := range tests {
 		if candidate == first {
@@ -443,72 +357,24 @@ type repositoryStub struct {
 }
 
 type evidenceSnapshotReaderStub struct {
-	snapshot EvidenceSnapshot
+	snapshot EvidenceReference
 	err      error
 	getCalls int
 }
 
-func (r *evidenceSnapshotReaderStub) GetEvidenceSnapshot(
+func (r *evidenceSnapshotReaderStub) GetEvaluationEvidence(
 	_ context.Context,
 	ownerUserID string,
 	_ string,
-) (EvidenceSnapshot, error) {
+) (EvidenceReference, error) {
 	r.getCalls++
 	if r.err != nil {
-		return EvidenceSnapshot{}, r.err
+		return EvidenceReference{}, r.err
 	}
 	if r.snapshot.ID != "" {
 		return r.snapshot, nil
 	}
-	return validEvidenceSnapshot(ownerUserID), nil
-}
-
-type evidenceSnapshotComposerStub struct {
-	command EnsureEvidenceSnapshotCommand
-	err     error
-}
-
-func (c *evidenceSnapshotComposerStub) Compose(
-	_ context.Context,
-	_ requestcontext.Actor,
-	_ string,
-	_ Scope,
-	_ SceneType,
-) (EnsureEvidenceSnapshotCommand, error) {
-	return c.command, c.err
-}
-
-func (c *evidenceSnapshotComposerStub) ComposeCompleted(
-	_ context.Context,
-	_ string,
-	_ string,
-	_ Scope,
-	_ SceneType,
-) (EnsureEvidenceSnapshotCommand, error) {
-	return c.command, c.err
-}
-
-type evidenceSnapshotRepositoryStub struct {
-	snapshot       EvidenceSnapshot
-	replayed       bool
-	err            error
-	ensureCommands []EnsureEvidenceSnapshotCommand
-}
-
-func (r *evidenceSnapshotRepositoryStub) EnsureEvidenceSnapshot(
-	_ context.Context,
-	command EnsureEvidenceSnapshotCommand,
-) (EvidenceSnapshot, bool, error) {
-	r.ensureCommands = append(r.ensureCommands, command)
-	return r.snapshot, r.replayed, r.err
-}
-
-func (r *evidenceSnapshotRepositoryStub) GetEvidenceSnapshot(
-	_ context.Context,
-	_ string,
-	_ string,
-) (EvidenceSnapshot, error) {
-	return r.snapshot, r.err
+	return validEvidenceReference(ownerUserID), nil
 }
 
 func (r *repositoryStub) Ensure(
@@ -592,85 +458,13 @@ func validEvaluation() Evaluation {
 	}
 }
 
-func validEvidenceSnapshot(ownerUserID string) EvidenceSnapshot {
-	sourceManifestHash := testSnapshotSourceManifestHash
-	snapshotID := deriveEvidenceSnapshotID(
-		ownerUserID,
-		"session-1",
-		ScopeSession,
-		sourceManifestHash,
-	)
-	payload, err := canonicalEvidencePayload(
-		evidenceSnapshotPayloadForMetadata(snapshotID, "session-1"),
-	)
-	if err != nil {
-		panic(err)
-	}
-	return EvidenceSnapshot{
-		ID:                 snapshotID,
-		OwnerUserID:        ownerUserID,
-		PracticeSessionID:  "session-1",
-		InputRevision:      1,
-		Scope:              ScopeSession,
-		SceneType:          SceneInterview,
-		SourceManifestHash: sourceManifestHash,
-		SnapshotHash:       sha256.Sum256(payload),
-		Payload:            payload,
-		CreatedAt:          time.Now().UTC(),
-	}
-}
-
-func validEvidenceCommand(
-	ownerUserID string,
-	practiceSessionID string,
-	scope Scope,
-	sceneType SceneType,
-) EnsureEvidenceSnapshotCommand {
-	provisionalPayload := evidenceSnapshotPayloadForMetadata(
-		"snapshot_provisional",
-		practiceSessionID,
-	)
-	sourceManifestHash, err := evidenceSourceManifestHash(provisionalPayload)
-	if err != nil {
-		panic(err)
-	}
-	snapshotID := deriveEvidenceSnapshotID(
-		ownerUserID,
-		practiceSessionID,
-		scope,
-		sourceManifestHash,
-	)
-	return EnsureEvidenceSnapshotCommand{
-		SnapshotID:         snapshotID,
-		OwnerUserID:        ownerUserID,
-		PracticeSessionID:  practiceSessionID,
-		Scope:              scope,
-		SceneType:          sceneType,
-		SourceManifestHash: sourceManifestHash,
-		CanonicalPayload: evidenceSnapshotPayloadForMetadata(
-			snapshotID,
-			practiceSessionID,
-		),
-	}
-}
-
-func evidenceSnapshotFromCommand(
-	command EnsureEvidenceSnapshotCommand,
-) EvidenceSnapshot {
-	payload, err := canonicalEvidencePayload(command.CanonicalPayload)
-	if err != nil {
-		panic(err)
-	}
-	return EvidenceSnapshot{
-		ID:                 command.SnapshotID,
-		OwnerUserID:        command.OwnerUserID,
-		PracticeSessionID:  command.PracticeSessionID,
-		InputRevision:      1,
-		Scope:              command.Scope,
-		SceneType:          command.SceneType,
-		SourceManifestHash: command.SourceManifestHash,
-		SnapshotHash:       sha256.Sum256(payload),
-		Payload:            payload,
-		CreatedAt:          time.Now().UTC(),
+func validEvidenceReference(ownerUserID string) EvidenceReference {
+	return EvidenceReference{
+		ID:                testSnapshotID,
+		OwnerUserID:       ownerUserID,
+		PracticeSessionID: "session-1",
+		InputRevision:     1,
+		Scope:             ScopeSession,
+		SceneType:         SceneInterview,
 	}
 }

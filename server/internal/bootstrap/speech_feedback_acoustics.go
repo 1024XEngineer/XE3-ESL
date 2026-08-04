@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -18,7 +18,7 @@ func NewSpeechFeedbackAcousticProvider(
 	database *pgxpool.Pool,
 	store objectstore.Store,
 	configuration config.ISEConfig,
-) (evaluation.SpeechFeedbackAcousticProvider, error) {
+) (speechfeedback.SpeechFeedbackAcousticProvider, error) {
 	if database == nil || store == nil {
 		return nil, errors.New(
 			"bootstrap: SpeechFeedback acoustic dependencies are required",
@@ -51,7 +51,7 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	reader, err := evaluation.NewSpeechFeedbackAudioReader(
+	reader, err := speechfeedback.NewSpeechFeedbackAudioReader(
 		service,
 		store,
 		&http.Client{
@@ -67,5 +67,5 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	return evaluation.NewSpeechFeedbackAcousticProvider(reader, evaluator)
+	return speechfeedback.NewSpeechFeedbackAcousticProvider(reader, evaluator)
 }

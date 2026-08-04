@@ -5,29 +5,30 @@ import (
 	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 )
 
 type evaluationShadowProcessor interface {
 	ProcessPending(
 		context.Context,
 		int,
-	) (evaluation.InterviewShadowSweepResult, error)
+	) (scoring.InterviewShadowSweepResult, error)
 }
 
 type combinedEvaluationShadowProcessor struct {
 	mu         sync.Mutex
-	intake     *evaluation.CompletionIntake
-	interview  *evaluation.InterviewShadowWorker
-	ielts      *evaluation.IELTSSpeakingShadowWorker
-	general    *evaluation.GeneralSceneWorker
+	intake     *scoring.CompletionIntake
+	interview  *scoring.InterviewShadowWorker
+	ielts      *scoring.IELTSSpeakingShadowWorker
+	general    *scoring.GeneralSceneWorker
 	nextWorker int
 }
 
 func newEvaluationShadowProcessor(
-	intake *evaluation.CompletionIntake,
-	interview *evaluation.InterviewShadowWorker,
-	ielts *evaluation.IELTSSpeakingShadowWorker,
-	general *evaluation.GeneralSceneWorker,
+	intake *scoring.CompletionIntake,
+	interview *scoring.InterviewShadowWorker,
+	ielts *scoring.IELTSSpeakingShadowWorker,
+	general *scoring.GeneralSceneWorker,
 ) (*combinedEvaluationShadowProcessor, error) {
 	if intake == nil || interview == nil || ielts == nil || general == nil {
 		return nil, evaluation.ErrInvalidRequest
@@ -43,7 +44,7 @@ func newEvaluationShadowProcessor(
 func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 	ctx context.Context,
 	limit int,
-) (evaluation.InterviewShadowSweepResult, error) {
+) (scoring.InterviewShadowSweepResult, error) {
 	if processor == nil ||
 		processor.intake == nil ||
 		processor.interview == nil ||
@@ -52,13 +53,13 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 		ctx == nil ||
 		limit < 1 ||
 		limit > 20 {
-		return evaluation.InterviewShadowSweepResult{},
+		return scoring.InterviewShadowSweepResult{},
 			evaluation.ErrInvalidRequest
 	}
 	processor.mu.Lock()
 	defer processor.mu.Unlock()
 
-	var total evaluation.InterviewShadowSweepResult
+	var total scoring.InterviewShadowSweepResult
 	intakeSweep, err := processor.intake.ProcessPending(ctx, 1)
 	if err != nil {
 		return total, err
@@ -70,7 +71,7 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 	for total.Claimed < limit {
 		preferred := processor.nextWorker
 		processor.nextWorker = (processor.nextWorker + 1) % 3
-		var claimed evaluation.InterviewShadowSweepResult
+		var claimed scoring.InterviewShadowSweepResult
 		for offset := range 3 {
 			candidate := (preferred + offset) % 3
 			claimed, err = processor.processOne(ctx, candidate)
@@ -92,13 +93,13 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 func (processor *combinedEvaluationShadowProcessor) processOne(
 	ctx context.Context,
 	worker int,
-) (evaluation.InterviewShadowSweepResult, error) {
+) (scoring.InterviewShadowSweepResult, error) {
 	switch worker {
 	case 0:
 		return processor.interview.ProcessPending(ctx, 1)
 	case 1:
 		result, err := processor.ielts.ProcessPending(ctx, 1)
-		return evaluation.InterviewShadowSweepResult{
+		return scoring.InterviewShadowSweepResult{
 			Claimed:   result.Claimed,
 			Completed: result.Completed,
 			Retried:   result.Retried,
@@ -106,21 +107,21 @@ func (processor *combinedEvaluationShadowProcessor) processOne(
 		}, err
 	case 2:
 		result, err := processor.general.ProcessPending(ctx, 1)
-		return evaluation.InterviewShadowSweepResult{
+		return scoring.InterviewShadowSweepResult{
 			Claimed:   result.Claimed,
 			Completed: result.Completed,
 			Retried:   result.Retried,
 			Failed:    result.Failed,
 		}, err
 	default:
-		return evaluation.InterviewShadowSweepResult{},
+		return scoring.InterviewShadowSweepResult{},
 			evaluation.ErrInvalidRequest
 	}
 }
 
 func addInterviewSweep(
-	total *evaluation.InterviewShadowSweepResult,
-	next evaluation.InterviewShadowSweepResult,
+	total *scoring.InterviewShadowSweepResult,
+	next scoring.InterviewShadowSweepResult,
 ) {
 	total.Claimed += next.Claimed
 	total.Completed += next.Completed

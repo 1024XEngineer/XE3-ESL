@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practiceevaluationfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/evaluationfeedback"
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
@@ -34,7 +34,7 @@ type VoiceConfiguration struct {
 	ASRLease                  time.Duration
 	AudioReadTimeout          time.Duration
 	ReviewHistoryCursorKey    []byte
-	SpeechFeedbackCoordinator *evaluation.SpeechFeedbackCoordinator
+	SpeechFeedbackCoordinator *speechfeedback.SpeechFeedbackCoordinator
 }
 
 type AgentImageConfiguration struct {
