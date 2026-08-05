@@ -1321,8 +1321,7 @@ func (loopRepository) Complete(
 	string,
 	string,
 	string,
-	string,
-	TextResult,
+	Completion,
 ) (Run, error) {
 	panic("unexpected Complete")
 }

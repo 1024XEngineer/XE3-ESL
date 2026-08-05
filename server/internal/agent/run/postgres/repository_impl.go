@@ -564,9 +564,13 @@ func (r *Repository) Complete(
 	ownerID string,
 	runID string,
 	workerLeaseToken string,
-	content string,
-	result agentrun.TextResult,
+	completion agentrun.Completion,
 ) (agentrun.Run, error) {
+	if !completion.Valid() {
+		return agentrun.Run{}, agentrun.ErrInvalidRequest
+	}
+	content := completion.Content
+	result := completion.Result
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return agentrun.Run{}, agentrun.ErrRepository
@@ -625,6 +629,63 @@ INSERT INTO agent_messages (
 		content,
 	); err != nil {
 		return agentrun.Run{}, mapRunPostgresError(err)
+	}
+	for _, draft := range completion.Enrichment.Memes {
+		attachmentID, idErr := r.ids.NewID()
+		if idErr != nil {
+			return agentrun.Run{}, agentrun.ErrRepository
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO agent_message_memes (
+    id,
+    owner_user_id,
+    thread_id,
+    message_id,
+    run_id,
+    meme_id,
+    pack_id,
+    pack_version,
+    category,
+    asset_key,
+    content_type,
+    size_bytes,
+    width,
+    height,
+    checksum_sha256,
+    position,
+    classification_policy_version,
+    selection_policy_version,
+    classifier_provider,
+    classifier_model,
+    created_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+    CURRENT_TIMESTAMP
+)`,
+			attachmentID,
+			ownerID,
+			run.ThreadID,
+			messageID,
+			run.ID,
+			draft.MemeID,
+			draft.PackID,
+			draft.PackVersion,
+			draft.Category,
+			draft.AssetKey,
+			draft.ContentType,
+			draft.SizeBytes,
+			draft.Width,
+			draft.Height,
+			draft.ChecksumSHA256,
+			draft.Position,
+			draft.ClassificationPolicyVersion,
+			draft.SelectionPolicyVersion,
+			draft.ClassifierProvider,
+			draft.ClassifierModel,
+		); err != nil {
+			return agentrun.Run{}, mapRunPostgresError(err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE agent_threads

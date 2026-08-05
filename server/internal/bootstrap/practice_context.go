@@ -83,6 +83,7 @@ func NewIdentityAgentAndPracticeComposition(
 		nil,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -113,6 +114,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		catalog,
 		jobTargetGenerator,
 		memoryExtractionNotifier,
+		nil,
 		nil,
 		nil,
 		voiceConfigurations...,
@@ -150,6 +152,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -181,6 +184,40 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
 		imageConfiguration,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsImagesAndMemes(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	modelProviders AgentModelProviders,
+	runConfiguration agentrun.Configuration,
+	memorySearcher memory.Searcher,
+	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
+	wakeups AgentWorkerWakeups,
+	imageConfiguration *AgentImageConfiguration,
+	memeConfiguration *AgentMemeConfiguration,
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		modelProviders,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		jobTargetGenerator,
+		wakeups.MemoryExtraction,
+		wakeups.ThreadSummary,
+		imageConfiguration,
+		memeConfiguration,
 		voiceConfigurations...,
 	)
 }
@@ -198,6 +235,7 @@ func newIdentityAgentAndPracticeComposition(
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
+	memeConfiguration *AgentMemeConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil || jobTargetGenerator == nil {
@@ -214,6 +252,7 @@ func newIdentityAgentAndPracticeComposition(
 		memoryExtractionNotifier,
 		summaryNotifier,
 		imageConfiguration,
+		memeConfiguration,
 		voiceConfigurations...,
 	)
 	if err != nil {

@@ -46,8 +46,7 @@ type Repository interface {
 		string,
 		string,
 		string,
-		string,
-		TextResult,
+		Completion,
 	) (Run, error)
 	Fail(stdcontext.Context, string, string, string, string, bool) (Run, error)
 	RecoverInterrupted(stdcontext.Context) (int64, error)

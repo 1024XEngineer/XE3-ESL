@@ -7,6 +7,7 @@ import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_message_meme_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
@@ -17,6 +18,34 @@ import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 
 void main() {
+  test('committed voice reply loads Meme content automatically', () async {
+    final memeClient = _RecordingMemeClient();
+    final conversationController = ConversationController(
+      client: FakeAgentClient(),
+      messageMemeClient: memeClient,
+    );
+    addTearDown(conversationController.dispose);
+    await conversationController.initialize();
+
+    conversationController.commitComposerMessages(const <AgentMessage>[
+      AgentMessage(
+        id: 'assistant-meme',
+        role: AgentMessageRole.assistant,
+        text: 'Voice reply with a Meme.',
+        memes: <AgentMessageMeme>[_voiceMeme],
+      ),
+    ]);
+    await memeClient.requested.future;
+    await Future<void>.delayed(Duration.zero);
+
+    expect(memeClient.calls, 1);
+    expect(conversationController.messages.last.memes.single.bytes, <int>[
+      4,
+      5,
+      6,
+    ]);
+  });
+
   test('late upload result cannot cross the Thread fence', () async {
     final client = _ControlledVoiceClient();
     final committed = <AgentMessage>[];
@@ -723,6 +752,39 @@ Future<void> _pumpVoiceOperation(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
 }
+
+final class _RecordingMemeClient implements AgentMessageMemeClient {
+  final Completer<void> requested = Completer<void>();
+  int calls = 0;
+
+  @override
+  Future<Uint8List> getMemeContent({
+    required String contentPath,
+    required int expectedSizeBytes,
+    required String expectedContentType,
+  }) async {
+    calls++;
+    expect(contentPath, _voiceMeme.contentPath);
+    expect(expectedSizeBytes, 3);
+    expect(expectedContentType, 'image/jpeg');
+    if (!requested.isCompleted) {
+      requested.complete();
+    }
+    return Uint8List.fromList(<int>[4, 5, 6]);
+  }
+}
+
+const _voiceMeme = AgentMessageMeme(
+  id: '20000000-0000-4000-8000-000000000004',
+  memeId: 'official-001:happy:voice',
+  category: 'happy',
+  contentType: 'image/jpeg',
+  sizeBytes: 3,
+  width: 100,
+  height: 80,
+  contentPath:
+      '/v1/agent-message-memes/20000000-0000-4000-8000-000000000004/content',
+);
 
 AgentVoiceController _controller(
   _ControlledVoiceClient client,

@@ -1347,6 +1347,7 @@ final class _WireMessage {
     this.producedByRunId,
     this.audio,
     this.images = const <AgentImageAsset>[],
+    this.memes = const <AgentMessageMeme>[],
     this.handoffs = const <AgentHandoff>[],
     this.speechFeedbackStatusUrl,
   });
@@ -1361,6 +1362,7 @@ final class _WireMessage {
   final String? producedByRunId;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
+  final List<AgentMessageMeme> memes;
   final List<AgentHandoff> handoffs;
   final String? speechFeedbackStatusUrl;
 
@@ -1373,6 +1375,7 @@ final class _WireMessage {
     modality: modality,
     audio: audio,
     images: images,
+    memes: memes,
     handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
@@ -1560,6 +1563,7 @@ _WireMessage _decodeMessageObject(
       'content',
       'audio',
       'images',
+      'memes',
       'handoffs',
       'speech_feedback_status_url',
       'created_at',
@@ -1610,6 +1614,9 @@ _WireMessage _decodeMessageObject(
         (value) => _decodeMessageImages(value, expectedThreadId),
       ) ??
       const <AgentImageAsset>[];
+  final memes =
+      _absentOnlyOptional(object, 'memes', _decodeMessageMemes) ??
+      const <AgentMessageMeme>[];
   final effectiveModality = modality ?? AgentMessageModality.text;
   final clientMessageId = _absentOnlyOptional(
     object,
@@ -1641,6 +1648,7 @@ _WireMessage _decodeMessageObject(
               handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
+      (role != AgentMessageRole.assistant && memes.isNotEmpty) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
       (effectiveModality == AgentMessageModality.text && audio != null) ||
       (effectiveModality == AgentMessageModality.multimodal &&
@@ -1665,9 +1673,86 @@ _WireMessage _decodeMessageObject(
     producedByRunId: producedByRunId,
     audio: audio,
     images: images,
+    memes: memes,
     handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
+}
+
+List<AgentMessageMeme> _decodeMessageMemes(Object? value) {
+  final values = _strictList(value, maxLength: 4);
+  if (values.isEmpty) {
+    throw const _InvalidAgentResponse();
+  }
+  final ids = <String>{};
+  return List<AgentMessageMeme>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{
+          'meme_attachment_id',
+          'meme_id',
+          'category',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'content_path',
+        },
+        required: const <String>{
+          'meme_attachment_id',
+          'meme_id',
+          'category',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'content_path',
+        },
+      );
+      final id = _strictUuid(object['meme_attachment_id']);
+      final contentType = _strictString(
+        object['content_type'],
+        minLength: 1,
+        maxLength: 32,
+      );
+      final contentPath = _strictString(
+        object['content_path'],
+        minLength: 1,
+        maxLength: 200,
+      );
+      if (!ids.add(id) ||
+          (contentType != 'image/gif' &&
+              contentType != 'image/jpeg' &&
+              contentType != 'image/png' &&
+              contentType != 'image/webp') ||
+          contentPath != '/v1/agent-message-memes/$id/content') {
+        throw const _InvalidAgentResponse();
+      }
+      return AgentMessageMeme(
+        id: id,
+        memeId: _strictStableId(object['meme_id']),
+        category: _strictStableId(object['category']),
+        contentType: contentType,
+        sizeBytes: _strictInt(
+          object['size_bytes'],
+          minimum: 1,
+          maximum: 20 * 1024 * 1024,
+        ),
+        width: _strictInt(object['width'], minimum: 1, maximum: 16384),
+        height: _strictInt(object['height'], minimum: 1, maximum: 16384),
+        contentPath: contentPath,
+      );
+    }),
+  );
+}
+
+String _strictStableId(Object? value) {
+  final result = _strictString(value, minLength: 1, maxLength: 128);
+  if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(result)) {
+    throw const _InvalidAgentResponse();
+  }
+  return result;
 }
 
 List<AgentImageAsset> _decodeMessageImages(

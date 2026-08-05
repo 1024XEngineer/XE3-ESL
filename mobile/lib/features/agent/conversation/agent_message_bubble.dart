@@ -15,6 +15,7 @@ final class AgentMessageBubble extends StatefulWidget {
     this.messageAudioController,
     this.onHandoff,
     this.onRefreshImage,
+    this.onRefreshMeme,
     this.polishedText,
     this.polishLoading = false,
     super.key,
@@ -25,6 +26,8 @@ final class AgentMessageBubble extends StatefulWidget {
   final ValueChanged<AgentHandoff>? onHandoff;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
+  final FutureOr<void> Function(String messageId, String memeAttachmentId)?
+  onRefreshMeme;
   final String? polishedText;
   final bool polishLoading;
 
@@ -101,7 +104,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
     const foreground = SpeakUpDesign.ink;
-    final content = switch (message.modality) {
+    final primaryContent = switch (message.modality) {
       AgentMessageModality.voice => _buildUserVoice(context, foreground),
       AgentMessageModality.multimodal => _buildMultimodalMessage(
         context,
@@ -109,6 +112,24 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       ),
       AgentMessageModality.text => _buildTextMessage(context, foreground),
     };
+    final content = message.memes.isEmpty
+        ? primaryContent
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              primaryContent,
+              const SizedBox(height: 8),
+              for (final meme in message.memes)
+                _AssistantMeme(
+                  key: Key('agent-message-meme-${meme.id}'),
+                  meme: meme,
+                  onRetry: widget.onRefreshMeme == null
+                      ? null
+                      : () => widget.onRefreshMeme!(message.id, meme.id),
+                ),
+            ],
+          );
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -438,6 +459,58 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _AssistantMeme extends StatelessWidget {
+  const _AssistantMeme({required this.meme, this.onRetry, super.key});
+
+  final AgentMessageMeme meme;
+  final FutureOr<void> Function()? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = meme.bytes;
+    if (bytes == null) {
+      return InkWell(
+        onTap: onRetry == null ? null : () => Future<void>.sync(onRetry!),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 132,
+          height: 92,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: SpeakUpDesign.border),
+          ),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.image_outlined, color: SpeakUpDesign.secondary),
+              SizedBox(height: 4),
+              Text('点击加载表情', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.memory(
+        bytes,
+        width: 160,
+        height: 160 * meme.height / meme.width,
+        fit: BoxFit.contain,
+        gaplessPlayback: true,
+        semanticLabel: 'AI ${meme.category} 表情',
+        errorBuilder: (context, error, stackTrace) => const SizedBox(
+          width: 132,
+          height: 72,
+          child: Center(child: Icon(Icons.broken_image_outlined)),
+        ),
+      ),
     );
   }
 }

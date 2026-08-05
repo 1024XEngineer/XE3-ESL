@@ -38,6 +38,19 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
+                memes: const <Object?>[
+                  {
+                    'meme_attachment_id': _memeAttachmentId,
+                    'meme_id': 'official-001:happy:01',
+                    'category': 'happy',
+                    'content_type': 'image/jpeg',
+                    'size_bytes': 26166,
+                    'width': 246,
+                    'height': 326,
+                    'content_path':
+                        '/v1/agent-message-memes/$_memeAttachmentId/content',
+                  },
+                ],
                 handoffs: const <Object?>[
                   {
                     'type': 'confirm_practice_plan',
@@ -72,6 +85,11 @@ void main() {
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
       expect(snapshot.messages.last.handoffs, hasLength(1));
+      expect(snapshot.messages.last.memes.single.category, 'happy');
+      expect(
+        snapshot.messages.last.memes.single.contentPath,
+        '/v1/agent-message-memes/$_memeAttachmentId/content',
+      );
       final handoff = snapshot.messages.last.handoffs.single;
       expect(handoff, isA<ConfirmPracticePlanHandoff>());
       expect(
@@ -1691,6 +1709,7 @@ Map<String, Object?> _messageJson({
   List<Object?>? handoffs,
   String? modality,
   List<Object?>? images,
+  List<Object?>? memes,
 }) {
   return {
     'message_id': id,
@@ -1702,6 +1721,7 @@ Map<String, Object?> _messageJson({
     'handoffs': ?handoffs,
     'modality': ?modality,
     'images': ?images,
+    'memes': ?memes,
     'content': content,
     'created_at': _createdAt,
   };
@@ -1767,6 +1787,7 @@ const _practicePlanId = '50000000-0000-4000-8000-000000000001';
 const _threadBId = '10000000-0000-4000-8000-000000000002';
 const _userMessageId = '20000000-0000-4000-8000-000000000001';
 const _assistantMessageId = '20000000-0000-4000-8000-000000000002';
+const _memeAttachmentId = '20000000-0000-4000-8000-000000000003';
 const _runId = '30000000-0000-4000-8000-000000000001';
 const _retryRunId = '30000000-0000-4000-8000-000000000002';
 const _thirdRunId = '30000000-0000-4000-8000-000000000003';
