@@ -252,7 +252,9 @@ class _ReviewPageState extends State<ReviewPage> {
             slivers: [
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(8, 28, 8, 0),
-                sliver: SliverToBoxAdapter(child: const _ReviewHeader()),
+                sliver: SliverToBoxAdapter(
+                  child: _ReviewHeader(previewMode: widget.previewMode),
+                ),
               ),
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -493,13 +495,24 @@ class _AbilityOverview extends StatelessWidget {
 }
 
 class _ReviewHeader extends StatelessWidget {
-  const _ReviewHeader();
+  const _ReviewHeader({required this.previewMode});
+
+  final bool previewMode;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
-      child: Text('复盘', style: SpeakUpDesign.pageTitle),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('复盘', style: SpeakUpDesign.pageTitle),
+          if (previewMode) ...[
+            const SizedBox(height: 8),
+            Text('本地预览；结果不会写入正式服务。', style: SpeakUpDesign.body),
+          ],
+        ],
+      ),
     );
   }
 }
