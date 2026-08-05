@@ -38,6 +38,23 @@ type CatalogReader interface {
 	) (SelectionSnapshot, error)
 }
 
+// EvaluationPolicyReferenceValidator is provided by Evaluation at composition
+// time so Scene can reject definitions that cannot be scored without owning
+// Evaluation's reference-to-pipeline registry.
+type EvaluationPolicyReferenceValidator interface {
+	ValidateEvaluationPolicyReference(string) error
+}
+
+// EvaluationPolicyReferenceValidatorFunc adapts composition-local validators
+// to Scene's policy-reference port.
+type EvaluationPolicyReferenceValidatorFunc func(string) error
+
+func (validate EvaluationPolicyReferenceValidatorFunc) ValidateEvaluationPolicyReference(
+	reference string,
+) error {
+	return validate(reference)
+}
+
 // AccessibleSelectionReader resolves the latest active Scene version visible
 // to one user. Public Scenes are visible to every user; private Scenes are
 // visible only to their owner. It is separate from CatalogReader because the
@@ -60,8 +77,11 @@ type Catalog struct {
 	ieltsQuestionBank *IELTSQuestionBank
 }
 
-func NewCatalog(definitions []SceneDefinition) (*Catalog, error) {
-	catalog, err := newValidatedCatalog(definitions)
+func NewCatalog(
+	definitions []SceneDefinition,
+	policyValidator EvaluationPolicyReferenceValidator,
+) (*Catalog, error) {
+	catalog, err := newValidatedCatalog(definitions, policyValidator)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +93,17 @@ func NewCatalog(definitions []SceneDefinition) (*Catalog, error) {
 	return catalog, nil
 }
 
-func newValidatedCatalog(definitions []SceneDefinition) (*Catalog, error) {
+func newValidatedCatalog(
+	definitions []SceneDefinition,
+	policyValidator EvaluationPolicyReferenceValidator,
+) (*Catalog, error) {
 	if len(definitions) == 0 {
 		return nil, invalidDefinition("catalog must contain at least one scene")
+	}
+	if policyValidator == nil {
+		return nil, invalidDefinition(
+			"evaluation policy validator is required",
+		)
 	}
 
 	scenes := make([]SceneDefinition, 0, len(definitions))
@@ -86,6 +114,13 @@ func newValidatedCatalog(definitions []SceneDefinition) (*Catalog, error) {
 		definition := cloneScene(source)
 		if err := validateScene(definition, sceneIDs, roleIDs, optionIDs); err != nil {
 			return nil, err
+		}
+		if err := policyValidator.ValidateEvaluationPolicyReference(
+			definition.EvaluationPolicyRef,
+		); err != nil {
+			return nil, invalidDefinition(
+				"evaluation policy reference is not registered and enabled",
+			)
 		}
 		sceneIDs[definition.ID] = struct{}{}
 		for _, role := range definition.Roles {
@@ -283,7 +318,11 @@ func validateScene(
 		return invalidDefinition("scene %q has invalid public fields", definition.ID)
 	}
 	if !validPolicyRef(definition.TurnPolicyRef, ".turn.v1") ||
-		!validPolicyRef(definition.SessionPolicyRef, ".session.v1") {
+		!validPolicyRef(definition.SessionPolicyRef, ".session.v1") ||
+		!validPolicyRef(
+			definition.EvaluationPolicyRef,
+			".evaluation.v1",
+		) {
 		return invalidDefinition("scene %q has invalid policy refs", definition.ID)
 	}
 	if !validScenePrompt(definition.Prompt) {

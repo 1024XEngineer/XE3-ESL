@@ -85,18 +85,19 @@ type PracticeOption struct {
 // SceneDefinition is the single immutable, versioned authority for one Scene.
 // Prompt, roles, options, and policy references change only with SceneVersion.
 type SceneDefinition struct {
-	ID               string           `json:"scene_id"`
-	Family           SceneFamily      `json:"scene_family"`
-	Model            SceneModel       `json:"scene_model"`
-	Name             string           `json:"name"`
-	Version          int              `json:"scene_version"`
-	Status           SceneStatus      `json:"status"`
-	TurnPolicyRef    string           `json:"turn_policy_ref"`
-	SessionPolicyRef string           `json:"session_policy_ref"`
-	Prompt           ScenePrompt      `json:"prompt"`
-	Roles            []RoleDefinition `json:"roles"`
-	PracticeOptions  []PracticeOption `json:"practice_options"`
-	DisplayOrder     int              `json:"-"`
+	ID                  string           `json:"scene_id"`
+	Family              SceneFamily      `json:"scene_family"`
+	Model               SceneModel       `json:"scene_model"`
+	Name                string           `json:"name"`
+	Version             int              `json:"scene_version"`
+	Status              SceneStatus      `json:"status"`
+	TurnPolicyRef       string           `json:"turn_policy_ref"`
+	SessionPolicyRef    string           `json:"session_policy_ref"`
+	EvaluationPolicyRef string           `json:"evaluation_policy_ref"`
+	Prompt              ScenePrompt      `json:"prompt"`
+	Roles               []RoleDefinition `json:"roles"`
+	PracticeOptions     []PracticeOption `json:"practice_options"`
+	DisplayOrder        int              `json:"-"`
 }
 
 // SelectionSnapshot freezes one exact Scene version and the user's selection.

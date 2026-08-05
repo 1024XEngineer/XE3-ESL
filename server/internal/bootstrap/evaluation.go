@@ -23,9 +23,10 @@ type EvaluationComposition struct {
 func NewEvaluationComposition(
 	database *pgxpool.Pool,
 	textGenerator scoring.TextGenerator,
+	policies *scoring.EvaluationPolicyRegistry,
 	configuration scoring.Configuration,
 ) (*EvaluationComposition, error) {
-	if database == nil || textGenerator == nil {
+	if database == nil || textGenerator == nil || policies == nil {
 		return nil, errors.New("bootstrap: Evaluation dependencies are required")
 	}
 	practiceRepository, err := practicepostgres.New(database)
@@ -61,6 +62,7 @@ func NewEvaluationComposition(
 		evidenceService,
 		evaluationService,
 		textGenerator,
+		policies,
 		configuration,
 	)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
@@ -26,7 +27,10 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	t *testing.T,
 ) {
 	pool := voiceIntegrationDatabase(t)
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

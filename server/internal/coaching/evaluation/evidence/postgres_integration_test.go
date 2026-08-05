@@ -745,6 +745,10 @@ func installEvidenceAuthorities(
 			Status:           scene.SceneStatusActive,
 			TurnPolicyRef:    "evidence.fixture.turn.v1",
 			SessionPolicyRef: "evidence.fixture.session.v1",
+			EvaluationPolicyRef: evidenceEvaluationPolicyRef(
+				practiceContext.SceneFamily,
+				practiceContext.SceneModel,
+			),
 			Prompt: scene.ScenePrompt{
 				PublicSceneBrief: practiceContext.TaskContext.PublicSceneBrief,
 				PracticeGoal:     practiceContext.PracticeGoal,
@@ -803,7 +807,12 @@ func installEvidenceAuthorities(
 		practiceContext.Scene.Version == publishedIELTSSceneVersion
 	var ieltsAssignment *preparation.IELTSAssignmentSnapshot
 	if usesPublishedIELTSScene {
-		catalog, err := scene.NewPostgresCatalog(pool)
+		catalog, err := scene.NewPostgresCatalog(
+			pool,
+			scene.EvaluationPolicyReferenceValidatorFunc(
+				func(string) error { return nil },
+			),
+		)
 		if err != nil {
 			t.Fatalf("open published Scene catalog: %v", err)
 		}
@@ -880,16 +889,17 @@ func installEvidenceAuthorities(
 	expectedContext, _, _, ok := evidencePracticeContextFromSnapshot(
 		command.OwnerUserID,
 		practice.Session{
-			ID:             command.PracticeSessionID,
-			SceneFamily:    sessionSnapshot.SceneFamily,
-			SceneModel:     sessionSnapshot.SceneModel,
-			SnapshotID:     sessionSnapshot.ID,
-			Status:         practice.SessionCompleted,
-			Version:        practiceContext.SessionVersion,
-			EffectiveTurns: len(payload.ConfirmedTurns),
-			StartedAt:      &authorityAt,
-			EndedAt:        &completedAt,
-			EndReason:      "COMPLETED",
+			ID:                  command.PracticeSessionID,
+			SceneFamily:         sessionSnapshot.SceneFamily,
+			SceneModel:          sessionSnapshot.SceneModel,
+			EvaluationPolicyRef: sessionSnapshot.SceneSelection.Scene.EvaluationPolicyRef,
+			SnapshotID:          sessionSnapshot.ID,
+			Status:              practice.SessionCompleted,
+			Version:             practiceContext.SessionVersion,
+			EffectiveTurns:      len(payload.ConfirmedTurns),
+			StartedAt:           &authorityAt,
+			EndedAt:             &completedAt,
+			EndReason:           "COMPLETED",
 		},
 		sessionSnapshot,
 	)
@@ -1057,6 +1067,7 @@ func installEvidenceAuthorities(
 			status,
 			turn_policy_ref,
 			session_policy_ref,
+			evaluation_policy_ref,
 			prompt,
 			roles,
 			practice_options,
@@ -1066,10 +1077,11 @@ func installEvidenceAuthorities(
 		VALUES (
 			$1, $2, $3, $4, 'Evidence fixture scene', 'active',
 			'evidence.fixture.turn.v1', 'evidence.fixture.session.v1',
-			$5, $6, $7, 1, $8
+			$5, $6, $7, $8, 1, $9
 		)
 		`, practiceContext.Scene.ID, practiceContext.Scene.Version,
 			practiceContext.SceneFamily, practiceContext.SceneModel,
+			sessionSnapshot.SceneSelection.Scene.EvaluationPolicyRef,
 			scenePromptDocument, rolesDocument, optionsDocument,
 			authorityAt); err != nil {
 			t.Fatalf("insert Evidence Scene version: %v", err)
@@ -1133,18 +1145,21 @@ func installEvidenceAuthorities(
 			snapshot_id,
 			scene_family,
 			scene_model,
+			evaluation_policy_ref,
 			end_reason,
 			plan_revision
 		)
 		VALUES (
 			$1, $2, $3, 'completed', $4, $5, $6, $6, $6, $7,
-			$8, $9, $10, 'COMPLETED', $11
+			$8, $9, $10, $11, 'COMPLETED', $12
 		)
 	`, command.OwnerUserID, command.PracticeSessionID, planID,
 		practiceContext.SessionVersion, len(payload.ConfirmedTurns),
 		authorityAt, completedAt,
 		practiceContext.SessionSnapshotID, practiceContext.SceneFamily,
-		practiceContext.SceneModel, practiceContext.PlanRevision); err != nil {
+		practiceContext.SceneModel,
+		sessionSnapshot.SceneSelection.Scene.EvaluationPolicyRef,
+		practiceContext.PlanRevision); err != nil {
 		t.Fatalf("insert Evidence Practice Session: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1389,6 +1404,24 @@ func installEvidenceAuthorities(
 	}
 	if err := lockCurrentEvidenceSources(ctx, probe, command); err != nil {
 		t.Fatalf("probe complete Evidence authority: %v", err)
+	}
+}
+
+func evidenceEvaluationPolicyRef(family, model string) string {
+	switch scene.SceneFamily(family) {
+	case scene.SceneFamilyInterview:
+		return "interview.shadow.evaluation.v1"
+	case scene.SceneFamilyExam:
+		if scene.SceneModel(model) == scene.SceneModelIELTSSpeakingFullMock {
+			return "ielts.speaking_full_mock.evaluation.v1"
+		}
+		return "ielts.speaking_practice.evaluation.v1"
+	case scene.SceneFamilyWorkplace:
+		return "workplace.general.evaluation.v1"
+	case scene.SceneFamilyDaily:
+		return "daily.general.evaluation.v1"
+	default:
+		panic("unsupported Evidence fixture Scene family: " + family)
 	}
 }
 

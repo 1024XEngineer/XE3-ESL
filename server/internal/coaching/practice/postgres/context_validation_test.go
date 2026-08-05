@@ -40,11 +40,12 @@ func validSessionCommandFixture(
 ) practice.CreateSessionCommand {
 	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
 	definition := scene.SceneDefinition{
-		ID:      "scene-1",
-		Family:  scene.SceneFamilyInterview,
-		Model:   scene.SceneModelInterviewBasicDialogue,
-		Version: 1,
-		Status:  scene.SceneStatusActive,
+		ID:                  "scene-1",
+		Family:              scene.SceneFamilyInterview,
+		Model:               scene.SceneModelInterviewBasicDialogue,
+		Version:             1,
+		Status:              scene.SceneStatusActive,
+		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt: scene.ScenePrompt{
 			FocusAreas:               []string{"clarity"},
 			TurnBlueprints:           []string{"question"},

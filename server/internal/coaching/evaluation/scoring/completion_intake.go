@@ -3,12 +3,11 @@ package scoring
 import (
 	"context"
 	"errors"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 type CompletionIntakeConfiguration struct {
@@ -48,6 +47,7 @@ type CompletionIntake struct {
 	completions   practice.CompletionHandoffRepository
 	evidence      completedEvidenceFreezer
 	evaluations   completedEvaluationCreator
+	policies      *EvaluationPolicyRegistry
 	configuration CompletionIntakeConfiguration
 }
 
@@ -62,16 +62,18 @@ func NewCompletionIntake(
 	completions practice.CompletionHandoffRepository,
 	evidence completedEvidenceFreezer,
 	evaluations completedEvaluationCreator,
+	policies *EvaluationPolicyRegistry,
 	configuration CompletionIntakeConfiguration,
 ) (*CompletionIntake, error) {
 	if completions == nil || evidence == nil || evaluations == nil ||
-		!configuration.valid() {
+		policies == nil || !configuration.valid() {
 		return nil, evaluation.ErrInvalidRequest
 	}
 	return &CompletionIntake{
 		completions:   completions,
 		evidence:      evidence,
 		evaluations:   evaluations,
+		policies:      policies,
 		configuration: configuration,
 	}, nil
 }
@@ -81,7 +83,8 @@ func (intake *CompletionIntake) ProcessPending(
 	limit int,
 ) (CompletionIntakeSweepResult, error) {
 	if intake == nil || intake.completions == nil || intake.evidence == nil ||
-		intake.evaluations == nil || !intake.configuration.valid() ||
+		intake.evaluations == nil || intake.policies == nil ||
+		!intake.configuration.valid() ||
 		ctx == nil || limit < 1 || limit > 20 {
 		return CompletionIntakeSweepResult{}, evaluation.ErrInvalidRequest
 	}
@@ -137,10 +140,7 @@ func (intake *CompletionIntake) process(
 	if !claim.Valid() {
 		return practice.ErrCompletionHandoffInvalid
 	}
-	route, err := completionEvaluationRoute(
-		claim.SceneFamily,
-		claim.SceneModel,
-	)
+	policy, err := intake.policies.resolve(claim.EvaluationPolicyRef)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (intake *CompletionIntake) process(
 		claim.OwnerUserID,
 		claim.Completion.SessionID,
 		evaluation.ScopeSession,
-		route.SceneType,
+		policy.SceneType,
 	)
 	if err != nil {
 		return err
@@ -165,73 +165,13 @@ func (intake *CompletionIntake) process(
 			InputSnapshotID:   snapshot.ID,
 			InputRevision:     snapshot.InputRevision,
 			Scope:             evaluation.ScopeSession,
-			SceneType:         route.SceneType,
+			SceneType:         policy.SceneType,
 			Channels:          []evaluation.Channel{evaluation.ChannelScene},
-			SceneStrategyRef:  route.StrategyRef,
-			PipelineVersion:   route.PipelineVersion,
+			SceneStrategyRef:  policy.StrategyRef,
+			PipelineVersion:   policy.PipelineVersion,
 		},
 	)
 	return err
-}
-
-type completionEvaluationRouteSpec struct {
-	SceneType       evaluation.SceneType
-	StrategyRef     string
-	PipelineVersion string
-}
-
-func completionEvaluationRoute(
-	family scene.SceneFamily,
-	model scene.SceneModel,
-) (completionEvaluationRouteSpec, error) {
-	switch family {
-	case scene.SceneFamilyInterview:
-		if model == scene.SceneModelProjectExperienceDeepDive ||
-			model == scene.SceneModelInterviewBasicDialogue {
-			return completionEvaluationRouteSpec{
-				SceneType:       evaluation.SceneInterview,
-				StrategyRef:     InterviewShadowStrategyRef,
-				PipelineVersion: InterviewShadowPipelineVersion,
-			}, nil
-		}
-	case scene.SceneFamilyExam:
-		if model == scene.SceneModelIELTSSpeakingFullMock {
-			return completionEvaluationRouteSpec{
-				SceneType:       evaluation.SceneIELTSSpeaking,
-				StrategyRef:     IELTSSpeakingShadowStrategyRef,
-				PipelineVersion: IELTSSpeakingShadowPipelineVersion,
-			}, nil
-		}
-		if model == scene.SceneModelIELTSSpeakingPart1 ||
-			model == scene.SceneModelIELTSSpeakingPart2 ||
-			model == scene.SceneModelIELTSSpeakingPart3 ||
-			model == scene.SceneModelExamBasicDialogue {
-			return completionEvaluationRouteSpec{
-				SceneType:       evaluation.SceneIELTSSpeaking,
-				StrategyRef:     GeneralSceneStrategyRef,
-				PipelineVersion: GeneralScenePipelineVersion,
-			}, nil
-		}
-	case scene.SceneFamilyDaily:
-		if model == scene.SceneModelHotelCheckinAndIssueHandling ||
-			model == scene.SceneModelDailyBasicDialogue {
-			return completionEvaluationRouteSpec{
-				SceneType:       evaluation.SceneOverseasDaily,
-				StrategyRef:     GeneralSceneStrategyRef,
-				PipelineVersion: GeneralScenePipelineVersion,
-			}, nil
-		}
-	case scene.SceneFamilyWorkplace:
-		if model == scene.SceneModelProgressAndRiskUpdate ||
-			model == scene.SceneModelWorkplaceBasicDialogue {
-			return completionEvaluationRouteSpec{
-				SceneType:       evaluation.SceneOverseasWorkplace,
-				StrategyRef:     GeneralSceneStrategyRef,
-				PipelineVersion: GeneralScenePipelineVersion,
-			}, nil
-		}
-	}
-	return completionEvaluationRouteSpec{}, ErrStrategyNotAvailable
 }
 
 func completionIntakeFailure(err error) practice.CompletionHandoffFailure {

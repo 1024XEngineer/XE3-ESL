@@ -267,6 +267,7 @@ components:
         - status
         - turn_policy_ref
         - session_policy_ref
+        - evaluation_policy_ref
         - prompt
         - roles
         - practice_options
@@ -287,6 +288,8 @@ components:
         turn_policy_ref:
           $ref: '#/components/schemas/ResourceId'
         session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        evaluation_policy_ref:
           $ref: '#/components/schemas/ResourceId'
         prompt:
           $ref: '#/components/schemas/ScenePrompt'

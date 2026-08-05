@@ -200,25 +200,27 @@ func turnPolicySessionBootstrap(
 ) practice.SessionBootstrap {
 	role := scene.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
 	definition := scene.SceneDefinition{
-		ID:            "scene-1",
-		Family:        scene.SceneFamilyInterview,
-		Model:         scene.SceneModelProjectExperienceDeepDive,
-		Version:       1,
-		TurnPolicyRef: turnPolicyRef,
-		Prompt:        sessionFixture().Prompt,
-		Roles:         []scene.RoleDefinition{role},
+		ID:                  "scene-1",
+		Family:              scene.SceneFamilyInterview,
+		Model:               scene.SceneModelProjectExperienceDeepDive,
+		Version:             1,
+		TurnPolicyRef:       turnPolicyRef,
+		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+		Prompt:              sessionFixture().Prompt,
+		Roles:               []scene.RoleDefinition{role},
 	}
 	return practice.SessionBootstrap{
 		Session: practice.Session{
-			ID:             "session-1",
-			PlanID:         "plan-1",
-			PlanRevision:   1,
-			SceneFamily:    definition.Family,
-			SceneModel:     definition.Model,
-			SnapshotID:     "snapshot-1",
-			Status:         practice.SessionStarting,
-			Version:        1,
-			EffectiveTurns: 0,
+			ID:                  "session-1",
+			PlanID:              "plan-1",
+			PlanRevision:        1,
+			SceneFamily:         definition.Family,
+			SceneModel:          definition.Model,
+			EvaluationPolicyRef: definition.EvaluationPolicyRef,
+			SnapshotID:          "snapshot-1",
+			Status:              practice.SessionStarting,
+			Version:             1,
+			EffectiveTurns:      0,
 		},
 		Snapshot: practice.SessionSnapshot{
 			ID:           "snapshot-1",

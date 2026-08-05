@@ -23,6 +23,7 @@ import (
 
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -40,7 +41,10 @@ var testReviewHistoryCursorKey = []byte(
 func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
 	text := &followUpVoiceTextGenerator{}
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -162,7 +166,10 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -795,7 +802,10 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("build cleanup-race Preparation catalog: %v", err)
 	}

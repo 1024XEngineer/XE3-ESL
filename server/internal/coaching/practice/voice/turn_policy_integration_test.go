@@ -18,7 +18,12 @@ import (
 
 func TestPostgresSceneCatalogReferencesRegisteredTurnPolicies(t *testing.T) {
 	pool := newTurnPolicyCatalogPool(t)
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scene.EvaluationPolicyReferenceValidatorFunc(
+			func(string) error { return nil },
+		),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}

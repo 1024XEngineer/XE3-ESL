@@ -717,14 +717,15 @@ func mustSceneCatalog(t *testing.T) *scene.Catalog {
 		},
 	}
 	catalog, err := scene.NewCatalog([]scene.SceneDefinition{{
-		ID:               testJobTargetSceneID,
-		Family:           scene.SceneFamilyInterview,
-		Model:            scene.SceneModelProjectExperienceDeepDive,
-		Name:             "Technical interview",
-		Version:          1,
-		Status:           scene.SceneStatusActive,
-		TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
-		SessionPolicyRef: "interview.project_deep_dive.session.v1",
+		ID:                  testJobTargetSceneID,
+		Family:              scene.SceneFamilyInterview,
+		Model:               scene.SceneModelProjectExperienceDeepDive,
+		Name:                "Technical interview",
+		Version:             1,
+		Status:              scene.SceneStatusActive,
+		TurnPolicyRef:       "interview.project_deep_dive.turn.v1",
+		SessionPolicyRef:    "interview.project_deep_dive.session.v1",
+		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt: scene.ScenePrompt{
 			PublicSceneBrief:         "Discuss one technical project.",
 			PracticeGoal:             "Explain evidence and trade-offs clearly.",
@@ -758,7 +759,9 @@ func mustSceneCatalog(t *testing.T) *scene.Catalog {
 				DisplayName:      "HR focus",
 			},
 		},
-	}})
+	}}, scene.EvaluationPolicyReferenceValidatorFunc(
+		func(string) error { return nil },
+	))
 	if err != nil {
 		t.Fatalf("scene.NewCatalog: %v", err)
 	}

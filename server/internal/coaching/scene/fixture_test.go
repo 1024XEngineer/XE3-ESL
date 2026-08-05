@@ -1,6 +1,31 @@
 package scene
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+type testEvaluationPolicyValidator map[string]bool
+
+func (validator testEvaluationPolicyValidator) ValidateEvaluationPolicyReference(
+	reference string,
+) error {
+	if validator[reference] {
+		return nil
+	}
+	return errors.New("evaluation policy reference unavailable")
+}
+
+func testPolicyValidator() testEvaluationPolicyValidator {
+	return testEvaluationPolicyValidator{
+		"interview.shadow.evaluation.v1":         true,
+		"ielts.speaking_practice.evaluation.v1":  true,
+		"ielts.speaking_full_mock.evaluation.v1": true,
+		"workplace.general.evaluation.v1":        true,
+		"daily.general.evaluation.v1":            true,
+		"disabled.fixture.evaluation.v1":         false,
+	}
+}
 
 const (
 	testSceneID       = "scn_test_interview"
@@ -12,14 +37,15 @@ const (
 
 func testSceneDefinition() SceneDefinition {
 	return SceneDefinition{
-		ID:               testSceneID,
-		Family:           SceneFamilyInterview,
-		Model:            SceneModelProjectExperienceDeepDive,
-		Name:             "Test interview",
-		Version:          1,
-		Status:           SceneStatusActive,
-		TurnPolicyRef:    "interview.test.turn.v1",
-		SessionPolicyRef: "interview.test.session.v1",
+		ID:                  testSceneID,
+		Family:              SceneFamilyInterview,
+		Model:               SceneModelProjectExperienceDeepDive,
+		Name:                "Test interview",
+		Version:             1,
+		Status:              SceneStatusActive,
+		TurnPolicyRef:       "interview.test.turn.v1",
+		SessionPolicyRef:    "interview.test.session.v1",
+		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt: ScenePrompt{
 			PublicSceneBrief:         "Explain one project and its outcome.",
 			PracticeGoal:             "Present evidence and trade-offs clearly.",
@@ -70,7 +96,7 @@ func mustTestCatalog(t *testing.T, definitions ...SceneDefinition) *Catalog {
 	if len(definitions) == 0 {
 		definitions = []SceneDefinition{testSceneDefinition()}
 	}
-	catalog, err := NewCatalog(definitions)
+	catalog, err := NewCatalog(definitions, testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}

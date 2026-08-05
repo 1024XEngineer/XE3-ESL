@@ -291,6 +291,9 @@ func validExecutablePlan(
 		plan.SceneSelection.Scene.ID == "" ||
 		plan.SceneSelection.Scene.Version < 1 ||
 		plan.SceneSelection.Scene.Status != scene.SceneStatusActive ||
+		!validEvaluationPolicyRef(
+			plan.SceneSelection.Scene.EvaluationPolicyRef,
+		) ||
 		plan.SessionPolicy.MinEffectiveTurns < 1 ||
 		plan.SessionPolicy.MaxEffectiveTurns <
 			plan.SessionPolicy.MinEffectiveTurns ||

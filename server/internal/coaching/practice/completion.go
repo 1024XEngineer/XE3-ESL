@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 // PracticeCompleted is the durable handoff produced with the final Turn.
@@ -29,13 +27,12 @@ var (
 )
 
 type CompletionHandoffClaim struct {
-	OwnerUserID    string
-	Completion     PracticeCompleted
-	SceneFamily    scene.SceneFamily
-	SceneModel     scene.SceneModel
-	AttemptCount   int
-	FencingToken   int64
-	LeaseExpiresAt time.Time
+	OwnerUserID         string
+	Completion          PracticeCompleted
+	EvaluationPolicyRef string
+	AttemptCount        int
+	FencingToken        int64
+	LeaseExpiresAt      time.Time
 }
 
 func (claim CompletionHandoffClaim) Valid() bool {
@@ -45,7 +42,7 @@ func (claim CompletionHandoffClaim) Valid() bool {
 		claim.Completion.SessionVersion > 1 &&
 		strings.TrimSpace(claim.Completion.CompletionToken) != "" &&
 		!claim.Completion.CreatedAt.IsZero() &&
-		validCompletionScene(claim.SceneFamily, claim.SceneModel) &&
+		validEvaluationPolicyRef(claim.EvaluationPolicyRef) &&
 		claim.AttemptCount > 0 &&
 		claim.FencingToken >= int64(claim.AttemptCount) &&
 		!claim.LeaseExpiresAt.IsZero()
@@ -95,27 +92,7 @@ type CompletionHandoffRepository interface {
 	) error
 }
 
-func validCompletionScene(
-	family scene.SceneFamily,
-	model scene.SceneModel,
-) bool {
-	switch family {
-	case scene.SceneFamilyInterview:
-		return model == scene.SceneModelProjectExperienceDeepDive ||
-			model == scene.SceneModelInterviewBasicDialogue
-	case scene.SceneFamilyExam:
-		return model == scene.SceneModelIELTSSpeakingPart1 ||
-			model == scene.SceneModelIELTSSpeakingPart2 ||
-			model == scene.SceneModelIELTSSpeakingPart3 ||
-			model == scene.SceneModelIELTSSpeakingFullMock ||
-			model == scene.SceneModelExamBasicDialogue
-	case scene.SceneFamilyWorkplace:
-		return model == scene.SceneModelProgressAndRiskUpdate ||
-			model == scene.SceneModelWorkplaceBasicDialogue
-	case scene.SceneFamilyDaily:
-		return model == scene.SceneModelHotelCheckinAndIssueHandling ||
-			model == scene.SceneModelDailyBasicDialogue
-	default:
-		return false
-	}
+func validEvaluationPolicyRef(value string) bool {
+	return len(value) <= 128 && value == strings.TrimSpace(value) &&
+		strings.HasSuffix(value, ".evaluation.v1")
 }

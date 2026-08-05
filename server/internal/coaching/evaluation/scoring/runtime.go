@@ -92,10 +92,11 @@ func NewRuntime(
 	evidenceService RuntimeEvidence,
 	evaluationService RuntimeEvaluations,
 	textGenerator TextGenerator,
+	policies *EvaluationPolicyRegistry,
 	configuration Configuration,
 ) (*Runtime, error) {
 	if repository == nil || completions == nil || evidenceService == nil ||
-		evaluationService == nil || textGenerator == nil ||
+		evaluationService == nil || textGenerator == nil || policies == nil ||
 		!configuration.valid() {
 		return nil, evaluation.ErrInvalidRequest
 	}
@@ -161,6 +162,7 @@ func NewRuntime(
 		completions,
 		evidenceService,
 		evaluationService,
+		policies,
 		CompletionIntakeConfiguration{
 			MaxAttempts:   configuration.maxAttempts,
 			LeaseDuration: configuration.leaseDuration,

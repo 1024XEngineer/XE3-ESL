@@ -88,7 +88,10 @@ func TestCatalogHTTPRoutesExposeCanonicalScenes(t *testing.T) {
 func TestCatalogHTTPHidesUnknownAndInactiveScenes(t *testing.T) {
 	definition := testSceneDefinition()
 	definition.Status = SceneStatusInactive
-	catalog, err := NewCatalog([]SceneDefinition{definition})
+	catalog, err := NewCatalog(
+		[]SceneDefinition{definition},
+		testPolicyValidator(),
+	)
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
