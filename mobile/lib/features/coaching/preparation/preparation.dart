@@ -395,11 +395,15 @@ class _PreparationPageState extends State<PreparationPage> {
   }
 
   void _handleBack(PreparationController? controller) {
-    if (widget.launchController?.isSelectionLocked ?? false) {
+    final launch = widget.launchController;
+    if (launch?.isNavigationLocked ?? false) {
       return;
     }
     if (controller?.selectedScene != null) {
-      widget.launchController?.selectionChanged();
+      if (!(launch?.prepareFailedAttemptForNavigation() ?? true)) {
+        return;
+      }
+      launch?.selectionChanged();
       controller?.showSceneList();
       return;
     }
@@ -413,11 +417,12 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.preparationController;
-    final launchLocked = widget.launchController?.isSelectionLocked ?? false;
+    final navigationLocked =
+        widget.launchController?.isNavigationLocked ?? false;
     final hasInternalRoute =
         controller?.selectedScene != null || _selectedHub != null;
     return PopScope<void>(
-      canPop: !launchLocked && !hasInternalRoute,
+      canPop: !navigationLocked && !hasInternalRoute,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
           _handleBack(controller);
@@ -435,7 +440,7 @@ class _PreparationPageState extends State<PreparationPage> {
                 leading: IconButton(
                   key: const Key('preparation-route-back-button'),
                   tooltip: '返回',
-                  onPressed: launchLocked
+                  onPressed: navigationLocked
                       ? null
                       : () => _handleBack(controller),
                   icon: const Icon(Icons.arrow_back_rounded),
@@ -763,7 +768,7 @@ class _SceneLaunchStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final launchLocked = launchController?.isSelectionLocked ?? false;
+    final navigationLocked = launchController?.isNavigationLocked ?? false;
     final message =
         controller.errorMessage ??
         launchController?.errorMessage ??
@@ -782,7 +787,7 @@ class _SceneLaunchStatus extends StatelessWidget {
           child: IconButton(
             key: const Key('preparation-back-to-catalog'),
             tooltip: '取消并返回',
-            onPressed: launchLocked ? null : onBack,
+            onPressed: navigationLocked ? null : onBack,
             icon: const Icon(Icons.arrow_back_rounded),
             color: PreparationDesign.ink,
             style: IconButton.styleFrom(

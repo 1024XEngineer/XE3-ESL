@@ -359,104 +359,126 @@ void main() {
     expect(launchClient.calls, isEmpty);
   });
 
-  testWidgets('direct start stays locked until voice retry succeeds', (
-    tester,
-  ) async {
-    final session = Completer<PreparationPracticeBootstrap>();
-    final preparationController = PreparationController(
-      client: _FixtureClient(),
-    );
-    final launchClient = _PageLaunchClient(sessionCompleter: session);
-    var navigations = 0;
-    var voiceCalls = 0;
-    final launchController = PreparationLaunchController(
-      client: launchClient,
-      contextProvider: () => _pageContext,
-      threadIdProvider: () => _pageContext.threadId,
-      goalActivator:
-          ({
-            required threadId,
-            required selection,
-            required clientOperationId,
-          }) async => _pageContext,
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {
-            voiceCalls++;
-            if (voiceCalls == 1) {
-              throw const PreparationLaunchException(
-                kind: PreparationLaunchFailureKind.invalidResponse,
-                stage: PreparationLaunchStage.voice,
-              );
-            }
-          },
-      idFactory: (scope) => '$scope-pending-widget-key',
-    );
-    addTearDown(preparationController.dispose);
-    addTearDown(launchController.dispose);
+  testWidgets(
+    'direct start unlocks return after failure and retries on reentry',
+    (tester) async {
+      final session = Completer<PreparationPracticeBootstrap>();
+      final preparationController = PreparationController(
+        client: _FixtureClient(),
+      );
+      final launchClient = _PageLaunchClient(sessionCompleter: session);
+      var navigations = 0;
+      var voiceCalls = 0;
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () => _pageContext,
+        threadIdProvider: () => _pageContext.threadId,
+        goalActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _pageContext,
+        voiceActivator:
+            ({
+              required context,
+              required scene,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              voiceCalls++;
+              if (voiceCalls == 1) {
+                throw const PreparationLaunchException(
+                  kind: PreparationLaunchFailureKind.invalidResponse,
+                  stage: PreparationLaunchStage.voice,
+                );
+              }
+            },
+        idFactory: (scope) => '$scope-pending-widget-key',
+      );
+      addTearDown(preparationController.dispose);
+      addTearDown(launchController.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PreparationPage(
-          showBackButton: true,
-          preparationController: preparationController,
-          launchController: launchController,
-          onPracticeStarted: () => navigations++,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            showBackButton: true,
+            preparationController: preparationController,
+            launchController: launchController,
+            onPracticeStarted: () => navigations++,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openFamily(tester, 'INTERVIEW');
-    await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-    await tester.pump();
-    await tester.pump();
+      );
+      await tester.pumpAndSettle();
+      await _openFamily(tester, 'INTERVIEW');
+      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
+      await tester.pump();
+      await tester.pump();
 
-    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
-    expect(launchController.isStarting, isTrue);
-    expect(
-      tester
-          .widget<IconButton>(
-            find.byKey(const Key('preparation-back-to-catalog')),
-          )
-          .onPressed,
-      isNull,
-    );
-    expect(find.text('选择对话角色'), findsNothing);
+      expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+      expect(launchController.isStarting, isTrue);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('preparation-back-to-catalog')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(find.text('选择对话角色'), findsNothing);
 
-    session.complete(
-      PreparationPracticeBootstrap(
-        session: PreparationPracticeSession(
-          id: 'session-1',
-          planId: 'plan-1',
-          sceneFamily: SceneFamily.interview,
-          sceneModel: SceneModel.projectExperienceDeepDive,
-          snapshotId: 'session-snapshot-1',
-          status: 'starting',
-          version: 1,
-          createdAt: DateTime.utc(2026, 7, 26),
+      session.complete(
+        PreparationPracticeBootstrap(
+          session: PreparationPracticeSession(
+            id: 'session-1',
+            planId: 'plan-1',
+            sceneFamily: SceneFamily.interview,
+            sceneModel: SceneModel.projectExperienceDeepDive,
+            snapshotId: 'session-snapshot-1',
+            status: 'starting',
+            version: 1,
+            createdAt: DateTime.utc(2026, 7, 26),
+          ),
+          preparationSnapshotId: 'preparation-snapshot-1',
+          maxEffectiveTurns: 6,
         ),
-        preparationSnapshotId: 'preparation-snapshot-1',
-        maxEffectiveTurns: 6,
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(launchController.canRetry, isTrue);
-    expect(navigations, 0);
-    await tester.tap(find.byKey(const Key('preparation-catalog-retry')));
-    await tester.pumpAndSettle();
+      expect(launchController.canRetry, isTrue);
+      expect(navigations, 0);
+      expect(launchController.isSelectionLocked, isTrue);
+      expect(launchController.isNavigationLocked, isFalse);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('preparation-back-to-catalog')),
+            )
+            .onPressed,
+        isNotNull,
+      );
 
-    expect(voiceCalls, 2);
-    expect(navigations, 1);
-    expect(
-      find.byKey(const Key('preparation-scene-launch-status')),
-      findsNothing,
-    );
-  });
+      await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('preparation-scene-launch-status')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('catalog-scene-$_sceneId')), findsOneWidget);
+      expect(launchController.canRetry, isTrue);
+
+      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
+      await tester.pumpAndSettle();
+
+      expect(voiceCalls, 2);
+      expect(navigations, 1);
+      expect(
+        find.byKey(const Key('preparation-scene-launch-status')),
+        findsNothing,
+      );
+    },
+  );
 }
 
 class _FixtureClient implements SceneClient {
