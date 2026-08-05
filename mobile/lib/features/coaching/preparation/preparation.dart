@@ -1244,7 +1244,7 @@ class _InterviewHub extends StatelessWidget {
   }
 }
 
-enum _IeltsSourceFilter { all, newSeason, carryOver, evergreen }
+enum _IeltsSourceFilter { all, newSeason, carryOver }
 
 final class _IeltsBrowserState {
   const _IeltsBrowserState({
@@ -1429,7 +1429,7 @@ class _IeltsHubState extends State<_IeltsHub> {
           key: const Key('ielts-mode-special'),
           eyebrow: '分类题库',
           title: '按 Part 专项突破',
-          description: '按新题、保留题、万年老题和主题标签精准选题。',
+          description: '按新题、保留题和主题标签精准选题。',
           actionLabel: '选择专项题目',
           icon: Icons.grid_view_rounded,
           color: const Color(0xFF0EA5E9),
@@ -1989,14 +1989,12 @@ bool _matchesSource(String release, _IeltsSourceFilter source) =>
       _IeltsSourceFilter.all => true,
       _IeltsSourceFilter.newSeason => release == 'new',
       _IeltsSourceFilter.carryOver => release == 'carry_over',
-      _IeltsSourceFilter.evergreen => release == 'evergreen',
     };
 
 String _ieltsSourceFilterLabel(_IeltsSourceFilter value) => switch (value) {
   _IeltsSourceFilter.all => '全部',
   _IeltsSourceFilter.newSeason => '5–8月新题',
   _IeltsSourceFilter.carryOver => '5–8月保留题',
-  _IeltsSourceFilter.evergreen => '万年老题',
 };
 
 String _ieltsBrowserPartLabel(IeltsPracticeMode value) => switch (value) {
