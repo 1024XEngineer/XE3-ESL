@@ -21,7 +21,8 @@ SHELL := /bin/bash
 	check-api-contracts \
 	check-smoke \
 	dev-android \
-	dev-ios-simulator
+	dev-ios-simulator \
+	test-ios-simulator-scenes
 
 help:
 	@printf '%s\n' \
@@ -35,6 +36,8 @@ help:
 		'  make check-smoke    Run the deterministic Mock main flow' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend and run without AvatarKit on an iOS Simulator'
+	@printf '%s\n' \
+		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
 
 check: check-flutter check-go check-api check-smoke
 
@@ -153,3 +156,8 @@ dev-android:
 
 dev-ios-simulator:
 	./tools/ios-simulator-dev/run.sh
+
+test-ios-simulator-scenes:
+	./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS IELTS Part 1 creates a Practice Session'

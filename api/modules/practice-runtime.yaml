@@ -872,6 +872,7 @@ components:
         - scene_version
         - scene_family
         - scene_model
+        - practice_session_status
         - session_version
         - effective_turns
         - turn_limit
@@ -890,6 +891,13 @@ components:
           $ref: ./scene.yaml#/components/schemas/SceneFamily
         scene_model:
           $ref: ./scene.yaml#/components/schemas/SceneModel
+        practice_session_status:
+          type: string
+          enum:
+            - in_progress
+            - paused
+            - completed
+            - ended_early
         session_version:
           type: integer
           minimum: 1
@@ -901,6 +909,10 @@ components:
           minimum: 1
         session_completed:
           type: boolean
+          description: |
+            True when the Practice Session is terminal, whether it completed
+            normally or ended early. `practice_session_status` remains the
+            authoritative reason for the terminal state.
         current_question:
           $ref: '#/components/schemas/VoiceQuestion'
         current_turn:

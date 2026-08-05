@@ -26,6 +26,7 @@ void main() {
             'scene_version': 1,
             'scene_family': 'INTERVIEW',
             'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+            'practice_session_status': 'completed',
             'session_version': 5,
             'effective_turns': 4,
             'turn_limit': 6,
@@ -57,6 +58,38 @@ void main() {
       transport.expectDone();
     },
   );
+
+  test('accepts a practice ended before the learner answered', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        response: _json(HttpStatus.ok, {
+          'practice_session_id': _sessionId,
+          'practice_plan_id': 'plan-1',
+          'scene_id': 'scene-project-deep-dive',
+          'scene_version': 1,
+          'scene_family': 'INTERVIEW',
+          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_session_status': 'ended_early',
+          'session_version': 2,
+          'effective_turns': 0,
+          'turn_limit': 6,
+          'session_completed': true,
+        }),
+      ),
+    ]);
+
+    final snapshot = await _client(
+      transport,
+    ).restorePractice(sessionId: _sessionId);
+
+    expect(snapshot.completedTurns, 0);
+    expect(snapshot.sessionCompleted, isTrue);
+    expect(snapshot.currentQuestion, isNull);
+    expect(snapshot.currentTurn, isNull);
+    transport.expectDone();
+  });
 
   test('encodes every opaque resource ID as one path segment', () {
     const endpoints = PracticeWireEndpoints();
@@ -212,6 +245,7 @@ void main() {
           'scene_version': 1,
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_session_status': 'in_progress',
           'session_version': 2,
           'effective_turns': 1,
           'turn_limit': 3,
@@ -336,6 +370,7 @@ void main() {
           'scene_version': 1,
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_session_status': 'in_progress',
           'session_version': 2,
           'effective_turns': 1,
           'turn_limit': 3,
@@ -391,6 +426,7 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
+          'plan_revision': 1,
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
@@ -830,6 +866,7 @@ Map<String, Object?> _sessionJson() {
     'scene_version': 1,
     'scene_family': 'INTERVIEW',
     'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'practice_session_status': 'in_progress',
     'session_version': 1,
     'effective_turns': 0,
     'turn_limit': 3,
