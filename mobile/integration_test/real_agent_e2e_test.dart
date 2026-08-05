@@ -399,6 +399,53 @@ void main() {
       binding,
       'ielts-part1-practice-started',
     );
+
+    final firstSessionId = dependencies.practiceController.practiceSessionId!;
+    final ended = await dependencies.practiceController
+        .endActivePracticeEarly();
+    expect(
+      ended,
+      isTrue,
+      reason:
+          'error=${dependencies.practiceController.errorMessage}; '
+          'session=${dependencies.practiceController.practiceSessionId}; '
+          'version=${dependencies.practiceController.practiceSessionVersion}; '
+          'active=${dependencies.practiceController.hasActivePractice}',
+    );
+    expect(
+      await dependencies.preparationLaunchController.resumeCurrentPractice(),
+      isFalse,
+    );
+    expect(
+      dependencies.preparationLaunchController.hasResumablePractice,
+      isFalse,
+    );
+
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save & exit'));
+    await _waitForPreparationTarget(
+      tester,
+      target: questionSet,
+      operation: 'return to IELTS Part 1 after ending the first session',
+      timeout: const Duration(seconds: 20),
+    );
+    await tester.tap(questionSet);
+    await _waitUntil(tester, () {
+      final currentSessionId =
+          dependencies.practiceController.practiceSessionId;
+      return currentSessionId != null && currentSessionId != firstSessionId;
+    }, const Duration(seconds: 90));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-page')),
+      operation: 'create a new IELTS Part 1 session after terminal recovery',
+      timeout: const Duration(seconds: 90),
+    );
+    expect(
+      dependencies.practiceController.practiceSessionId,
+      isNot(firstSessionId),
+    );
   });
 }
 

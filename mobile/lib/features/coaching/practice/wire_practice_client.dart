@@ -784,6 +784,7 @@ PracticeSessionSnapshot _decodeSessionState(
       'scene_version',
       'scene_family',
       'scene_model',
+      'practice_session_status',
       'session_version',
       'effective_turns',
       'turn_limit',
@@ -801,10 +802,24 @@ PracticeSessionSnapshot _decodeSessionState(
   final sceneModel = SceneModel.fromWireValue(
     _string(root, 'scene_model', maxLength: 64),
   );
+  final sessionStatus = switch (_string(
+    root,
+    'practice_session_status',
+    maxLength: 32,
+  )) {
+    'in_progress' => PracticeSessionLifecycleStatus.inProgress,
+    'paused' => PracticeSessionLifecycleStatus.paused,
+    'completed' => PracticeSessionLifecycleStatus.completed,
+    'ended_early' => PracticeSessionLifecycleStatus.endedEarly,
+    _ => throw _invalidResponse(),
+  };
   final sessionVersion = _integer(root, 'session_version');
   final effectiveTurns = _integer(root, 'effective_turns');
   final turnLimit = _integer(root, 'turn_limit');
   final completed = _boolean(root, 'session_completed');
+  final terminal =
+      sessionStatus == PracticeSessionLifecycleStatus.completed ||
+      sessionStatus == PracticeSessionLifecycleStatus.endedEarly;
   if (const {
     'current_question',
     'current_turn',
@@ -830,12 +845,14 @@ PracticeSessionSnapshot _decodeSessionState(
       sceneVersion < 1 ||
       !validPracticeSceneIdentity(sceneFamily, sceneModel) ||
       sessionVersion < 1 ||
+      completed != terminal ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
       turnLimit > 14 ||
       effectiveTurns > turnLimit ||
       (!completed && question == null) ||
-      (completed && (question != null || turn == null)) ||
+      (completed &&
+          (question != null || (effectiveTurns > 0 && turn == null))) ||
       (question != null && question.sessionId != sessionId) ||
       (turn != null &&
           (turn.sessionId != sessionId ||
@@ -915,6 +932,7 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
     required: const {
       'practice_session_id',
       'practice_plan_id',
+      'plan_revision',
       'scene_family',
       'scene_model',
       'evaluation_policy_ref',
@@ -927,6 +945,7 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
   );
   final sessionId = _string(root, 'practice_session_id');
   _string(root, 'practice_plan_id');
+  final planRevision = _integer(root, 'plan_revision');
   _string(root, 'scene_family', maxLength: 32);
   _string(root, 'scene_model', maxLength: 64);
   _string(root, 'evaluation_policy_ref');
@@ -955,6 +974,7 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
       status == PracticeSessionLifecycleStatus.completed ||
       status == PracticeSessionLifecycleStatus.endedEarly;
   if (sessionId != expectedSessionId ||
+      planRevision < 1 ||
       version < 1 ||
       (startedAt != null && startedAt.isBefore(createdAt)) ||
       (terminal &&

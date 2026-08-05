@@ -371,16 +371,18 @@ func (handler *Handler) ensureQuestionTip(c *gin.Context) {
 
 func SessionStateResponse(state practicevoice.SessionState) gin.H {
 	result := gin.H{
-		"practice_session_id": state.Session.ID,
-		"practice_plan_id":    state.Session.PlanID,
-		"scene_id":            state.Session.SceneID,
-		"scene_version":       state.Session.SceneVersion,
-		"scene_family":        state.Session.SceneFamily,
-		"scene_model":         state.Session.SceneModel,
-		"session_version":     state.Session.SessionVersion,
-		"effective_turns":     state.Session.EffectiveTurns,
-		"turn_limit":          state.Session.TurnLimit,
-		"session_completed":   state.Session.Completed,
+		"practice_session_id":     state.Session.ID,
+		"practice_plan_id":        state.Session.PlanID,
+		"scene_id":                state.Session.SceneID,
+		"scene_version":           state.Session.SceneVersion,
+		"scene_family":            state.Session.SceneFamily,
+		"scene_model":             state.Session.SceneModel,
+		"practice_session_status": state.Session.Status,
+		"session_version":         state.Session.SessionVersion,
+		"effective_turns":         state.Session.EffectiveTurns,
+		"turn_limit":              state.Session.TurnLimit,
+		"session_completed": state.Session.Completed ||
+			state.Session.Status == string(practice.SessionEndedEarly),
 	}
 	if state.Question != nil {
 		result["current_question"] = QuestionResponse(*state.Question)
