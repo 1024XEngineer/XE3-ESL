@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_image_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_meme_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 
 typedef ConversationClientIdFactory = String Function(String scope);
@@ -15,11 +16,13 @@ final class ConversationController extends ChangeNotifier {
   ConversationController({
     required this.client,
     this.messageImageClient,
+    this.messageMemeClient,
     ConversationClientIdFactory? clientIdFactory,
   }) : _clientIdFactory = clientIdFactory ?? _createSecureClientId;
 
   final AgentClient client;
   final AgentMessageImageClient? messageImageClient;
+  final AgentMessageMemeClient? messageMemeClient;
   final ConversationClientIdFactory _clientIdFactory;
 
   String? _threadId;
@@ -198,6 +201,7 @@ final class ConversationController extends ChangeNotifier {
     _initialized = true;
     _applyRestoredTextState(thread);
     unawaited(_hydrateMessageImageContents(fence));
+    unawaited(_hydrateMessageMemeContents(fence));
   }
 
   void _applyRestoredTextState(AgentThreadSnapshot thread) {
@@ -684,6 +688,60 @@ final class ConversationController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshMessageMeme(String messageId, String memeId) async {
+    final memeClient = messageMemeClient;
+    final message = _messages.where((item) => item.id == messageId).firstOrNull;
+    if (memeClient == null || message == null) {
+      return;
+    }
+    final meme = message.memes.where((item) => item.id == memeId).firstOrNull;
+    if (meme == null) {
+      return;
+    }
+    final fence = _captureOperationFence(threadId: _threadId);
+    try {
+      final bytes = await memeClient.getMemeContent(
+        contentPath: meme.contentPath,
+        expectedSizeBytes: meme.sizeBytes,
+        expectedContentType: meme.contentType,
+      );
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      _messages = <AgentMessage>[
+        for (final candidate in _messages)
+          if (candidate.id == messageId)
+            candidate.copyWith(
+              memes: <AgentMessageMeme>[
+                for (final item in candidate.memes)
+                  if (item.id == memeId) item.withBytes(bytes) else item,
+              ],
+            )
+          else
+            candidate,
+      ];
+      notifyListeners();
+    } catch (_) {
+      // Text remains readable and the bubble exposes an explicit retry.
+    }
+  }
+
+  Future<void> _hydrateMessageMemeContents(
+    _ConversationOperationFence fence,
+  ) async {
+    final targets = <({String messageId, String memeId})>[
+      for (final message in _messages)
+        for (final meme in message.memes)
+          if (!meme.isLoaded) (messageId: message.id, memeId: meme.id),
+    ];
+    for (final target in targets) {
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      await refreshMessageMeme(target.messageId, target.memeId);
+    }
+  }
+
   Future<bool> sendText(
     String value, {
     List<String> imageAssetIds = const <String>[],
@@ -772,6 +830,7 @@ final class ConversationController extends ChangeNotifier {
       _appendMessages([exchange.userMessage, ?exchange.assistantMessage]);
       notifyListeners();
       unawaited(_hydrateMessageImageContents(fence));
+      unawaited(_hydrateMessageMemeContents(fence));
       await _refreshAuthoritativeThreadPage(
         client,
         fence: fence,
@@ -1134,6 +1193,7 @@ final class ConversationController extends ChangeNotifier {
       _nextMessageCursor = page.nextCursor;
       _resolveMessagePageRefresh();
       notifyListeners();
+      unawaited(_hydrateMessageMemeContents(fence));
       return true;
     } catch (_) {
       if (_isOperationCurrent(fence)) {
@@ -1160,9 +1220,11 @@ final class ConversationController extends ChangeNotifier {
 
   /// Commits durable voice Messages returned by the Composer workflow.
   void commitComposerMessages(Iterable<AgentMessage> values) {
-    if (_disposed || _threadId == null) {
+    final threadId = _threadId;
+    if (_disposed || threadId == null) {
       return;
     }
+    final fence = _captureOperationFence(threadId: threadId);
     _appendMessages(values);
     final current = _currentThreadSummary;
     if (current != null) {
@@ -1178,6 +1240,7 @@ final class ConversationController extends ChangeNotifier {
       _mergeThreadSummary(updated, placeFirst: true);
     }
     notifyListeners();
+    unawaited(_hydrateMessageMemeContents(fence));
   }
 
   void markMessageAudioDeleted(

@@ -362,6 +362,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onRetryPendingImage: widget.composerController.retryPendingImage,
         onRefreshMessageImage:
             widget.conversationController.refreshMessageImage,
+        onRefreshMessageMeme: widget.conversationController.refreshMessageMeme,
         onCreateConversation: () =>
             unawaited(widget.conversationController.createThread()),
         draftThreadRecoveryGeneration:

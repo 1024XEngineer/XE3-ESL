@@ -19,6 +19,8 @@ typedef ConversationVoiceStarter = AgentComposerAction;
 typedef ConversationPendingImageAction = AgentComposerPendingImageAction;
 typedef ConversationMessageImageAction =
     FutureOr<void> Function(String messageId, String imageAssetId);
+typedef ConversationMessageMemeAction =
+    FutureOr<void> Function(String messageId, String memeAttachmentId);
 
 /// App-injected presentation port for optional Message feedback.
 abstract interface class ConversationMessageFeedbackPresenter
@@ -79,6 +81,7 @@ class ConversationPage extends StatefulWidget {
     this.onRemovePendingImage,
     this.onRetryPendingImage,
     this.onRefreshMessageImage,
+    this.onRefreshMessageMeme,
     this.feedbackPresenter,
     super.key,
   }) : onStartVoice = onStartVoice ?? onVoicePlaceholder;
@@ -118,6 +121,7 @@ class ConversationPage extends StatefulWidget {
   final ConversationPendingImageAction? onRemovePendingImage;
   final ConversationPendingImageAction? onRetryPendingImage;
   final ConversationMessageImageAction? onRefreshMessageImage;
+  final ConversationMessageMemeAction? onRefreshMessageMeme;
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
 
   @override
@@ -281,6 +285,7 @@ class ConversationPage extends StatefulWidget {
                                 messageAudioController: messageAudioController,
                                 onHandoff: onMessageHandoff,
                                 onRefreshImage: onRefreshMessageImage,
+                                onRefreshMeme: onRefreshMessageMeme,
                                 feedbackPresenter: feedbackPresenter,
                                 onSameThreadRepractice:
                                     !isBusy && onStartVoice != null
@@ -905,6 +910,7 @@ class _MessageList extends StatelessWidget {
     this.messageAudioController,
     this.onHandoff,
     this.onRefreshImage,
+    this.onRefreshMeme,
     this.feedbackPresenter,
     this.onSameThreadRepractice,
   });
@@ -913,6 +919,7 @@ class _MessageList extends StatelessWidget {
   final AgentMessageAudioController? messageAudioController;
   final ValueChanged<AgentHandoff>? onHandoff;
   final ConversationMessageImageAction? onRefreshImage;
+  final ConversationMessageMemeAction? onRefreshMeme;
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
   final VoidCallback? onSameThreadRepractice;
 
@@ -933,6 +940,7 @@ class _MessageList extends StatelessWidget {
               messageAudioController: messageAudioController,
               onHandoff: onHandoff,
               onRefreshImage: onRefreshImage,
+              onRefreshMeme: onRefreshMeme,
               polishedText: feedbackPresenter?.polishedTextFor(message),
               polishLoading:
                   feedbackPresenter?.polishLoadingFor(message) ?? false,
@@ -948,6 +956,7 @@ class _MessageList extends StatelessWidget {
               messageAudioController: messageAudioController,
               onHandoff: onHandoff,
               onRefreshImage: onRefreshImage,
+              onRefreshMeme: onRefreshMeme,
               polishedText: feedbackPresenter?.polishedTextFor(message),
               polishLoading:
                   feedbackPresenter?.polishLoadingFor(message) ?? false,

@@ -1689,6 +1689,7 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'memes',
       'handoffs',
       'speech_feedback_status_url',
       'created_at',
@@ -1733,10 +1734,14 @@ AgentMessage _decodeMessageObject(
   final handoffs = object['handoffs'] == null
       ? const <AgentHandoff>[]
       : decodeAgentHandoffs(object['handoffs']);
+  final memes = object['memes'] == null
+      ? const <AgentMessageMeme>[]
+      : _decodeVoiceMessageMemes(object['memes']);
   if ((role == AgentMessageRole.user &&
           (clientId == null || producedBy != null || handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
+      (role != AgentMessageRole.assistant && memes.isNotEmpty) ||
       (modality == AgentMessageModality.voice &&
           (role != AgentMessageRole.user || audio == null)) ||
       (modality == AgentMessageModality.text && audio != null) ||
@@ -1754,8 +1759,74 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
+    memes: memes,
     handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
+  );
+}
+
+List<AgentMessageMeme> _decodeVoiceMessageMemes(Object? value) {
+  final values = _strictList(value, max: 4);
+  if (values.isEmpty) {
+    throw const _InvalidVoiceResponse();
+  }
+  final ids = <String>{};
+  return List<AgentMessageMeme>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{
+          'meme_attachment_id',
+          'meme_id',
+          'category',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'content_path',
+        },
+        required: const <String>{
+          'meme_attachment_id',
+          'meme_id',
+          'category',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'content_path',
+        },
+      );
+      final id = _strictUuid(object['meme_attachment_id']);
+      final contentType = _strictString(
+        object['content_type'],
+        min: 1,
+        max: 32,
+      );
+      final contentPath = _strictString(
+        object['content_path'],
+        min: 1,
+        max: 200,
+      );
+      if (!ids.add(id) ||
+          !_memeContentTypes.contains(contentType) ||
+          contentPath != '/v1/agent-message-memes/$id/content') {
+        throw const _InvalidVoiceResponse();
+      }
+      return AgentMessageMeme(
+        id: id,
+        memeId: _strictPattern(object['meme_id'], _stableMemeIdPattern, 128),
+        category: _strictPattern(object['category'], _stableMemeIdPattern, 128),
+        contentType: contentType,
+        sizeBytes: _strictInt(
+          object['size_bytes'],
+          min: 1,
+          max: 20 * 1024 * 1024,
+        ),
+        width: _strictInt(object['width'], min: 1, max: 16384),
+        height: _strictInt(object['height'], min: 1, max: 16384),
+        contentPath: contentPath,
+      );
+    }),
   );
 }
 
@@ -2102,6 +2173,15 @@ final RegExp _uuidPattern = RegExp(
 final RegExp _clientIdentityPattern = RegExp(
   r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
 );
+final RegExp _stableMemeIdPattern = RegExp(
+  r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
+);
+const _memeContentTypes = <String>{
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+};
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failurePattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
 final RegExp _playbackPathPattern = RegExp(

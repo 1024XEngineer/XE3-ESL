@@ -22,6 +22,7 @@ import (
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentvoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/http"
 	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
+	agentmemehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/meme/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	memoryagentsource "github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory/agentsource"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
@@ -78,6 +79,7 @@ func NewIdentityAndAgentModules(
 		nil,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -128,6 +130,7 @@ func buildIdentityAgentComposition(
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
+	memeConfiguration *AgentMemeConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || modelProviders.Run == nil ||
@@ -275,6 +278,14 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	memeEnricher, memeApplication, err := buildAgentMemeApplication(
+		database,
+		modelProviders.Run,
+		memeConfiguration,
+	)
+	if err != nil {
+		return nil, err
+	}
 	var runStore agentrun.Repository = runRepository
 	notifiers := make([]interface{ Notify() }, 0, 2)
 	if memoryExtractionNotifier != nil {
@@ -290,6 +301,12 @@ func buildIdentityAgentComposition(
 		}
 	}
 	runOptions := append([]agentrun.Option(nil), toolOptions.runOptions...)
+	if memeEnricher != nil {
+		runOptions = append(
+			runOptions,
+			agentrun.WithAssistantEnricher(memeEnricher),
+		)
+	}
 	if agentImages != nil {
 		imageSubmissions, imageSubmissionErr :=
 			runpostgres.NewImageSubmissionRepository(database, ids)
@@ -395,6 +412,12 @@ func buildIdentityAgentComposition(
 	conversationHTTPOptions := []agentconversationhttp.Option{
 		agentconversationhttp.WithToolCalls(runService),
 	}
+	if memeApplication != nil {
+		conversationHTTPOptions = append(
+			conversationHTTPOptions,
+			agentconversationhttp.WithMessageMemes(memeApplication),
+		)
+	}
 	if agentImages != nil {
 		conversationHTTPOptions = append(
 			conversationHTTPOptions,
@@ -426,6 +449,16 @@ func buildIdentityAgentComposition(
 		goalHTTP,
 		conversationHTTP,
 		runHTTP,
+	}
+	if memeApplication != nil {
+		memeHTTP, memeHTTPErr := agentmemehttp.NewHandler(
+			memeApplication,
+			errorRenderer,
+		)
+		if memeHTTPErr != nil {
+			return nil, memeHTTPErr
+		}
+		registrars = append(registrars, memeHTTP)
 	}
 	if agentImages != nil {
 		imageHTTP, imageHTTPErr := agentimagehttp.NewHandler(
@@ -562,6 +595,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		modelProviders,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		nil,
 		nil,
 		nil,
