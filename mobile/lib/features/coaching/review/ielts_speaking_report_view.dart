@@ -181,7 +181,10 @@ class _ReadyReport extends StatelessWidget {
         const SizedBox(height: SpeakUpDesign.space16),
         _OverallScore(report: report),
         const SizedBox(height: SpeakUpDesign.space16),
-        _ScoreOverview(report: report),
+        IeltsSpeakingScoreOverview(
+          key: const Key('ielts-speaking-report-criteria'),
+          criteria: report.criteria,
+        ),
         const SizedBox(height: SpeakUpDesign.space12),
         _EvidenceStandard(report: report),
         const SizedBox(height: SpeakUpDesign.space24),
@@ -366,25 +369,34 @@ class _OverallScore extends StatelessWidget {
   }
 }
 
-class _ScoreOverview extends StatelessWidget {
-  const _ScoreOverview({required this.report});
+class IeltsSpeakingScoreOverview extends StatelessWidget {
+  const IeltsSpeakingScoreOverview({
+    required this.criteria,
+    this.title = '四项评分',
+    this.radarSemanticsKey = const Key('ielts-speaking-score-radar'),
+    super.key,
+  });
 
-  final IeltsSpeakingReport report;
+  final List<IeltsSpeakingCriterion> criteria;
+  final String title;
+  final Key radarSemanticsKey;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      key: const Key('ielts-speaking-report-criteria'),
       child: Padding(
         padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('四项评分', style: SpeakUpDesign.cardTitle),
+            Text(title, style: SpeakUpDesign.cardTitle),
             const SizedBox(height: SpeakUpDesign.space8),
             Text('0–9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
             const SizedBox(height: SpeakUpDesign.space16),
-            IeltsSpeakingScoreRadar(criteria: report.criteria),
+            IeltsSpeakingScoreRadar(
+              criteria: criteria,
+              semanticsKey: radarSemanticsKey,
+            ),
           ],
         ),
       ),

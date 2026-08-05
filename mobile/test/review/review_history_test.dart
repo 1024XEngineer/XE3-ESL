@@ -1115,7 +1115,13 @@ void main() {
 
 Future<void> _expandHistory(WidgetTester tester) async {
   final toggle = find.byKey(const Key('review-history-toggle'));
-  await tester.ensureVisible(toggle);
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('review-history-list')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  await tester.scrollUntilVisible(toggle, 200, scrollable: scrollable);
   await tester.tap(toggle);
   await tester.pumpAndSettle();
 }

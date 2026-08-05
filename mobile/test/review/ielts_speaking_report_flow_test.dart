@@ -139,6 +139,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('个人能力'), findsOneWidget);
+    expect(find.text('0–9 分练习估分 · 图形越靠外代表该维度表现越强'), findsOneWidget);
     expect(find.byKey(const Key('review-ability-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-ability-empty')), findsNothing);
     expect(find.text('流利与连贯'), findsOneWidget);
@@ -152,8 +153,13 @@ void main() {
       findsNothing,
     );
 
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
-    await tester.pumpAndSettle();
+    await _toggleHistory(tester);
+    await _scrollReviewTo(
+      tester,
+      find.byKey(
+        const Key('ielts-report-history-select-session_ielts_report_001'),
+      ),
+    );
     expect(
       find.byKey(
         const Key('ielts-report-history-select-session_ielts_report_001'),
@@ -161,8 +167,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
-    await tester.pumpAndSettle();
+    await _toggleHistory(tester);
     expect(
       find.byKey(
         const Key('ielts-report-history-select-session_ielts_report_001'),
@@ -301,6 +306,24 @@ final class _IndexClient implements IeltsSpeakingReportIndexClient {
 
   @override
   Future<void> clearAccountState() async {}
+}
+
+Future<void> _toggleHistory(WidgetTester tester) async {
+  final toggle = find.byKey(const Key('review-history-toggle'));
+  await _scrollReviewTo(tester, toggle);
+  await tester.tap(toggle);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _scrollReviewTo(WidgetTester tester, Finder target) async {
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('review-history-list')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  await tester.scrollUntilVisible(target, 200, scrollable: scrollable);
+  await tester.pumpAndSettle();
 }
 
 IeltsSpeakingReportEnvelope _completeReportEnvelope() {
