@@ -358,7 +358,7 @@ class _ResumeDetailPageState extends State<ResumeDetailPage> {
                     title: '结构化内容',
                     subtitle: detail.content == null
                         ? '解析完成后会显示在这里'
-                        : '可人工修正岗位和技能',
+                        : '可人工修正岗位、技能、荣誉和经历',
                     action: detail.content == null
                         ? null
                         : TextButton.icon(
@@ -403,24 +403,34 @@ final class _ResumeContentEditorSheetState
     extends State<_ResumeContentEditorSheet> {
   late final TextEditingController _position;
   late final TextEditingController _skills;
+  late final TextEditingController _awards;
+  late final List<Map<String, Object?>> _workExperiences;
+  late final List<Map<String, Object?>> _projectExperiences;
+  late final List<Map<String, Object?>> _educationExperiences;
 
   @override
   void initState() {
     super.initState();
     _position = TextEditingController(text: widget.content.targetPosition);
     _skills = TextEditingController(text: widget.content.skills.join('、'));
+    _awards = TextEditingController(text: widget.content.awards.join('\n'));
+    _workExperiences = _editableItems(widget.content.workExperiences);
+    _projectExperiences = _editableItems(widget.content.projectExperiences);
+    _educationExperiences = _editableItems(widget.content.educationExperiences);
   }
 
   @override
   void dispose() {
     _position.dispose();
     _skills.dispose();
+    _awards.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Padding(
       padding: EdgeInsets.fromLTRB(
         SpeakUpDesign.space20,
         SpeakUpDesign.space8,
@@ -432,44 +442,342 @@ final class _ResumeContentEditorSheetState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('完善简历内容', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: SpeakUpDesign.space8),
+            Text('可修改、补充或删除结构化信息', style: SpeakUpDesign.meta),
             const SizedBox(height: SpeakUpDesign.space16),
             TextField(
+              key: const Key('resume-edit-target-position'),
               controller: _position,
               maxLength: 200,
               decoration: const InputDecoration(labelText: '目标岗位'),
             ),
             const SizedBox(height: SpeakUpDesign.space12),
             TextField(
+              key: const Key('resume-edit-skills'),
               controller: _skills,
+              maxLines: 3,
               decoration: const InputDecoration(
                 labelText: '技能',
                 hintText: '使用逗号、顿号或换行分隔',
               ),
             ),
-            const SizedBox(height: SpeakUpDesign.space16),
+            const SizedBox(height: SpeakUpDesign.space12),
+            TextField(
+              key: const Key('resume-edit-awards'),
+              controller: _awards,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: '奖项荣誉',
+                hintText: '每行填写一项奖项、荣誉或奖学金',
+              ),
+            ),
+            const SizedBox(height: SpeakUpDesign.space24),
+            _experienceSection(
+              title: '工作经历',
+              addKey: const Key('resume-edit-add-work'),
+              items: _workExperiences,
+              maximum: 30,
+              emptyItem: _emptyWorkExperience,
+              itemBuilder: _workEditor,
+            ),
+            const SizedBox(height: SpeakUpDesign.space24),
+            _experienceSection(
+              title: '项目经历',
+              addKey: const Key('resume-edit-add-project'),
+              items: _projectExperiences,
+              maximum: 50,
+              emptyItem: _emptyProjectExperience,
+              itemBuilder: _projectEditor,
+            ),
+            const SizedBox(height: SpeakUpDesign.space24),
+            _experienceSection(
+              title: '教育经历',
+              addKey: const Key('resume-edit-add-education'),
+              items: _educationExperiences,
+              maximum: 20,
+              emptyItem: _emptyEducationExperience,
+              itemBuilder: _educationEditor,
+            ),
+            const SizedBox(height: SpeakUpDesign.space24),
             FilledButton(
               key: const Key('resume-content-save'),
-              onPressed: () => Navigator.pop(
-                context,
-                widget.content.copyWith(
-                  targetPosition: _position.text.trim(),
-                  skills: _skills.text
-                      .split(RegExp(r'[,，、\n]'))
-                      .map((value) => value.trim())
-                      .where((value) => value.isNotEmpty)
-                      .toSet()
-                      .take(100)
-                      .toList(growable: false),
-                ),
-              ),
+              onPressed: _save,
               child: const Text('保存修改'),
             ),
           ],
         ),
       ),
+    ),
+  );
+
+  Widget _experienceSection({
+    required String title,
+    required Key addKey,
+    required List<Map<String, Object?>> items,
+    required int maximum,
+    required Map<String, Object?> Function() emptyItem,
+    required Widget Function(Map<String, Object?>, int) itemBuilder,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+          ),
+          TextButton.icon(
+            key: addKey,
+            onPressed: items.length >= maximum
+                ? null
+                : () => setState(() => items.add(emptyItem())),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('新增'),
+          ),
+        ],
+      ),
+      if (items.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: SpeakUpDesign.space12),
+          child: Text('暂未填写，可点击新增', style: SpeakUpDesign.meta),
+        )
+      else
+        for (var index = 0; index < items.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space12),
+          itemBuilder(items[index], index),
+        ],
+    ],
+  );
+
+  Widget _workEditor(Map<String, Object?> item, int index) =>
+      _experienceEditorCard(
+        key: Key('resume-edit-work-$index'),
+        title: '工作经历 ${index + 1}',
+        onDelete: () => setState(() => _workExperiences.removeAt(index)),
+        children: [
+          _field(item, 'company', '公司', 200),
+          _field(item, 'position', '职位', 200),
+          _dateFields(item),
+          _listField(item, 'duties', '主要职责'),
+          _listField(item, 'achievements', '工作成果'),
+        ],
+      );
+
+  Widget _projectEditor(Map<String, Object?> item, int index) =>
+      _experienceEditorCard(
+        key: Key('resume-edit-project-$index'),
+        title: '项目经历 ${index + 1}',
+        onDelete: () => setState(() => _projectExperiences.removeAt(index)),
+        children: [
+          _field(item, 'project_name', '项目名称', 200),
+          _field(item, 'role', '项目角色', 200),
+          _field(item, 'description', '项目介绍', 4000, maxLines: 3),
+          _listField(item, 'technologies', '技术栈', commaSeparated: true),
+          _listField(item, 'duties', '主要职责'),
+          _listField(item, 'achievements', '项目成果'),
+        ],
+      );
+
+  Widget _educationEditor(Map<String, Object?> item, int index) =>
+      _experienceEditorCard(
+        key: Key('resume-edit-education-$index'),
+        title: '教育经历 ${index + 1}',
+        onDelete: () => setState(() => _educationExperiences.removeAt(index)),
+        children: [
+          _field(item, 'school', '学校', 200),
+          _field(item, 'major', '专业', 200),
+          _field(item, 'degree', '学历/学位', 100),
+          _field(item, 'gpa', 'GPA', 64),
+          _dateFields(item),
+        ],
+      );
+
+  Widget _experienceEditorCard({
+    required Key key,
+    required String title,
+    required VoidCallback onDelete,
+    required List<Widget> children,
+  }) => Card(
+    key: key,
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(SpeakUpDesign.space16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              IconButton(
+                tooltip: '删除$title',
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded),
+              ),
+            ],
+          ),
+          for (final child in children) ...[
+            const SizedBox(height: SpeakUpDesign.space12),
+            child,
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Widget _field(
+    Map<String, Object?> item,
+    String key,
+    String label,
+    int maxLength, {
+    int maxLines = 1,
+  }) => TextFormField(
+    key: ValueKey('${identityHashCode(item)}-$key'),
+    initialValue: item[key] as String? ?? '',
+    maxLength: maxLength,
+    maxLines: maxLines,
+    decoration: InputDecoration(labelText: label),
+    onChanged: (value) => item[key] = value,
+  );
+
+  Widget _listField(
+    Map<String, Object?> item,
+    String key,
+    String label, {
+    bool commaSeparated = false,
+  }) => TextFormField(
+    key: ValueKey('${identityHashCode(item)}-$key'),
+    initialValue: _stringValues(item, key).join(commaSeparated ? '、' : '\n'),
+    minLines: 2,
+    maxLines: 4,
+    decoration: InputDecoration(
+      labelText: label,
+      hintText: commaSeparated ? '使用逗号、顿号或换行分隔' : '每行填写一项',
+    ),
+    onChanged: (value) => item[key] = commaSeparated
+        ? _uniqueValues(value, maximum: 100)
+        : _lineValues(value, maximum: 100),
+  );
+
+  Widget _dateFields(Map<String, Object?> item) => Row(
+    children: [
+      Expanded(child: _field(item, 'start_date', '开始时间', 32)),
+      const SizedBox(width: SpeakUpDesign.space12),
+      Expanded(child: _field(item, 'end_date', '结束时间', 32)),
+    ],
+  );
+
+  void _save() {
+    Navigator.pop(
+      context,
+      widget.content.copyWith(
+        targetPosition: _position.text.trim(),
+        skills: _uniqueValues(_skills.text, maximum: 100),
+        awards: _uniqueLineValues(_awards.text, maximum: 100),
+        workExperiences: _normalizedItems(_workExperiences),
+        projectExperiences: _normalizedItems(_projectExperiences),
+        educationExperiences: _normalizedItems(_educationExperiences),
+      ),
     );
   }
 }
+
+List<Map<String, Object?>> _editableItems(List<Map<String, Object?>> items) =>
+    items
+        .map(
+          (item) => <String, Object?>{
+            for (final entry in item.entries)
+              entry.key: entry.value is List<Object?>
+                  ? List<Object?>.of(entry.value as List<Object?>)
+                  : entry.value,
+          },
+        )
+        .toList();
+
+List<Map<String, Object?>> _normalizedItems(List<Map<String, Object?>> items) =>
+    items
+        .map(
+          (item) => <String, Object?>{
+            for (final entry in item.entries)
+              entry.key: switch (entry.value) {
+                String value => value.trim(),
+                List<Object?> values =>
+                  values
+                      .whereType<String>()
+                      .map((value) => value.trim())
+                      .where((value) => value.isNotEmpty)
+                      .toList(growable: false),
+                _ => entry.value,
+              },
+          },
+        )
+        .where(_itemHasContent)
+        .toList(growable: false);
+
+bool _itemHasContent(Map<String, Object?> item) => item.values.any(
+  (value) => switch (value) {
+    String text => text.isNotEmpty,
+    List<Object?> values => values.isNotEmpty,
+    _ => false,
+  },
+);
+
+List<String> _lineValues(String value, {required int maximum}) => value
+    .split('\n')
+    .map((item) => item.trim())
+    .where((item) => item.isNotEmpty)
+    .take(maximum)
+    .toList(growable: false);
+
+List<String> _uniqueValues(String value, {required int maximum}) {
+  final seen = <String>{};
+  return value
+      .split(RegExp(r'[,，、\n]'))
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty && seen.add(item.toLowerCase()))
+      .take(maximum)
+      .toList(growable: false);
+}
+
+List<String> _uniqueLineValues(String value, {required int maximum}) {
+  final seen = <String>{};
+  return value
+      .split('\n')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty && seen.add(item.toLowerCase()))
+      .take(maximum)
+      .toList(growable: false);
+}
+
+Map<String, Object?> _emptyWorkExperience() => <String, Object?>{
+  'company': '',
+  'position': '',
+  'start_date': '',
+  'end_date': '',
+  'duties': <Object?>[],
+  'achievements': <Object?>[],
+};
+
+Map<String, Object?> _emptyProjectExperience() => <String, Object?>{
+  'project_name': '',
+  'role': '',
+  'description': '',
+  'technologies': <Object?>[],
+  'duties': <Object?>[],
+  'achievements': <Object?>[],
+};
+
+Map<String, Object?> _emptyEducationExperience() => <String, Object?>{
+  'school': '',
+  'major': '',
+  'degree': '',
+  'gpa': '',
+  'start_date': '',
+  'end_date': '',
+};
 
 class _ResumeIcon extends StatelessWidget {
   const _ResumeIcon();

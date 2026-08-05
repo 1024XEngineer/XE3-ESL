@@ -169,6 +169,91 @@ void main() {
     expect(find.text('绩点'), findsOneWidget);
     expect(find.text('4.588/5.0'), findsOneWidget);
   });
+
+  testWidgets('editor saves awards and every experience section', (
+    tester,
+  ) async {
+    final ready = _resume('editable', ResumeParseStatus.ready);
+    final client = _PageClient(
+      <ResumeItem>[ready],
+      const ResumeContent(
+        workExperiences: <Map<String, Object?>>[
+          <String, Object?>{
+            'company': '原公司',
+            'position': '开发工程师',
+            'start_date': '',
+            'end_date': '',
+            'duties': <Object?>[],
+            'achievements': <Object?>[],
+          },
+        ],
+        projectExperiences: <Map<String, Object?>>[
+          <String, Object?>{
+            'project_name': '原项目',
+            'role': '开发者',
+            'description': '',
+            'technologies': <Object?>[],
+            'duties': <Object?>[],
+            'achievements': <Object?>[],
+          },
+        ],
+        educationExperiences: <Map<String, Object?>>[
+          <String, Object?>{
+            'school': '原学校',
+            'major': '软件工程',
+            'degree': '本科',
+            'gpa': '',
+            'start_date': '',
+            'end_date': '',
+          },
+        ],
+      ),
+    );
+    final controller = ResumeController(
+      client: client,
+      filePicker: _NoopPicker(),
+      urlOpener: _NoopOpener(),
+    );
+    await tester.pumpWidget(
+      _app(ResumeDetailPage(controller: controller, resumeId: ready.id)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('resume-edit-content')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('可修改、补充或删除结构化信息'), findsOneWidget);
+    expect(find.byKey(const Key('resume-edit-awards')), findsOneWidget);
+    expect(find.byKey(const Key('resume-edit-work-0')), findsOneWidget);
+    expect(find.byKey(const Key('resume-edit-project-0')), findsOneWidget);
+    expect(find.byKey(const Key('resume-edit-education-0')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('resume-edit-awards')),
+      '一等奖\n校级奖学金',
+    );
+    final projectName = find.widgetWithText(TextFormField, '项目名称');
+    await tester.ensureVisible(projectName);
+    await tester.enterText(projectName, '新项目');
+    final school = find.widgetWithText(TextFormField, '学校');
+    await tester.ensureVisible(school);
+    await tester.enterText(school, '杭州电子科技大学');
+    final save = find.byKey(const Key('resume-content-save'));
+    await tester.ensureVisible(save);
+    tester.widget<FilledButton>(save).onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(client.savedContent?.awards, <String>['一等奖', '校级奖学金']);
+    expect(
+      client.savedContent?.projectExperiences.single['project_name'],
+      '新项目',
+    );
+    expect(
+      client.savedContent?.educationExperiences.single['school'],
+      '杭州电子科技大学',
+    );
+    expect(client.savedContent?.workExperiences.single['company'], '原公司');
+  });
 }
 
 Widget _app(Widget home) => MaterialApp(theme: SpeakUpTheme.light, home: home);
@@ -206,6 +291,7 @@ final class _PageClient implements ResumeClient {
   _PageClient(this.items, this.content);
   final List<ResumeItem> items;
   final ResumeContent? content;
+  ResumeContent? savedContent;
   @override
   Future<List<ResumeItem>> list() async => items;
   @override
@@ -237,5 +323,8 @@ final class _PageClient implements ResumeClient {
   Future<ResumeDetail> updateContent(
     ResumeDetail detail,
     ResumeContent content,
-  ) => throw UnimplementedError();
+  ) async {
+    savedContent = content;
+    return ResumeDetail(resume: detail.resume, content: content);
+  }
 }
