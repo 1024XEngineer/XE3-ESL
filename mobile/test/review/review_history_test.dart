@@ -345,6 +345,7 @@ void main() {
 
     client.complete(0, ReviewHistoryPage(items: [_item(_olderId, score: 78)]));
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
     expect(client.requests, hasLength(1));
@@ -388,6 +389,7 @@ void main() {
 
     client.complete(0, const ReviewHistoryPage(items: []));
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     expect(client.requests, hasLength(1));
     expect(find.byKey(const Key('review-availability-title')), findsOneWidget);
@@ -465,15 +467,27 @@ void main() {
       await tester.pump();
       expect(
         find.byKey(const Key('review-history-initial-loading')),
-        findsOneWidget,
+        findsNothing,
       );
+      await tester.tap(find.byKey(const Key('review-history-entry')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('review-history-page')), findsOneWidget);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
       expect(find.text('summary-91'), findsOneWidget);
+      await _ensureHistoryVisible(
+        tester,
+        find.byKey(const Key('review-history-load-more')),
+      );
       expect(find.byKey(const Key('review-history-load-more')), findsOneWidget);
 
+      await _ensureHistoryVisible(
+        tester,
+        find.byKey(const Key('review-history-select-$_newerId')),
+      );
       await tester.tap(
         find.byKey(const Key('review-history-select-$_newerId')),
       );
@@ -484,6 +498,10 @@ void main() {
 
       await tester.tap(find.byKey(const Key('review-detail-back')));
       await tester.pumpAndSettle();
+      await _ensureHistoryVisible(
+        tester,
+        find.byKey(const Key('review-history-select-$_olderId')),
+      );
       await tester.tap(
         find.byKey(const Key('review-history-select-$_olderId')),
       );
@@ -494,6 +512,10 @@ void main() {
 
       await tester.tap(find.byKey(const Key('review-detail-back')));
       await tester.pumpAndSettle();
+      await _ensureHistoryVisible(
+        tester,
+        find.byKey(const Key('review-history-load-more')),
+      );
       await tester.tap(find.byKey(const Key('review-history-load-more')));
       await tester.pumpAndSettle();
       expect(
@@ -516,11 +538,15 @@ void main() {
     await tester.pump();
     expect(
       find.byKey(const Key('review-history-initial-loading')),
-      findsOneWidget,
+      findsNothing,
     );
-    await tester.pumpAndSettle();
+    await _expandHistory(tester);
     expect(find.byKey(const Key('review-history-error')), findsOneWidget);
 
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-retry')),
+    );
     await tester.tap(find.byKey(const Key('review-history-retry')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-content')), findsOneWidget);
@@ -547,6 +573,7 @@ void main() {
         MaterialApp(home: ReviewPage(historyController: controller)),
       );
       await tester.pumpAndSettle();
+      await _expandHistory(tester);
 
       expect(client.cursors, <String?>[null]);
       expect(controller.hasMore, isTrue);
@@ -561,6 +588,10 @@ void main() {
         findsOneWidget,
       );
 
+      await _ensureHistoryVisible(
+        tester,
+        find.byKey(const Key('review-history-page-retry')),
+      );
       await tester.tap(find.byKey(const Key('review-history-page-retry')));
       await tester.pumpAndSettle();
 
@@ -580,13 +611,22 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-load-more')),
+    );
     await tester.tap(find.byKey(const Key('review-history-load-more')));
     await tester.pumpAndSettle();
 
     expect(client.cursors, <String?>[null, 'older_cursor']);
     expect(find.byKey(const Key('review-history-page-error')), findsOneWidget);
 
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-page-retry')),
+    );
     await tester.tap(find.byKey(const Key('review-history-page-retry')));
     await tester.pumpAndSettle();
 
@@ -608,6 +648,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(
+      find.byKey(const Key('review-history-initial-loading')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('review-history-entry')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(
       find.byKey(const Key('review-history-initial-loading')),
       findsOneWidget,
@@ -636,6 +683,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: failureController)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     expect(find.byKey(const Key('review-content')), findsNothing);
     expect(find.byKey(const Key('review-history-error')), findsOneWidget);
@@ -666,6 +714,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: historyController)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
     expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
@@ -673,6 +722,10 @@ void main() {
     expect(find.text('summary-91'), findsOneWidget);
     expect(find.text('summary-78'), findsOneWidget);
 
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-select-$_newerId')),
+    );
     await tester.tap(find.byKey(const Key('review-history-select-$_newerId')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
@@ -681,6 +734,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('review-detail-back')));
     await tester.pumpAndSettle();
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-select-$_olderId')),
+    );
     await tester.tap(find.byKey(const Key('review-history-select-$_olderId')));
     await tester.pumpAndSettle();
 
@@ -701,6 +758,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
@@ -790,6 +848,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -839,6 +898,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
     expect(find.text('IELTS 口语复盘'), findsOneWidget);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
@@ -879,6 +939,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -905,6 +966,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     final expectedLabel =
         '${item.review.title}，摘要：${item.review.summary}，'
@@ -945,6 +1007,7 @@ void main() {
       MaterialApp(home: ReviewPage(historyController: controller)),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     for (final item in items) {
       expect(
@@ -998,6 +1061,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandHistory(tester);
 
     final historyScrollable = find.descendant(
       of: find.byKey(const Key('review-history-list')),
@@ -1044,6 +1108,33 @@ void main() {
     expect(find.text(longFocus), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> _expandHistory(WidgetTester tester) async {
+  final entry = find.byKey(const Key('review-history-entry'));
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('review-overview-scroll')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  await tester.scrollUntilVisible(entry, 200, scrollable: scrollable);
+  await tester.drag(scrollable, const Offset(0, -120));
+  await tester.pumpAndSettle();
+  await tester.tap(entry);
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('review-history-page')), findsOneWidget);
+}
+
+Future<void> _ensureHistoryVisible(WidgetTester tester, Finder target) async {
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('review-history-list')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  await tester.scrollUntilVisible(target, 200, scrollable: scrollable);
+  await tester.pumpAndSettle();
 }
 
 Future<HttpServer> _startReviewHistoryServer(

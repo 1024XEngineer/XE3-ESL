@@ -6,6 +6,8 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
+const _abilityBlue = Color(0xFF2563EB);
+
 class IeltsSpeakingSessionReportPanel extends StatefulWidget {
   const IeltsSpeakingSessionReportPanel({
     required this.practiceSessionId,
@@ -181,7 +183,10 @@ class _ReadyReport extends StatelessWidget {
         const SizedBox(height: SpeakUpDesign.space16),
         _OverallScore(report: report),
         const SizedBox(height: SpeakUpDesign.space16),
-        _ScoreOverview(report: report),
+        IeltsSpeakingScoreOverview(
+          key: const Key('ielts-speaking-report-criteria'),
+          criteria: report.criteria,
+        ),
         const SizedBox(height: SpeakUpDesign.space12),
         _EvidenceStandard(report: report),
         const SizedBox(height: SpeakUpDesign.space24),
@@ -366,25 +371,34 @@ class _OverallScore extends StatelessWidget {
   }
 }
 
-class _ScoreOverview extends StatelessWidget {
-  const _ScoreOverview({required this.report});
+class IeltsSpeakingScoreOverview extends StatelessWidget {
+  const IeltsSpeakingScoreOverview({
+    required this.criteria,
+    this.title = '四项评分',
+    this.radarSemanticsKey = const Key('ielts-speaking-score-radar'),
+    super.key,
+  });
 
-  final IeltsSpeakingReport report;
+  final List<IeltsSpeakingCriterion> criteria;
+  final String title;
+  final Key radarSemanticsKey;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      key: const Key('ielts-speaking-report-criteria'),
       child: Padding(
         padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('四项评分', style: SpeakUpDesign.cardTitle),
+            Text(title, style: SpeakUpDesign.cardTitle),
             const SizedBox(height: SpeakUpDesign.space8),
-            Text('0–9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
+            Text('0-9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
             const SizedBox(height: SpeakUpDesign.space16),
-            _ScoreRadarChart(criteria: report.criteria),
+            IeltsSpeakingScoreRadar(
+              criteria: criteria,
+              semanticsKey: radarSemanticsKey,
+            ),
           ],
         ),
       ),
@@ -392,10 +406,149 @@ class _ScoreOverview extends StatelessWidget {
   }
 }
 
-class _ScoreRadarChart extends StatelessWidget {
-  const _ScoreRadarChart({required this.criteria});
+class IeltsSpeakingAbilityProfile extends StatelessWidget {
+  const IeltsSpeakingAbilityProfile({
+    required this.report,
+    required this.loading,
+    super.key,
+  });
+
+  final IeltsSpeakingReport? report;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = report;
+    final criteria = value?.criteria;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('个人能力', style: SpeakUpDesign.sectionTitle),
+            const SizedBox(height: SpeakUpDesign.space16),
+            if (criteria == null)
+              ConstrainedBox(
+                key: const Key('review-ability-empty'),
+                constraints: const BoxConstraints(minHeight: 220),
+                child: _AbilityEmptyState(loading: loading),
+              )
+            else
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 380),
+                  child: IeltsSpeakingScoreRadar(
+                    criteria: criteria,
+                    semanticsKey: const Key('review-ability-radar'),
+                    height: 292,
+                    profileMode: true,
+                  ),
+                ),
+              ),
+            if (value != null) ...[
+              const SizedBox(height: SpeakUpDesign.space12),
+              _AbilitySummary(report: value),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AbilitySummary extends StatelessWidget {
+  const _AbilitySummary({required this.report});
+
+  final IeltsSpeakingReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final band = report.speakingOverallBand;
+    return Container(
+      key: const Key('review-ability-summary'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: SpeakUpDesign.space16,
+        vertical: SpeakUpDesign.space12,
+      ),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.canvas,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+      ),
+      child: Row(
+        children: [
+          Text('综合得分', style: SpeakUpDesign.meta),
+          const SizedBox(width: SpeakUpDesign.space8),
+          Text(
+            band?.toStringAsFixed(1) ?? '--',
+            key: const Key('review-ability-overall-band'),
+            style: SpeakUpDesign.sectionTitle.copyWith(
+              color: _abilityBlue,
+              fontSize: 28,
+              height: 1,
+            ),
+          ),
+          const SizedBox(width: SpeakUpDesign.space12),
+          Container(width: 1, height: 28, color: SpeakUpDesign.border),
+          const SizedBox(width: SpeakUpDesign.space12),
+          Expanded(
+            child: Text(
+              report.speakingOverallExplanation,
+              key: const Key('review-ability-summary-text'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: SpeakUpDesign.meta,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AbilityEmptyState extends StatelessWidget {
+  const _AbilityEmptyState({required this.loading});
+
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(SpeakUpDesign.space24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            loading ? '正在读取能力数据' : '完成一次 IELTS 口语完整模考',
+            textAlign: TextAlign.center,
+            style: SpeakUpDesign.cardTitle,
+          ),
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text(
+            loading ? '四项练习估分将在这里呈现' : '获得流利度、词汇、语法和发音四维能力图',
+            textAlign: TextAlign.center,
+            style: SpeakUpDesign.meta,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class IeltsSpeakingScoreRadar extends StatelessWidget {
+  const IeltsSpeakingScoreRadar({
+    required this.criteria,
+    this.semanticsKey = const Key('ielts-speaking-score-radar'),
+    this.height = 300,
+    this.profileMode = false,
+    super.key,
+  });
 
   final List<IeltsSpeakingCriterion> criteria;
+  final Key semanticsKey;
+  final double height;
+  final bool profileMode;
 
   @override
   Widget build(BuildContext context) {
@@ -417,35 +570,37 @@ class _ScoreRadarChart extends StatelessWidget {
         )
         .join('，');
     return Semantics(
-      key: const Key('ielts-speaking-score-radar'),
+      key: semanticsKey,
       label: 'IELTS 口语四维雷达图，$semanticLabel',
       child: SizedBox(
-        height: 300,
+        height: height,
         child: Stack(
           alignment: Alignment.center,
           children: [
             Positioned.fill(
               child: Padding(
                 padding: const EdgeInsets.all(48),
-                child: CustomPaint(painter: _RadarPainter(values)),
+                child: CustomPaint(
+                  painter: _RadarPainter(values, emphasized: profileMode),
+                ),
               ),
             ),
-            _RadarLabel(
+            _radarLabel(
               alignment: Alignment.topCenter,
               label: '流利与连贯',
               score: ordered[0]?.estimatedBand,
             ),
-            _RadarLabel(
+            _radarLabel(
               alignment: Alignment.centerRight,
               label: '发音',
               score: ordered[1]?.estimatedBand,
             ),
-            _RadarLabel(
+            _radarLabel(
               alignment: Alignment.bottomCenter,
               label: '语法',
               score: ordered[2]?.estimatedBand,
             ),
-            _RadarLabel(
+            _radarLabel(
               alignment: Alignment.centerLeft,
               label: '词汇',
               score: ordered[3]?.estimatedBand,
@@ -454,6 +609,17 @@ class _ScoreRadarChart extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _radarLabel({
+    required Alignment alignment,
+    required String label,
+    required int? score,
+  }) {
+    if (!profileMode) {
+      return _RadarLabel(alignment: alignment, label: label, score: score);
+    }
+    return _AbilityRadarLabel(alignment: alignment, label: label, score: score);
   }
 }
 
@@ -480,10 +646,47 @@ class _RadarLabel extends StatelessWidget {
   );
 }
 
+class _AbilityRadarLabel extends StatelessWidget {
+  const _AbilityRadarLabel({
+    required this.alignment,
+    required this.label,
+    this.score,
+  });
+
+  final Alignment alignment;
+  final String label;
+  final int? score;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: alignment,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.secondary),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          score == null ? '--' : '${score!}.0',
+          style: SpeakUpDesign.cardTitle.copyWith(
+            color: SpeakUpDesign.ink,
+            fontSize: 20,
+            height: 1.1,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class _RadarPainter extends CustomPainter {
-  const _RadarPainter(this.values);
+  const _RadarPainter(this.values, {this.emphasized = false});
 
   final List<double> values;
+  final bool emphasized;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -509,16 +712,35 @@ class _RadarPainter extends CustomPainter {
     canvas.drawPath(
       dataPath,
       Paint()
-        ..color = SpeakUpDesign.primary.withValues(alpha: 0.2)
+        ..color = (emphasized ? _abilityBlue : SpeakUpDesign.primary)
+            .withValues(alpha: emphasized ? 0.12 : 0.2)
         ..style = PaintingStyle.fill,
     );
     canvas.drawPath(
       dataPath,
       Paint()
-        ..color = SpeakUpDesign.primary
+        ..color = emphasized ? _abilityBlue : SpeakUpDesign.primary
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5,
+        ..strokeWidth = emphasized ? 2.4 : 2.5,
     );
+    if (emphasized) {
+      for (final point in _points(center, radius, normalized)) {
+        canvas.drawCircle(
+          point,
+          4.5,
+          Paint()
+            ..color = SpeakUpDesign.surface
+            ..style = PaintingStyle.fill,
+        );
+        canvas.drawCircle(
+          point,
+          2.8,
+          Paint()
+            ..color = _abilityBlue
+            ..style = PaintingStyle.fill,
+        );
+      }
+    }
   }
 
   Path _polygon(Offset center, double radius, List<num> scales) {
@@ -537,7 +759,7 @@ class _RadarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
-      oldDelegate.values != values;
+      oldDelegate.values != values || oldDelegate.emphasized != emphasized;
 }
 
 class _EvidenceStandard extends StatelessWidget {
