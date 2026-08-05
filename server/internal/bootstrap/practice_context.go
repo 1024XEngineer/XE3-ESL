@@ -10,7 +10,9 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceapi "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/api"
+	practiceplanpolicy "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	preparationsource "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/preparationsource"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
@@ -282,7 +284,7 @@ func newIdentityAgentAndPracticeComposition(
 		base.goalService,
 		threadReader,
 		catalog,
-		preparation.NewPolicyCatalog(),
+		practiceplanpolicy.NewResolver(),
 	)
 	if err != nil {
 		return nil, err
@@ -295,10 +297,14 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
+	planSource, err := preparationsource.New(planApplication)
+	if err != nil {
+		return nil, err
+	}
 	practiceApplication, err := practice.NewSessionApplication(
 		practiceRepository,
 		base.ids,
-		planApplication,
+		planSource,
 	)
 	if err != nil {
 		return nil, err

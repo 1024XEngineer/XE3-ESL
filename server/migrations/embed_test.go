@@ -422,6 +422,46 @@ func TestPracticeQuestionTipsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestPracticeExecutionPolicyReferenceMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000071_practice_execution_policy_refs.up.sql")
+	for _, required := range []string{
+		"RECREATE THE DEVELOPMENT OR TEST DATABASE",
+		"SCN_DAILY_CUSTOM",
+		"DAILY.PRACTICE.SESSION.V1",
+		"SCN_WORKPLACE_CUSTOM",
+		"WORKPLACE.PRACTICE.SESSION.V1",
+		"SCN_INTERVIEW_CUSTOM",
+		"INTERVIEW.PRACTICE.SESSION.V1",
+		"SCN_SPEAKING_EXAM_CUSTOM",
+		"EXAM.PRACTICE.SESSION.V1",
+		"RETRY_ALLOWED",
+		"QUESTION_TRANSLATION_ALLOWED",
+		"JSONB_TYPEOF(PAYLOAD -> 'RETRY_ALLOWED') <> 'BOOLEAN'",
+		"JSONB_TYPEOF(PAYLOAD -> 'QUESTION_TRANSLATION_ALLOWED') <> 'BOOLEAN'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("up migration missing %q", required)
+		}
+	}
+	if strings.Contains(up, "SCENE_FAMILY") || strings.Contains(up, "SCENE_MODEL") {
+		t.Error("up migration must not infer execution policy from Scene metadata")
+	}
+
+	down := readMigration(t, "000071_practice_execution_policy_refs.down.sql")
+	if !strings.Contains(down, "GENERIC.PRACTICE.SESSION.V1") {
+		t.Error("down migration must restore prior explicit policy references")
+	}
+	if !strings.Contains(
+		down,
+		"PRACTICE EXECUTION POLICY ROLLBACK REQUIRES EMPTY",
+	) || strings.Contains(down, "QUESTION_TRANSLATION_ALLOWED") ||
+		strings.Contains(down, "RETRY_ALLOWED") {
+		t.Error("down migration must restore the prior Session Policy JSON shape")
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

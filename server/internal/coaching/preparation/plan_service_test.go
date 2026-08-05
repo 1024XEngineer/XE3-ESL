@@ -793,7 +793,7 @@ func newPlanTestService(
 			resolveAccessible: dependencies.resolveAccessibleSelection,
 			resolveIELTS:      dependencies.resolveIELTS,
 		},
-		NewPolicyCatalog(),
+		planPolicyResolverStub{},
 	)
 	if err != nil {
 		t.Fatalf("NewPlanService: %v", err)
@@ -845,7 +845,7 @@ func planSelectionFixture() scene.SelectionSnapshot {
 		Version:             2,
 		Status:              scene.SceneStatusActive,
 		TurnPolicyRef:       "interview.turn.v1",
-		SessionPolicyRef:    genericPracticeSessionPolicyRef,
+		SessionPolicyRef:    "generic.practice.session.v1",
 		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt: scene.ScenePrompt{
 			PublicSceneBrief:         "Interview practice",
@@ -888,6 +888,36 @@ func planSelectionFixture() scene.SelectionSnapshot {
 		SelectedRoleIDs:  []string{"role-1"},
 		PracticeOptionID: "option-full",
 	}
+}
+
+type planPolicyResolverStub struct{}
+
+func (planPolicyResolverStub) ResolveSessionPolicy(
+	definition scene.SceneDefinition,
+	option scene.PracticeOption,
+	requestedMaxEffectiveTurns int,
+) (SessionPolicy, error) {
+	policy := SessionPolicy{
+		SuggestedDurationSeconds: definition.Prompt.SuggestedDurationSeconds,
+		MinEffectiveTurns:        4,
+		MaxEffectiveTurns:        6,
+		CoverageCheckpointTurn:   4,
+		MaxFollowUpsPerQuestion:  1,
+		EarlyCompletionRule:      EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+	}
+	if option.Type == scene.PracticeOptionFocus {
+		policy.MinEffectiveTurns = 1
+		policy.MaxEffectiveTurns = 3
+		policy.CoverageCheckpointTurn = 1
+	}
+	if requestedMaxEffectiveTurns > 0 {
+		if requestedMaxEffectiveTurns < policy.MinEffectiveTurns ||
+			requestedMaxEffectiveTurns > policy.MaxEffectiveTurns {
+			return SessionPolicy{}, ErrPlanInvalid
+		}
+		policy.MaxEffectiveTurns = requestedMaxEffectiveTurns
+	}
+	return policy, nil
 }
 
 func completePlanFixture() PracticePlan {

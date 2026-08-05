@@ -113,7 +113,7 @@ func (a *Application) SubmitTurn(
 	if err != nil {
 		return Turn{}, err
 	}
-	decision, err := a.practice.ApplyTurnOutcome(practice.TurnOutcome{
+	decision, err := a.practice.ApplyTurnOutcome(practiceTurnOutcome{
 		SessionID: turn.SessionID,
 		TurnID:    turn.ID,
 		IsRetry:   turn.Kind == practice.TurnKindRetry,

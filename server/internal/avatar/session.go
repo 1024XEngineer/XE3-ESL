@@ -7,7 +7,6 @@ import (
 	"time"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -111,9 +110,9 @@ func (service *Service) IssueSessionToken(
 		)
 	}
 	if session.ID != practiceSessionID ||
-		(session.SceneFamily != scene.SceneFamilyWorkplace &&
-			session.SceneFamily != scene.SceneFamilyDaily &&
-			session.SceneFamily != scene.SceneFamilyInterview) ||
+		(session.SceneFamily != practice.SceneFamilyWorkplace &&
+			session.SceneFamily != practice.SceneFamilyDaily &&
+			session.SceneFamily != practice.SceneFamilyInterview) ||
 		(session.Status != practice.SessionStarting &&
 			session.Status != practice.SessionInProgress) {
 		return SessionToken{}, apperror.New(

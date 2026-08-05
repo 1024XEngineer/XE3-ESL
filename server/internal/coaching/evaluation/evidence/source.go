@@ -16,8 +16,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -1017,23 +1015,23 @@ func validCompletedEvidenceSession(
 }
 
 func evidenceSceneMatches(
-	family scene.SceneFamily,
-	model scene.SceneModel,
+	family practice.SceneFamily,
+	model practice.SceneModel,
 	sceneType evaluation.SceneType,
 ) bool {
 	switch family {
-	case scene.SceneFamilyExam:
+	case practice.SceneFamilyExam:
 		return sceneType == evaluation.SceneIELTSSpeaking &&
-			(model == scene.SceneModelIELTSSpeakingPart1 ||
-				model == scene.SceneModelIELTSSpeakingPart2 ||
-				model == scene.SceneModelIELTSSpeakingPart3 ||
-				model == scene.SceneModelIELTSSpeakingFullMock ||
-				model == scene.SceneModelExamBasicDialogue)
-	case scene.SceneFamilyInterview:
+			(model == practice.SceneModelIELTSSpeakingPart1 ||
+				model == practice.SceneModelIELTSSpeakingPart2 ||
+				model == practice.SceneModelIELTSSpeakingPart3 ||
+				model == practice.SceneModelIELTSSpeakingFullMock ||
+				model == practice.SceneModelExamBasicDialogue)
+	case practice.SceneFamilyInterview:
 		return sceneType == evaluation.SceneInterview
-	case scene.SceneFamilyDaily:
+	case practice.SceneFamilyDaily:
 		return sceneType == evaluation.SceneOverseasDaily
-	case scene.SceneFamilyWorkplace:
+	case practice.SceneFamilyWorkplace:
 		return sceneType == evaluation.SceneOverseasWorkplace
 	default:
 		return false
@@ -1177,7 +1175,7 @@ func evidencePracticeContextFromSnapshot(
 }
 
 func evidenceObjectives(
-	source []preparation.PracticeObjective,
+	source []practice.PracticeObjective,
 ) []Objective {
 	result := make([]Objective, len(source))
 	for index, item := range source {
@@ -1193,7 +1191,7 @@ func evidenceObjectives(
 }
 
 func evidencePreparationContextFromSnapshot(
-	source preparation.Snapshot,
+	source practice.PreparationSnapshot,
 ) PreparationContext {
 	result := PreparationContext{
 		SnapshotID:                         source.ID,
@@ -1258,7 +1256,7 @@ func evidenceTextHash(value string) string {
 }
 
 func evidenceResumeSnapshotHash(
-	value *preparation.ResumeRevisionSnapshot,
+	value *practice.ResumeRevisionSnapshot,
 ) string {
 	if value == nil {
 		return ""

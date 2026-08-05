@@ -12,7 +12,9 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	preparationsource "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/preparationsource"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
@@ -445,14 +447,17 @@ func createContextPlan(
 		BackgroundSnapshot: "Backend engineer",
 		CreatedAt:          owner.PreparationAt.UTC(),
 	}
-	policy := preparation.SessionPolicy{
-		SuggestedDurationSeconds: 600,
-		MinEffectiveTurns:        1,
-		MaxEffectiveTurns:        3,
-		CoverageCheckpointTurn:   1,
-		MaxFollowUpsPerQuestion:  1,
-		EarlyCompletionRule: preparation.
-			EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+	option, err := selection.PracticeOption()
+	if err != nil {
+		t.Fatalf("PracticeOption: %v", err)
+	}
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
+		selection.Scene,
+		option,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("ResolveSessionPolicy: %v", err)
 	}
 	objectives := []preparation.PracticeObjective{{
 		ID: "clarity", Description: "clarity",
@@ -486,7 +491,8 @@ func contextSessionCommand(
 	snapshotID string,
 	key string,
 ) practice.CreateSessionCommand {
-	roles, _ := plan.SceneSelection.SelectedRoles()
+	projection := mustProjectContextPlan(plan)
+	roles, _ := projection.SceneSelection.SelectedRoles()
 	participants := make([]practice.Participant, 0, len(roles)+1)
 	for _, role := range roles {
 		roleCopy := role
@@ -505,13 +511,13 @@ func contextSessionCommand(
 	})
 	snapshot := practice.SessionSnapshot{
 		ID: snapshotID, SessionID: sessionID, PlanRevision: plan.Revision,
-		SceneFamily:        plan.SceneSelection.Scene.Family,
-		SceneModel:         plan.SceneSelection.Scene.Model,
-		SceneSelection:     plan.SceneSelection,
-		Preparation:        plan.PreparationSnapshot,
+		SceneFamily:        projection.SceneSelection.Scene.Family,
+		SceneModel:         projection.SceneSelection.Scene.Model,
+		SceneSelection:     projection.SceneSelection,
+		Preparation:        projection.Preparation,
 		Participants:       participants,
-		SessionPolicy:      plan.SessionPolicy,
-		PracticeObjectives: plan.PracticeObjectives,
+		SessionPolicy:      projection.SessionPolicy,
+		PracticeObjectives: projection.PracticeObjectives,
 	}
 	return practice.CreateSessionCommand{
 		SessionID: sessionID, SnapshotID: snapshotID,
@@ -522,6 +528,38 @@ func contextSessionCommand(
 			Key:           key, PayloadFingerprint: sha256.Sum256([]byte(key)),
 		},
 	}
+}
+
+func mustProjectContextPlan(
+	plan preparation.PracticePlan,
+) practice.PlanProjection {
+	reader, err := preparationsource.New(contextPlanReader{plan: plan})
+	if err != nil {
+		panic(err)
+	}
+	projection, err := reader.ReadExecutablePlan(
+		context.Background(),
+		requestcontext.Actor{UserID: plan.UserID, SessionID: "fixture"},
+		plan.ID,
+		plan.Revision,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return projection
+}
+
+type contextPlanReader struct {
+	plan preparation.PracticePlan
+}
+
+func (reader contextPlanReader) ReadExecutablePlan(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	int,
+) (preparation.PracticePlan, error) {
+	return reader.plan, nil
 }
 
 func preparationPlanIntent(

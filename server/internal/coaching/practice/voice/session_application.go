@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -15,24 +14,25 @@ import (
 // only the immutable routing data needed to create voice-practice
 // Questions and the authoritative progress returned by Practice.
 type Session struct {
-	ID                       string
-	PlanID                   string
-	SceneID                  string
-	SceneVersion             int
-	SceneFamily              string
-	SceneModel               string
-	TurnPolicyRef            string
-	Prompt                   scene.ScenePrompt
-	PreviousUserResponse     string
-	PreviousQuestion         string
-	SessionVersion           int
-	EffectiveTurns           int
-	TurnLimit                int
-	MaxFollowUpsPerQuestion  int
-	Completed                bool
-	Status                   string
-	FacilitatorParticipantID string
-	LearnerParticipantID     string
+	ID                         string
+	PlanID                     string
+	SceneID                    string
+	SceneVersion               int
+	SceneFamily                string
+	SceneModel                 string
+	TurnPolicyRef              string
+	Prompt                     practice.ScenePrompt
+	PreviousUserResponse       string
+	PreviousQuestion           string
+	SessionVersion             int
+	EffectiveTurns             int
+	TurnLimit                  int
+	MaxFollowUpsPerQuestion    int
+	QuestionTranslationAllowed bool
+	Completed                  bool
+	Status                     string
+	FacilitatorParticipantID   string
+	LearnerParticipantID       string
 }
 
 type SessionPort interface {
@@ -152,7 +152,7 @@ func (application *SessionApplication) QuestionTranslation(
 	if err != nil {
 		return QuestionTranslation{}, err
 	}
-	if session.ID != question.SessionID || session.SceneFamily != "INTERVIEW" {
+	if session.ID != question.SessionID || !session.QuestionTranslationAllowed {
 		return QuestionTranslation{}, ErrInvalidContext
 	}
 	content, err := application.translator.TranslateQuestion(
@@ -508,7 +508,7 @@ func (application *SessionApplication) restoreTurnHistory(
 }
 
 func validVoiceTurnPolicy(reference string) bool {
-	_, err := resolveTurnPolicy(reference)
+	_, err := practice.ResolveTurnPolicy(reference)
 	return err == nil
 }
 

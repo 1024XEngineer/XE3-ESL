@@ -56,4 +56,5 @@ import "embed"
 //go:embed 000068_preparation_resume_revision.*.sql
 //go:embed 000069_scene_evaluation_policy_ref.*.sql
 //go:embed 000070_practice_question_tips.*.sql
+//go:embed 000071_practice_execution_policy_refs.*.sql
 var Files embed.FS

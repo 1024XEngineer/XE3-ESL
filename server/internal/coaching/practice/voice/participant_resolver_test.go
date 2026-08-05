@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -30,7 +29,7 @@ func TestApplicationResolvesLearnerFromFrozenSnapshot(t *testing.T) {
 						SubjectID: "role-1",
 					},
 					RoleDefinitionID: "role-1",
-					RoleSnapshot: &scene.RoleDefinition{
+					RoleSnapshot: &practice.RoleDefinition{
 						ID: "role-1",
 					},
 				},

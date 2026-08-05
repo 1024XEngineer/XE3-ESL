@@ -9,22 +9,24 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/preparationsource"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 const (
-	DemoUserID              = "user_demo"
-	DemoScene               = "scn_programmer_interview"
-	DemoRoleDefinition      = "role_technical_interviewer"
-	DemoPracticeOption      = "option_full_simulation"
-	demoFacilitatorID       = "participant_facilitator_001"
-	demoLearnerID           = "participant_learner_001"
-	demoPreparationProfile  = "profile_demo_001"
-	demoPreparationSnapshot = "preparation_snapshot_demo_001"
-	demoResumeID            = "50000000-0000-4000-8000-000000000001"
-	demoPracticePlan        = "plan_demo_001"
-	demoPracticeSession     = "session_demo_001"
+	DemoUserID                             = "user_demo"
+	DemoScene                              = "scn_programmer_interview"
+	DemoRoleDefinition                     = "role_technical_interviewer"
+	DemoPracticeOption                     = "option_full_simulation"
+	demoFacilitatorID                      = "participant_facilitator_001"
+	demoLearnerID                          = "participant_learner_001"
+	demoPreparationProfile                 = "profile_demo_001"
+	demoPreparationSnapshot                = "preparation_snapshot_demo_001"
+	demoResumeID                           = "50000000-0000-4000-8000-000000000001"
+	demoPracticePlan                       = "plan_demo_001"
+	demoPracticeSession                    = "session_demo_001"
+	coverageSatisfiedAtCheckpointEndReason = "COVERAGE_SATISFIED_AT_CHECKPOINT"
 )
 
 var (
@@ -327,15 +329,13 @@ func (r *Runtime) createSession() (
 }
 
 func (r *Runtime) sessionLocked() practice.Session {
-	if r.plan == nil {
-		panic("deterministic Practice Plan is required")
-	}
+	plan := r.planProjectionLocked()
 	session := practice.Session{
 		ID:             demoPracticeSession,
-		PlanID:         r.plan.ID,
-		PlanRevision:   r.plan.Revision,
-		SceneFamily:    r.plan.SceneSelection.Scene.Family,
-		SceneModel:     r.plan.SceneSelection.Scene.Model,
+		PlanID:         plan.ID,
+		PlanRevision:   plan.Revision,
+		SceneFamily:    plan.SceneSelection.Scene.Family,
+		SceneModel:     plan.SceneSelection.Scene.Model,
 		SnapshotID:     "snapshot_session_demo_001",
 		Status:         r.sessionStatus,
 		EffectiveTurns: r.effectiveTurns,
@@ -349,7 +349,7 @@ func (r *Runtime) sessionLocked() practice.Session {
 	if r.sessionStatus == practice.SessionCompleted {
 		endedAt := r.now.Add(80 * time.Second)
 		session.EndedAt = &endedAt
-		session.EndReason = practice.EndReasonCoverageSatisfiedAtCheckpoint
+		session.EndReason = coverageSatisfiedAtCheckpointEndReason
 	}
 	return session
 }
@@ -644,10 +644,8 @@ func (r *Runtime) lastEventSequenceLocked() int {
 }
 
 func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
-	if r.plan == nil {
-		panic("deterministic Practice Plan is required")
-	}
-	roles, err := r.plan.SceneSelection.SelectedRoles()
+	plan := r.planProjectionLocked()
+	roles, err := plan.SceneSelection.SelectedRoles()
 	if err != nil || len(roles) != 1 {
 		panic("resolve deterministic Scene role")
 	}
@@ -655,11 +653,11 @@ func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 	return practice.SessionSnapshot{
 		ID:             "snapshot_session_demo_001",
 		SessionID:      demoPracticeSession,
-		PlanRevision:   r.plan.Revision,
-		SceneFamily:    r.plan.SceneSelection.Scene.Family,
-		SceneModel:     r.plan.SceneSelection.Scene.Model,
-		SceneSelection: r.plan.SceneSelection,
-		Preparation:    r.plan.PreparationSnapshot,
+		PlanRevision:   plan.Revision,
+		SceneFamily:    plan.SceneSelection.Scene.Family,
+		SceneModel:     plan.SceneSelection.Scene.Model,
+		SceneSelection: plan.SceneSelection,
+		Preparation:    plan.Preparation,
 		Participants: []practice.Participant{
 			{
 				ID:               demoFacilitatorID,
@@ -678,11 +676,22 @@ func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 				Order:      2,
 			},
 		},
-		SessionPolicy:      r.plan.SessionPolicy,
-		PracticeObjectives: append([]preparation.PracticeObjective(nil), r.plan.PracticeObjectives...),
-		IELTSAssignment:    r.plan.IELTSAssignment,
+		SessionPolicy:      plan.SessionPolicy,
+		PracticeObjectives: append([]practice.PracticeObjective(nil), plan.PracticeObjectives...),
+		IELTSAssignment:    plan.IELTSAssignment,
 		CreatedAt:          r.now.Add(4 * time.Second),
 	}
+}
+
+func (r *Runtime) planProjectionLocked() practice.PlanProjection {
+	if r.plan == nil {
+		panic("deterministic Practice Plan is required")
+	}
+	projection, err := preparationsource.ProjectConfirmedPlan(*r.plan)
+	if err != nil {
+		panic("project deterministic Practice Plan")
+	}
+	return projection
 }
 
 func mustJSONMap(value any) map[string]any {

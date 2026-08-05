@@ -4,11 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"slices"
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -186,18 +184,19 @@ func mapPracticeSession(
 		return Session{}, ErrInvalidContext
 	}
 	result := Session{
-		ID:                      session.ID,
-		PlanID:                  session.PlanID,
-		SceneID:                 selection.Scene.ID,
-		SceneVersion:            selection.Scene.Version,
-		SceneFamily:             string(snapshot.SceneFamily),
-		SceneModel:              string(snapshot.SceneModel),
-		TurnPolicyRef:           selection.Scene.TurnPolicyRef,
-		Prompt:                  cloneScenePrompt(selection.Scene.Prompt),
-		SessionVersion:          session.Version,
-		EffectiveTurns:          session.EffectiveTurns,
-		TurnLimit:               snapshot.SessionPolicy.MaxEffectiveTurns,
-		MaxFollowUpsPerQuestion: snapshot.SessionPolicy.MaxFollowUpsPerQuestion,
+		ID:                         session.ID,
+		PlanID:                     session.PlanID,
+		SceneID:                    selection.Scene.ID,
+		SceneVersion:               selection.Scene.Version,
+		SceneFamily:                string(snapshot.SceneFamily),
+		SceneModel:                 string(snapshot.SceneModel),
+		TurnPolicyRef:              selection.Scene.TurnPolicyRef,
+		Prompt:                     cloneScenePrompt(selection.Scene.Prompt),
+		SessionVersion:             session.Version,
+		EffectiveTurns:             session.EffectiveTurns,
+		TurnLimit:                  snapshot.SessionPolicy.MaxEffectiveTurns,
+		MaxFollowUpsPerQuestion:    snapshot.SessionPolicy.MaxFollowUpsPerQuestion,
+		QuestionTranslationAllowed: snapshot.SessionPolicy.QuestionTranslationAllowed,
 		Completed: session.Status ==
 			practice.SessionCompleted,
 		Status: string(session.Status),
@@ -282,10 +281,10 @@ func mapPracticeSession(
 	return result, nil
 }
 
-func cloneScenePrompt(source scene.ScenePrompt) scene.ScenePrompt {
+func cloneScenePrompt(source practice.ScenePrompt) practice.ScenePrompt {
 	result := source
-	result.FocusAreas = slices.Clone(source.FocusAreas)
-	result.TurnBlueprints = slices.Clone(source.TurnBlueprints)
+	result.FocusAreas = append([]string(nil), source.FocusAreas...)
+	result.TurnBlueprints = append([]string(nil), source.TurnBlueprints...)
 	return result
 }
 

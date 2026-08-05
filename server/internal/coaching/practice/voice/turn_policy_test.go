@@ -6,27 +6,25 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 func TestResolveTurnPolicyUsesExactRegisteredReference(t *testing.T) {
-	tests := map[string]turnPolicy{
-		genericPracticeTurnPolicy:             turnPolicyGenerated,
-		dailyHotelCheckinIssueTurnPolicy:      turnPolicyGenerated,
-		workplaceProgressRiskUpdateTurnPolicy: turnPolicyGenerated,
-		interviewProjectDeepDiveTurnPolicy:    turnPolicyInterview,
-		ieltsSpeakingPart1TurnPolicy:          turnPolicyFrozenIELTS,
-		ieltsSpeakingPart2TurnPolicy:          turnPolicyFrozenIELTS,
-		ieltsSpeakingPart3TurnPolicy:          turnPolicyFrozenIELTS,
-		ieltsSpeakingFullMockTurnPolicy:       turnPolicyFrozenIELTS,
+	tests := map[string]practice.TurnPolicyKind{
+		practice.GenericPracticeTurnPolicy:             practice.TurnPolicyGenerated,
+		practice.DailyHotelCheckinIssueTurnPolicy:      practice.TurnPolicyGenerated,
+		practice.WorkplaceProgressRiskUpdateTurnPolicy: practice.TurnPolicyGenerated,
+		practice.InterviewProjectDeepDiveTurnPolicy:    practice.TurnPolicyInterview,
+		practice.IELTSSpeakingPart1TurnPolicy:          practice.TurnPolicyFrozenIELTS,
+		practice.IELTSSpeakingPart2TurnPolicy:          practice.TurnPolicyFrozenIELTS,
+		practice.IELTSSpeakingPart3TurnPolicy:          practice.TurnPolicyFrozenIELTS,
+		practice.IELTSSpeakingFullMockTurnPolicy:       practice.TurnPolicyFrozenIELTS,
 	}
 	for reference, want := range tests {
 		t.Run(reference, func(t *testing.T) {
-			got, err := resolveTurnPolicy(reference)
-			if err != nil || got != want {
-				t.Fatalf("resolveTurnPolicy(%q) = %d, %v", reference, got, err)
+			got, err := practice.ResolveTurnPolicy(reference)
+			if err != nil || got.Kind != want {
+				t.Fatalf("ResolveTurnPolicy(%q) = %#v, %v", reference, got, err)
 			}
 		})
 	}
@@ -37,8 +35,8 @@ func TestResolveTurnPolicyUsesExactRegisteredReference(t *testing.T) {
 		"generic.practice.turn.v2",
 	} {
 		t.Run("reject "+reference, func(t *testing.T) {
-			if _, err := resolveTurnPolicy(reference); !errors.Is(err, ErrInvalidContext) {
-				t.Fatalf("resolveTurnPolicy(%q) error = %v", reference, err)
+			if _, err := practice.ResolveTurnPolicy(reference); !errors.Is(err, practice.ErrExecutionPolicyNotFound) {
+				t.Fatalf("ResolveTurnPolicy(%q) error = %v", reference, err)
 			}
 		})
 	}
@@ -51,7 +49,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 			response: "What outcome do you need?",
 		}
 		session := sessionFixture()
-		session.TurnPolicyRef = genericPracticeTurnPolicy
+		session.TurnPolicyRef = practice.GenericPracticeTurnPolicy
 		session.SceneFamily = "INTERVIEW"
 		session.SceneModel = "IELTS_SPEAKING_FULL_MOCK"
 		session.Prompt.TurnBlueprints = []string{"Open", "Clarify"}
@@ -80,7 +78,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 			response: `{"question_type":"FOLLOW_UP","content":"What changed after launch?"}`,
 		}
 		session := sessionFixture()
-		session.TurnPolicyRef = interviewProjectDeepDiveTurnPolicy
+		session.TurnPolicyRef = practice.InterviewProjectDeepDiveTurnPolicy
 		session.SceneFamily = "DAILY"
 		session.SceneModel = "DAILY_BASIC_DIALOGUE"
 		session.EffectiveTurns = 1
@@ -107,7 +105,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		repository := newTurnPolicyQuestionRepository()
 		generator := &turnPolicyQuestionGenerator{response: "must not be used"}
 		session := sessionFixture()
-		session.TurnPolicyRef = ieltsSpeakingPart1TurnPolicy
+		session.TurnPolicyRef = practice.IELTSSpeakingPart1TurnPolicy
 		session.SceneFamily = "DAILY"
 		session.SceneModel = "DAILY_BASIC_DIALOGUE"
 		session.Prompt.TurnBlueprints = []string{"Part 1: What do you do?"}
@@ -174,14 +172,14 @@ func TestSessionAdapterRejectsUnknownPolicyBeforeActivation(t *testing.T) {
 
 func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 	bootstrap := turnPolicySessionBootstrap(
-		interviewProjectDeepDiveTurnPolicy,
+		practice.InterviewProjectDeepDiveTurnPolicy,
 	)
 
 	mapped, err := mapPracticeSession(bootstrap, "user-1")
 	if err != nil {
 		t.Fatalf("mapPracticeSession: %v", err)
 	}
-	if mapped.TurnPolicyRef != interviewProjectDeepDiveTurnPolicy {
+	if mapped.TurnPolicyRef != practice.InterviewProjectDeepDiveTurnPolicy {
 		t.Fatalf("TurnPolicyRef = %q", mapped.TurnPolicyRef)
 	}
 
@@ -198,16 +196,22 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 func turnPolicySessionBootstrap(
 	turnPolicyRef string,
 ) practice.SessionBootstrap {
-	role := scene.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
-	definition := scene.SceneDefinition{
+	role := practice.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
+	definition := practice.SceneDefinition{
 		ID:                  "scene-1",
-		Family:              scene.SceneFamilyInterview,
-		Model:               scene.SceneModelProjectExperienceDeepDive,
+		Family:              practice.SceneFamilyInterview,
+		Model:               practice.SceneModelProjectExperienceDeepDive,
 		Version:             1,
+		Status:              practice.SceneStatusActive,
 		TurnPolicyRef:       turnPolicyRef,
+		SessionPolicyRef:    practice.InterviewProjectDeepDiveSessionPolicy,
 		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt:              sessionFixture().Prompt,
-		Roles:               []scene.RoleDefinition{role},
+		Roles:               []practice.RoleDefinition{role},
+		PracticeOptions: []practice.PracticeOption{{
+			ID: "option-1", SceneID: "scene-1",
+			Type: practice.PracticeOptionFullSimulation,
+		}},
 	}
 	return practice.SessionBootstrap{
 		Session: practice.Session{
@@ -228,9 +232,10 @@ func turnPolicySessionBootstrap(
 			PlanRevision: 1,
 			SceneFamily:  definition.Family,
 			SceneModel:   definition.Model,
-			SceneSelection: scene.SelectionSnapshot{
-				Scene:           definition,
-				SelectedRoleIDs: []string{role.ID},
+			SceneSelection: practice.SceneSelection{
+				Scene:            definition,
+				SelectedRoleIDs:  []string{role.ID},
+				PracticeOptionID: "option-1",
 			},
 			Participants: []practice.Participant{
 				{
@@ -253,9 +258,13 @@ func turnPolicySessionBootstrap(
 					Order: 2,
 				},
 			},
-			SessionPolicy: preparation.SessionPolicy{
-				MaxEffectiveTurns:       3,
-				MaxFollowUpsPerQuestion: 1,
+			SessionPolicy: practice.SessionPolicy{
+				SuggestedDurationSeconds: 600,
+				MinEffectiveTurns:        4,
+				MaxEffectiveTurns:        6,
+				CoverageCheckpointTurn:   4,
+				MaxFollowUpsPerQuestion:  3,
+				EarlyCompletionRule:      practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 			},
 		},
 	}

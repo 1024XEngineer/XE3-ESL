@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -38,7 +36,7 @@ func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 	}
 	command := repository.created
 	if command.PlanID != plan.ID || command.PlanRevision != plan.Revision ||
-		command.Snapshot.Preparation.ID != plan.PreparationSnapshot.ID ||
+		command.Snapshot.Preparation.ID != plan.Preparation.ID ||
 		command.Snapshot.SceneSelection.Scene.ID !=
 			plan.SceneSelection.Scene.ID ||
 		command.Snapshot.SessionPolicy != plan.SessionPolicy ||
@@ -60,8 +58,10 @@ func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	t.Parallel()
 	plan := practicePlanFixture()
-	plan.SceneSelection.Scene.Family = scene.SceneFamilyExam
-	plan.SceneSelection.Scene.Model = scene.SceneModelIELTSSpeakingPart1
+	plan.SceneSelection.Scene.Family = SceneFamilyExam
+	plan.SceneSelection.Scene.Model = SceneModelIELTSSpeakingPart1
+	plan.SceneSelection.Scene.TurnPolicyRef = IELTSSpeakingPart1TurnPolicy
+	plan.SceneSelection.Scene.SessionPolicyRef = IELTSSpeakingPart1SessionPolicy
 	blueprints := []string{
 		"question-1", "question-2", "question-3", "question-4",
 		"question-5", "question-6", "question-7", "question-8",
@@ -72,10 +72,14 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 		[]string(nil),
 		blueprints...,
 	)
-	plan.IELTSAssignment = &preparation.IELTSAssignmentSnapshot{
+	plan.SessionPolicy.MinEffectiveTurns = len(blueprints)
+	plan.SessionPolicy.MaxEffectiveTurns = len(blueprints)
+	plan.SessionPolicy.CoverageCheckpointTurn = len(blueprints)
+	plan.SessionPolicy.MaxFollowUpsPerQuestion = 0
+	plan.IELTSAssignment = &IELTSAssignment{
 		BankID:         "ielts-bank-1",
 		Season:         "2026-05",
-		Mode:           scene.IELTSPracticeModePart1,
+		Mode:           IELTSPracticeModePart1,
 		Part1SetID:     "part-1-set-1",
 		Part1Questions: 8,
 		TurnBlueprints: append([]string(nil), blueprints...),
@@ -134,7 +138,7 @@ func TestSessionApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	application := newContextTestApplication(
 		t,
 		&sessionRepositoryStub{},
-		&planReaderStub{err: preparation.ErrPlanConflict},
+		&planReaderStub{err: ErrConflict},
 	)
 	_, _, err := application.CreateSession(
 		context.Background(),
@@ -145,6 +149,60 @@ func TestSessionApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("CreateSession stale error = %v", err)
+	}
+}
+
+func TestSessionApplicationRejectsUnknownPoliciesBeforeRepositoryWrite(
+	t *testing.T,
+) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*PlanProjection)
+	}{
+		{
+			name: "unknown Session policy",
+			mutate: func(plan *PlanProjection) {
+				plan.SceneSelection.Scene.SessionPolicyRef =
+					"unknown.practice.session.v1"
+			},
+		},
+		{
+			name: "unknown Turn policy",
+			mutate: func(plan *PlanProjection) {
+				plan.SceneSelection.Scene.TurnPolicyRef =
+					"unknown.practice.turn.v1"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := practicePlanFixture()
+			test.mutate(&plan)
+			repository := &sessionRepositoryStub{}
+			application := newContextTestApplication(
+				t,
+				repository,
+				&planReaderStub{plan: plan},
+			)
+			_, _, err := application.CreateSession(
+				context.Background(),
+				practiceActorFixture(),
+				plan.ID,
+				"unknown-policy-key",
+				CreateSessionRequest{
+					ExpectedPlanRevision: plan.Revision,
+					UserConfirmed:        true,
+				},
+			)
+			if !errors.Is(err, ErrConflict) || repository.createCalls != 0 {
+				t.Fatalf(
+					"CreateSession() = %v, writes = %d",
+					err,
+					repository.createCalls,
+				)
+			}
+		})
 	}
 }
 
@@ -170,7 +228,7 @@ func TestSessionApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
 func newContextTestApplication(
 	t *testing.T,
 	repository SessionRepository,
-	reader preparation.PlanReader,
+	reader PlanProjectionReader,
 ) *SessionApplication {
 	t.Helper()
 	application, err := NewSessionApplication(
@@ -189,17 +247,19 @@ func newContextTestApplication(
 	return application
 }
 
-func practicePlanFixture() preparation.PracticePlan {
+func practicePlanFixture() PlanProjection {
 	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
-	definition := scene.SceneDefinition{
+	definition := SceneDefinition{
 		ID:                  "scene-1",
-		Family:              scene.SceneFamilyInterview,
-		Model:               scene.SceneModelInterviewBasicDialogue,
+		Family:              SceneFamilyInterview,
+		Model:               SceneModelInterviewBasicDialogue,
 		Name:                "Interview",
 		Version:             1,
-		Status:              scene.SceneStatusActive,
+		Status:              SceneStatusActive,
+		TurnPolicyRef:       GenericPracticeTurnPolicy,
+		SessionPolicyRef:    GenericPracticeSessionPolicy,
 		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
-		Prompt: scene.ScenePrompt{
+		Prompt: ScenePrompt{
 			PublicSceneBrief:         "Brief",
 			PracticeGoal:             "Goal",
 			UserRole:                 "Candidate",
@@ -209,56 +269,51 @@ func practicePlanFixture() preparation.PracticePlan {
 			TurnBlueprints:           []string{"question"},
 			SuggestedDurationSeconds: 600,
 		},
-		Roles: []scene.RoleDefinition{{
+		Roles: []RoleDefinition{{
 			ID:               "role-1",
 			SceneID:          "scene-1",
 			Type:             "INTERVIEWER",
 			DisplayName:      "Interviewer",
 			Responsibilities: "Ask",
 			Style:            "Direct",
-			PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+			PracticeObjectives: []PracticeObjectiveDefinition{{
 				ID: "clarity", Description: "Explain the answer clearly.",
 			}},
 		}},
-		PracticeOptions: []scene.PracticeOption{{
+		PracticeOptions: []PracticeOption{{
 			ID:          "option-full",
 			SceneID:     "scene-1",
-			Type:        scene.PracticeOptionFullSimulation,
+			Type:        PracticeOptionFullSimulation,
 			DisplayName: "Full",
 		}},
 	}
-	return preparation.PracticePlan{
-		ID:             "plan-1",
-		UserID:         "user-1",
-		SourceThreadID: "thread-1",
-		PreparationSnapshot: preparation.Snapshot{
+	return PlanProjection{
+		ID:          "plan-1",
+		OwnerUserID: "user-1",
+		Preparation: PreparationSnapshot{
 			ID:                 "snapshot-preparation-1",
 			SourceProfileID:    "profile-1",
 			SourceVersion:      1,
 			BackgroundSnapshot: "Backend engineer",
 			CreatedAt:          createdAt,
 		},
-		SceneSelection: scene.SelectionSnapshot{
+		SceneSelection: SceneSelection{
 			Scene:            definition,
 			SelectedRoleIDs:  []string{"role-1"},
 			PracticeOptionID: "option-full",
 		},
-		SessionPolicy: preparation.SessionPolicy{
+		SessionPolicy: SessionPolicy{
 			SuggestedDurationSeconds: 600,
 			MinEffectiveTurns:        4,
 			MaxEffectiveTurns:        6,
 			CoverageCheckpointTurn:   4,
 			MaxFollowUpsPerQuestion:  1,
-			EarlyCompletionRule: preparation.
-				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+			EarlyCompletionRule:      EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		},
-		PracticeObjectives: []preparation.PracticeObjective{{
+		PracticeObjectives: []PracticeObjective{{
 			ID: "clarity", Description: "clarity",
 		}},
-		Revision:  3,
-		Status:    preparation.PlanStatusReady,
-		CreatedAt: createdAt,
-		UpdatedAt: createdAt,
+		Revision: 3,
 	}
 }
 
@@ -267,7 +322,7 @@ func practiceActorFixture() requestcontext.Actor {
 }
 
 type planReaderStub struct {
-	plan     preparation.PracticePlan
+	plan     PlanProjection
 	err      error
 	calls    int
 	planID   string
@@ -279,7 +334,7 @@ func (s *planReaderStub) ReadExecutablePlan(
 	_ requestcontext.Actor,
 	planID string,
 	revision int,
-) (preparation.PracticePlan, error) {
+) (PlanProjection, error) {
 	s.calls++
 	s.planID = planID
 	s.revision = revision
@@ -306,6 +361,7 @@ type sessionRepositoryStub struct {
 	createErr      error
 	resolved       SessionBootstrap
 	resolvedPlanID string
+	createCalls    int
 }
 
 func (s *sessionRepositoryStub) ReplaySession(
@@ -321,6 +377,7 @@ func (s *sessionRepositoryStub) CreateSession(
 	_ Actor,
 	command CreateSessionCommand,
 ) (SessionBootstrap, bool, error) {
+	s.createCalls++
 	s.created = command
 	if s.createErr != nil {
 		return SessionBootstrap{}, false, s.createErr

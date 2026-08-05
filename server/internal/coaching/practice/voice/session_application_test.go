@@ -6,15 +6,16 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestSessionTranslatesOnlyInterviewQuestions(t *testing.T) {
+func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
 	translator := &questionTranslatorStub{content: "接下来发生了什么？"}
+	allowed := sessionFixture()
+	allowed.SceneFamily = "DAILY"
 	application := translationApplication(
 		t,
-		sessionPortStub{session: sessionFixture()},
+		sessionPortStub{session: allowed},
 		translator,
 	)
 
@@ -33,7 +34,8 @@ func TestSessionTranslatesOnlyInterviewQuestions(t *testing.T) {
 	}
 
 	daily := sessionFixture()
-	daily.SceneFamily = "DAILY"
+	daily.SceneFamily = "INTERVIEW"
+	daily.QuestionTranslationAllowed = false
 	dailyTranslator := &questionTranslatorStub{content: "不应调用"}
 	dailyApplication := translationApplication(
 		t,
@@ -212,8 +214,8 @@ func sessionFixture() Session {
 		SceneVersion:  1,
 		SceneFamily:   "INTERVIEW",
 		SceneModel:    "INTERVIEW_STANDARD",
-		TurnPolicyRef: interviewProjectDeepDiveTurnPolicy,
-		Prompt: scene.ScenePrompt{
+		TurnPolicyRef: practice.InterviewProjectDeepDiveTurnPolicy,
+		Prompt: practice.ScenePrompt{
 			PublicSceneBrief: "Interview practice",
 			PracticeGoal:     "Answer clearly",
 			UserRole:         "Candidate",
@@ -222,11 +224,12 @@ func sessionFixture() Session {
 			FocusAreas:       []string{"clarity"},
 			TurnBlueprints:   []string{"Ask for an introduction"},
 		},
-		SessionVersion:           1,
-		TurnLimit:                3,
-		MaxFollowUpsPerQuestion:  1,
-		Status:                   "in_progress",
-		FacilitatorParticipantID: "facilitator-1",
-		LearnerParticipantID:     "learner-1",
+		SessionVersion:             1,
+		TurnLimit:                  3,
+		MaxFollowUpsPerQuestion:    1,
+		QuestionTranslationAllowed: true,
+		Status:                     "in_progress",
+		FacilitatorParticipantID:   "facilitator-1",
+		LearnerParticipantID:       "learner-1",
 	}
 }

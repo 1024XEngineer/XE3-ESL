@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 )
 
 type EvidenceSnapshot struct {
@@ -567,8 +567,8 @@ func evidencePracticeContextMatchesScene(
 		len(context.TaskBlueprints) > 0 &&
 		len(context.Participants) > 1 &&
 		evidenceSceneMatches(
-			scene.SceneFamily(context.SceneFamily),
-			scene.SceneModel(context.SceneModel),
+			practice.SceneFamily(context.SceneFamily),
+			practice.SceneModel(context.SceneModel),
 			sceneType,
 		)
 }

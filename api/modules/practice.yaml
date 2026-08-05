@@ -406,6 +406,48 @@ components:
           - role_snapshot
         role_snapshot:
           - role_definition_id
+    PracticeExecutionPolicy:
+      type: object
+      additionalProperties: false
+      description: |
+        Practice-owned execution values frozen for one Session. The policy
+        reference selects the registered behavior before this snapshot is
+        written; runtime progression reads only these frozen values.
+      required:
+        - suggested_duration_seconds
+        - min_effective_turns
+        - max_effective_turns
+        - coverage_checkpoint_turn
+        - max_follow_ups_per_question
+        - early_completion_rule
+        - retry_allowed
+        - question_translation_allowed
+      properties:
+        suggested_duration_seconds:
+          type: integer
+          minimum: 1
+        min_effective_turns:
+          type: integer
+          minimum: 1
+        max_effective_turns:
+          type: integer
+          minimum: 1
+          maximum: 14
+        coverage_checkpoint_turn:
+          type: integer
+          minimum: 1
+          maximum: 14
+        max_follow_ups_per_question:
+          type: integer
+          minimum: 0
+          maximum: 3
+        early_completion_rule:
+          type: string
+          const: COVERAGE_SATISFIED_AFTER_CHECKPOINT
+        retry_allowed:
+          type: boolean
+        question_translation_allowed:
+          type: boolean
     PracticeSessionSnapshot:
       type: object
       additionalProperties: false
@@ -447,7 +489,7 @@ components:
           items:
             $ref: '#/components/schemas/PracticeParticipant'
         session_policy:
-          $ref: ./preparation.yaml#/components/schemas/PracticeSessionPolicy
+          $ref: '#/components/schemas/PracticeExecutionPolicy'
         practice_objectives:
           type: array
           minItems: 1

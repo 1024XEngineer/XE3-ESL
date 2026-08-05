@@ -1574,7 +1574,28 @@ func ensureTestPracticeSession(
 	snapshot := fmt.Sprintf(`{
 		"snapshot_id":%q,
 		"practice_session_id":%q,
-		"session_policy":{"max_effective_turns":14}
+		"scene_selection":{
+			"scene":{
+				"turn_policy_ref":"generic.practice.turn.v1",
+				"session_policy_ref":"generic.practice.session.v1",
+				"prompt":{"turn_blueprints":["Open the practice"]},
+				"practice_options":[{
+					"practice_option_id":"option-full",
+					"practice_option_type":"FULL_SIMULATION"
+				}]
+			},
+			"practice_option_id":"option-full"
+		},
+		"session_policy":{
+			"suggested_duration_seconds":600,
+			"min_effective_turns":4,
+			"max_effective_turns":6,
+			"coverage_checkpoint_turn":4,
+			"max_follow_ups_per_question":1,
+			"early_completion_rule":"COVERAGE_SATISFIED_AFTER_CHECKPOINT",
+			"retry_allowed":false,
+			"question_translation_allowed":false
+		}
 	}`, snapshotID, sessionID)
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO practice_sessions (
@@ -1591,7 +1612,7 @@ func ensureTestPracticeSession(
 			owner_user_id, session_id, snapshot_id,
 			turn_limit, snapshot_document
 		)
-		VALUES ($1, $2, $3, 14, $4::jsonb)
+		VALUES ($1, $2, $3, 6, $4::jsonb)
 		ON CONFLICT (owner_user_id, session_id) DO NOTHING
 	`, ownerUserID, sessionID, snapshotID, snapshot); err != nil {
 		t.Fatalf("ensure Practice Session snapshot fixture: %v", err)

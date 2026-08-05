@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -306,9 +307,10 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	if err != nil {
 		t.Fatalf("PracticeOption IELTS: %v", err)
 	}
-	policy, err := preparation.NewPolicyCatalog().ResolveSessionPolicy(
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
 		selection.Scene,
 		option,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("ResolveSessionPolicy IELTS: %v", err)
@@ -579,9 +581,10 @@ func seedPlanCommand(
 	if err != nil {
 		t.Fatalf("PracticeOption: %v", err)
 	}
-	policy, err := preparation.NewPolicyCatalog().ResolveSessionPolicy(
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
 		selection.Scene,
 		option,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("ResolveSessionPolicy: %v", err)
@@ -627,9 +630,10 @@ func revisePlanCommand(
 	if err != nil {
 		t.Fatalf("PracticeOption: %v", err)
 	}
-	policy, err := preparation.NewPolicyCatalog().ResolveSessionPolicy(
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
 		selection.Scene,
 		option,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("ResolveSessionPolicy: %v", err)

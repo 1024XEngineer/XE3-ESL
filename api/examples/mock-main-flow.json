@@ -20,6 +20,8 @@
     "max_effective_turns": 6,
     "coverage_checkpoint_turn": 4,
     "max_follow_ups_per_question": 1,
+    "retry_allowed": false,
+    "question_translation_allowed": true,
     "early_completion_rule": "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
   },
   "participants": [
