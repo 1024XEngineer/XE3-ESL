@@ -766,55 +766,74 @@ class _SceneLaunchStatus extends StatelessWidget {
         controller.errorMessage ??
         launchController?.errorMessage ??
         launchController?.workspaceErrorMessage;
-    return ListView(
+    final pagePadding = PreparationDesign.pagePadding(
+      context,
+      hasPrimaryNavigation: hasPrimaryNavigation,
+      top: 8,
+    );
+    return Column(
       key: const Key('preparation-scene-launch-status'),
-      primary: false,
-      padding: PreparationDesign.pagePadding(
-        context,
-        hasPrimaryNavigation: hasPrimaryNavigation,
-        top: 8,
-      ),
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            key: const Key('preparation-back-to-catalog'),
-            tooltip: '取消并返回',
-            onPressed: navigationLocked ? null : onBack,
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: PreparationDesign.ink,
-            style: IconButton.styleFrom(
-              backgroundColor: PreparationDesign.surface,
-              side: const BorderSide(color: PreparationDesign.border),
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            pagePadding.left,
+            pagePadding.top,
+            pagePadding.right,
+            0,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              key: const Key('preparation-back-to-catalog'),
+              tooltip: '取消并返回',
+              onPressed: navigationLocked ? null : onBack,
+              icon: const Icon(Icons.arrow_back_rounded),
+              color: PreparationDesign.ink,
+              style: IconButton.styleFrom(
+                backgroundColor: PreparationDesign.surface,
+                side: const BorderSide(color: PreparationDesign.border),
+              ),
             ),
           ),
         ),
-        const SizedBox(height: 18),
-        Text(
-          scene.name,
-          key: const Key('preparation-scene-title'),
-          style: PreparationDesign.pageTitle,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          message == null ? '正在准备练习…' : '暂时无法开始这项练习。',
-          style: PreparationDesign.body,
-        ),
-        const SizedBox(height: 28),
-        if (message != null)
-          _CatalogFailure(
-            key: const Key('preparation-launch-error'),
-            message: message,
-            onRetry: controller.errorMessage != null
-                ? controller.retryLastFailure
-                : launchController?.canRetry == true
-                ? onRetry
-                : () async => onBack(),
-          )
-        else
-          const LinearProgressIndicator(
-            key: Key('preparation-launch-progress'),
+        Expanded(
+          child: ListView(
+            primary: false,
+            padding: EdgeInsets.fromLTRB(
+              pagePadding.left,
+              18,
+              pagePadding.right,
+              pagePadding.bottom,
+            ),
+            children: [
+              Text(
+                scene.name,
+                key: const Key('preparation-scene-title'),
+                style: PreparationDesign.pageTitle,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message == null ? '正在准备练习…' : '暂时无法开始这项练习。',
+                style: PreparationDesign.body,
+              ),
+              const SizedBox(height: 28),
+              if (message != null)
+                _CatalogFailure(
+                  key: const Key('preparation-launch-error'),
+                  message: message,
+                  onRetry: controller.errorMessage != null
+                      ? controller.retryLastFailure
+                      : launchController?.canRetry == true
+                      ? onRetry
+                      : () async => onBack(),
+                )
+              else
+                const LinearProgressIndicator(
+                  key: Key('preparation-launch-progress'),
+                ),
+            ],
           ),
+        ),
       ],
     );
   }

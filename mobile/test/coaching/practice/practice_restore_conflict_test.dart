@@ -208,6 +208,7 @@ Map<String, Object?> _activeSessionJson(String sessionId) {
     'scene_version': 1,
     'scene_family': 'INTERVIEW',
     'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'practice_session_status': 'in_progress',
     'session_version': 2,
     'effective_turns': 0,
     'turn_limit': 3,

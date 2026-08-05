@@ -715,6 +715,8 @@ final class _HubLaunchClient implements PreparationLaunchClient {
         coverageCheckpointTurn: assignment.turnBlueprints.length,
         maxFollowUpsPerQuestion: 0,
         earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+        retryAllowed: false,
+        questionTranslationAllowed: false,
       ),
       practiceObjectives: const <PracticeObjective>[
         PracticeObjective(id: 'ielts', description: 'Complete IELTS practice.'),
