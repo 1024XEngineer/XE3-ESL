@@ -63,7 +63,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('toggles interview subtitles and conversation text', (
+  testWidgets('toggles interview text without an avatar subtitle', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -86,11 +86,8 @@ void main() {
 
     final toggle = find.byKey(const Key('immersive-toggle-conversation-text'));
     expect(toggle, findsOneWidget);
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
-    expect(find.text(question), findsWidgets);
-    final subtitleSize = tester.getSize(
-      find.byKey(const Key('immersive-live-subtitle')),
-    );
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
+    expect(find.text(question), findsOneWidget);
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),
     );
@@ -99,16 +96,8 @@ void main() {
     await tester.tap(toggle);
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
     expect(messageBubble, findsOneWidget);
-    expect(
-      tester
-          .widget<Visibility>(
-            find.byKey(const Key('immersive-live-subtitle-text')),
-          )
-          .visible,
-      isFalse,
-    );
     expect(
       tester
           .widget<Visibility>(
@@ -117,22 +106,18 @@ void main() {
           .visible,
       isFalse,
     );
-    expect(
-      tester.getSize(find.byKey(const Key('immersive-live-subtitle'))),
-      subtitleSize,
-    );
     expect(tester.getSize(messageBubble), messageBubbleSize);
     expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
 
     await tester.tap(toggle);
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
-    expect(find.text(question), findsWidgets);
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
+    expect(find.text(question), findsOneWidget);
     expect(
       tester
           .widget<Visibility>(
-            find.byKey(const Key('immersive-live-subtitle-text')),
+            find.byKey(Key('practice-message-text-${questionMessage.id}')),
           )
           .visible,
       isTrue,
