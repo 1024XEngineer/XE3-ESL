@@ -20,10 +20,12 @@ func (b preparationBackend) CreateProfile(
 ) (map[string]any, error) {
 	result := b.runtime.createProfile()
 	result["background_summary"] = request.BackgroundSummary
-	if request.ResumeRef == "" {
-		delete(result, "resume_ref")
+	if request.ResumeID == "" {
+		delete(result, "resume_id")
+		delete(result, "resume_revision")
 	} else {
-		result["resume_ref"] = request.ResumeRef
+		result["resume_id"] = request.ResumeID
+		result["resume_revision"] = request.ResumeRevision
 	}
 	if request.JobDescriptionRef == "" {
 		delete(result, "job_description_ref")

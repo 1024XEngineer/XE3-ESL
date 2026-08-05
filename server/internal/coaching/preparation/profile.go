@@ -30,7 +30,8 @@ const (
 type Profile struct {
 	ID                           string    `json:"preparation_profile_id"`
 	UserID                       string    `json:"user_id"`
-	ResumeRef                    string    `json:"resume_ref,omitempty"`
+	ResumeID                     string    `json:"resume_id,omitempty"`
+	ResumeRevision               int64     `json:"resume_revision,omitempty"`
 	JobDescriptionRef            string    `json:"job_description_ref,omitempty"`
 	BackgroundSummary            string    `json:"background_summary"`
 	JobTargetID                  string    `json:"job_target_id,omitempty"`
@@ -43,17 +44,17 @@ type Profile struct {
 // create request. Optional source references are copied as frozen values; no
 // later Profile or external reference change can reinterpret this record.
 type Snapshot struct {
-	ID                                 string              `json:"preparation_snapshot_id"`
-	SourceProfileID                    string              `json:"source_profile_id"`
-	SourceVersion                      int                 `json:"source_version"`
-	SourceJobTargetID                  string              `json:"source_job_target_id,omitempty"`
-	SourceJobTargetConfirmationVersion int                 `json:"source_job_target_confirmation_version,omitempty"`
-	JobTargetInputSnapshot             *JobTargetInput     `json:"job_target_input_snapshot,omitempty"`
-	JobTargetCandidateSnapshot         *JobTargetCandidate `json:"job_target_candidate_snapshot,omitempty"`
-	ResumeSnapshot                     string              `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot             string              `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot                 string              `json:"background_snapshot"`
-	CreatedAt                          time.Time           `json:"created_at"`
+	ID                                 string                  `json:"preparation_snapshot_id"`
+	SourceProfileID                    string                  `json:"source_profile_id"`
+	SourceVersion                      int                     `json:"source_version"`
+	SourceJobTargetID                  string                  `json:"source_job_target_id,omitempty"`
+	SourceJobTargetConfirmationVersion int                     `json:"source_job_target_confirmation_version,omitempty"`
+	JobTargetInputSnapshot             *JobTargetInput         `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot         *JobTargetCandidate     `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeSnapshot                     *ResumeRevisionSnapshot `json:"resume_snapshot,omitempty"`
+	JobDescriptionSnapshot             string                  `json:"job_description_snapshot,omitempty"`
+	BackgroundSnapshot                 string                  `json:"background_snapshot"`
+	CreatedAt                          time.Time               `json:"created_at"`
 }
 
 // IdempotencyIntent is derived from trusted transport routing plus a canonical
@@ -67,9 +68,10 @@ type IdempotencyIntent struct {
 }
 
 type CreateProfileCommand struct {
-	ProfileID string
-	Request   CreateProfileRequest
-	Intent    IdempotencyIntent
+	ProfileID      string
+	Request        CreateProfileRequest
+	ResumeRevision *ResumeRevisionSnapshot
+	Intent         IdempotencyIntent
 }
 
 type CreateSnapshotCommand struct {
@@ -145,16 +147,22 @@ type ResourceIDGenerator interface {
 type PersistenceService struct {
 	repository ProfileRepository
 	ids        ResourceIDGenerator
+	resumes    ResumeRevisionReader
 }
 
 func NewPersistenceService(
 	repository ProfileRepository,
 	ids ResourceIDGenerator,
+	resumes ResumeRevisionReader,
 ) (*PersistenceService, error) {
-	if repository == nil || ids == nil {
+	if repository == nil || ids == nil || resumes == nil {
 		return nil, errors.New("preparation: persistence dependency is required")
 	}
-	return &PersistenceService{repository: repository, ids: ids}, nil
+	return &PersistenceService{
+		repository: repository,
+		ids:        ids,
+		resumes:    resumes,
+	}, nil
 }
 
 func (s *PersistenceService) CreateProfile(
@@ -186,14 +194,34 @@ func (s *PersistenceService) CreateProfile(
 	if found {
 		return replayedProfile, true, nil
 	}
+	var resumeRevision *ResumeRevisionSnapshot
+	if request.ResumeID != "" {
+		resolved, err := s.resumes.ReadOwnedRevision(
+			ctx,
+			actor,
+			request.ResumeID,
+			request.ResumeRevision,
+		)
+		if err != nil {
+			return Profile{}, false, err
+		}
+		if !validResumeRevisionSnapshot(resolved) ||
+			resolved.ResumeID != request.ResumeID ||
+			resolved.Revision != request.ResumeRevision {
+			return Profile{}, false, ErrProfileConflict
+		}
+		resolved = cloneResumeRevisionSnapshot(resolved)
+		resumeRevision = &resolved
+	}
 	profileID, err := s.ids.NewID()
 	if err != nil {
 		return Profile{}, false, ErrProfileRepository
 	}
 	return s.repository.CreateProfile(ctx, actor, CreateProfileCommand{
-		ProfileID: profileID,
-		Request:   request,
-		Intent:    intent,
+		ProfileID:      profileID,
+		Request:        request,
+		ResumeRevision: resumeRevision,
+		Intent:         intent,
 	})
 }
 
@@ -296,14 +324,13 @@ func newPreparationIntent(
 }
 
 func validCreateProfileRequest(request CreateProfileRequest) bool {
+	resumePairValid := (request.ResumeID == "" && request.ResumeRevision == 0) ||
+		(validResourceIdentifier(request.ResumeID) && request.ResumeRevision > 0)
 	targetPairValid := (request.JobTargetID == "" &&
 		request.JobTargetConfirmationVersion == 0) ||
 		(validResourceIdentifier(request.JobTargetID) &&
 			request.JobTargetConfirmationVersion > 0)
-	return targetPairValid && validOptionalPreparationText(
-		request.ResumeRef,
-		maxPreparationReferenceLength,
-	) &&
+	return resumePairValid && targetPairValid &&
 		validOptionalPreparationText(
 			request.JobDescriptionRef,
 			maxPreparationReferenceLength,

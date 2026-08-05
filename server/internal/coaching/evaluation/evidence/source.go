@@ -1201,7 +1201,7 @@ func evidencePreparationContextFromSnapshot(
 		SourceVersion:                      source.SourceVersion,
 		SourceJobTargetID:                  source.SourceJobTargetID,
 		SourceJobTargetConfirmationVersion: source.SourceJobTargetConfirmationVersion,
-		ResumeSnapshotHash: evidenceTextHash(
+		ResumeSnapshotHash: evidenceResumeSnapshotHash(
 			source.ResumeSnapshot,
 		),
 		JobDescriptionSnapshotHash: evidenceTextHash(
@@ -1254,6 +1254,20 @@ func evidenceTextHash(value string) string {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func evidenceResumeSnapshotHash(
+	value *preparation.ResumeRevisionSnapshot,
+) string {
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }
 

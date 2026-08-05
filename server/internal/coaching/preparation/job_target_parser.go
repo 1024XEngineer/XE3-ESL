@@ -83,9 +83,6 @@ func (p *AIJobTargetParser) ParseJobTarget(
 		)
 	}
 
-	// resume_ref is deliberately excluded. The parser has no resource reader,
-	// URL client, or file tool and receives only inline material needed for the
-	// current parse.
 	material, err := json.Marshal(struct {
 		Source              JobTargetSource `json:"source"`
 		JobTitle            string          `json:"job_title,omitempty"`

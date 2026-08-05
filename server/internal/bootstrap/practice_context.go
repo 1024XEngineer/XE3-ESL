@@ -17,6 +17,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	resumeapp "github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
+	resumepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/resume/persistence"
+	resumepreparationsource "github.com/1024XEngineer/XE3-ESL/server/internal/resume/preparationsource"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -216,9 +219,24 @@ func newIdentityAgentAndPracticeComposition(
 	}
 
 	preparationRepository := preparation.NewPostgresProfileRepository(database)
+	resumeRepository, err := resumepersistence.NewGormRepositoryFromPool(database)
+	if err != nil {
+		return nil, err
+	}
+	resumeRevisionQuery, err := resumeapp.NewRevisionQuery(resumeRepository)
+	if err != nil {
+		return nil, err
+	}
+	resumeRevisionReader, err := resumepreparationsource.New(
+		resumeRevisionQuery,
+	)
+	if err != nil {
+		return nil, err
+	}
 	preparationApplication, err := preparation.NewPersistenceService(
 		preparationRepository,
 		base.ids,
+		resumeRevisionReader,
 	)
 	if err != nil {
 		return nil, err

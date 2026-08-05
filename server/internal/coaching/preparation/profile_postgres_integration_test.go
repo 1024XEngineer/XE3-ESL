@@ -170,15 +170,22 @@ func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 	ctx := context.Background()
 	actorA := preparationActor(preparationUserA, preparationSessionA)
 	actorB := preparationActor(preparationUserB, preparationSessionB)
+	resumeID := "50000000-0000-4000-8000-000000000111"
+	seedPreparationResumeRevision(t, pool, actorA.UserID, resumeID)
 
 	profileRequest := preparation.CreateProfileRequest{
-		ResumeRef:         "oss://resume/object-v1",
+		ResumeID:          resumeID,
+		ResumeRevision:    1,
 		JobDescriptionRef: "oss://job/object-v1",
 		BackgroundSummary: "Backend engineer with distributed systems work.",
 	}
 	profileCommand := preparation.CreateProfileCommand{
 		ProfileID: "profile-original",
 		Request:   profileRequest,
+		ResumeRevision: preparationResumeSnapshot(
+			profileRequest.ResumeID,
+			profileRequest.ResumeRevision,
+		),
 		Intent: profileIntent(
 			"profile-create-key",
 			profileRequest,
@@ -243,6 +250,12 @@ func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 	); !errors.Is(err, preparation.ErrProfileNotFound) {
 		t.Fatalf("cross-user ReadProfile error = %v, want not found", err)
 	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM resumes
+		WHERE owner_user_id = $1 AND resume_id = $2
+	`, actorA.UserID, resumeID); err != nil {
+		t.Fatalf("delete source Resume after Profile creation: %v", err)
+	}
 
 	snapshotRequest := preparation.CreateSnapshotRequest{SourceVersion: 1}
 	snapshotCommand := preparation.CreateSnapshotCommand{
@@ -263,7 +276,10 @@ func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 	if err != nil || replayed {
 		t.Fatalf("CreateSnapshot replayed = %v, error = %v", replayed, err)
 	}
-	if snapshot.ResumeSnapshot != profile.ResumeRef ||
+	if !reflect.DeepEqual(
+		snapshot.ResumeSnapshot,
+		profileCommand.ResumeRevision,
+	) ||
 		snapshot.JobDescriptionSnapshot != profile.JobDescriptionRef ||
 		snapshot.BackgroundSnapshot != profile.BackgroundSummary ||
 		snapshot.SourceVersion != profile.Version ||
@@ -396,6 +412,75 @@ func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 			replayed,
 			err,
 		)
+	}
+}
+
+func preparationResumeSnapshot(
+	resumeID string,
+	revision int64,
+) *preparation.ResumeRevisionSnapshot {
+	return &preparation.ResumeRevisionSnapshot{
+		ResumeID: resumeID,
+		Revision: revision,
+		Material: preparation.ResumeMaterial{
+			TargetPosition:       "Backend Engineer",
+			ProfessionalSummary:  "Builds reliable Go services.",
+			WorkExperiences:      []preparation.ResumeWorkExperience{},
+			ProjectExperiences:   []preparation.ResumeProjectExperience{},
+			EducationExperiences: []preparation.ResumeEducationExperience{},
+			Skills:               []string{"Go", "PostgreSQL"},
+			Awards:               []string{},
+		},
+	}
+}
+
+func seedPreparationResumeRevision(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	ownerID string,
+	resumeID string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	transaction, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin Resume seed: %v", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO resumes (
+			resume_id, owner_user_id, title, original_filename,
+			content_type, size_bytes, checksum_sha256, object_key,
+			file_status, parse_status, version
+		) VALUES (
+			$1, $2, 'Backend Resume', 'resume.pdf',
+			'application/pdf', 128, $3, $4,
+			'AVAILABLE', 'READY', 1
+		)
+	`, resumeID, ownerID, strings.Repeat("a", 64),
+		"resume/v1/00000000000000000000000000000001.pdf"); err != nil {
+		t.Fatalf("seed Resume: %v", err)
+	}
+	content, err := json.Marshal(
+		preparationResumeSnapshot(resumeID, 1).Material,
+	)
+	if err != nil {
+		t.Fatalf("marshal Resume seed content: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO resume_revisions (
+			owner_user_id, resume_id, revision, source, content
+		) VALUES ($1, $2, 1, 'MANUAL', $3)
+	`, ownerID, resumeID, content); err != nil {
+		t.Fatalf("seed Resume Revision: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+		UPDATE resumes SET current_revision = 1 WHERE resume_id = $1
+	`, resumeID); err != nil {
+		t.Fatalf("bind current Resume Revision: %v", err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit Resume seed: %v", err)
 	}
 }
 

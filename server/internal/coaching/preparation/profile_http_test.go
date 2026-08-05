@@ -62,7 +62,8 @@ func TestProfileHTTPCreateProfileUsesTrustedActor(t *testing.T) {
 	want := Profile{
 		ID:                "profile-1",
 		UserID:            actor.UserID,
-		ResumeRef:         "resume-1",
+		ResumeID:          "50000000-0000-4000-8000-000000000001",
+		ResumeRevision:    3,
 		JobDescriptionRef: "job-1",
 		BackgroundSummary: "Confirmed background.",
 		Version:           1,
@@ -84,7 +85,8 @@ func TestProfileHTTPCreateProfileUsesTrustedActor(t *testing.T) {
 				t.Fatalf("idempotency key = %q", key)
 			}
 			if request != (CreateProfileRequest{
-				ResumeRef:         "resume-1",
+				ResumeID:          "50000000-0000-4000-8000-000000000001",
+				ResumeRevision:    3,
 				JobDescriptionRef: "job-1",
 				BackgroundSummary: "Confirmed background.",
 			}) {
@@ -98,7 +100,8 @@ func TestProfileHTTPCreateProfileUsesTrustedActor(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/v1/preparation-profiles",
-		`{"resume_ref":"resume-1","job_description_ref":"job-1",`+
+		`{"resume_id":"50000000-0000-4000-8000-000000000001",`+
+			`"resume_revision":3,"job_description_ref":"job-1",`+
 			`"background_summary":"Confirmed background."}`,
 		"application/json; charset=utf-8",
 		"profile-key-0001",
@@ -185,10 +188,20 @@ func TestProfileHTTPCreateSnapshotReplayKeepsCreatedSemantics(t *testing.T) {
 	actor := profileHTTPActor()
 	createdAt := time.Date(2026, 7, 26, 11, 13, 14, 0, time.UTC)
 	want := Snapshot{
-		ID:                     "snapshot-1",
-		SourceProfileID:        "profile-1",
-		SourceVersion:          3,
-		ResumeSnapshot:         "Frozen resume.",
+		ID:              "snapshot-1",
+		SourceProfileID: "profile-1",
+		SourceVersion:   3,
+		ResumeSnapshot: &ResumeRevisionSnapshot{
+			ResumeID: "50000000-0000-4000-8000-000000000001",
+			Revision: 3,
+			Material: ResumeMaterial{
+				WorkExperiences:      []ResumeWorkExperience{},
+				ProjectExperiences:   []ResumeProjectExperience{},
+				EducationExperiences: []ResumeEducationExperience{},
+				Skills:               []string{"Go"},
+				Awards:               []string{},
+			},
+		},
 		JobDescriptionSnapshot: "Frozen job.",
 		BackgroundSnapshot:     "Frozen background.",
 		CreatedAt:              createdAt,

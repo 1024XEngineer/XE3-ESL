@@ -23,6 +23,16 @@ func ResumeVersionConflictError() error {
 	return apperror.New(apperror.Conflict, "resume_version_conflict", "Resume changed before this operation.")
 }
 
+// ResumeRevisionUnavailableError reports that a Resume has no parsed Revision
+// that can be bound to a Preparation Profile yet.
+func ResumeRevisionUnavailableError() error {
+	return apperror.New(
+		apperror.FailedPrecondition,
+		"resume_revision_unavailable",
+		"Resume parsing has not produced an available revision.",
+	)
+}
+
 // UnsupportedResumeFormatError 返回上传文件不是受支持文本型 PDF 的错误。
 func UnsupportedResumeFormatError() error {
 	return apperror.New(apperror.InvalidArgument, "unsupported_resume_format", "Only text-based PDF resumes are supported.")

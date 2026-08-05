@@ -9,7 +9,8 @@ func (Module) Name() string { return "preparation" }
 
 // CreateProfileRequest is the application input for one preparation profile.
 type CreateProfileRequest struct {
-	ResumeRef                    string `json:"resume_ref,omitempty"`
+	ResumeID                     string `json:"resume_id,omitempty"`
+	ResumeRevision               int64  `json:"resume_revision,omitempty"`
 	JobDescriptionRef            string `json:"job_description_ref,omitempty"`
 	BackgroundSummary            string `json:"background_summary"`
 	JobTargetID                  string `json:"job_target_id,omitempty"`

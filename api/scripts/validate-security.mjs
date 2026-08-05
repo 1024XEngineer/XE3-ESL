@@ -103,7 +103,9 @@ const preparationProfileRequest =
   schemas.CreatePreparationProfileRequest?.properties ?? {};
 const preparationTextPattern =
   preparationProfileRequest.background_summary?.pattern;
-assert.equal(preparationProfileRequest.resume_ref?.maxLength, 16 * 1024);
+assert.equal(preparationProfileRequest.resume_ref, undefined);
+assert.equal(preparationProfileRequest.resume_id?.format, 'uuid');
+assert.equal(preparationProfileRequest.resume_revision?.minimum, 1);
 assert.equal(
   preparationProfileRequest.job_description_ref?.maxLength,
   16 * 1024,
@@ -111,10 +113,6 @@ assert.equal(
 assert.equal(
   preparationProfileRequest.background_summary?.maxLength,
   64 * 1024,
-);
-assert.equal(
-  preparationProfileRequest.resume_ref?.pattern,
-  preparationTextPattern,
 );
 assert.equal(
   preparationProfileRequest.job_description_ref?.pattern,

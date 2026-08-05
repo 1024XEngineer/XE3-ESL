@@ -606,7 +606,17 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 					CandidateBackground: "Needs a quiet room.",
 					PracticeFocus:       "Make a clear request.",
 				},
-				ResumeSnapshot:         "sensitive resume snapshot",
+				ResumeSnapshot: &preparation.ResumeRevisionSnapshot{
+					ResumeID: "50000000-0000-4000-8000-000000000001",
+					Revision: 1,
+					Material: preparation.ResumeMaterial{
+						WorkExperiences:      []preparation.ResumeWorkExperience{},
+						ProjectExperiences:   []preparation.ResumeProjectExperience{},
+						EducationExperiences: []preparation.ResumeEducationExperience{},
+						Skills:               []string{"Go"},
+						Awards:               []string{},
+					},
+				},
 				BackgroundSnapshot:     "sensitive background snapshot",
 				JobDescriptionSnapshot: "confirmed job description snapshot",
 			},

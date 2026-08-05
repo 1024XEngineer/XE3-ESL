@@ -352,6 +352,23 @@ func TestIELTSSpeakingAcousticPayloadMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestPreparationResumeRevisionMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000068_preparation_resume_revision.up.sql",
+		"000068_preparation_resume_revision.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read Preparation Resume migration %q: %v", name, err)
+		}
+	}
+	up := readMigration(t, "000068_preparation_resume_revision.up.sql")
+	if !strings.Contains(up, "RECREATE THE DEVELOPMENT OR TEST DATABASE") {
+		t.Fatal("Preparation Resume migration must state its initialization requirement")
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

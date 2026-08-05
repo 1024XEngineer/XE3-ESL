@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAIJobTargetParserSeparatesUntrustedMaterialAndOmitsResumeRef(
+func TestAIJobTargetParserSeparatesUntrustedMaterial(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -41,7 +41,6 @@ func TestAIJobTargetParserSeparatesUntrustedMaterialAndOmitsResumeRef(
 			Company:        "Example",
 			CandidateBackground: "Engineer. " +
 				injection,
-			ResumeRef: "https://private.invalid/resume-secret",
 		},
 	)
 	if err != nil {
@@ -65,12 +64,6 @@ func TestAIJobTargetParserSeparatesUntrustedMaterialAndOmitsResumeRef(
 		injection,
 	) {
 		t.Fatal("untrusted material was not serialized as user data")
-	}
-	if strings.Contains(
-		generator.request.SystemInstruction+generator.request.UserMaterial,
-		"resume-secret",
-	) {
-		t.Fatal("resume reference was sent to the parser provider")
 	}
 	system := generator.request.SystemInstruction
 	for _, required := range []string{

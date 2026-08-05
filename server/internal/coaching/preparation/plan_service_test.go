@@ -817,10 +817,20 @@ func planActor() requestcontext.Actor {
 
 func planSnapshotFixture() Snapshot {
 	return Snapshot{
-		ID:                 "snapshot-1",
-		SourceProfileID:    "profile-1",
-		SourceVersion:      2,
-		ResumeSnapshot:     "resume",
+		ID:              "snapshot-1",
+		SourceProfileID: "profile-1",
+		SourceVersion:   2,
+		ResumeSnapshot: &ResumeRevisionSnapshot{
+			ResumeID: "50000000-0000-4000-8000-000000000001",
+			Revision: 1,
+			Material: ResumeMaterial{
+				WorkExperiences:      []ResumeWorkExperience{},
+				ProjectExperiences:   []ResumeProjectExperience{},
+				EducationExperiences: []ResumeEducationExperience{},
+				Skills:               []string{"Go"},
+				Awards:               []string{},
+			},
+		},
 		BackgroundSnapshot: "backend engineer",
 		CreatedAt:          time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC),
 	}
