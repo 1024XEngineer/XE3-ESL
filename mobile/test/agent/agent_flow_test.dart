@@ -27,7 +27,10 @@ void main() {
   testWidgets('uses one Agent Thread for text and 3 Practice turns', (
     tester,
   ) async {
-    final scene = testScenes.first;
+    final scene = testScene(
+      family: SceneFamily.exam,
+      model: SceneModel.examBasicDialogue,
+    );
     final harness = _agentHarness(
       practiceClient: FakePracticeClient(
         sceneFamily: scene.family,
