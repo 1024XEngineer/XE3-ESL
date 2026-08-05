@@ -16,6 +16,8 @@ var (
 	ErrRetryTurnConflict = errors.New("practice: retry Turn conflict")
 )
 
+const retryActorSubjectNamespace = "speakup.user"
+
 type AuthorizeSameQuestionRetryCommand struct {
 	RetryRequestID    string
 	PracticeSessionID string
@@ -24,25 +26,18 @@ type AuthorizeSameQuestionRetryCommand struct {
 }
 
 type RetryTurnApplication struct {
-	repository            RetryTurnRepository
-	actorSubjectNamespace string
+	repository RetryTurnRepository
 }
 
 func NewRetryTurnApplication(
 	repository RetryTurnRepository,
-	actorSubjectNamespace string,
 ) (*RetryTurnApplication, error) {
-	namespace := strings.TrimSpace(actorSubjectNamespace)
-	if repository == nil || namespace != actorSubjectNamespace ||
-		!validSubjectNamespace(namespace) {
+	if repository == nil {
 		return nil, errors.New(
 			"practice: retry Turn dependency is required",
 		)
 	}
-	return &RetryTurnApplication{
-		repository:            repository,
-		actorSubjectNamespace: namespace,
-	}, nil
+	return &RetryTurnApplication{repository: repository}, nil
 }
 
 func (application *RetryTurnApplication) AuthorizeSameQuestionRetry(
@@ -103,9 +98,8 @@ func (application *RetryTurnApplication) ResolveAuthorizedParticipant(
 		ctx,
 		contextActor(actor),
 		ResolveRetryParticipantCommand{
-			RetryRequestID: retryRequestID,
-			ActorSubjectNamespace: application.
-				actorSubjectNamespace,
+			RetryRequestID:        retryRequestID,
+			ActorSubjectNamespace: retryActorSubjectNamespace,
 		},
 	)
 	switch {
@@ -136,22 +130,6 @@ func validRetryTurnID(value string) bool {
 		default:
 			return false
 		}
-	}
-	return true
-}
-
-func validSubjectNamespace(namespace string) bool {
-	if namespace == "" || namespace[0] < 'a' || namespace[0] > 'z' {
-		return false
-	}
-	for index := 1; index < len(namespace); index++ {
-		character := namespace[index]
-		if (character >= 'a' && character <= 'z') ||
-			(character >= '0' && character <= '9') ||
-			character == '.' || character == '_' || character == '-' {
-			continue
-		}
-		return false
 	}
 	return true
 }

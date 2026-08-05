@@ -1,4 +1,4 @@
-package bootstrap
+package memorysource
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 			RetrievalPolicyVersion: "memory-retrieval-v1",
 		}},
 	}
-	adapter, err := newAgentMemoryContextSearcher(delegate)
+	adapter, err := NewSearcher(delegate)
 	if err != nil {
 		t.Fatalf("newAgentMemoryContextSearcher: %v", err)
 	}
@@ -77,12 +77,12 @@ func TestAgentMemoryContextSearcherRequiresDependencyAndPropagatesFailure(
 	t *testing.T,
 ) {
 	t.Parallel()
-	if adapter, err := newAgentMemoryContextSearcher(nil); err == nil ||
+	if adapter, err := NewSearcher(nil); err == nil ||
 		adapter != nil {
 		t.Fatalf("nil adapter = %#v, %v", adapter, err)
 	}
 	dependencyError := errors.New("embedding unavailable")
-	adapter, err := newAgentMemoryContextSearcher(
+	adapter, err := NewSearcher(
 		&recordingDomainMemorySearcher{err: dependencyError},
 	)
 	if err != nil {

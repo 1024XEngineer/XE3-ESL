@@ -3,10 +3,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
@@ -15,6 +13,7 @@ import (
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
+	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -254,7 +253,7 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 
-	threadReader, err := newPreparationThreadReader(base.agentService)
+	threadReader, err := preparationagentthread.New(base.agentService)
 	if err != nil {
 		return nil, err
 	}
@@ -470,59 +469,6 @@ func (r *bearerProtectedRoutes) RegisterRoutes(router *gin.Engine) {
 	}
 }
 
-type agentThreadReader interface {
-	GetThread(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (agentconversation.Thread, error)
-}
-
-type preparationThreadReader struct {
-	threads agentThreadReader
-}
-
-func newPreparationThreadReader(
-	threads agentThreadReader,
-) (*preparationThreadReader, error) {
-	if threads == nil {
-		return nil, errors.New("bootstrap: Agent Thread reader is required")
-	}
-	return &preparationThreadReader{threads: threads}, nil
-}
-
-func (r *preparationThreadReader) ReadOwnedThread(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-) (preparation.SourceThread, error) {
-	if r == nil || r.threads == nil || ctx == nil || !actor.Valid() {
-		return preparation.SourceThread{}, preparation.ErrPlanInvalid
-	}
-	thread, err := r.threads.GetThread(ctx, actor, threadID)
-	if err != nil {
-		return preparation.SourceThread{}, mapPreparationThreadError(err)
-	}
-	if thread.ID != threadID || thread.OwnerID != actor.UserID {
-		return preparation.SourceThread{}, preparation.ErrPlanNotFound
-	}
-	return preparation.SourceThread{ID: thread.ID}, nil
-}
-
-func mapPreparationThreadError(err error) error {
-	switch {
-	case errors.Is(err, agentconversation.ErrInvalidRequest):
-		return preparation.ErrPlanInvalid
-	case errors.Is(err, agentconversation.ErrNotFound):
-		return preparation.ErrPlanNotFound
-	case errors.Is(err, agentconversation.ErrConflict):
-		return preparation.ErrPlanConflict
-	default:
-		return fmt.Errorf("bootstrap: read Agent Thread for Preparation: %w", err)
-	}
-}
-
 var (
-	_ preparation.SourceThreadReader = (*preparationThreadReader)(nil)
-	_ RouteRegistrar                 = (*bearerProtectedRoutes)(nil)
+	_ RouteRegistrar = (*bearerProtectedRoutes)(nil)
 )

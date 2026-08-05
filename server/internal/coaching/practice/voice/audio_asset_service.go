@@ -106,7 +106,7 @@ func NewAudioAssetService(
 		return nil, ErrAudioAssetInvalidDependency
 	}
 	if stagedTTL <= 0 {
-		stagedTTL = defaultStagedTTL
+		return nil, ErrAudioAssetInvalid
 	}
 	reclaimer, err := NewAudioAssetReclaimer(repository, store, clock)
 	if err != nil {
@@ -121,6 +121,25 @@ func NewAudioAssetService(
 		reclaimer:  reclaimer,
 		stagedTTL:  stagedTTL,
 	}, nil
+}
+
+// NewProductionAudioAssetService owns Practice Voice's production retention
+// policy while accepting only infrastructure dependencies from Bootstrap.
+func NewProductionAudioAssetService(
+	repository AudioAssetLifecycleRepository,
+	store objectstore.Store,
+	ids AudioAssetIDGenerator,
+	clock AudioAssetClock,
+	turns AudioAssetTurnVerifier,
+) (*AudioAssetService, error) {
+	return NewAudioAssetService(
+		repository,
+		store,
+		ids,
+		clock,
+		turns,
+		defaultStagedTTL,
+	)
 }
 
 // Upload creates staged metadata before writing object bytes. A failed Put or

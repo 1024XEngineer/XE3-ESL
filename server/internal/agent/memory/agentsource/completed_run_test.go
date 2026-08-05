@@ -1,4 +1,4 @@
-package bootstrap
+package agentsource
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 			ActiveGoalID: "60000000-0000-4000-8000-000000000001",
 		},
 	}
-	reader, err := newAgentCompletedRunReader(
+	reader, err := NewCompletedRunReader(
 		runs,
 		messages,
 		manifests,
@@ -79,7 +79,7 @@ func TestAgentCompletedRunReaderRejectsNonCompletedRun(t *testing.T) {
 			Status:  agentrun.StatusRunning,
 		},
 	}
-	reader, _ := newAgentCompletedRunReader(
+	reader, _ := NewCompletedRunReader(
 		runs,
 		&fakeCompletedAgentMessageReader{},
 		&fakeCompletedAgentManifestReader{},
@@ -98,7 +98,7 @@ func TestAgentCompletedRunReaderTreatsInvalidStoredManifestAsDependencyFailure(
 ) {
 	t.Parallel()
 
-	err := mapAgentMemorySourceError(agentcontext.ErrInvalidContext)
+	err := mapSourceError(agentcontext.ErrInvalidContext)
 	if errors.Is(err, memory.ErrInvalidArgument) ||
 		!errors.Is(err, agentcontext.ErrInvalidContext) {
 		t.Fatalf("mapped invalid stored Manifest error = %v", err)

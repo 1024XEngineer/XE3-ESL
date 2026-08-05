@@ -1,39 +1,38 @@
-package bootstrap
+package scoring
 
 import (
 	"context"
 	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 )
 
-type evaluationShadowProcessor interface {
+type Processor interface {
 	ProcessPending(
 		context.Context,
 		int,
-	) (scoring.InterviewShadowSweepResult, error)
+	) (InterviewShadowSweepResult, error)
 }
 
-type combinedEvaluationShadowProcessor struct {
+type combinedProcessor struct {
 	mu         sync.Mutex
-	intake     *scoring.CompletionIntake
-	interview  *scoring.InterviewShadowWorker
-	ielts      *scoring.IELTSSpeakingShadowWorker
-	general    *scoring.GeneralSceneWorker
+	intake     *CompletionIntake
+	interview  *InterviewShadowWorker
+	ielts      *IELTSSpeakingShadowWorker
+	general    *GeneralSceneWorker
 	nextWorker int
 }
 
-func newEvaluationShadowProcessor(
-	intake *scoring.CompletionIntake,
-	interview *scoring.InterviewShadowWorker,
-	ielts *scoring.IELTSSpeakingShadowWorker,
-	general *scoring.GeneralSceneWorker,
-) (*combinedEvaluationShadowProcessor, error) {
+func NewProcessor(
+	intake *CompletionIntake,
+	interview *InterviewShadowWorker,
+	ielts *IELTSSpeakingShadowWorker,
+	general *GeneralSceneWorker,
+) (Processor, error) {
 	if intake == nil || interview == nil || ielts == nil || general == nil {
 		return nil, evaluation.ErrInvalidRequest
 	}
-	return &combinedEvaluationShadowProcessor{
+	return &combinedProcessor{
 		intake:    intake,
 		interview: interview,
 		ielts:     ielts,
@@ -41,10 +40,10 @@ func newEvaluationShadowProcessor(
 	}, nil
 }
 
-func (processor *combinedEvaluationShadowProcessor) ProcessPending(
+func (processor *combinedProcessor) ProcessPending(
 	ctx context.Context,
 	limit int,
-) (scoring.InterviewShadowSweepResult, error) {
+) (InterviewShadowSweepResult, error) {
 	if processor == nil ||
 		processor.intake == nil ||
 		processor.interview == nil ||
@@ -53,13 +52,12 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 		ctx == nil ||
 		limit < 1 ||
 		limit > 20 {
-		return scoring.InterviewShadowSweepResult{},
-			evaluation.ErrInvalidRequest
+		return InterviewShadowSweepResult{}, evaluation.ErrInvalidRequest
 	}
 	processor.mu.Lock()
 	defer processor.mu.Unlock()
 
-	var total scoring.InterviewShadowSweepResult
+	var total InterviewShadowSweepResult
 	intakeSweep, err := processor.intake.ProcessPending(ctx, 1)
 	if err != nil {
 		return total, err
@@ -71,11 +69,11 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 	for total.Claimed < limit {
 		preferred := processor.nextWorker
 		processor.nextWorker = (processor.nextWorker + 1) % 3
-		var claimed scoring.InterviewShadowSweepResult
+		var claimed InterviewShadowSweepResult
 		for offset := range 3 {
 			candidate := (preferred + offset) % 3
 			claimed, err = processor.processOne(ctx, candidate)
-			addInterviewSweep(&total, claimed)
+			addSweep(&total, claimed)
 			if err != nil {
 				return total, err
 			}
@@ -90,16 +88,16 @@ func (processor *combinedEvaluationShadowProcessor) ProcessPending(
 	return total, nil
 }
 
-func (processor *combinedEvaluationShadowProcessor) processOne(
+func (processor *combinedProcessor) processOne(
 	ctx context.Context,
 	worker int,
-) (scoring.InterviewShadowSweepResult, error) {
+) (InterviewShadowSweepResult, error) {
 	switch worker {
 	case 0:
 		return processor.interview.ProcessPending(ctx, 1)
 	case 1:
 		result, err := processor.ielts.ProcessPending(ctx, 1)
-		return scoring.InterviewShadowSweepResult{
+		return InterviewShadowSweepResult{
 			Claimed:   result.Claimed,
 			Completed: result.Completed,
 			Retried:   result.Retried,
@@ -107,26 +105,22 @@ func (processor *combinedEvaluationShadowProcessor) processOne(
 		}, err
 	case 2:
 		result, err := processor.general.ProcessPending(ctx, 1)
-		return scoring.InterviewShadowSweepResult{
+		return InterviewShadowSweepResult{
 			Claimed:   result.Claimed,
 			Completed: result.Completed,
 			Retried:   result.Retried,
 			Failed:    result.Failed,
 		}, err
 	default:
-		return scoring.InterviewShadowSweepResult{},
-			evaluation.ErrInvalidRequest
+		return InterviewShadowSweepResult{}, evaluation.ErrInvalidRequest
 	}
 }
 
-func addInterviewSweep(
-	total *scoring.InterviewShadowSweepResult,
-	next scoring.InterviewShadowSweepResult,
-) {
+func addSweep(total *InterviewShadowSweepResult, next InterviewShadowSweepResult) {
 	total.Claimed += next.Claimed
 	total.Completed += next.Completed
 	total.Retried += next.Retried
 	total.Failed += next.Failed
 }
 
-var _ evaluationShadowProcessor = (*combinedEvaluationShadowProcessor)(nil)
+var _ Processor = (*combinedProcessor)(nil)

@@ -7,6 +7,7 @@ import (
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -63,7 +64,7 @@ func TestPreparationThreadReaderValidatesOwnedThread(
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			reader, err := newPreparationThreadReader(agentThreadReaderStub{
+			reader, err := preparationagentthread.New(agentThreadReaderStub{
 				thread: test.thread,
 				err:    test.threadError,
 			})

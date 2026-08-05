@@ -2,8 +2,6 @@ package bootstrap
 
 import (
 	"errors"
-	"net/http"
-	"time"
 
 	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
@@ -40,13 +38,12 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	service, err := practicevoice.NewAudioAssetService(
+	service, err := practicevoice.NewProductionAudioAssetService(
 		repository,
 		store,
 		practicevoice.SecureAudioAssetIDGenerator{},
 		practicevoice.NewAudioAssetSystemClock(),
 		repository,
-		24*time.Hour,
 	)
 	if err != nil {
 		return nil, err
@@ -54,15 +51,7 @@ func NewSpeechFeedbackAcousticProvider(
 	reader, err := speechfeedback.NewSpeechFeedbackAudioReader(
 		service,
 		store,
-		&http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(
-				_ *http.Request,
-				_ []*http.Request,
-			) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		speechfeedback.NewSpeechFeedbackAudioHTTPClient(),
 	)
 	if err != nil {
 		return nil, err
