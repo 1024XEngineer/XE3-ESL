@@ -19,7 +19,16 @@ const (
 
 // Failure 是可由 Resume Worker 安全持久化的文档解析失败。
 type Failure struct {
-	code string
+	code      string
+	pageCount int
+}
+
+// PageCount returns the validated PDF page count when it is available.
+func (failure *Failure) PageCount() int {
+	if failure == nil {
+		return 0
+	}
+	return failure.pageCount
 }
 
 func (failure *Failure) Error() string {
@@ -87,7 +96,10 @@ func (parser *TextPDFParser) Parse(
 		return StructuredDocument{}, err
 	}
 	if visibleRuneCount(text) < 20 {
-		return StructuredDocument{}, &Failure{code: "pdf_text_unavailable"}
+		return StructuredDocument{}, &Failure{
+			code:      "pdf_text_unavailable",
+			pageCount: len(pages),
+		}
 	}
 	return StructuredDocument{
 		Format:        "pdf",
@@ -121,7 +133,10 @@ func extractPages(
 		}
 		raw, err := pdfPage.GetPlainText(fonts)
 		if err != nil {
-			return nil, "", &Failure{code: "pdf_text_unavailable"}
+			return nil, "", &Failure{
+				code:      "pdf_text_unavailable",
+				pageCount: pdfDocument.NumPage(),
+			}
 		}
 		text := normalizeText(raw)
 		if text == "" {
@@ -130,7 +145,10 @@ func extractPages(
 		}
 		totalBytes += len(text)
 		if totalBytes > maximumTextBytes {
-			return nil, "", &Failure{code: "pdf_text_unavailable"}
+			return nil, "", &Failure{
+				code:      "pdf_text_unavailable",
+				pageCount: pdfDocument.NumPage(),
+			}
 		}
 		pages = append(pages, Page{
 			Number: pageNumber,

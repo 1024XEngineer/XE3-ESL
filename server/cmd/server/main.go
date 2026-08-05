@@ -165,6 +165,14 @@ func run() int {
 		)
 		return 1
 	}
+	resumeOCRConfig, err := config.LoadResumeOCR()
+	if err != nil {
+		logger.Error(
+			"Resume OCR configuration invalid",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
 	agentVoiceObjectReadHosts, err :=
 		bootstrap.AgentVoiceObjectReadAllowedHosts(storageConfig)
 	if err != nil {
@@ -199,6 +207,7 @@ func run() int {
 		databasePool.Native(),
 		storageConfig,
 		textConfig,
+		resumeOCRConfig,
 	)
 	if err != nil {
 		logger.Error(

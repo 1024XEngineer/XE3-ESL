@@ -63,6 +63,15 @@ type Parser interface {
 	Version() string
 }
 
+// URLFallbackParser adds the OCR path without changing native PDF parsing.
+type URLFallbackParser interface {
+	Parser
+	// ParseURL converts a short-lived private PDF URL after native text is unavailable.
+	ParseURL(context.Context, string) (resume.Content, error)
+	// OCRVersion returns the version recorded for OCR-generated revisions.
+	OCRVersion() string
+}
+
 // IDGenerator 定义 Resume 模块生成资源标识和对象键的能力。
 type IDGenerator interface {
 	// NewResumeID 根据用户和幂等键生成稳定简历标识。
