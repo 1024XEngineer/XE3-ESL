@@ -384,7 +384,7 @@ class _ScoreOverview extends StatelessWidget {
             const SizedBox(height: SpeakUpDesign.space8),
             Text('0–9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
             const SizedBox(height: SpeakUpDesign.space16),
-            _ScoreRadarChart(criteria: report.criteria),
+            IeltsSpeakingScoreRadar(criteria: report.criteria),
           ],
         ),
       ),
@@ -392,10 +392,17 @@ class _ScoreOverview extends StatelessWidget {
   }
 }
 
-class _ScoreRadarChart extends StatelessWidget {
-  const _ScoreRadarChart({required this.criteria});
+class IeltsSpeakingScoreRadar extends StatelessWidget {
+  const IeltsSpeakingScoreRadar({
+    required this.criteria,
+    this.semanticsKey = const Key('ielts-speaking-score-radar'),
+    this.height = 300,
+    super.key,
+  });
 
   final List<IeltsSpeakingCriterion> criteria;
+  final Key semanticsKey;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
@@ -417,10 +424,10 @@ class _ScoreRadarChart extends StatelessWidget {
         )
         .join('，');
     return Semantics(
-      key: const Key('ielts-speaking-score-radar'),
+      key: semanticsKey,
       label: 'IELTS 口语四维雷达图，$semanticLabel',
       child: SizedBox(
-        height: 300,
+        height: height,
         child: Stack(
           alignment: Alignment.center,
           children: [

@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
@@ -41,13 +42,21 @@ class ReviewPage extends StatefulWidget {
 }
 
 class _ReviewPageState extends State<ReviewPage> {
+  bool _historyExpanded = false;
+  String? _abilitySessionId;
+
   @override
   void initState() {
     super.initState();
     widget.historyController?.addListener(_rebuild);
-    widget.ieltsSpeakingReportIndexController?.addListener(_rebuild);
+    widget.ieltsSpeakingReportIndexController?.addListener(
+      _handleReportIndexChanged,
+    );
+    widget.ieltsSpeakingReportController?.addListener(_rebuild);
     if (widget.autoload) {
       unawaited(_refresh());
+    } else {
+      _syncAbilityReport();
     }
   }
 
@@ -63,23 +72,91 @@ class _ReviewPageState extends State<ReviewPage> {
     }
     if (oldWidget.ieltsSpeakingReportIndexController !=
         widget.ieltsSpeakingReportIndexController) {
-      oldWidget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
-      widget.ieltsSpeakingReportIndexController?.addListener(_rebuild);
+      oldWidget.ieltsSpeakingReportIndexController?.removeListener(
+        _handleReportIndexChanged,
+      );
+      widget.ieltsSpeakingReportIndexController?.addListener(
+        _handleReportIndexChanged,
+      );
       if (widget.autoload) {
         unawaited(widget.ieltsSpeakingReportIndexController?.refresh());
+      } else {
+        _syncAbilityReport(force: true);
       }
+    }
+    if (oldWidget.ieltsSpeakingReportController !=
+        widget.ieltsSpeakingReportController) {
+      if (_abilitySessionId case final sessionId?) {
+        oldWidget.ieltsSpeakingReportController?.cancel(sessionId);
+      }
+      oldWidget.ieltsSpeakingReportController?.removeListener(_rebuild);
+      widget.ieltsSpeakingReportController?.addListener(_rebuild);
+      _abilitySessionId = null;
+      _syncAbilityReport(force: true);
     }
   }
 
   @override
   void dispose() {
     widget.historyController?.removeListener(_rebuild);
-    widget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
+    widget.ieltsSpeakingReportIndexController?.removeListener(
+      _handleReportIndexChanged,
+    );
+    widget.ieltsSpeakingReportController?.removeListener(_rebuild);
+    if (_abilitySessionId case final sessionId?) {
+      widget.ieltsSpeakingReportController?.cancel(sessionId);
+    }
     super.dispose();
   }
 
   void _rebuild() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      setState(() {});
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _handleReportIndexChanged() {
+    _syncAbilityReport();
+    _rebuild();
+  }
+
+  void _syncAbilityReport({bool force = false}) {
+    final reportController = widget.ieltsSpeakingReportController;
+    final indexController = widget.ieltsSpeakingReportIndexController;
+    if (reportController == null || indexController == null) return;
+    final readyReports = indexController.items.where(
+      (item) =>
+          item.reportKind == IeltsSpeakingReportKind.fullMock &&
+          item.evaluationStatus == IeltsSpeakingReportEvaluationStatus.ready,
+    );
+    if (readyReports.isEmpty) {
+      final previousSessionId = _abilitySessionId;
+      _abilitySessionId = null;
+      if (previousSessionId != null &&
+          reportController.practiceSessionId == previousSessionId) {
+        reportController.cancel(previousSessionId);
+      }
+      return;
+    }
+    final latest = readyReports.reduce(
+      (current, candidate) =>
+          candidate.updatedAt.isAfter(current.updatedAt) ? candidate : current,
+    );
+    final alreadyLoaded =
+        reportController.practiceSessionId == latest.practiceSessionId &&
+        (reportController.isLoading || reportController.envelope != null);
+    if (!force &&
+        _abilitySessionId == latest.practiceSessionId &&
+        alreadyLoaded) {
+      return;
+    }
+    _abilitySessionId = latest.practiceSessionId;
+    unawaited(reportController.load(latest.practiceSessionId));
   }
 
   Future<void> _refresh() async {
@@ -88,6 +165,7 @@ class _ReviewPageState extends State<ReviewPage> {
       if (widget.ieltsSpeakingReportIndexController != null)
         widget.ieltsSpeakingReportIndexController!.refresh(),
     ]);
+    _syncAbilityReport();
   }
 
   void _openDetail(ReviewHistoryItem item) {
@@ -104,14 +182,27 @@ class _ReviewPageState extends State<ReviewPage> {
         item.reportKind == IeltsSpeakingReportKind.interview) {
       return;
     }
-    unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              _IeltsReportDetailPage(item: item, controller: controller),
-        ),
-      ),
-    );
+    unawaited(() async {
+      controller.removeListener(_rebuild);
+      try {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => _IeltsReportDetailPage(
+              item: item,
+              controller: controller,
+              cancelOnDispose: false,
+            ),
+          ),
+        );
+      } finally {
+        await Future<void>.delayed(Duration.zero);
+        if (mounted &&
+            identical(controller, widget.ieltsSpeakingReportController)) {
+          controller.addListener(_rebuild);
+          _syncAbilityReport(force: true);
+        }
+      }
+    }());
   }
 
   @override
@@ -135,6 +226,7 @@ class _ReviewPageState extends State<ReviewPage> {
     final initialError = !hasItems
         ? ieltsController?.errorMessage ?? controller?.errorMessage
         : null;
+    final abilityReport = _abilityReport();
     return Scaffold(
       key: const Key('review-page'),
       appBar: widget.showBackButton || widget.onExit != null
@@ -164,12 +256,44 @@ class _ReviewPageState extends State<ReviewPage> {
                   child: _ReviewHeader(previewMode: widget.previewMode),
                 ),
               ),
-              if (initialLoading)
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                sliver: SliverToBoxAdapter(
+                  child: _AbilityOverview(
+                    report: abilityReport,
+                    loading:
+                        abilityReport == null &&
+                        ((ieltsController?.isLoading ?? false) ||
+                            (widget.ieltsSpeakingReportController?.isLoading ??
+                                false)),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                sliver: SliverToBoxAdapter(
+                  child: Semantics(
+                    expanded: _historyExpanded,
+                    child: OutlinedButton.icon(
+                      key: const Key('review-history-toggle'),
+                      onPressed: () =>
+                          setState(() => _historyExpanded = !_historyExpanded),
+                      icon: Icon(
+                        _historyExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                      ),
+                      label: const Text('历史报告'),
+                    ),
+                  ),
+                ),
+              ),
+              if (_historyExpanded && initialLoading)
                 const SliverPadding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverToBoxAdapter(child: _HistoryLoading()),
                 )
-              else if (initialError != null)
+              else if (_historyExpanded && initialError != null)
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverToBoxAdapter(
@@ -179,7 +303,7 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                   ),
                 )
-              else if (!hasItems)
+              else if (_historyExpanded && !hasItems)
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverToBoxAdapter(
@@ -189,7 +313,7 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                   ),
                 )
-              else ...[
+              else if (_historyExpanded) ...[
                 if (interviewItems.isNotEmpty)
                   _IeltsReportSection(
                     title: '面试练习报告',
@@ -218,7 +342,7 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                   ),
               ],
-              if (items.isNotEmpty && controller != null)
+              if (_historyExpanded && items.isNotEmpty && controller != null)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                   sliver: SliverToBoxAdapter(
@@ -228,6 +352,71 @@ class _ReviewPageState extends State<ReviewPage> {
               const SliverToBoxAdapter(child: SizedBox(height: 140)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  IeltsSpeakingReport? _abilityReport() {
+    final envelope = widget.ieltsSpeakingReportController?.envelope;
+    if (envelope == null ||
+        envelope.practiceSessionId != _abilitySessionId ||
+        envelope.evaluationStatus !=
+            IeltsSpeakingReportEvaluationStatus.ready) {
+      return null;
+    }
+    final report = envelope.report;
+    if (report == null) return null;
+    final byId = {
+      for (final criterion in report.criteria) criterion.id: criterion,
+    };
+    const required = <IeltsSpeakingCriterionId>{
+      IeltsSpeakingCriterionId.fluencyAndCoherence,
+      IeltsSpeakingCriterionId.lexicalResource,
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy,
+      IeltsSpeakingCriterionId.pronunciation,
+    };
+    if (required.any((id) => byId[id]?.estimatedBand == null)) return null;
+    return report;
+  }
+}
+
+class _AbilityOverview extends StatelessWidget {
+  const _AbilityOverview({required this.report, required this.loading});
+
+  final IeltsSpeakingReport? report;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('review-ability-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('个人能力', style: SpeakUpDesign.sectionTitle),
+            const SizedBox(height: SpeakUpDesign.space12),
+            if (report case final value?)
+              IeltsSpeakingScoreRadar(
+                criteria: value.criteria,
+                semanticsKey: const Key('review-ability-radar'),
+                height: 272,
+              )
+            else
+              SizedBox(
+                key: const Key('review-ability-empty'),
+                height: 180,
+                child: Center(
+                  child: Text(
+                    loading ? '正在读取能力数据…' : '完成一次 IELTS 口语完整模考后显示四维能力',
+                    textAlign: TextAlign.center,
+                    style: SpeakUpDesign.body,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -552,10 +741,15 @@ class _EmptyReview extends StatelessWidget {
 }
 
 class _IeltsReportDetailPage extends StatefulWidget {
-  const _IeltsReportDetailPage({required this.item, required this.controller});
+  const _IeltsReportDetailPage({
+    required this.item,
+    required this.controller,
+    this.cancelOnDispose = true,
+  });
 
   final IeltsSpeakingReportIndexItem item;
   final IeltsSpeakingReportController controller;
+  final bool cancelOnDispose;
 
   @override
   State<_IeltsReportDetailPage> createState() => _IeltsReportDetailPageState();
@@ -570,7 +764,9 @@ class _IeltsReportDetailPageState extends State<_IeltsReportDetailPage> {
 
   @override
   void dispose() {
-    widget.controller.cancel(widget.item.practiceSessionId);
+    if (widget.cancelOnDispose) {
+      widget.controller.cancel(widget.item.practiceSessionId);
+    }
     super.dispose();
   }
 
