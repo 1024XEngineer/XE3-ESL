@@ -389,6 +389,23 @@ enum PracticeSessionLifecycleStatus {
 
 enum CompletedPracticeRouteResult { continueWithAgent }
 
+final class InterviewPracticeCompletion {
+  const InterviewPracticeCompletion({
+    required this.practiceSessionId,
+    required this.title,
+    required this.speechFeedbackSourceKeys,
+  });
+
+  final String practiceSessionId;
+  final String title;
+  final List<String> speechFeedbackSourceKeys;
+}
+
+typedef OpenInterviewPracticeReport =
+    Future<CompletedPracticeRouteResult?> Function(
+      InterviewPracticeCompletion completion,
+    );
+
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({
     required this.sessionId,
