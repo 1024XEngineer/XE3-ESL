@@ -103,6 +103,16 @@ void main() {
       key: 'primary-tab-review',
       expectedPageKey: 'review-page',
     );
+    expect(find.byKey(const Key('review-exit-button')), findsOneWidget);
+    expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('review-exit-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    await _tapPrimaryDestination(
+      tester,
+      key: 'primary-tab-review',
+      expectedPageKey: 'review-page',
+    );
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-profile',
@@ -884,7 +894,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
-    expect(find.byKey(const Key('primary-navigation')), findsNothing);
+    expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
     final keyboardTop =
         tester.view.physicalSize.height / tester.view.devicePixelRatio - 240;
     final composerRect = tester.getRect(

@@ -17,6 +17,7 @@ import 'package:speakup/features/coaching/review/review_history_controller.dart'
 class ReviewPage extends StatefulWidget {
   const ReviewPage({
     this.showBackButton = false,
+    this.onExit,
     this.previewMode = false,
     this.practiceAvailable = true,
     this.historyController,
@@ -27,6 +28,7 @@ class ReviewPage extends StatefulWidget {
   });
 
   final bool showBackButton;
+  final VoidCallback? onExit;
   final bool previewMode;
   final bool practiceAvailable;
   final ReviewHistoryController? historyController;
@@ -135,12 +137,15 @@ class _ReviewPageState extends State<ReviewPage> {
         : null;
     return Scaffold(
       key: const Key('review-page'),
-      appBar: widget.showBackButton
+      appBar: widget.showBackButton || widget.onExit != null
           ? AppBar(
               leading: IconButton(
-                key: const Key('review-route-back-button'),
+                key: widget.showBackButton
+                    ? const Key('review-route-back-button')
+                    : const Key('review-exit-button'),
                 tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
+                onPressed:
+                    widget.onExit ?? () => Navigator.of(context).maybePop(),
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
             )

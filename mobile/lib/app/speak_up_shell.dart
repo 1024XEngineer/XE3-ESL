@@ -318,7 +318,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     final canContinuePractice =
         widget.practiceController.hasActivePractice ||
         (widget.preparationLaunchController?.hasResumablePractice ?? false);
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
@@ -405,6 +404,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,
+        onExit: widget.showBackButton ? null : () => _selectDestination(0),
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
@@ -441,14 +441,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ),
       drawerScrimColor: const Color(0x52000000),
       body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: keyboardVisible
-          ? null
-          : GlassNavigationBar(
-              destinations: _destinations,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: _selectDestination,
-              solid: practiceSelected,
-            ),
+      bottomNavigationBar: GlassNavigationBar(
+        destinations: _destinations,
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _selectDestination,
+        solid: practiceSelected,
+      ),
     );
   }
 
