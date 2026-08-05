@@ -838,14 +838,15 @@ func planSnapshotFixture() Snapshot {
 
 func planSelectionFixture() scene.SelectionSnapshot {
 	definition := scene.SceneDefinition{
-		ID:               "scene-1",
-		Family:           scene.SceneFamilyInterview,
-		Model:            scene.SceneModelInterviewBasicDialogue,
-		Name:             "Interview",
-		Version:          2,
-		Status:           scene.SceneStatusActive,
-		TurnPolicyRef:    "interview.turn.v1",
-		SessionPolicyRef: genericPracticeSessionPolicyRef,
+		ID:                  "scene-1",
+		Family:              scene.SceneFamilyInterview,
+		Model:               scene.SceneModelInterviewBasicDialogue,
+		Name:                "Interview",
+		Version:             2,
+		Status:              scene.SceneStatusActive,
+		TurnPolicyRef:       "interview.turn.v1",
+		SessionPolicyRef:    genericPracticeSessionPolicyRef,
+		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 		Prompt: scene.ScenePrompt{
 			PublicSceneBrief:         "Interview practice",
 			PracticeGoal:             "Give clear answers",

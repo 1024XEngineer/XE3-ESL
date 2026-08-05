@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -254,7 +255,10 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 		actor.SessionID,
 		"ielts",
 	)
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}
@@ -554,7 +558,10 @@ func seedPlanCommand(
 		t.Fatalf("seed Plan Snapshot = (%#v, %t, %v)", snapshot, replayed, err)
 	}
 
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}
@@ -772,17 +779,18 @@ func seedBlockingPracticeSession(
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, status, version,
 			effective_turns, started_at, snapshot_id,
-			scene_family, scene_model, plan_revision
+			scene_family, scene_model, evaluation_policy_ref, plan_revision
 		) VALUES (
 			$1, 'session-blocking-delete', $2, 'in_progress', 1,
 			0, transaction_timestamp(), 'session-blocking-snapshot',
-			$3, $4, $5
+			$3, $4, $5, $6
 		)
 	`,
 		plan.UserID,
 		plan.ID,
 		plan.SceneSelection.Scene.Family,
 		plan.SceneSelection.Scene.Model,
+		plan.SceneSelection.Scene.EvaluationPolicyRef,
 		plan.Revision,
 	); err != nil {
 		t.Fatalf("insert blocking Practice Session: %v", err)

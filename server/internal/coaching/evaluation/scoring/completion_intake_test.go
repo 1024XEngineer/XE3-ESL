@@ -2,20 +2,19 @@ package scoring
 
 import (
 	"context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 func TestCompletionIntakeCreatesOneEvaluationAndAcknowledgesHandoff(
 	t *testing.T,
 ) {
-	claim := completionHandoffFixture(scene.SceneFamilyInterview,
-		scene.SceneModelProjectExperienceDeepDive)
+	claim := completionHandoffFixture(InterviewEvaluationPolicyRef)
 	completions := &completionHandoffRepositoryStub{claim: claim}
 	evidence := &completedEvidenceFreezerStub{
 		snapshot: completionEvidenceFixture(claim),
@@ -25,6 +24,7 @@ func TestCompletionIntakeCreatesOneEvaluationAndAcknowledgesHandoff(
 		completions,
 		evidence,
 		evaluations,
+		NewEvaluationPolicyRegistry(),
 		completionIntakeConfigurationFixture(),
 	)
 	if err != nil {
@@ -52,10 +52,7 @@ func TestCompletionIntakeCreatesOneEvaluationAndAcknowledgesHandoff(
 func TestCompletionIntakeRoutesDailyPracticeToGeneralSceneEvaluation(
 	t *testing.T,
 ) {
-	claim := completionHandoffFixture(
-		scene.SceneFamilyDaily,
-		scene.SceneModelDailyBasicDialogue,
-	)
+	claim := completionHandoffFixture(DailyEvaluationPolicyRef)
 	completions := &completionHandoffRepositoryStub{claim: claim}
 	intake, err := NewCompletionIntake(
 		completions,
@@ -63,6 +60,7 @@ func TestCompletionIntakeRoutesDailyPracticeToGeneralSceneEvaluation(
 			snapshot: completionEvidenceFixture(claim),
 		},
 		&completedEvaluationCreatorStub{},
+		NewEvaluationPolicyRegistry(),
 		completionIntakeConfigurationFixture(),
 	)
 	if err != nil {
@@ -77,32 +75,88 @@ func TestCompletionIntakeRoutesDailyPracticeToGeneralSceneEvaluation(
 	}
 }
 
-func TestCompletionEvaluationRouteCoversEveryFormalSceneModel(t *testing.T) {
+func TestEvaluationPolicyRegistryCoversEveryFormalPolicy(t *testing.T) {
 	t.Parallel()
+	registry := NewEvaluationPolicyRegistry()
 	tests := []struct {
-		family   scene.SceneFamily
-		model    scene.SceneModel
-		scene    evaluation.SceneType
-		strategy string
+		reference string
+		scene     evaluation.SceneType
+		strategy  string
 	}{
-		{scene.SceneFamilyInterview, scene.SceneModelProjectExperienceDeepDive, evaluation.SceneInterview, InterviewShadowStrategyRef},
-		{scene.SceneFamilyInterview, scene.SceneModelInterviewBasicDialogue, evaluation.SceneInterview, InterviewShadowStrategyRef},
-		{scene.SceneFamilyExam, scene.SceneModelIELTSSpeakingPart1, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
-		{scene.SceneFamilyExam, scene.SceneModelIELTSSpeakingPart2, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
-		{scene.SceneFamilyExam, scene.SceneModelIELTSSpeakingPart3, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
-		{scene.SceneFamilyExam, scene.SceneModelIELTSSpeakingFullMock, evaluation.SceneIELTSSpeaking, IELTSSpeakingShadowStrategyRef},
-		{scene.SceneFamilyExam, scene.SceneModelExamBasicDialogue, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
-		{scene.SceneFamilyWorkplace, scene.SceneModelProgressAndRiskUpdate, evaluation.SceneOverseasWorkplace, GeneralSceneStrategyRef},
-		{scene.SceneFamilyWorkplace, scene.SceneModelWorkplaceBasicDialogue, evaluation.SceneOverseasWorkplace, GeneralSceneStrategyRef},
-		{scene.SceneFamilyDaily, scene.SceneModelHotelCheckinAndIssueHandling, evaluation.SceneOverseasDaily, GeneralSceneStrategyRef},
-		{scene.SceneFamilyDaily, scene.SceneModelDailyBasicDialogue, evaluation.SceneOverseasDaily, GeneralSceneStrategyRef},
+		{InterviewEvaluationPolicyRef, evaluation.SceneInterview, InterviewShadowStrategyRef},
+		{IELTSSpeakingPracticeEvaluationPolicyRef, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
+		{IELTSSpeakingFullMockEvaluationPolicyRef, evaluation.SceneIELTSSpeaking, IELTSSpeakingShadowStrategyRef},
+		{WorkplaceEvaluationPolicyRef, evaluation.SceneOverseasWorkplace, GeneralSceneStrategyRef},
+		{DailyEvaluationPolicyRef, evaluation.SceneOverseasDaily, GeneralSceneStrategyRef},
 	}
 	for _, test := range tests {
-		route, err := completionEvaluationRoute(test.family, test.model)
-		if err != nil || route.SceneType != test.scene ||
-			route.StrategyRef != test.strategy {
-			t.Errorf("family=%s model=%s route=%#v error=%v", test.family, test.model, route, err)
+		policy, err := registry.resolve(test.reference)
+		if err != nil || policy.SceneType != test.scene ||
+			policy.StrategyRef != test.strategy ||
+			policy.PipelineVersion == "" {
+			t.Errorf("reference=%s policy=%#v error=%v", test.reference, policy, err)
 		}
+	}
+}
+
+func TestEvaluationPolicyRegistryRejectsUnknownAndDisabledReferences(
+	t *testing.T,
+) {
+	t.Parallel()
+	registry := &EvaluationPolicyRegistry{
+		policies: map[string]evaluationPolicySpec{
+			"disabled.fixture.evaluation.v1": {
+				SceneType:       evaluation.SceneInterview,
+				StrategyRef:     InterviewShadowStrategyRef,
+				PipelineVersion: InterviewShadowPipelineVersion,
+				Enabled:         false,
+			},
+		},
+	}
+	for _, reference := range []string{
+		"unknown.fixture.evaluation.v1",
+		"disabled.fixture.evaluation.v1",
+	} {
+		if err := registry.ValidateEvaluationPolicyReference(reference); !errors.Is(err, ErrStrategyNotAvailable) {
+			t.Errorf("reference=%s error=%v", reference, err)
+		}
+	}
+}
+
+func TestCompletionIntakeRejectsUnknownPolicyBeforeCreatingEvidence(
+	t *testing.T,
+) {
+	claim := completionHandoffFixture("unknown.pipeline.evaluation.v1")
+	completions := &completionHandoffRepositoryStub{claim: claim}
+	evidence := &completedEvidenceFreezerStub{}
+	evaluations := &completedEvaluationCreatorStub{}
+	intake, err := NewCompletionIntake(
+		completions,
+		evidence,
+		evaluations,
+		NewEvaluationPolicyRegistry(),
+		completionIntakeConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := intake.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sweep != (CompletionIntakeSweepResult{Claimed: 1, Failed: 1}) ||
+		completions.completed != 0 || completions.failed != 1 ||
+		completions.failure.Code != "strategy_not_available" ||
+		completions.failure.Retryable || evidence.calls != 0 ||
+		evaluations.calls != 0 {
+		t.Fatalf(
+			"sweep=%#v completions=%d failure=%#v evidence=%d evaluations=%d",
+			sweep,
+			completions.completed,
+			completions.failure,
+			evidence.calls,
+			evaluations.calls,
+		)
 	}
 }
 
@@ -115,8 +169,7 @@ func completionIntakeConfigurationFixture() CompletionIntakeConfiguration {
 }
 
 func completionHandoffFixture(
-	family scene.SceneFamily,
-	model scene.SceneModel,
+	evaluationPolicyRef string,
 ) practice.CompletionHandoffClaim {
 	now := time.Date(2026, time.August, 4, 8, 0, 0, 0, time.UTC)
 	return practice.CompletionHandoffClaim{
@@ -128,44 +181,32 @@ func completionHandoffFixture(
 			CompletionToken: "practice-session:practice-session-1:completed:v4",
 			CreatedAt:       now,
 		},
-		SceneFamily:    family,
-		SceneModel:     model,
-		AttemptCount:   1,
-		FencingToken:   1,
-		LeaseExpiresAt: now.Add(time.Minute),
+		EvaluationPolicyRef: evaluationPolicyRef,
+		AttemptCount:        1,
+		FencingToken:        1,
+		LeaseExpiresAt:      now.Add(time.Minute),
 	}
 }
 
 func completionEvidenceFixture(
 	claim practice.CompletionHandoffClaim,
 ) evidence.EvidenceSnapshot {
+	policy, err := NewEvaluationPolicyRegistry().resolve(
+		claim.EvaluationPolicyRef,
+	)
+	if err != nil {
+		panic(err)
+	}
 	return evidence.EvidenceSnapshot{
-		ID:                "evaluation-snapshot-1",
-		OwnerUserID:       claim.OwnerUserID,
-		PracticeSessionID: claim.Completion.SessionID,
-		InputRevision:     claim.Completion.SessionVersion,
-		Scope:             evaluation.ScopeSession,
-		SceneType: completionSceneTypeFixture(
-			claim.SceneFamily,
-		),
+		ID:                 "evaluation-snapshot-1",
+		OwnerUserID:        claim.OwnerUserID,
+		PracticeSessionID:  claim.Completion.SessionID,
+		InputRevision:      claim.Completion.SessionVersion,
+		Scope:              evaluation.ScopeSession,
+		SceneType:          policy.SceneType,
 		SourceManifestHash: [32]byte{1},
 		Payload:            []byte(`{"schema":"fixture"}`),
 		CreatedAt:          claim.Completion.CreatedAt,
-	}
-}
-
-func completionSceneTypeFixture(family scene.SceneFamily) evaluation.SceneType {
-	switch family {
-	case scene.SceneFamilyInterview:
-		return evaluation.SceneInterview
-	case scene.SceneFamilyExam:
-		return evaluation.SceneIELTSSpeaking
-	case scene.SceneFamilyDaily:
-		return evaluation.SceneOverseasDaily
-	case scene.SceneFamilyWorkplace:
-		return evaluation.SceneOverseasWorkplace
-	default:
-		return ""
 	}
 }
 
@@ -211,6 +252,7 @@ func (stub *completionHandoffRepositoryStub) FailCompletionHandoff(
 
 type completedEvidenceFreezerStub struct {
 	snapshot evidence.EvidenceSnapshot
+	calls    int
 }
 
 func (stub *completedEvidenceFreezerStub) FreezeCompleted(
@@ -220,6 +262,7 @@ func (stub *completedEvidenceFreezerStub) FreezeCompleted(
 	evaluation.Scope,
 	evaluation.SceneType,
 ) (evidence.EvidenceSnapshot, bool, error) {
+	stub.calls++
 	return stub.snapshot, false, nil
 }
 

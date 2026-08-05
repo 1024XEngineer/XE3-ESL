@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -131,16 +132,17 @@ func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
 	}
 	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
 		{
-			ID:               testProgrammerInterviewSceneID,
-			Family:           scene.SceneFamilyInterview,
-			Model:            scene.SceneModelProjectExperienceDeepDive,
-			Name:             "Technical interview",
-			Version:          1,
-			Status:           scene.SceneStatusActive,
-			TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
-			SessionPolicyRef: "interview.project_deep_dive.session.v1",
-			Prompt:           bootstrapTestScenePrompt(),
-			Roles:            []scene.RoleDefinition{programmerRole},
+			ID:                  testProgrammerInterviewSceneID,
+			Family:              scene.SceneFamilyInterview,
+			Model:               scene.SceneModelProjectExperienceDeepDive,
+			Name:                "Technical interview",
+			Version:             1,
+			Status:              scene.SceneStatusActive,
+			TurnPolicyRef:       "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef:    "interview.project_deep_dive.session.v1",
+			EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+			Prompt:              bootstrapTestScenePrompt(),
+			Roles:               []scene.RoleDefinition{programmerRole},
 			PracticeOptions: []scene.PracticeOption{
 				{
 					ID:          testFullSimulationOptionID,
@@ -158,16 +160,17 @@ func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
 			},
 		},
 		{
-			ID:               testIELTSFullMockSceneID,
-			Family:           scene.SceneFamilyExam,
-			Model:            scene.SceneModelIELTSSpeakingFullMock,
-			Name:             "IELTS Speaking full mock",
-			Version:          1,
-			Status:           scene.SceneStatusActive,
-			TurnPolicyRef:    "ielts.speaking_full_mock.turn.v1",
-			SessionPolicyRef: "ielts.speaking_full_mock.session.v1",
-			Prompt:           bootstrapTestScenePrompt(),
-			Roles:            []scene.RoleDefinition{ieltsRole},
+			ID:                  testIELTSFullMockSceneID,
+			Family:              scene.SceneFamilyExam,
+			Model:               scene.SceneModelIELTSSpeakingFullMock,
+			Name:                "IELTS Speaking full mock",
+			Version:             1,
+			Status:              scene.SceneStatusActive,
+			TurnPolicyRef:       "ielts.speaking_full_mock.turn.v1",
+			SessionPolicyRef:    "ielts.speaking_full_mock.session.v1",
+			EvaluationPolicyRef: "ielts.speaking_full_mock.evaluation.v1",
+			Prompt:              bootstrapTestScenePrompt(),
+			Roles:               []scene.RoleDefinition{ieltsRole},
 			PracticeOptions: []scene.PracticeOption{
 				{
 					ID:          testIELTSFullSimulationID,
@@ -184,7 +187,7 @@ func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
 				},
 			},
 		},
-	})
+	}, scoring.NewEvaluationPolicyRegistry())
 	if err != nil {
 		t.Fatalf("scene.NewCatalog: %v", err)
 	}

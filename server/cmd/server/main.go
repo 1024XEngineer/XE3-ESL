@@ -188,7 +188,11 @@ func run() int {
 		return 1
 	}
 	defer databasePool.Close()
-	sceneCatalog, err := scene.NewPostgresCatalog(databasePool.Native())
+	evaluationPolicies := scoring.NewEvaluationPolicyRegistry()
+	sceneCatalog, err := scene.NewPostgresCatalog(
+		databasePool.Native(),
+		evaluationPolicies,
+	)
 	if err != nil {
 		logger.Error("Scene catalog startup failed", slog.Any("error", err))
 		return 1
@@ -223,6 +227,7 @@ func run() int {
 	evaluationComposition, err := bootstrap.NewEvaluationComposition(
 		databasePool.Native(),
 		evaluationScoringGenerator,
+		evaluationPolicies,
 		evaluationConfiguration,
 	)
 	if err != nil {

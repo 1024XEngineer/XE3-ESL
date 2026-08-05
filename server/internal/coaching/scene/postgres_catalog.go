@@ -22,9 +22,10 @@ WITH latest_builtin AS (
         versions.scene_model,
         versions.name,
         versions.status,
-        versions.turn_policy_ref,
-        versions.session_policy_ref,
-        versions.prompt,
+	        versions.turn_policy_ref,
+	        versions.session_policy_ref,
+	        versions.evaluation_policy_ref,
+	        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -41,9 +42,10 @@ SELECT
     scene_model,
     name,
     status,
-    turn_policy_ref,
-    session_policy_ref,
-    prompt,
+	    turn_policy_ref,
+	    session_policy_ref,
+	    evaluation_policy_ref,
+	    prompt,
     roles,
     practice_options,
     display_order
@@ -60,9 +62,10 @@ WITH latest_builtin AS (
         versions.scene_model,
         versions.name,
         versions.status,
-        versions.turn_policy_ref,
-        versions.session_policy_ref,
-        versions.prompt,
+	        versions.turn_policy_ref,
+	        versions.session_policy_ref,
+	        versions.evaluation_policy_ref,
+	        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -81,9 +84,10 @@ SELECT
     scene_model,
     name,
     status,
-    turn_policy_ref,
-    session_policy_ref,
-    prompt,
+	    turn_policy_ref,
+	    session_policy_ref,
+	    evaluation_policy_ref,
+	    prompt,
     roles,
     practice_options,
     display_order
@@ -99,9 +103,10 @@ WITH latest_builtin AS (
         versions.scene_model,
         versions.name,
         versions.status,
-        versions.turn_policy_ref,
-        versions.session_policy_ref,
-        versions.prompt,
+	        versions.turn_policy_ref,
+	        versions.session_policy_ref,
+	        versions.evaluation_policy_ref,
+	        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -120,9 +125,10 @@ SELECT
     scene_model,
     name,
     status,
-    turn_policy_ref,
-    session_policy_ref,
-    prompt,
+	    turn_policy_ref,
+	    session_policy_ref,
+	    evaluation_policy_ref,
+	    prompt,
     roles,
     practice_options,
     display_order
@@ -139,9 +145,10 @@ WITH latest_accessible AS (
         versions.scene_model,
         versions.name,
         versions.status,
-        versions.turn_policy_ref,
-        versions.session_policy_ref,
-        versions.prompt,
+	        versions.turn_policy_ref,
+	        versions.session_policy_ref,
+	        versions.evaluation_policy_ref,
+	        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -163,9 +170,10 @@ SELECT
     scene_model,
     name,
     status,
-    turn_policy_ref,
-    session_policy_ref,
-    prompt,
+	    turn_policy_ref,
+	    session_policy_ref,
+	    evaluation_policy_ref,
+	    prompt,
     roles,
     practice_options,
     display_order
@@ -212,19 +220,34 @@ func (database pgxCatalogDatabase) QueryRow(
 // PostgresCatalog is the production read adapter for immutable Scene versions.
 type PostgresCatalog struct {
 	database          catalogDatabase
+	policyValidator   EvaluationPolicyReferenceValidator
 	ieltsQuestionBank *IELTSQuestionBank
 }
 
-func NewPostgresCatalog(pool *pgxpool.Pool) (*PostgresCatalog, error) {
+func NewPostgresCatalog(
+	pool *pgxpool.Pool,
+	policyValidator EvaluationPolicyReferenceValidator,
+) (*PostgresCatalog, error) {
 	if pool == nil {
 		return nil, errors.New("scene: PostgreSQL catalog pool is required")
 	}
-	return newPostgresCatalog(pgxCatalogDatabase{pool: pool})
+	return newPostgresCatalog(
+		pgxCatalogDatabase{pool: pool},
+		policyValidator,
+	)
 }
 
-func newPostgresCatalog(database catalogDatabase) (*PostgresCatalog, error) {
+func newPostgresCatalog(
+	database catalogDatabase,
+	policyValidator EvaluationPolicyReferenceValidator,
+) (*PostgresCatalog, error) {
 	if database == nil {
 		return nil, errors.New("scene: PostgreSQL catalog database is required")
+	}
+	if policyValidator == nil {
+		return nil, errors.New(
+			"scene: Evaluation policy validator is required",
+		)
 	}
 	bank, err := loadEmbeddedIELTSQuestionBank()
 	if err != nil {
@@ -232,6 +255,7 @@ func newPostgresCatalog(database catalogDatabase) (*PostgresCatalog, error) {
 	}
 	return &PostgresCatalog{
 		database:          database,
+		policyValidator:   policyValidator,
 		ieltsQuestionBank: &bank,
 	}, nil
 }
@@ -259,7 +283,7 @@ func (catalog *PostgresCatalog) ListActiveScenes(
 	if err := rows.Err(); err != nil {
 		return nil, catalogReadError("list active Scenes", err)
 	}
-	return validateLoadedScenes(definitions)
+	return validateLoadedScenes(definitions, catalog.policyValidator)
 }
 
 func (catalog *PostgresCatalog) GetScene(
@@ -278,7 +302,10 @@ func (catalog *PostgresCatalog) GetScene(
 	if err != nil {
 		return SceneDefinition{}, err
 	}
-	validated, err := validateLoadedScenes([]SceneDefinition{definition})
+	validated, err := validateLoadedScenes(
+		[]SceneDefinition{definition},
+		catalog.policyValidator,
+	)
 	if err != nil {
 		return SceneDefinition{}, err
 	}
@@ -318,11 +345,17 @@ func (catalog *PostgresCatalog) ResolveSelection(
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
-	validated, err := validateLoadedScenes([]SceneDefinition{definition})
+	validated, err := validateLoadedScenes(
+		[]SceneDefinition{definition},
+		catalog.policyValidator,
+	)
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
-	memoryCatalog, err := newValidatedCatalog(validated)
+	memoryCatalog, err := newValidatedCatalog(
+		validated,
+		catalog.policyValidator,
+	)
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
@@ -362,11 +395,17 @@ func (catalog *PostgresCatalog) ResolveAccessibleSelection(
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
-	validated, err := validateLoadedScenes([]SceneDefinition{definition})
+	validated, err := validateLoadedScenes(
+		[]SceneDefinition{definition},
+		catalog.policyValidator,
+	)
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
-	memoryCatalog, err := newValidatedCatalog(validated)
+	memoryCatalog, err := newValidatedCatalog(
+		validated,
+		catalog.policyValidator,
+	)
 	if err != nil {
 		return SelectionSnapshot{}, err
 	}
@@ -433,6 +472,7 @@ func scanSceneDefinition(scanner catalogRow) (SceneDefinition, error) {
 		&definition.Status,
 		&definition.TurnPolicyRef,
 		&definition.SessionPolicyRef,
+		&definition.EvaluationPolicyRef,
 		&promptPayload,
 		&rolesPayload,
 		&optionsPayload,
@@ -522,11 +562,12 @@ func decodeStrictJSON(payload []byte, destination any) error {
 
 func validateLoadedScenes(
 	definitions []SceneDefinition,
+	policyValidator EvaluationPolicyReferenceValidator,
 ) ([]SceneDefinition, error) {
 	if len(definitions) == 0 {
 		return []SceneDefinition{}, nil
 	}
-	catalog, err := newValidatedCatalog(definitions)
+	catalog, err := newValidatedCatalog(definitions, policyValidator)
 	if err != nil {
 		return nil, err
 	}

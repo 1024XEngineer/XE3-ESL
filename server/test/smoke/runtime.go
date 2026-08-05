@@ -94,14 +94,15 @@ func NewRuntime(catalog scene.CatalogReader) *Runtime {
 func newDeterministicSceneCatalog() scene.CatalogReader {
 	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
 		{
-			ID:               DemoScene,
-			Family:           scene.SceneFamilyInterview,
-			Model:            scene.SceneModelProjectExperienceDeepDive,
-			Name:             "项目经历深挖",
-			Version:          1,
-			Status:           scene.SceneStatusActive,
-			TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
-			SessionPolicyRef: "interview.project_deep_dive.session.v1",
+			ID:                  DemoScene,
+			Family:              scene.SceneFamilyInterview,
+			Model:               scene.SceneModelProjectExperienceDeepDive,
+			Name:                "项目经历深挖",
+			Version:             1,
+			Status:              scene.SceneStatusActive,
+			TurnPolicyRef:       "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef:    "interview.project_deep_dive.session.v1",
+			EvaluationPolicyRef: "interview.shadow.evaluation.v1",
 			Prompt: scene.ScenePrompt{
 				PublicSceneBrief: "围绕一个真实项目说明个人职责、关键难点、技术取舍和结果。",
 				PracticeGoal:     "清楚表达个人贡献、决策依据、结果与反思。",
@@ -153,7 +154,9 @@ func newDeterministicSceneCatalog() scene.CatalogReader {
 			},
 			DisplayOrder: 10,
 		},
-	})
+	}, scene.EvaluationPolicyReferenceValidatorFunc(
+		func(string) error { return nil },
+	))
 	if err != nil {
 		panic(fmt.Sprintf("build deterministic Scene catalog: %v", err))
 	}

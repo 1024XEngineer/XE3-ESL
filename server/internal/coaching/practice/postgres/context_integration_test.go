@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
@@ -119,12 +120,12 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO coaching_scene_versions (
 			scene_id, scene_version, scene_family, scene_model, name,
-			status, turn_policy_ref, session_policy_ref, prompt, roles,
+			status, turn_policy_ref, session_policy_ref, evaluation_policy_ref, prompt, roles,
 			practice_options, display_order
 		)
 		SELECT
 			scene_id, scene_version + 1, scene_family, scene_model, name,
-			status, $3, session_policy_ref, prompt, roles,
+			status, $3, session_policy_ref, evaluation_policy_ref, prompt, roles,
 			practice_options, display_order
 		FROM coaching_scene_versions
 		WHERE scene_id = $1 AND scene_version = $2
@@ -135,7 +136,10 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	); err != nil {
 		t.Fatalf("publish later Scene version: %v", err)
 	}
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}
@@ -390,7 +394,10 @@ func createContextPlan(
 	planID string,
 ) preparation.PracticePlan {
 	t.Helper()
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}

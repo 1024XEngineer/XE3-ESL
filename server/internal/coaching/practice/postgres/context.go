@@ -117,9 +117,9 @@ func (r *Repository) CreateSession(
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, plan_revision,
 			status, version, effective_turns, snapshot_id,
-			scene_family, scene_model
+			scene_family, scene_model, evaluation_policy_ref
 		) VALUES (
-			$1, $2, $3, $4, 'starting', 1, 0, $5, $6, $7
+			$1, $2, $3, $4, 'starting', 1, 0, $5, $6, $7, $8
 		)
 		RETURNING created_at
 	`,
@@ -130,6 +130,7 @@ func (r *Repository) CreateSession(
 		command.SnapshotID,
 		snapshot.SceneFamily,
 		snapshot.SceneModel,
+		snapshot.SceneSelection.Scene.EvaluationPolicyRef,
 	).Scan(&createdAt)
 	if err != nil {
 		return practice.SessionBootstrap{}, false,
@@ -176,15 +177,16 @@ func (r *Repository) CreateSession(
 	}
 	bootstrap := practice.SessionBootstrap{
 		Session: practice.Session{
-			ID:           command.SessionID,
-			PlanID:       command.PlanID,
-			PlanRevision: command.PlanRevision,
-			SceneFamily:  snapshot.SceneFamily,
-			SceneModel:   snapshot.SceneModel,
-			SnapshotID:   command.SnapshotID,
-			Status:       practice.SessionStarting,
-			Version:      1,
-			CreatedAt:    createdAt.Time.UTC(),
+			ID:                  command.SessionID,
+			PlanID:              command.PlanID,
+			PlanRevision:        command.PlanRevision,
+			SceneFamily:         snapshot.SceneFamily,
+			SceneModel:          snapshot.SceneModel,
+			EvaluationPolicyRef: snapshot.SceneSelection.Scene.EvaluationPolicyRef,
+			SnapshotID:          command.SnapshotID,
+			Status:              practice.SessionStarting,
+			Version:             1,
+			CreatedAt:           createdAt.Time.UTC(),
 		},
 		Snapshot: snapshot,
 	}
@@ -654,6 +656,7 @@ const contextSessionSelect = `
 		session.plan_revision,
 		session.scene_family,
 		session.scene_model,
+		session.evaluation_policy_ref,
 		session.snapshot_id,
 		session.status,
 		session.version,
@@ -676,6 +679,7 @@ const contextBootstrapSelect = `
 		session.plan_revision,
 		session.scene_family,
 		session.scene_model,
+		session.evaluation_policy_ref,
 		session.snapshot_id,
 		session.status,
 		session.version,
@@ -720,6 +724,7 @@ func scanSession(row contextRowScanner) (practice.Session, error) {
 		&session.PlanRevision,
 		&session.SceneFamily,
 		&session.SceneModel,
+		&session.EvaluationPolicyRef,
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
@@ -766,6 +771,7 @@ func scanContextBootstrap(
 		&session.PlanRevision,
 		&session.SceneFamily,
 		&session.SceneModel,
+		&session.EvaluationPolicyRef,
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
@@ -959,6 +965,9 @@ func validContextSnapshot(
 		snapshot.PlanRevision < 1 ||
 		snapshot.SceneSelection.Scene.Family != snapshot.SceneFamily ||
 		snapshot.SceneSelection.Scene.Model != snapshot.SceneModel ||
+		!validEvaluationPolicyRef(
+			snapshot.SceneSelection.Scene.EvaluationPolicyRef,
+		) ||
 		snapshot.SceneSelection.Scene.Status != scene.SceneStatusActive ||
 		!validContextResourceID(snapshot.Preparation.ID) ||
 		!validContextResourceID(snapshot.Preparation.SourceProfileID) ||
@@ -1113,10 +1122,16 @@ func validContextResourceID(value string) bool {
 		strings.TrimSpace(value) == value && !strings.ContainsRune(value, '\x00')
 }
 
+func validEvaluationPolicyRef(value string) bool {
+	return validContextResourceID(value) &&
+		strings.HasSuffix(value, ".evaluation.v1")
+}
+
 func validStoredSession(session practice.Session) bool {
 	if !validContextResourceID(session.ID) ||
 		!validContextResourceID(session.PlanID) || session.PlanRevision < 1 ||
 		!validContextResourceID(session.SnapshotID) || session.Version < 1 ||
+		!validEvaluationPolicyRef(session.EvaluationPolicyRef) ||
 		session.EffectiveTurns < 0 || session.CreatedAt.IsZero() {
 		return false
 	}
@@ -1146,6 +1161,8 @@ func validStoredContextBootstrap(
 		bootstrap.Snapshot.PlanRevision == bootstrap.Session.PlanRevision &&
 		bootstrap.Snapshot.SceneFamily == bootstrap.Session.SceneFamily &&
 		bootstrap.Snapshot.SceneModel == bootstrap.Session.SceneModel &&
+		bootstrap.Snapshot.SceneSelection.Scene.EvaluationPolicyRef ==
+			bootstrap.Session.EvaluationPolicyRef &&
 		!bootstrap.Snapshot.CreatedAt.IsZero() &&
 		validContextSnapshot(bootstrap.Snapshot, learnerUserID(bootstrap.Snapshot))
 }

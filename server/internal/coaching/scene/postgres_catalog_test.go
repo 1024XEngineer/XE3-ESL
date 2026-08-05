@@ -48,7 +48,7 @@ func TestPostgresCatalogReadsOnlyLatestActiveBuiltinScenes(t *testing.T) {
 		nil,
 	)
 
-	catalog, err := NewPostgresCatalog(pool)
+	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestPostgresCatalogResolvesOnlyLatestActiveVersion(t *testing.T) {
 	definition := testSceneDefinition()
 	insertSceneVersion(t, pool, definition, "", nil)
 
-	catalog, err := NewPostgresCatalog(pool)
+	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog() error = %v", err)
 	}
@@ -141,7 +141,7 @@ func TestPostgresCatalogResolvesPublicOrOwnedPrivateScene(t *testing.T) {
 	reparentTestScene(&privateDefinition)
 	insertSceneVersion(t, pool, privateDefinition, ownerUserID, nil)
 
-	catalog, err := NewPostgresCatalog(pool)
+	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog() error = %v", err)
 	}
@@ -206,7 +206,7 @@ func TestPostgresCatalogRejectsInvalidStoredJSON(t *testing.T) {
 		[]byte(`{"unexpected":true}`),
 	)
 
-	catalog, err := NewPostgresCatalog(pool)
+	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog() error = %v", err)
 	}
@@ -216,9 +216,27 @@ func TestPostgresCatalogRejectsInvalidStoredJSON(t *testing.T) {
 	}
 }
 
+func TestPostgresCatalogRejectsUnavailableEvaluationPolicy(t *testing.T) {
+	pool := sceneCatalogTestDatabase(t)
+	definition := testSceneDefinition()
+	definition.EvaluationPolicyRef = "unknown.fixture.evaluation.v1"
+	insertSceneVersion(t, pool, definition, "", nil)
+
+	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewPostgresCatalog() error = %v", err)
+	}
+	if _, err := catalog.GetScene(context.Background(), definition.ID); !errors.Is(err, ErrCatalogDefinitionInvalid) {
+		t.Fatalf("GetScene() error = %v", err)
+	}
+}
+
 func TestPostgresCatalogReportsDatabaseAndContextErrors(t *testing.T) {
 	databaseErr := errors.New("database unavailable")
-	catalog, err := newPostgresCatalog(failingCatalogDatabase{err: databaseErr})
+	catalog, err := newPostgresCatalog(
+		failingCatalogDatabase{err: databaseErr},
+		testPolicyValidator(),
+	)
 	if err != nil {
 		t.Fatalf("newPostgresCatalog() error = %v", err)
 	}
@@ -325,6 +343,7 @@ func sceneCatalogTestDatabase(t *testing.T) *pgxpool.Pool {
             status text NOT NULL,
             turn_policy_ref text NOT NULL,
             session_policy_ref text NOT NULL,
+			evaluation_policy_ref text NOT NULL,
             prompt jsonb NOT NULL,
             roles jsonb NOT NULL,
             practice_options jsonb NOT NULL,
@@ -416,13 +435,14 @@ func insertSceneVersion(
             status,
             turn_policy_ref,
             session_policy_ref,
+			evaluation_policy_ref,
             prompt,
             roles,
             practice_options,
             display_order
          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8,
-            $9::jsonb, $10::jsonb, $11::jsonb, $12
+			$1, $2, $3, $4, $5, $6, $7, $8, $9,
+			$10::jsonb, $11::jsonb, $12::jsonb, $13
          )`,
 		definition.ID,
 		definition.Version,
@@ -432,6 +452,7 @@ func insertSceneVersion(
 		definition.Status,
 		definition.TurnPolicyRef,
 		definition.SessionPolicyRef,
+		definition.EvaluationPolicyRef,
 		string(prompt),
 		string(roles),
 		string(options),

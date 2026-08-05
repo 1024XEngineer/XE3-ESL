@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -500,7 +501,10 @@ func TestPostgresJobTargetConfirmationRejectsMultiRoleInterview(
 	); err != nil {
 		t.Fatalf("CompleteAnalysis: %v", err)
 	}
-	catalog, err := scene.NewPostgresCatalog(pool)
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
 	if err != nil {
 		t.Fatalf("NewPostgresCatalog: %v", err)
 	}

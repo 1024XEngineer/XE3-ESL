@@ -137,7 +137,10 @@ func TestCatalogRejectsInvalidCanonicalDefinitions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			definition := testSceneDefinition()
 			test.mutate(&definition)
-			if _, err := NewCatalog([]SceneDefinition{definition}); !errors.Is(err, ErrCatalogDefinitionInvalid) {
+			if _, err := NewCatalog(
+				[]SceneDefinition{definition},
+				testPolicyValidator(),
+			); !errors.Is(err, ErrCatalogDefinitionInvalid) {
 				t.Fatalf("NewCatalog() error = %v", err)
 			}
 		})
@@ -168,8 +171,29 @@ func TestCatalogRejectsConflictingObjectiveDescriptionsAcrossRoles(t *testing.T)
 		},
 	)
 
-	if _, err := NewCatalog([]SceneDefinition{definition}); !errors.Is(err, ErrCatalogDefinitionInvalid) {
+	if _, err := NewCatalog(
+		[]SceneDefinition{definition},
+		testPolicyValidator(),
+	); !errors.Is(err, ErrCatalogDefinitionInvalid) {
 		t.Fatalf("NewCatalog() error = %v", err)
+	}
+}
+
+func TestCatalogRejectsUnregisteredOrDisabledEvaluationPolicy(t *testing.T) {
+	for _, reference := range []string{
+		"unknown.fixture.evaluation.v1",
+		"disabled.fixture.evaluation.v1",
+	} {
+		t.Run(reference, func(t *testing.T) {
+			definition := testSceneDefinition()
+			definition.EvaluationPolicyRef = reference
+			if _, err := NewCatalog(
+				[]SceneDefinition{definition},
+				testPolicyValidator(),
+			); !errors.Is(err, ErrCatalogDefinitionInvalid) {
+				t.Fatalf("NewCatalog() error = %v", err)
+			}
+		})
 	}
 }
 

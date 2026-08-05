@@ -369,6 +369,46 @@ func TestPreparationResumeRevisionMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestSceneEvaluationPolicyReferenceMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000069_scene_evaluation_policy_ref.up.sql")
+	for _, required := range []string{
+		"ADD COLUMN EVALUATION_POLICY_REF",
+		"INTERVIEW.SHADOW.EVALUATION.V1",
+		"IELTS.SPEAKING_PRACTICE.EVALUATION.V1",
+		"IELTS.SPEAKING_FULL_MOCK.EVALUATION.V1",
+		"WORKPLACE.GENERAL.EVALUATION.V1",
+		"DAILY.GENERAL.EVALUATION.V1",
+		"SCN_PROGRAMMER_INTERVIEW",
+		"SCN_IELTS_SPEAKING_FULL",
+		"SCN_WORKPLACE_CUSTOM",
+		"SCN_DAILY_CUSTOM",
+		"SCENE VERSIONS WITHOUT AN EXPLICIT EVALUATION POLICY EXIST",
+		"DISABLE TRIGGER COACHING_SCENE_VERSIONS_ARE_IMMUTABLE",
+		"ENABLE TRIGGER COACHING_SCENE_VERSIONS_ARE_IMMUTABLE",
+		"'EVALUATION_POLICY_REF', VERSION.EVALUATION_POLICY_REF",
+		"RECREATE THE DEVELOPMENT OR TEST DATABASE",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("up migration missing %q", required)
+		}
+	}
+	if strings.Contains(up, "WHEN SCENE_FAMILY") ||
+		strings.Contains(up, "WHEN SCENE_MODEL") {
+		t.Error("up migration must not infer Evaluation Policy from Scene metadata")
+	}
+
+	down := readMigration(t, "000069_scene_evaluation_policy_ref.down.sql")
+	if !strings.Contains(down, "DROP COLUMN EVALUATION_POLICY_REF") ||
+		strings.Contains(
+			down,
+			"'EVALUATION_POLICY_REF', VERSION.EVALUATION_POLICY_REF",
+		) {
+		t.Error("down migration must restore the prior Scene JSON shape")
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 
