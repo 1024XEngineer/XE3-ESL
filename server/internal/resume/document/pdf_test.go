@@ -33,8 +33,8 @@ func TestTextPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
 		body []byte
 		code string
 	}{
-		"invalid":  {body: []byte("not-pdf"), code: "pdf_invalid"},
-		"textless": {body: testPDF(""), code: "pdf_text_unavailable"},
+		"invalid":       {body: []byte("not-pdf"), code: "pdf_invalid"},
+		"textless scan": {body: testScannedPDF(), code: "pdf_text_unavailable"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewTextPDFParser().Parse(
@@ -47,6 +47,35 @@ func TestTextPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testScannedPDF() []byte {
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 7 >>\nstream\nFFFFFF>\nendstream",
+		"<< /Length 31 >>\nstream\nq 612 0 0 792 0 0 cm /Im0 Do Q\nendstream",
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("%PDF-1.4\n")
+	offsets := []int{0}
+	for index, object := range objects {
+		offsets = append(offsets, buffer.Len())
+		fmt.Fprintf(&buffer, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := buffer.Len()
+	fmt.Fprintf(&buffer, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&buffer, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(
+		&buffer,
+		"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n",
+		len(objects)+1,
+		xref,
+	)
+	return buffer.Bytes()
 }
 
 func testPDF(text string) []byte {

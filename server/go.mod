@@ -5,11 +5,13 @@ go 1.26.0
 toolchain go1.26.5
 
 require (
+	github.com/PaddlePaddle/PaddleOCR/api_sdk/go v0.2.0
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
 	golang.org/x/text v0.40.0
@@ -36,7 +38,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect

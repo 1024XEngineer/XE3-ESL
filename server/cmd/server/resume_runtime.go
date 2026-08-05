@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +11,8 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/paddleocr"
+	resumeapp "github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
 	resumedocument "github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 	resumefieldextractor "github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 	resumeidentifier "github.com/1024XEngineer/XE3-ESL/server/internal/resume/identifier"
@@ -25,8 +28,12 @@ func buildResumeComposition(
 	pool *pgxpool.Pool,
 	storageConfig config.ObjectStorageConfig,
 	textConfig config.TextGenerationConfig,
+	ocrConfig config.ResumeOCRConfig,
 ) (*bootstrap.ResumeComposition, error) {
 	if !storageConfig.Enabled {
+		if ocrConfig.Enabled {
+			return nil, errors.New("Resume OCR requires private object storage")
+		}
 		return nil, nil
 	}
 	fieldGenerator, err := bootstrap.NewResumeFieldGenerator(textConfig)
@@ -44,14 +51,36 @@ func buildResumeComposition(
 	if err != nil {
 		return nil, err
 	}
-	resumePipeline, err := resumeparser.NewPipeline(
-		resumedocument.NewTextPDFParser(),
-		fields,
-	)
+	provider, err := ossstore.NewCredentialsProvider(storageConfig)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := ossstore.NewCredentialsProvider(storageConfig)
+	var resumePipeline resumeapp.Parser
+	if ocrConfig.Enabled {
+		ocrClient, clientErr := paddleocr.New(paddleocr.Config{
+			AccessToken: ocrConfig.AccessToken,
+			BaseURL:     ocrConfig.BaseURL,
+			Model:       ocrConfig.Model,
+			Timeout:     ocrConfig.Timeout,
+		})
+		if clientErr != nil {
+			return nil, clientErr
+		}
+		ocrDocuments, parserErr := resumedocument.NewOCRPDFParser(ocrClient)
+		if parserErr != nil {
+			return nil, parserErr
+		}
+		resumePipeline, err = resumeparser.NewOCRFallbackPipeline(
+			resumedocument.NewTextPDFParser(),
+			ocrDocuments,
+			fields,
+		)
+	} else {
+		resumePipeline, err = resumeparser.NewPipeline(
+			resumedocument.NewTextPDFParser(),
+			fields,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

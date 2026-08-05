@@ -15,8 +15,22 @@ func TestBuildResumeCompositionIsOptionalWithoutObjectStorage(t *testing.T) {
 		nil,
 		config.ObjectStorageConfig{Enabled: false},
 		config.TextGenerationConfig{},
+		config.ResumeOCRConfig{},
 	)
 	if err != nil || composition != nil {
+		t.Fatalf("composition = %#v, err = %v", composition, err)
+	}
+}
+
+func TestBuildResumeCompositionRejectsOCRWithoutObjectStorage(t *testing.T) {
+	composition, err := buildResumeComposition(
+		context.Background(),
+		nil,
+		config.ObjectStorageConfig{Enabled: false},
+		config.TextGenerationConfig{},
+		config.ResumeOCRConfig{Enabled: true},
+	)
+	if err == nil || composition != nil {
 		t.Fatalf("composition = %#v, err = %v", composition, err)
 	}
 }

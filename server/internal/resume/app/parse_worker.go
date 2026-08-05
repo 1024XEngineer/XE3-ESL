@@ -4,10 +4,16 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
+)
+
+const (
+	ocrSignedURLLifetime = 2 * time.Minute
+	maximumOCRPages      = 5
 )
 
 // ParseWorker 从持久化队列领取简历并调用解析器生成结构化修订。
@@ -82,14 +88,45 @@ func (w *ParseWorker) ProcessResume(ctx context.Context, claimed resume.Resume) 
 		claimed.FileStatus != resume.FileAvailable {
 		return InvalidResumeError()
 	}
+	startedAt := time.Now()
 	reader, err := w.storage.Open(ctx, claimed.ObjectKey)
 	if err != nil {
 		return w.failClaim(ctx, claimed, "storage_read_failed")
 	}
 	content, parseErr := w.parser.Parse(ctx, reader)
 	closeErr := reader.Close()
+	parserVersion := w.parser.Version()
 	if parseErr != nil {
-		return w.failClaim(ctx, claimed, parserFailureCode(parseErr))
+		failureCode := parserFailureCode(parseErr)
+		fallback, canFallback := w.parser.(URLFallbackParser)
+		if failureCode != "pdf_text_unavailable" || !canFallback {
+			return w.failClaim(ctx, claimed, failureCode)
+		}
+		if parserFailurePageCount(parseErr) > maximumOCRPages {
+			return w.failClaim(ctx, claimed, "ocr_page_limit_exceeded")
+		}
+		slog.Info(
+			"Resume parse entered OCR fallback",
+			slog.String("resume_id", claimed.ID),
+			slog.String("stage", "ocr"),
+			slog.String("parser_version", fallback.OCRVersion()),
+		)
+		if closeErr != nil {
+			return w.failClaim(ctx, claimed, "storage_read_failed")
+		}
+		sourceURL, _, signErr := w.storage.SignedReadURL(
+			ctx,
+			claimed.ObjectKey,
+			ocrSignedURLLifetime,
+		)
+		if signErr != nil {
+			return w.failClaim(ctx, claimed, "storage_read_failed")
+		}
+		content, parseErr = fallback.ParseURL(ctx, sourceURL)
+		if parseErr != nil {
+			return w.failClaim(ctx, claimed, parserFailureCode(parseErr))
+		}
+		parserVersion = fallback.OCRVersion()
 	}
 	if closeErr != nil {
 		return w.failClaim(ctx, claimed, "storage_read_failed")
@@ -98,11 +135,21 @@ func (w *ParseWorker) ProcessResume(ctx context.Context, claimed resume.Resume) 
 		return w.failClaim(ctx, claimed, "parser_output_invalid")
 	}
 	content = normalizeContent(content)
-	return w.repository.CompleteParse(ctx, claimed, resume.Revision{
+	err = w.repository.CompleteParse(ctx, claimed, resume.Revision{
 		Source:        resume.RevisionParser,
-		ParserVersion: w.parser.Version(),
+		ParserVersion: parserVersion,
 		Content:       content,
 	})
+	if err == nil {
+		slog.Info(
+			"Resume parse completed",
+			slog.String("resume_id", claimed.ID),
+			slog.String("stage", "complete"),
+			slog.String("parser_version", parserVersion),
+			slog.Duration("duration", time.Since(startedAt)),
+		)
+	}
+	return err
 }
 
 // failClaim 持久化稳定失败码；成功落库后不再把单份坏简历升级为 Worker 故障。
@@ -110,6 +157,12 @@ func (w *ParseWorker) failClaim(ctx context.Context, claimed resume.Resume, code
 	if err := w.repository.FailParse(ctx, claimed, code); err != nil {
 		return err
 	}
+	slog.Warn(
+		"Resume parse failed",
+		slog.String("resume_id", claimed.ID),
+		slog.String("stage", "failed"),
+		slog.String("failure_code", code),
+	)
 	return nil
 }
 
@@ -126,4 +179,15 @@ func parserFailureCode(err error) string {
 		}
 	}
 	return "pdf_parse_failed"
+}
+
+func parserFailurePageCount(err error) int {
+	type pageCountFailure interface {
+		PageCount() int
+	}
+	var failure pageCountFailure
+	if errors.As(err, &failure) {
+		return failure.PageCount()
+	}
+	return 0
 }

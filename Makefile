@@ -15,6 +15,7 @@ SHELL := /bin/bash
 	check-go-vet \
 	check-go-test \
 	check-oss-live \
+	check-resume-ocr-live \
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
@@ -29,6 +30,7 @@ help:
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
+		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-smoke    Run the deterministic Mock main flow' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
@@ -96,6 +98,38 @@ check-oss-live:
 .PHONY: check-oss-live-go
 check-oss-live-go:
 	cd server && go test -count=1 -run '^TestLiveObjectLifecycle$$' ./internal/platform/objectstore/ossstore
+
+check-resume-ocr-live:
+	@set -euo pipefail; \
+	required=(OSS_ENABLED OSS_REGION OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_RESUME_PREFIX OSS_SIGNED_URL_TTL RESUME_OCR_ENABLED PADDLEOCR_ACCESS_TOKEN RESUME_OCR_LIVE_TEST RESUME_OCR_LIVE_TEST_PDF); \
+	missing=(); \
+	for name in "$${required[@]}"; do \
+		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
+	done; \
+	if (( $${#missing[@]} > 0 )); then \
+		printf '%s\n' 'This live test intentionally does not load or execute .env.'; \
+		printf 'Export the required variables before running this target. Missing:'; \
+		printf ' %s' "$${missing[@]}"; \
+		printf '\n'; \
+		exit 1; \
+	fi; \
+	if [[ "$${OSS_ENABLED}" != "1" && "$${OSS_ENABLED}" != "true" ]]; then \
+		printf '%s\n' 'Set and export OSS_ENABLED=1.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${RESUME_OCR_ENABLED}" != "1" && "$${RESUME_OCR_ENABLED}" != "true" ]]; then \
+		printf '%s\n' 'Set and export RESUME_OCR_ENABLED=1.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${RESUME_OCR_LIVE_TEST}" != "1" ]]; then \
+		printf '%s\n' 'Set and export RESUME_OCR_LIVE_TEST=1 to opt in to the hosted API call.'; \
+		exit 1; \
+	fi; \
+	$(MAKE) --no-print-directory check-resume-ocr-live-go
+
+.PHONY: check-resume-ocr-live-go
+check-resume-ocr-live-go:
+	cd server && go test -count=1 -run '^TestLiveRecognizePDF$$' ./internal/providers/paddleocr
 
 check-api: check-api-contracts
 

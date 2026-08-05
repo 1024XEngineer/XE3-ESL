@@ -159,6 +159,76 @@ func TestParseWorkerCompletesAndPersistsFailures(t *testing.T) {
 	}
 }
 
+func TestParseWorkerFallsBackToOCRForTextlessPDFOnly(t *testing.T) {
+	claimed := resume.Resume{
+		ID: "40000000-0000-4000-8000-000000000004", OwnerUserID: serviceTestActor.UserID,
+		ObjectKey: "resume/v1/scanned.pdf", FileStatus: resume.FileAvailable,
+		ParseStatus: resume.ParseRunning, Version: 3,
+	}
+	repository := &repositoryFake{claim: claimed, claimFound: true}
+	files := newFileStorageFake()
+	files.objects[claimed.ObjectKey] = []byte("scanned pdf")
+	parser := &ocrFallbackParserFake{
+		primaryErr: &codedParseError{code: "pdf_text_unavailable"},
+		ocrContent: resume.Content{
+			TargetPosition: "Backend Engineer", WorkExperiences: []resume.WorkExperience{},
+			ProjectExperiences:   []resume.ProjectExperience{},
+			EducationExperiences: []resume.EducationExperience{}, Skills: []string{"Go"},
+		},
+	}
+	worker, err := NewParseWorker(repository, files, parser, time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewParseWorker: %v", err)
+	}
+	processed, err := worker.ProcessNext(context.Background())
+	if err != nil || !processed || !parser.ocrCalled || files.signedURLCalls != 1 ||
+		repository.completedRevision.ParserVersion != "paddleocr-vl-1.6/v1+fields/v1" {
+		t.Fatalf(
+			"processed=%v OCR=%v signed=%d revision=%#v error=%v",
+			processed,
+			parser.ocrCalled,
+			files.signedURLCalls,
+			repository.completedRevision,
+			err,
+		)
+	}
+
+	repository.claimFound = true
+	repository.completedRevision = resume.Revision{}
+	repository.failedCode = ""
+	files.signedURLCalls = 0
+	parser.primaryErr = &codedParseError{code: "pdf_invalid"}
+	parser.ocrCalled = false
+	processed, err = worker.ProcessNext(context.Background())
+	if err != nil || !processed || parser.ocrCalled || files.signedURLCalls != 0 ||
+		repository.failedCode != "pdf_invalid" {
+		t.Fatalf(
+			"non-textless processed=%v OCR=%v signed=%d code=%q error=%v",
+			processed,
+			parser.ocrCalled,
+			files.signedURLCalls,
+			repository.failedCode,
+			err,
+		)
+	}
+
+	repository.claimFound = true
+	repository.failedCode = ""
+	parser.primaryErr = &codedParseError{code: "pdf_text_unavailable", pageCount: 6}
+	processed, err = worker.ProcessNext(context.Background())
+	if err != nil || !processed || parser.ocrCalled || files.signedURLCalls != 0 ||
+		repository.failedCode != "ocr_page_limit_exceeded" {
+		t.Fatalf(
+			"page limit processed=%v OCR=%v signed=%d code=%q error=%v",
+			processed,
+			parser.ocrCalled,
+			files.signedURLCalls,
+			repository.failedCode,
+			err,
+		)
+	}
+}
+
 // newTestService 创建固定配置的应用服务测试夹具。
 func newTestService(t *testing.T, repository Repository, files FileStorage) *Service {
 	t.Helper()
@@ -197,9 +267,10 @@ func (idGeneratorFake) NewObjectKey(_ string, seed string) string {
 
 // fileStorageFake 是内存文件存储测试替身。
 type fileStorageFake struct {
-	objects   map[string][]byte
-	putErr    error
-	deleteErr error
+	objects        map[string][]byte
+	putErr         error
+	deleteErr      error
+	signedURLCalls int
 }
 
 // newFileStorageFake 创建空内存文件存储。
@@ -228,6 +299,7 @@ func (storage *fileStorageFake) Open(_ context.Context, key string) (io.ReadClos
 
 // SignedReadURL 返回固定测试地址。
 func (storage *fileStorageFake) SignedReadURL(_ context.Context, _ string, lifetime time.Duration) (string, time.Time, error) {
+	storage.signedURLCalls++
 	return "https://files.example.test/resume.pdf", time.Now().UTC().Add(lifetime), nil
 }
 
@@ -254,14 +326,47 @@ func (parser *parserFake) Parse(context.Context, io.Reader) (resume.Content, err
 // Version 返回固定解析器版本。
 func (*parserFake) Version() string { return "test-parser/v1" }
 
+type ocrFallbackParserFake struct {
+	primaryErr error
+	ocrContent resume.Content
+	ocrErr     error
+	ocrCalled  bool
+}
+
+func (parser *ocrFallbackParserFake) Parse(
+	context.Context,
+	io.Reader,
+) (resume.Content, error) {
+	return resume.Content{}, parser.primaryErr
+}
+
+func (parser *ocrFallbackParserFake) ParseURL(
+	_ context.Context,
+	_ string,
+) (resume.Content, error) {
+	parser.ocrCalled = true
+	return parser.ocrContent, parser.ocrErr
+}
+
+func (*ocrFallbackParserFake) Version() string { return "pdf-native-text/v1+fields/v1" }
+
+func (*ocrFallbackParserFake) OCRVersion() string {
+	return "paddleocr-vl-1.6/v1+fields/v1"
+}
+
 // codedParseError 提供稳定 Worker 失败码。
-type codedParseError struct{ code string }
+type codedParseError struct {
+	code      string
+	pageCount int
+}
 
 // Error 返回测试错误描述。
 func (failure *codedParseError) Error() string { return failure.code }
 
 // FailureCode 返回稳定失败码。
 func (failure *codedParseError) FailureCode() string { return failure.code }
+
+func (failure *codedParseError) PageCount() int { return failure.pageCount }
 
 // repositoryFake 实现应用端口并记录关键状态迁移。
 type repositoryFake struct {
