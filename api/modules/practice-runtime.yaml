@@ -14,7 +14,7 @@ paths:
         - $ref: '#/components/parameters/PracticeSessionId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
-        '201':
+        '200':
           description: Durable Session state and its current text Question.
           content:
             application/json:
@@ -868,6 +868,8 @@ components:
       required:
         - practice_session_id
         - practice_plan_id
+        - scene_id
+        - scene_version
         - scene_family
         - scene_model
         - session_version
@@ -879,6 +881,11 @@ components:
           $ref: '#/components/schemas/ResourceId'
         practice_plan_id:
           $ref: '#/components/schemas/ResourceId'
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_version:
+          type: integer
+          minimum: 1
         scene_family:
           $ref: ./scene.yaml#/components/schemas/SceneFamily
         scene_model:

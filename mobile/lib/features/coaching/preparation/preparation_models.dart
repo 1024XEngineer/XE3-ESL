@@ -97,6 +97,8 @@ final class PreparationSessionPolicy {
     required this.coverageCheckpointTurn,
     required this.maxFollowUpsPerQuestion,
     required this.earlyCompletionRule,
+    required this.retryAllowed,
+    required this.questionTranslationAllowed,
   });
 
   final int suggestedDurationSeconds;
@@ -105,6 +107,8 @@ final class PreparationSessionPolicy {
   final int coverageCheckpointTurn;
   final int maxFollowUpsPerQuestion;
   final String earlyCompletionRule;
+  final bool retryAllowed;
+  final bool questionTranslationAllowed;
 }
 
 enum PracticePlanStatus { ready, archived }

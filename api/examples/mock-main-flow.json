@@ -6,6 +6,7 @@
     "plan_revision": 1,
     "scene_family": "INTERVIEW",
     "scene_model": "PROJECT_EXPERIENCE_DEEP_DIVE",
+    "evaluation_policy_ref": "interview.shadow.evaluation.v1",
     "snapshot_id": "snapshot_session_demo_001",
     "practice_session_status": "completed",
     "session_version": 6,

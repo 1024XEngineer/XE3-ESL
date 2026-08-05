@@ -314,6 +314,8 @@ PracticePlan _plan({required String sourceThreadId}) {
       coverageCheckpointTurn: 2,
       maxFollowUpsPerQuestion: 1,
       earlyCompletionRule: 'all_objectives_covered',
+      retryAllowed: false,
+      questionTranslationAllowed: true,
     ),
     practiceObjectives: const <PracticeObjective>[
       PracticeObjective(id: 'clarity', description: 'Communicate clearly.'),

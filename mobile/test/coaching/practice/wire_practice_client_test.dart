@@ -22,6 +22,8 @@ void main() {
           response: _json(HttpStatus.ok, {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
+            'scene_id': 'scene-project-deep-dive',
+            'scene_version': 1,
             'scene_family': 'INTERVIEW',
             'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
             'session_version': 5,
@@ -167,7 +169,7 @@ void main() {
           expect(request.rawFilePath, isNull);
           expect(request.headers['Idempotency-Key'], 'scene-operation');
         },
-        response: _json(HttpStatus.created, _sessionJson()),
+        response: _json(HttpStatus.ok, _sessionJson()),
       ),
       _Step(
         method: 'POST',
@@ -206,6 +208,8 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
+          'scene_id': 'scene-project-deep-dive',
+          'scene_version': 1,
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'session_version': 2,
@@ -328,6 +332,8 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
+          'scene_id': 'scene-project-deep-dive',
+          'scene_version': 1,
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'session_version': 2,
@@ -387,6 +393,7 @@ void main() {
           'practice_plan_id': 'plan-1',
           'scene_family': 'INTERVIEW',
           'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
           'snapshot_id': 'snapshot-1',
           'practice_session_status': 'ended_early',
           'session_version': 4,
@@ -633,7 +640,7 @@ void main() {
       _Step(
         method: 'POST',
         path: '/v1/practice-sessions/$_sessionId/voice-activation',
-        response: _json(HttpStatus.ok, _sessionJson()),
+        response: _json(HttpStatus.created, _sessionJson()),
       ),
     ]);
 
@@ -819,6 +826,8 @@ Map<String, Object?> _sessionJson() {
   return {
     'practice_session_id': _sessionId,
     'practice_plan_id': 'plan-1',
+    'scene_id': 'scene-project-deep-dive',
+    'scene_version': 1,
     'scene_family': 'INTERVIEW',
     'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'session_version': 1,

@@ -249,7 +249,7 @@ final class WirePracticeClient
         path: _endpoints.voiceActivationPath(sessionId),
         extraHeaders: <String, String>{'Idempotency-Key': clientOperationId},
       );
-      _requireStatus(response, const {HttpStatus.created});
+      _requireStatus(response, const {HttpStatus.ok});
       return _decodeSessionState(response.body, expectedSessionId: sessionId);
     });
   }
@@ -780,6 +780,8 @@ PracticeSessionSnapshot _decodeSessionState(
     required: const {
       'practice_session_id',
       'practice_plan_id',
+      'scene_id',
+      'scene_version',
       'scene_family',
       'scene_model',
       'session_version',
@@ -791,6 +793,8 @@ PracticeSessionSnapshot _decodeSessionState(
   );
   final sessionId = _string(root, 'practice_session_id');
   final planId = _string(root, 'practice_plan_id');
+  _string(root, 'scene_id');
+  final sceneVersion = _integer(root, 'scene_version');
   final sceneFamily = SceneFamily.fromWireValue(
     _string(root, 'scene_family', maxLength: 32),
   );
@@ -823,6 +827,7 @@ PracticeSessionSnapshot _decodeSessionState(
   if ((expectedSessionId != null && sessionId != expectedSessionId) ||
       sceneFamily == null ||
       sceneModel == null ||
+      sceneVersion < 1 ||
       !validPracticeSceneIdentity(sceneFamily, sceneModel) ||
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
@@ -912,6 +917,7 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
       'practice_plan_id',
       'scene_family',
       'scene_model',
+      'evaluation_policy_ref',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -923,6 +929,7 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
   _string(root, 'practice_plan_id');
   _string(root, 'scene_family', maxLength: 32);
   _string(root, 'scene_model', maxLength: 64);
+  _string(root, 'evaluation_policy_ref');
   _string(root, 'snapshot_id');
   final rawStatus = _string(root, 'practice_session_status', maxLength: 32);
   final status = switch (rawStatus) {

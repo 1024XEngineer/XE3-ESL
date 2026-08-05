@@ -430,6 +430,8 @@ final class _LifecycleLaunchClient implements PreparationLaunchClient {
         coverageCheckpointTurn: 1,
         maxFollowUpsPerQuestion: 1,
         earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+        retryAllowed: false,
+        questionTranslationAllowed: true,
       ),
       practiceObjectives: const <PracticeObjective>[
         PracticeObjective(
