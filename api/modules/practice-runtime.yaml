@@ -259,6 +259,41 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/tips:
+    post:
+      tags:
+        - Practice
+      summary: Create or restore a short reference answer for the current interview Question
+      description: |
+        The request has no body. The server verifies that the authenticated
+        Actor owns an active INTERVIEW Session and that `question_id` is its
+        current PRIMARY or FOLLOW_UP Question. One durable Tip is generated per
+        Question and replayed across repeated or concurrent requests. A Tip is
+        a read aid only: it never creates a candidate or Turn, never advances
+        effective turns or follow-up limits, and is excluded from Review,
+        Evaluation, memory, and message history.
+      operationId: ensureVoiceQuestionTip
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The newly generated or previously persisted Question Tip.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceQuestionTip'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/voice-questions/{question_id}/speech:
     get:
       tags:
@@ -966,6 +1001,29 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+    VoiceQuestionTip:
+      type: object
+      additionalProperties: false
+      required:
+        - tip_id
+        - practice_session_id
+        - question_id
+        - content
+        - created_at
+      properties:
+        tip_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 800
+        created_at:
+          type: string
+          format: date-time
     VoiceTurnHistoryEntry:
       type: object
       additionalProperties: false

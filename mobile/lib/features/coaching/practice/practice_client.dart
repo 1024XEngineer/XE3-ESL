@@ -49,6 +49,17 @@ abstract interface class PracticeQuestionTranslationClient {
   });
 }
 
+/// Optional interview-only reference answer capability.
+///
+/// A Tip is a separate read aid. It is never submitted as a candidate or Turn.
+abstract interface class PracticeQuestionTipClient {
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  });
+}
+
 /// Optional Daily/Workplace same-question retry capability.
 ///
 /// Keeping this separate from [PracticeClient] lets existing test doubles and

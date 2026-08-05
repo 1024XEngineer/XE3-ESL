@@ -55,4 +55,5 @@ import "embed"
 //go:embed 000067_evaluation_ielts_speaking_acoustic_payload.*.sql
 //go:embed 000068_preparation_resume_revision.*.sql
 //go:embed 000069_scene_evaluation_policy_ref.*.sql
+//go:embed 000070_practice_question_tips.*.sql
 var Files embed.FS

@@ -63,6 +63,11 @@ final class PracticeController extends ChangeNotifier
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
+  PracticeQuestionTip? _questionTip;
+  String? _questionTipRequestId;
+  String? _questionTipErrorMessage;
+  bool _questionTipLoading = false;
+  int _questionTipGeneration = 0;
   TranscriptionCandidate? _candidate;
   _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
@@ -100,6 +105,19 @@ final class PracticeController extends ChangeNotifier
   SceneModel? get practiceSceneModel => _practiceSceneModel;
   int? get practiceSessionVersion => _practiceSessionVersion;
   PracticeQuestion? get currentQuestion => _currentQuestion;
+  PracticeQuestionTip? get questionTip => _questionTip;
+  bool get isQuestionTipLoading => _questionTipLoading;
+  String? get questionTipErrorMessage => _questionTipErrorMessage;
+  bool get canRequestQuestionTip =>
+      client is PracticeQuestionTipClient &&
+      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel) &&
+      _practiceSessionId != null &&
+      _currentQuestion != null &&
+      !_sessionCompleted &&
+      !_disposed &&
+      !isBusy &&
+      !_questionTipLoading &&
+      _recordingState == PracticeRecordingState.idle;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
@@ -184,6 +202,8 @@ final class PracticeController extends ChangeNotifier
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
+  bool get isInterviewPractice =>
+      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
   bool get isFinalInterviewSubmission =>
       _recordingState == PracticeRecordingState.submitting &&
       _speechFeedbackRetry == null &&
@@ -192,7 +212,10 @@ final class PracticeController extends ChangeNotifier
       _completedTurns + 1 == _turnLimit &&
       isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
   bool get isBusy =>
-      _busy || _practiceRequestInFlight || _speechFeedbackRetry != null;
+      _busy ||
+      _practiceRequestInFlight ||
+      _questionTipLoading ||
+      _speechFeedbackRetry != null;
   bool get isSpeechFeedbackRetryActive => _speechFeedbackRetry != null;
   int get speechFeedbackRetryCompletionCount =>
       _speechFeedbackRetryCompletionCount;
@@ -1507,6 +1530,7 @@ final class PracticeController extends ChangeNotifier
         confirmation.sessionVersion ?? _practiceSessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
+    _clearQuestionTip();
     final audioAssetId = confirmation.audioAssetId;
     if (audioAssetId != null &&
         !_recordings.any(
@@ -1533,6 +1557,76 @@ final class PracticeController extends ChangeNotifier
     } else {
       _recordingState = PracticeRecordingState.idle;
     }
+  }
+
+  Future<PracticeQuestionTip?> requestQuestionTip() async {
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    if (client is! PracticeQuestionTipClient ||
+        sessionId == null ||
+        question == null ||
+        !isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel) ||
+        _sessionCompleted ||
+        _recordingState != PracticeRecordingState.idle) {
+      return null;
+    }
+    final tipClient = client as PracticeQuestionTipClient;
+    final cached = _questionTip;
+    if (cached != null &&
+        cached.sessionId == sessionId &&
+        cached.questionId == question.id) {
+      return cached;
+    }
+    if (_questionTipLoading) {
+      return null;
+    }
+    final generation = ++_questionTipGeneration;
+    _questionTipLoading = true;
+    _questionTipErrorMessage = null;
+    _questionTipRequestId ??= _newClientId('question-tip');
+    notifyListeners();
+    try {
+      final tip = await tipClient.ensureQuestionTip(
+        sessionId: sessionId,
+        questionId: question.id,
+        idempotencyKey: _questionTipRequestId!,
+      );
+      if (_disposed ||
+          generation != _questionTipGeneration ||
+          _practiceSessionId != sessionId ||
+          _currentQuestion?.id != question.id) {
+        return null;
+      }
+      if (tip.sessionId != sessionId ||
+          tip.questionId != question.id ||
+          tip.content.trim().isEmpty) {
+        throw StateError('Invalid question Tip response.');
+      }
+      _questionTip = tip;
+      _questionTipRequestId = null;
+      return tip;
+    } catch (_) {
+      if (!_disposed &&
+          generation == _questionTipGeneration &&
+          _practiceSessionId == sessionId &&
+          _currentQuestion?.id == question.id) {
+        _questionTipErrorMessage = '暂时无法生成参考答案，请稍后重试。';
+      }
+      return null;
+    } finally {
+      if (!_disposed && generation == _questionTipGeneration) {
+        _questionTipLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _clearQuestionTip() {
+    _questionTipGeneration++;
+    _questionTip = null;
+    _questionTipRequestId = null;
+    _questionTipErrorMessage = null;
+    _questionTipLoading = false;
   }
 
   Future<bool> _reconcileFinalInterviewSubmission({
@@ -1591,6 +1685,7 @@ final class PracticeController extends ChangeNotifier
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
     _currentQuestion = null;
+    _clearQuestionTip();
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
@@ -1718,6 +1813,7 @@ final class PracticeController extends ChangeNotifier
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
       _currentQuestion = null;
+      _clearQuestionTip();
       _activeScene = null;
       _completedTurns = 0;
       _turnLimit = 0;
@@ -1739,6 +1835,7 @@ final class PracticeController extends ChangeNotifier
     _practiceSessionVersion = snapshot.sessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
+    _clearQuestionTip();
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
     _sessionCompleted = snapshot.sessionCompleted;

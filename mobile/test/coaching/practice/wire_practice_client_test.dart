@@ -80,6 +80,10 @@ void main() {
       '$encoded/text-answers',
     );
     expect(
+      endpoints.questionTipPath(opaque, opaque),
+      '/v1/voice-practice-sessions/$encoded/questions/$encoded/tips',
+    );
+    expect(
       endpoints.confirmPath(opaque),
       '/v1/transcription-candidates/$encoded/confirmations',
     );
@@ -113,6 +117,41 @@ void main() {
     expect(translation.questionId, _questionId);
     expect(translation.targetLanguage, 'zh-CN');
     expect(translation.content, '请介绍一次你解决团队分歧的经历。');
+    transport.expectDone();
+  });
+
+  test('requests and decodes a Question Tip without an answer body', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path:
+            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '$_questionId/tips',
+        verify: (request) {
+          expect(request.jsonBody, isNull);
+          expect(request.rawFilePath, isNull);
+          expect(request.headers['Idempotency-Key'], 'question-tip-operation');
+        },
+        response: _json(HttpStatus.ok, {
+          'tip_id': 'question-tip-1',
+          'practice_session_id': _sessionId,
+          'question_id': _questionId,
+          'content':
+              'I would clarify the goal first. Then I would explain my approach clearly.',
+          'created_at': _timestamp,
+        }),
+      ),
+    ]);
+
+    final tip = await _client(transport).ensureQuestionTip(
+      sessionId: _sessionId,
+      questionId: _questionId,
+      idempotencyKey: 'question-tip-operation',
+    );
+
+    expect(tip.id, 'question-tip-1');
+    expect(tip.questionId, _questionId);
+    expect(tip.content, contains('clarify the goal'));
     transport.expectDone();
   });
 

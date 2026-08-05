@@ -192,6 +192,55 @@ func (translator *PracticeVoiceQuestionTranslator) TranslateQuestion(
 	return result.Content, nil
 }
 
+type PracticeVoiceAnswerTipGenerator struct {
+	generator *textClient
+}
+
+func NewPracticeVoiceAnswerTipGenerator(
+	configuration TextConfig,
+	apiKey string,
+) (*PracticeVoiceAnswerTipGenerator, error) {
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return &PracticeVoiceAnswerTipGenerator{generator: generator}, nil
+}
+
+func (generator *PracticeVoiceAnswerTipGenerator) GenerateAnswerTip(
+	ctx context.Context,
+	request practicevoice.AnswerTipGenerationRequest,
+) (practicevoice.AnswerTipGenerationResult, error) {
+	if generator == nil || generator.generator == nil {
+		return practicevoice.AnswerTipGenerationResult{},
+			practicevoice.NewProviderError(
+				practicevoice.ProviderOperationAnswerTipGeneration,
+				practicevoice.ProviderErrorConfiguration,
+				"",
+				errors.New("Qianwen Practice Voice answer Tip generator is required"),
+			)
+	}
+	result, err := generator.generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{Role: protocol.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: protocol.TextRoleUser, Content: request.UserPrompt},
+		},
+	})
+	if err != nil {
+		return practicevoice.AnswerTipGenerationResult{},
+			mapPracticeVoiceError(
+				err,
+				practicevoice.ProviderOperationAnswerTipGeneration,
+			)
+	}
+	return practicevoice.AnswerTipGenerationResult{
+		RequestID: result.ID,
+		Provider:  result.Provider,
+		Model:     result.Model,
+		Content:   result.Content,
+	}, nil
+}
+
 func mapPracticeVoiceUsage(usage protocol.SpeechUsage) practicevoice.SpeechUsage {
 	return practicevoice.SpeechUsage{
 		InputTokens:  usage.InputTokens,
@@ -264,4 +313,5 @@ var (
 	_ practicevoice.SpeechSynthesizer  = (*PracticeVoiceSynthesizer)(nil)
 	_ practicevoice.QuestionGenerator  = (*PracticeVoiceQuestionGenerator)(nil)
 	_ practicevoice.QuestionTranslator = (*PracticeVoiceQuestionTranslator)(nil)
+	_ practicevoice.AnswerTipGenerator = (*PracticeVoiceAnswerTipGenerator)(nil)
 )

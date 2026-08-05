@@ -167,6 +167,38 @@ void main() {
     },
   );
 
+  testWidgets('shows inline interview Tips without blocking the composer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = await _roleplayController(
+      practiceClient: _QuestionTipPracticeClient(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('immersive-question-tip')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('immersive-question-tip')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    expect(
+      find.text('I would describe the situation and my specific role.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('immersive-record')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('removes the avatar surface before leaving practice', (
     tester,
   ) async {
@@ -610,11 +642,13 @@ Future<PracticeController> _roleplayController({
   final sceneFamily = switch (practiceClient) {
     final _AsyncReviewPracticeClient client => client.resolvedSceneFamily,
     final _TranslationPracticeClient client => client.resolvedSceneFamily,
+    _QuestionTipPracticeClient() => SceneFamily.interview,
     _ => SceneFamily.daily,
   };
   final sceneModel = switch (practiceClient) {
     final _AsyncReviewPracticeClient client => client.resolvedSceneModel,
     final _TranslationPracticeClient client => client.resolvedSceneModel,
+    _QuestionTipPracticeClient() => SceneModel.interviewBasicDialogue,
     _ => SceneModel.hotelCheckinAndIssueHandling,
   };
   final scene = testScene(
@@ -870,6 +904,75 @@ final class _FailOncePracticeClient implements PracticeClient {
     ),
     SceneFamily.daily,
     SceneModel.hotelCheckinAndIssueHandling,
+  );
+}
+
+final class _QuestionTipPracticeClient
+    implements PracticeClient, PracticeQuestionTipClient {
+  final _delegate = FakePracticeClient(
+    sceneFamily: SceneFamily.interview,
+    sceneModel: SceneModel.interviewBasicDialogue,
+  );
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) => _delegate.restorePractice(sessionId: sessionId);
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) => _delegate.activatePractice(
+    sessionId: sessionId,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => _delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) => _delegate.confirm(
+    sessionId: sessionId,
+    questionId: questionId,
+    candidateId: candidateId,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) => _delegate.submitText(
+    sessionId: sessionId,
+    questionId: questionId,
+    answerText: answerText,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  }) async => PracticeQuestionTip(
+    id: 'tip-1',
+    sessionId: sessionId,
+    questionId: questionId,
+    content: 'I would describe the situation and my specific role.',
+    createdAt: DateTime.utc(2026, 8, 3),
   );
 }
 

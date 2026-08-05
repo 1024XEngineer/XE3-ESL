@@ -74,6 +74,10 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		handler.submitText,
 	)
 	routes.POST(
+		"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/tips",
+		handler.ensureQuestionTip,
+	)
+	routes.POST(
 		"/v1/transcription-candidates/:candidate_id/confirmations",
 		handler.confirmCandidate,
 	)
@@ -335,6 +339,36 @@ func (handler *Handler) questionTranslation(c *gin.Context) {
 	})
 }
 
+func (handler *Handler) ensureQuestionTip(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		handler.write(c, invalidRequest(nil))
+		return
+	}
+	key, ok := httpinput.IdempotencyKey(c.Request)
+	if !ok {
+		handler.write(c, invalidRequest(nil))
+		return
+	}
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	tip, err := handler.application.EnsureQuestionTip(
+		c.Request.Context(),
+		actor,
+		c.Param("practice_session_id"),
+		c.Param("question_id"),
+		key,
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, QuestionTipResponse(tip))
+}
+
 func SessionStateResponse(state practicevoice.SessionState) gin.H {
 	result := gin.H{
 		"practice_session_id": state.Session.ID,
@@ -380,6 +414,16 @@ func QuestionResponse(question practice.Question) gin.H {
 		result["parent_question_id"] = question.ParentQuestionID
 	}
 	return result
+}
+
+func QuestionTipResponse(tip practicevoice.QuestionTipResult) gin.H {
+	return gin.H{
+		"tip_id":              tip.ID,
+		"practice_session_id": tip.SessionID,
+		"question_id":         tip.QuestionID,
+		"content":             tip.Content,
+		"created_at":          tip.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
 }
 
 func TranscriptionCandidateResponse(

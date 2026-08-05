@@ -116,6 +116,22 @@ final class PracticeQuestionTranslation {
   final String content;
 }
 
+final class PracticeQuestionTip {
+  const PracticeQuestionTip({
+    required this.id,
+    required this.sessionId,
+    required this.questionId,
+    required this.content,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String sessionId;
+  final String questionId;
+  final String content;
+  final DateTime createdAt;
+}
+
 /// The server-authoritative practice projection consumed by Flutter.
 ///
 /// The projection is always loaded by the explicit opaque [sessionId].

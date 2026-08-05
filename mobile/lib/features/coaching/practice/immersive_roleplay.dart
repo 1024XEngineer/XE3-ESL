@@ -8,6 +8,8 @@ import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
+import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
@@ -78,6 +80,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   String? _scheduledInterviewReportSessionId;
   String? _autoOpenedInterviewReportSessionId;
   bool _interviewReportRouteActive = false;
+  IeltsExaminerSpeaker? _ownedTipSpeaker;
+  String? _visibleTipQuestionId;
 
   @override
   void initState() {
@@ -114,6 +118,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (controllerChanged) {
       oldWidget.practiceController.removeListener(_handleControllerState);
       _observedMessageCount = widget.practiceController.practiceMessages.length;
+      _visibleTipQuestionId = null;
       widget.practiceController.addListener(_handleControllerState);
       _syncRecordingTimer();
     }
@@ -131,7 +136,51 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _textController.dispose();
     _textFocusNode.dispose();
     unawaited(widget.practiceController.stopPracticeAudio(notify: false));
+    if (_ownedTipSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     super.dispose();
+  }
+
+  Future<void> _showQuestionTip() async {
+    final controller = widget.practiceController;
+    final tip = await controller.requestQuestionTip();
+    if (!mounted ||
+        tip == null ||
+        controller.currentQuestion?.id != tip.questionId) {
+      return;
+    }
+    setState(() => _visibleTipQuestionId = tip.questionId);
+  }
+
+  Future<void> _speakQuestionTip() async {
+    final tip = widget.practiceController.questionTip;
+    if (tip == null || _visibleTipQuestionId != tip.questionId) {
+      return;
+    }
+    final speaker = _ownedTipSpeaker ??= SystemIeltsExaminerSpeaker();
+    await speaker.speak(tip.content);
+  }
+
+  void _hideQuestionTip() {
+    if (_visibleTipQuestionId == null) {
+      return;
+    }
+    setState(() => _visibleTipQuestionId = null);
+    unawaited(_stopQuestionTipSpeech());
+  }
+
+  Future<void> _stopQuestionTipSpeech() async {
+    try {
+      await _ownedTipSpeaker?.stop();
+    } on Object {
+      // Recording and dismissal must not be blocked by a platform TTS error.
+    }
+  }
+
+  Future<void> _beforeStartRecording() async {
+    await _stopQuestionTipSpeech();
+    await _runBoundedUserTurnAction(widget.onBeforeStartRecording);
   }
 
   void _handleControllerState() {
@@ -141,6 +190,10 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     final messageCount = widget.practiceController.practiceMessages.length;
     final shouldFollowConversation = messageCount != _observedMessageCount;
     _observedMessageCount = messageCount;
+    if (_visibleTipQuestionId !=
+        widget.practiceController.currentQuestion?.id) {
+      _visibleTipQuestionId = null;
+    }
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
@@ -456,9 +509,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       recordingSeconds: _recordingSeconds,
                       previewMode: widget.previewMode,
                       conversationTextVisible: _conversationTextVisible,
-                      onBeforeStartRecording: () => _runBoundedUserTurnAction(
-                        widget.onBeforeStartRecording,
-                      ),
+                      onBeforeStartRecording: _beforeStartRecording,
                       onReplayQuestion: widget.onReplayQuestion,
                       speechFeedbackController: widget.speechFeedbackController,
                       replayLoading: widget.replayLoading,
@@ -473,6 +524,10 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                                   is PracticeQuestionTranslationClient
                           ? _translateQuestion
                           : null,
+                      onShowTip: _showQuestionTip,
+                      onHideTip: _hideQuestionTip,
+                      onSpeakTip: _speakQuestionTip,
+                      visibleTipQuestionId: _visibleTipQuestionId,
                       onOpenReport: _openInterviewReport,
                     );
                     if (landscape) {
@@ -700,6 +755,10 @@ class _ConversationPanel extends StatelessWidget {
     required this.onSubmitText,
     required this.onToggleConversationText,
     required this.onTranslateQuestion,
+    required this.onShowTip,
+    required this.onHideTip,
+    required this.onSpeakTip,
+    required this.visibleTipQuestionId,
     required this.onOpenReport,
   });
 
@@ -720,6 +779,10 @@ class _ConversationPanel extends StatelessWidget {
   final VoidCallback onSubmitText;
   final VoidCallback onToggleConversationText;
   final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
+  final VoidCallback onShowTip;
+  final VoidCallback onHideTip;
+  final Future<void> Function() onSpeakTip;
+  final String? visibleTipQuestionId;
   final VoidCallback onOpenReport;
 
   @override
@@ -733,6 +796,7 @@ class _ConversationPanel extends StatelessWidget {
             controller: controller,
             conversationTextVisible: conversationTextVisible,
             onToggleConversationText: onToggleConversationText,
+            onShowTip: onShowTip,
             onReplayQuestion: onReplayQuestion,
             replayLoading: replayLoading,
             replayPlaying: replayPlaying,
@@ -815,6 +879,26 @@ class _ConversationPanel extends StatelessWidget {
                     },
                   ),
           ),
+          if (controller.questionTip case final tip?
+              when tip.questionId == visibleTipQuestionId)
+            QuestionTipCard(
+              content: tip.content,
+              onClose: onHideTip,
+              onSpeak: onSpeakTip,
+            ),
+          if (controller.questionTipErrorMessage case final message?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                message,
+                key: const Key('immersive-question-tip-error'),
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: SpeakUpDesign.error,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           _ImmersiveComposer(
             controller: controller,
             textController: textController,
@@ -871,6 +955,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.controller,
     required this.conversationTextVisible,
     required this.onToggleConversationText,
+    required this.onShowTip,
     required this.onReplayQuestion,
     required this.replayLoading,
     required this.replayPlaying,
@@ -879,6 +964,7 @@ class _ConversationHeader extends StatelessWidget {
   final PracticeController controller;
   final bool conversationTextVisible;
   final VoidCallback onToggleConversationText;
+  final VoidCallback onShowTip;
   final ImmersiveAsyncAction? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
@@ -919,6 +1005,28 @@ class _ConversationHeader extends StatelessWidget {
                     : Icons.visibility_off_outlined,
               ),
             ),
+          if (controller.isInterviewPractice) ...[
+            const SizedBox(width: 8),
+            TextButton.icon(
+              key: const Key('immersive-question-tip'),
+              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
+              style: TextButton.styleFrom(
+                foregroundColor: SpeakUpDesign.primary,
+                backgroundColor: SpeakUpDesign.primaryMuted,
+                minimumSize: const Size(0, 34),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: controller.isQuestionTipLoading
+                  ? const SizedBox.square(
+                      dimension: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.lightbulb_outline_rounded, size: 18),
+              label: Text(controller.isQuestionTipLoading ? '生成中' : 'Tips'),
+            ),
+          ],
           if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
             const SizedBox(width: 6),
             IconButton(

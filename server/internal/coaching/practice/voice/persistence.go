@@ -185,3 +185,74 @@ type PersistenceStore interface {
 	GetTurn(context.Context, Actor, string) (practice.Turn, error)
 	ListSessionTurns(context.Context, Actor, string) ([]practice.Turn, error)
 }
+
+type QuestionTipStatus string
+
+const (
+	QuestionTipProcessing QuestionTipStatus = "processing"
+	QuestionTipCompleted  QuestionTipStatus = "completed"
+	QuestionTipFailed     QuestionTipStatus = "failed"
+)
+
+type QuestionTip struct {
+	ID                 string
+	SessionID          string
+	QuestionID         string
+	IdempotencyKey     string
+	Status             QuestionTipStatus
+	FencingToken       int64
+	DeletionGeneration int64
+	LeaseAcquired      bool
+	LeaseExpiresAt     time.Time
+	Content            string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	CompletedAt        *time.Time
+}
+
+type ClaimQuestionTipCommand struct {
+	SessionID      string
+	QuestionID     string
+	IdempotencyKey string
+	LeaseDuration  time.Duration
+}
+
+type CompleteQuestionTipCommand struct {
+	TipID              string
+	FencingToken       int64
+	DeletionGeneration int64
+	Content            string
+	Provider           string
+	Model              string
+	ProviderRequestID  string
+}
+
+type FailQuestionTipCommand struct {
+	TipID              string
+	FencingToken       int64
+	DeletionGeneration int64
+}
+
+type QuestionTipStore interface {
+	ClaimQuestionTip(
+		context.Context,
+		Actor,
+		ClaimQuestionTipCommand,
+	) (QuestionTip, error)
+	GetQuestionTip(
+		context.Context,
+		Actor,
+		string,
+		string,
+	) (QuestionTip, error)
+	CompleteQuestionTip(
+		context.Context,
+		Actor,
+		CompleteQuestionTipCommand,
+	) (QuestionTip, error)
+	FailQuestionTip(
+		context.Context,
+		Actor,
+		FailQuestionTipCommand,
+	) error
+}

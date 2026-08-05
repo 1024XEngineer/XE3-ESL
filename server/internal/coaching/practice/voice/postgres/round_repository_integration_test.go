@@ -24,6 +24,52 @@ const (
 	testUserB = "10000000-0000-4000-8000-000000000002"
 )
 
+func TestRepositoryQuestionTipHasOneGenerationLeasePerQuestion(t *testing.T) {
+	repository, _ := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(t, repository, actor, "question-tip", "session-tip")
+	command := practicevoice.ClaimQuestionTipCommand{
+		SessionID: question.SessionID, QuestionID: question.ID,
+		IdempotencyKey: "question-tip-request-1", LeaseDuration: time.Minute,
+	}
+	claimed, err := repository.ClaimQuestionTip(context.Background(), actor, command)
+	if err != nil || !claimed.LeaseAcquired || claimed.Status != practicevoice.QuestionTipProcessing {
+		t.Fatalf("first claim = %+v, %v", claimed, err)
+	}
+	concurrentCommand := command
+	concurrentCommand.IdempotencyKey = "question-tip-request-2"
+	concurrent, err := repository.ClaimQuestionTip(context.Background(), actor, concurrentCommand)
+	if err != nil || concurrent.ID != claimed.ID || concurrent.LeaseAcquired {
+		t.Fatalf("concurrent claim = %+v, %v", concurrent, err)
+	}
+	completed, err := repository.CompleteQuestionTip(
+		context.Background(), actor, practicevoice.CompleteQuestionTipCommand{
+			TipID: claimed.ID, FencingToken: claimed.FencingToken,
+			DeletionGeneration: claimed.DeletionGeneration,
+			Content:            "I would clarify the goal first. Then I would explain my approach clearly.",
+			Provider:           "fake", Model: "fake-model", ProviderRequestID: "provider-request-1",
+		},
+	)
+	if err != nil || completed.Status != practicevoice.QuestionTipCompleted || completed.Content == "" {
+		t.Fatalf("completed Tip = %+v, %v", completed, err)
+	}
+	replayed, err := repository.ClaimQuestionTip(context.Background(), actor, concurrentCommand)
+	if err != nil || replayed.ID != claimed.ID || replayed.Content != completed.Content || replayed.LeaseAcquired {
+		t.Fatalf("completed replay = %+v, %v", replayed, err)
+	}
+
+	otherQuestion := saveTestQuestion(t, repository, actor, "question-tip-other", "session-tip-other")
+	_, err = repository.ClaimQuestionTip(
+		context.Background(), actor, practicevoice.ClaimQuestionTipCommand{
+			SessionID: otherQuestion.SessionID, QuestionID: otherQuestion.ID,
+			IdempotencyKey: command.IdempotencyKey, LeaseDuration: time.Minute,
+		},
+	)
+	if !errors.Is(err, practicevoice.ErrPersistenceConflict) {
+		t.Fatalf("cross-question idempotency error = %v", err)
+	}
+}
+
 func TestRepositoryRecoversQuestionCandidateAttemptAndTurn(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	actor := testActor(testUserA)
@@ -1454,6 +1500,15 @@ func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 		conversationRetryIntegrationSchema,
 	); err != nil {
 		t.Fatalf("apply Conversation retry integration schema: %v", err)
+	}
+	tipMigration, err := migrations.Files.ReadFile(
+		"000070_practice_question_tips.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read Practice Tip migration: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), string(tipMigration)); err != nil {
+		t.Fatalf("apply Practice Tip migration: %v", err)
 	}
 	for _, userID := range []string{testUserA, testUserB} {
 		if _, err := pool.Exec(

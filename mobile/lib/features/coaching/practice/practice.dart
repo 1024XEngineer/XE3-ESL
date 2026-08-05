@@ -11,6 +11,7 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
+import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
@@ -72,6 +73,7 @@ class _PracticePageState extends State<PracticePage>
   int _recordingSeconds = 0;
   bool _speechFeedbackRebuildScheduled = false;
   bool _interviewReportRouteActive = false;
+  IeltsExaminerSpeaker? _ownedTipSpeaker;
 
   @override
   void initState() {
@@ -122,7 +124,42 @@ class _PracticePageState extends State<PracticePage>
     _textAnswerController.dispose();
     _textAnswerFocusNode.dispose();
     unawaited(widget.practiceController?.stopPracticeAudio(notify: false));
+    if (_ownedTipSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     super.dispose();
+  }
+
+  Future<void> _showQuestionTip() async {
+    final controller = widget.practiceController;
+    if (controller == null) {
+      return;
+    }
+    final tip = await controller.requestQuestionTip();
+    if (!mounted ||
+        tip == null ||
+        controller.currentQuestion?.id != tip.questionId) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => QuestionTipSheet(
+        content: tip.content,
+        onSpeak: () async {
+          final speaker =
+              widget.ieltsExaminerSpeaker ??
+              (_ownedTipSpeaker ??= SystemIeltsExaminerSpeaker());
+          await speaker.speak(tip.content);
+        },
+      ),
+    );
+    try {
+      await (widget.ieltsExaminerSpeaker ?? _ownedTipSpeaker)?.stop();
+    } on Object {
+      // Closing the reference sheet must not be blocked by a platform TTS error.
+    }
   }
 
   void _handleState() {
@@ -509,6 +546,7 @@ class _PracticePageState extends State<PracticePage>
                       onToggleTextMode: _toggleTextAnswerMode,
                       recordingSeconds: _recordingSeconds,
                       onOpenReport: _openInterviewReport,
+                      onShowTip: _showQuestionTip,
                     ),
                   ],
                 ),
@@ -899,6 +937,7 @@ class _RecordingPanel extends StatefulWidget {
     required this.onToggleTextMode,
     required this.recordingSeconds,
     required this.onOpenReport,
+    required this.onShowTip,
   });
 
   final PracticeController controller;
@@ -909,6 +948,7 @@ class _RecordingPanel extends StatefulWidget {
   final VoidCallback onToggleTextMode;
   final int recordingSeconds;
   final VoidCallback onOpenReport;
+  final VoidCallback onShowTip;
 
   @override
   State<_RecordingPanel> createState() => _RecordingPanelState();
@@ -979,12 +1019,14 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             widget.controller.hasPendingPracticeAudio
                 ? _PendingPracticeAudioPanel(controller: widget.controller)
                 : _IdleAnswerPanel(
+                    controller: widget.controller,
                     textController: widget.textController,
                     textFocusNode: widget.textFocusNode,
                     onSubmitText: widget.onSubmitText,
                     textMode: widget.textMode,
                     onToggleTextMode: widget.onToggleTextMode,
                     capture: capture,
+                    onShowTip: widget.onShowTip,
                   ),
           PracticeRecordingState.starting ||
           PracticeRecordingState.recording => PracticeRecordingComposer(
@@ -1042,31 +1084,70 @@ class _CompletedPracticePanel extends StatelessWidget {
 
 class _IdleAnswerPanel extends StatelessWidget {
   const _IdleAnswerPanel({
+    required this.controller,
     required this.textController,
     required this.textFocusNode,
     required this.onSubmitText,
     required this.textMode,
     required this.onToggleTextMode,
     required this.capture,
+    required this.onShowTip,
   });
 
+  final PracticeController controller;
   final TextEditingController textController;
   final FocusNode textFocusNode;
   final VoidCallback onSubmitText;
   final bool textMode;
   final VoidCallback onToggleTextMode;
   final VoiceCaptureView capture;
+  final VoidCallback onShowTip;
 
   @override
   Widget build(BuildContext context) {
-    return PracticeIdleComposer(
-      capture: capture,
-      textController: textController,
-      textFocusNode: textFocusNode,
-      textMode: textMode,
-      onToggleTextMode: onToggleTextMode,
-      onSubmitText: onSubmitText,
-      keyPrefix: 'practice',
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (controller.isInterviewPractice) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const Key('practice-question-tip'),
+              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
+              icon: controller.isQuestionTipLoading
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.lightbulb_outline_rounded, size: 19),
+              label: Text(controller.isQuestionTipLoading ? '正在生成' : 'Tips'),
+            ),
+          ),
+          if (controller.questionTipErrorMessage case final message?)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                message,
+                key: const Key('practice-question-tip-error'),
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: SpeakUpDesign.error,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+        PracticeIdleComposer(
+          capture: capture,
+          textController: textController,
+          textFocusNode: textFocusNode,
+          textMode: textMode,
+          onToggleTextMode: onToggleTextMode,
+          onSubmitText: onSubmitText,
+          keyPrefix: 'practice',
+        ),
+      ],
     );
   }
 }

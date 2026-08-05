@@ -409,6 +409,19 @@ func TestSceneEvaluationPolicyReferenceMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestPracticeQuestionTipsMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000070_practice_question_tips.up.sql",
+		"000070_practice_question_tips.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read Practice Question Tip migration %q: %v", name, err)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 
