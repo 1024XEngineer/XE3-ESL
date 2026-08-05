@@ -17,6 +17,7 @@ const (
 	IELTSSpeakingOverallAvailable     = "AVAILABLE"
 	IELTSSpeakingOverallNotAvailable  = "NOT_AVAILABLE"
 	IELTSTargetPlanNotConfigured      = "NOT_CONFIGURED"
+	ieltsMaximumReportQuestions       = 64
 )
 
 var (
@@ -133,7 +134,10 @@ func ProjectIELTSSpeakingReport(
 		Disclaimer:         IELTSSpeakingReportDisclaimer,
 		ScoreabilityStatus: result.Scoreability,
 		GateStatus:         result.Gate,
-		TestSummary:        projectIELTSSpeakingTestSummary(payload),
+		TestSummary: projectIELTSSpeakingTestSummary(
+			payload,
+			result.QuestionResults,
+		),
 		Criteria: make(
 			[]IELTSSpeakingReportCriterion,
 			len(result.Criteria),
@@ -266,6 +270,7 @@ func projectIELTSSpeakingReportCriterion(
 
 func projectIELTSSpeakingTestSummary(
 	payload evidence.SnapshotPayload,
+	questions []scoring.IELTSSpeakingShadowQuestionResult,
 ) IELTSSpeakingReportTestSummary {
 	summary := IELTSSpeakingReportTestSummary{
 		QuestionCount: len(payload.OpportunityManifest),
@@ -274,10 +279,22 @@ func projectIELTSSpeakingTestSummary(
 		summary.AnsweredCount++
 		summary.RecordingDurationMS += turn.Audio.DurationMS
 	}
-	if len(payload.OpportunityManifest) >= scoring.IELTSQuestionCount {
-		summary.Part1Topic = payload.OpportunityManifest[0].QuestionText
-		summary.Part2Topic = payload.OpportunityManifest[8].QuestionText
-		summary.Part3Topic = payload.OpportunityManifest[9].QuestionText
+	for index, question := range questions {
+		topic := payload.OpportunityManifest[index].QuestionText
+		switch question.PartID {
+		case scoring.IELTSPart1:
+			if summary.Part1Topic == "" {
+				summary.Part1Topic = topic
+			}
+		case scoring.IELTSPart2:
+			if summary.Part2Topic == "" {
+				summary.Part2Topic = topic
+			}
+		case scoring.IELTSPart3:
+			if summary.Part3Topic == "" {
+				summary.Part3Topic = topic
+			}
+		}
 	}
 	return summary
 }
@@ -423,7 +440,8 @@ func (report IELTSSpeakingReport) Valid() bool {
 		!validIELTSSpeakingOverall(report.SpeakingOverall, report.Criteria) ||
 		report.SpeakingOverall.Explanation == "" ||
 		len(report.PartReviews) != len(ieltsPartOrder) ||
-		len(report.Questions) != scoring.IELTSQuestionCount ||
+		len(report.Questions) != report.TestSummary.QuestionCount ||
+		!validIELTSReportQuestionSequence(report.Questions) ||
 		report.TargetPlan.Status != IELTSTargetPlanNotConfigured ||
 		report.PriorityActions == nil ||
 		len(report.PriorityActions) > 3 {
@@ -470,10 +488,10 @@ func (report IELTSSpeakingReport) Valid() bool {
 			}
 		}
 	}
+	answeredCount := 0
 	for index, question := range report.Questions {
 		if !validIdentifier(question.QuestionID) ||
 			question.Index != index+1 ||
-			question.PartID != scoring.IELTSPartForQuestionIndex(index+1) ||
 			!validReportText(
 				question.QuestionText,
 				reportMaximumInputString,
@@ -484,6 +502,7 @@ func (report IELTSSpeakingReport) Valid() bool {
 			return false
 		}
 		if question.AssessmentStatus == scoring.IELTSAssessmentAssessed {
+			answeredCount++
 			if question.OpportunityStatus !=
 				scoring.IELTSOpportunityProvided ||
 				!validIdentifier(question.ResponseTurnID) ||
@@ -516,13 +535,19 @@ func (report IELTSSpeakingReport) Valid() bool {
 			}
 		}
 	}
+	if answeredCount != report.TestSummary.AnsweredCount {
+		return false
+	}
 	for index, part := range report.PartReviews {
 		if part.PartID != ieltsPartOrder[index] ||
 			!slices.Equal(
 				part.QuestionIndexes,
-				ieltsQuestionIndexes(part.PartID),
+				ieltsQuestionIndexes(report.Questions, part.PartID),
 			) ||
-			!validStringList(part.EvidenceRefIDs, 14) ||
+			!validStringList(
+				part.EvidenceRefIDs,
+				report.TestSummary.QuestionCount,
+			) ||
 			!validStringList(part.StrengthFindingIDs, 36) ||
 			!validStringList(part.ImprovementFindingIDs, 36) ||
 			!validStringList(
@@ -561,7 +586,8 @@ func validIELTSSpeakingOverall(
 func validIELTSSpeakingTestSummary(
 	summary IELTSSpeakingReportTestSummary,
 ) bool {
-	return summary.QuestionCount == scoring.IELTSQuestionCount &&
+	return summary.QuestionCount > 0 &&
+		summary.QuestionCount <= ieltsMaximumReportQuestions &&
 		summary.AnsweredCount >= 0 &&
 		summary.AnsweredCount <= summary.QuestionCount &&
 		summary.RecordingDurationMS >= 0 &&
@@ -638,17 +664,37 @@ func validIELTSReportCriterion(
 	}
 }
 
-func ieltsQuestionIndexes(part scoring.IELTSPart) []int {
-	switch part {
-	case scoring.IELTSPart1:
-		return []int{1, 2, 3, 4, 5, 6, 7, 8}
-	case scoring.IELTSPart2:
-		return []int{9}
-	case scoring.IELTSPart3:
-		return []int{10, 11, 12, 13, 14}
-	default:
-		return []int{}
+func validIELTSReportQuestionSequence(
+	questions []IELTSSpeakingReportQuestion,
+) bool {
+	if len(questions) == 0 || questions[0].PartID != scoring.IELTSPart1 {
+		return false
 	}
+	partIndex := 0
+	for _, question := range questions[1:] {
+		if question.PartID == ieltsPartOrder[partIndex] {
+			continue
+		}
+		if partIndex+1 >= len(ieltsPartOrder) ||
+			question.PartID != ieltsPartOrder[partIndex+1] {
+			return false
+		}
+		partIndex++
+	}
+	return partIndex == len(ieltsPartOrder)-1
+}
+
+func ieltsQuestionIndexes(
+	questions []IELTSSpeakingReportQuestion,
+	part scoring.IELTSPart,
+) []int {
+	result := make([]int, 0, len(questions))
+	for _, question := range questions {
+		if question.PartID == part {
+			result = append(result, question.Index)
+		}
+	}
+	return result
 }
 
 func validStringList(values []string, maximum int) bool {

@@ -329,7 +329,6 @@ func (r *EvidenceSourceReader) compose(
 	if !validCompletedEvidenceSession(
 		ownerUserID,
 		practiceSessionID,
-		sceneType,
 		session,
 		snapshot,
 	) {
@@ -702,22 +701,40 @@ type SnapshotPayload struct {
 }
 
 type PracticeContext struct {
-	PracticeSessionID  string             `json:"practice_session_id"`
-	SessionSnapshotID  string             `json:"session_snapshot_id"`
-	SessionVersion     int                `json:"session_version"`
-	PlanRevision       int                `json:"plan_revision"`
-	SceneFamily        string             `json:"scene_family"`
-	SceneModel         string             `json:"scene_model"`
-	Scene              VersionedRef       `json:"scene"`
-	PracticeOption     PracticeOption     `json:"practice_option"`
-	UserRole           string             `json:"user_role"`
-	FacilitatorRole    string             `json:"facilitator_role"`
-	PracticeGoal       string             `json:"practice_goal"`
-	Preparation        PreparationContext `json:"preparation"`
-	TaskContext        TaskContext        `json:"task_context"`
-	TaskBlueprints     []string           `json:"task_blueprints"`
-	Participants       []Participant      `json:"participants"`
-	PracticeObjectives []Objective        `json:"practice_objectives"`
+	PracticeSessionID   string             `json:"practice_session_id"`
+	SessionSnapshotID   string             `json:"session_snapshot_id"`
+	SessionVersion      int                `json:"session_version"`
+	PlanRevision        int                `json:"plan_revision"`
+	PracticeExperience  string             `json:"practice_experience"`
+	SceneCategory       string             `json:"scene_category"`
+	PracticeMode        string             `json:"practice_mode"`
+	EvaluationPolicyRef string             `json:"evaluation_policy_ref"`
+	Scene               VersionedRef       `json:"scene"`
+	PracticeOption      PracticeOption     `json:"practice_option"`
+	UserRole            string             `json:"user_role"`
+	FacilitatorRole     string             `json:"facilitator_role"`
+	PracticeGoal        string             `json:"practice_goal"`
+	Preparation         PreparationContext `json:"preparation"`
+	TaskContext         TaskContext        `json:"task_context"`
+	TaskBlueprints      []string           `json:"task_blueprints"`
+	Participants        []Participant      `json:"participants"`
+	PracticeObjectives  []Objective        `json:"practice_objectives"`
+	IELTSAssignment     *IELTSAssignment   `json:"ielts_assignment,omitempty"`
+}
+
+type IELTSAssignment struct {
+	BankID string                `json:"bank_id"`
+	Season string                `json:"season"`
+	Mode   string                `json:"mode"`
+	Parts  []IELTSAssignmentPart `json:"parts"`
+}
+
+type IELTSAssignmentPart struct {
+	Part           string   `json:"part"`
+	SourceID       string   `json:"source_id"`
+	TopicTitle     string   `json:"topic_title,omitempty"`
+	CueCard        string   `json:"cue_card,omitempty"`
+	TurnBlueprints []string `json:"turn_blueprints"`
 }
 
 type TaskContext struct {
@@ -777,7 +794,7 @@ type VersionedRef struct {
 
 type PracticeOption struct {
 	ID   string `json:"id"`
-	Type string `json:"type"`
+	Mode string `json:"practice_mode"`
 }
 
 type Participant struct {
@@ -967,7 +984,6 @@ type evidenceSourceAudio struct {
 func validCompletedEvidenceSession(
 	ownerUserID string,
 	practiceSessionID string,
-	sceneType evaluation.SceneType,
 	session practice.Session,
 	snapshot practice.SessionSnapshot,
 ) bool {
@@ -983,13 +999,15 @@ func validCompletedEvidenceSession(
 		snapshot.ID != session.SnapshotID ||
 		snapshot.SessionID != practiceSessionID ||
 		snapshot.PlanRevision < 1 ||
-		snapshot.SceneFamily != session.SceneFamily ||
-		snapshot.SceneModel != session.SceneModel ||
-		snapshot.SceneSelection.Scene.Family != snapshot.SceneFamily ||
-		snapshot.SceneSelection.Scene.Model != snapshot.SceneModel ||
+		snapshot.Experience != session.Experience ||
+		snapshot.Category != session.Category ||
+		snapshot.PracticeMode != session.PracticeMode ||
+		snapshot.SceneSelection.Scene.Experience != snapshot.Experience ||
+		snapshot.SceneSelection.Scene.Category != snapshot.Category ||
 		snapshot.SceneSelection.Scene.Version < 1 ||
 		optionErr != nil ||
 		option.SceneID != snapshot.SceneSelection.Scene.ID ||
+		option.Mode != snapshot.PracticeMode ||
 		!validIdentifier(snapshot.Preparation.ID) ||
 		!validIdentifier(snapshot.Preparation.SourceProfileID) ||
 		snapshot.Preparation.SourceVersion < 1 ||
@@ -997,11 +1015,7 @@ func validCompletedEvidenceSession(
 		snapshot.SessionPolicy.MinEffectiveTurns < 1 ||
 		snapshot.SessionPolicy.MinEffectiveTurns >
 			snapshot.SessionPolicy.MaxEffectiveTurns ||
-		!evidenceSceneMatches(
-			snapshot.SceneFamily,
-			snapshot.SceneModel,
-			sceneType,
-		) {
+		option.EvaluationPolicyRef != session.EvaluationPolicyRef {
 		return false
 	}
 	for _, participant := range snapshot.Participants {
@@ -1012,30 +1026,6 @@ func validCompletedEvidenceSession(
 		}
 	}
 	return false
-}
-
-func evidenceSceneMatches(
-	family practice.SceneFamily,
-	model practice.SceneModel,
-	sceneType evaluation.SceneType,
-) bool {
-	switch family {
-	case practice.SceneFamilyExam:
-		return sceneType == evaluation.SceneIELTSSpeaking &&
-			(model == practice.SceneModelIELTSSpeakingPart1 ||
-				model == practice.SceneModelIELTSSpeakingPart2 ||
-				model == practice.SceneModelIELTSSpeakingPart3 ||
-				model == practice.SceneModelIELTSSpeakingFullMock ||
-				model == practice.SceneModelExamBasicDialogue)
-	case practice.SceneFamilyInterview:
-		return sceneType == evaluation.SceneInterview
-	case practice.SceneFamilyDaily:
-		return sceneType == evaluation.SceneOverseasDaily
-	case practice.SceneFamilyWorkplace:
-		return sceneType == evaluation.SceneOverseasWorkplace
-	default:
-		return false
-	}
 }
 
 func evidenceParticipants(
@@ -1141,20 +1131,22 @@ func evidencePracticeContextFromSnapshot(
 		return PracticeContext{}, nil, nil, false
 	}
 	prompt := snapshot.SceneSelection.Scene.Prompt
-	return PracticeContext{
-		PracticeSessionID: session.ID,
-		SessionSnapshotID: snapshot.ID,
-		SessionVersion:    session.Version,
-		PlanRevision:      snapshot.PlanRevision,
-		SceneFamily:       string(snapshot.SceneFamily),
-		SceneModel:        string(snapshot.SceneModel),
+	context := PracticeContext{
+		PracticeSessionID:   session.ID,
+		SessionSnapshotID:   snapshot.ID,
+		SessionVersion:      session.Version,
+		PlanRevision:        snapshot.PlanRevision,
+		PracticeExperience:  string(snapshot.Experience),
+		SceneCategory:       string(snapshot.Category),
+		PracticeMode:        string(snapshot.PracticeMode),
+		EvaluationPolicyRef: option.EvaluationPolicyRef,
 		Scene: VersionedRef{
 			ID:      snapshot.SceneSelection.Scene.ID,
 			Version: snapshot.SceneSelection.Scene.Version,
 		},
 		PracticeOption: PracticeOption{
 			ID:   option.ID,
-			Type: string(option.Type),
+			Mode: string(option.Mode),
 		},
 		UserRole:        prompt.UserRole,
 		FacilitatorRole: prompt.AIRole,
@@ -1166,12 +1158,30 @@ func evidencePracticeContextFromSnapshot(
 			PublicSceneBrief:         prompt.PublicSceneBrief,
 			PersonaSummary:           prompt.PersonaSummary,
 			FocusAreas:               cloneSortedStrings(prompt.FocusAreas),
-			SuggestedDurationSeconds: prompt.SuggestedDurationSeconds,
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
 		},
 		TaskBlueprints:     slices.Clone(prompt.TurnBlueprints),
 		Participants:       participants,
 		PracticeObjectives: evidenceObjectives(snapshot.PracticeObjectives),
-	}, allParticipants, candidates, true
+	}
+	if assignment := snapshot.IELTSAssignment; assignment != nil {
+		context.IELTSAssignment = &IELTSAssignment{
+			BankID: assignment.BankID,
+			Season: assignment.Season,
+			Mode:   string(assignment.Mode),
+			Parts:  make([]IELTSAssignmentPart, len(assignment.Parts)),
+		}
+		for index, part := range assignment.Parts {
+			context.IELTSAssignment.Parts[index] = IELTSAssignmentPart{
+				Part:           string(part.Part),
+				SourceID:       part.SourceID,
+				TopicTitle:     part.TopicTitle,
+				CueCard:        part.CueCard,
+				TurnBlueprints: slices.Clone(part.TurnBlueprints),
+			}
+		}
+	}
+	return context, allParticipants, candidates, true
 }
 
 func evidenceObjectives(

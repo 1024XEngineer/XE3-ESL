@@ -8,6 +8,8 @@ import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
+import '../../support/practice_fixtures.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -254,8 +256,8 @@ final _failedRetryRequest = PracticeRetryRequest(
 
 final _dailyScene = testScene(
   id: 'scene_daily_001',
-  family: SceneFamily.daily,
-  model: SceneModel.dailyBasicDialogue,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayDaily,
   name: 'Daily',
   prompt: const ScenePrompt(
     publicSceneBrief: 'Daily practice',
@@ -265,15 +267,16 @@ final _dailyScene = testScene(
     personaSummary: 'Supportive and focused.',
     focusAreas: <String>['clarity'],
     turnBlueprints: <String>['Ask one daily-life question.'],
-    suggestedDurationSeconds: 600,
   ),
 );
 
 final _completedDailySnapshot = PracticeSessionSnapshot(
   sessionId: 'session_daily_001',
   planId: 'plan_daily_001',
-  sceneFamily: SceneFamily.daily,
-  sceneModel: SceneModel.dailyBasicDialogue,
+  practiceExperience: PracticeExperience.roleplay,
+  sceneCategory: SceneCategory.roleplayDaily,
+  practiceMode: PracticeMode.fullSimulation,
+  capabilities: testPracticeCapabilities,
   sessionVersion: 1,
   completedTurns: 3,
   turnLimit: 3,

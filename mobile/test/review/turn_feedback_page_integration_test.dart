@@ -1,3 +1,4 @@
+import '../support/practice_fixtures.dart';
 import '../support/scene_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -5,8 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
-import 'package:speakup/features/coaching/practice/practice.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/features/coaching/interview/interview_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -107,7 +109,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
+          home: InterviewPracticePage(
             practiceController: practiceController,
             speechFeedbackController: feedbackController,
           ),
@@ -170,8 +172,8 @@ void main() {
     );
     final snapshot = _practiceSnapshot(
       feedback.statusUrl,
-      sceneFamily: SceneFamily.exam,
-      sceneModel: SceneModel.ieltsSpeakingPart2,
+      practiceExperience: PracticeExperience.ieltsSpeaking,
+      sceneCategory: SceneCategory.ieltsSpeaking,
       turnLimit: 6,
     );
     final practiceController = PracticeController(
@@ -183,10 +185,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: practiceController,
+        home: IeltsSpeakingMockPage(
+          controller: practiceController,
           speechFeedbackController: feedbackController,
-          ieltsMockProgressStore: _MemoryIeltsProgressStore(),
+          progressStore: _MemoryIeltsProgressStore(),
         ),
       ),
     );
@@ -229,8 +231,8 @@ void main() {
     );
     final snapshot = _practiceSnapshot(
       feedback.statusUrl,
-      sceneFamily: SceneFamily.exam,
-      sceneModel: SceneModel.ieltsSpeakingPart2,
+      practiceExperience: PracticeExperience.ieltsSpeaking,
+      sceneCategory: SceneCategory.ieltsSpeaking,
       turnLimit: 6,
     );
     final practiceController = PracticeController(
@@ -238,12 +240,15 @@ void main() {
         PracticeSessionSnapshot(
           sessionId: snapshot.sessionId,
           planId: snapshot.planId,
-          sceneFamily: snapshot.sceneFamily,
-          sceneModel: snapshot.sceneModel,
+          practiceExperience: snapshot.practiceExperience,
+          sceneCategory: snapshot.sceneCategory,
+          practiceMode: snapshot.practiceMode,
+          capabilities: snapshot.capabilities,
           sessionVersion: snapshot.sessionVersion,
           completedTurns: snapshot.completedTurns,
           turnLimit: snapshot.turnLimit,
           sessionCompleted: snapshot.sessionCompleted,
+          ieltsAssignment: snapshot.ieltsAssignment,
           currentQuestion: snapshot.currentQuestion,
           turnHistory: [
             PracticeTurnExchange(
@@ -272,10 +277,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: practiceController,
+        home: IeltsSpeakingMockPage(
+          controller: practiceController,
           speechFeedbackController: feedbackController,
-          ieltsMockProgressStore: _MemoryIeltsProgressStore(),
+          progressStore: _MemoryIeltsProgressStore(),
         ),
       ),
     );
@@ -335,7 +340,8 @@ void main() {
       );
       navigatorKey.currentState!.push(
         MaterialPageRoute<void>(
-          builder: (_) => PracticePage(speechFeedbackController: controller),
+          builder: (_) =>
+              InterviewPracticePage(speechFeedbackController: controller),
         ),
       );
       await tester.pumpAndSettle();
@@ -496,8 +502,8 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
 
 PracticeSessionSnapshot _practiceSnapshot(
   String statusUrl, {
-  SceneFamily sceneFamily = SceneFamily.workplace,
-  SceneModel sceneModel = SceneModel.workplaceBasicDialogue,
+  PracticeExperience practiceExperience = PracticeExperience.roleplay,
+  SceneCategory sceneCategory = SceneCategory.roleplayWorkplace,
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';
@@ -509,12 +515,22 @@ PracticeSessionSnapshot _practiceSnapshot(
   return PracticeSessionSnapshot(
     sessionId: sessionId,
     planId: 'plan_practice_session_001',
-    sceneFamily: sceneFamily,
-    sceneModel: sceneModel,
+    practiceExperience: practiceExperience,
+    sceneCategory: sceneCategory,
+    practiceMode: practiceExperience == PracticeExperience.ieltsSpeaking
+        ? PracticeMode.part2
+        : PracticeMode.fullSimulation,
+    capabilities: testPracticeCapabilities,
     sessionVersion: 2,
     completedTurns: 1,
     turnLimit: turnLimit,
     sessionCompleted: false,
+    ieltsAssignment: practiceExperience == PracticeExperience.ieltsSpeaking
+        ? testIeltsAssignment(
+            mode: PracticeMode.part2,
+            part3QuestionCount: turnLimit - 1,
+          )
+        : null,
     currentQuestion: const PracticeQuestion(
       id: 'practice_question_002',
       sessionId: sessionId,
@@ -545,21 +561,24 @@ Future<void> _restorePractice(
   PracticeController controller,
   PracticeSessionSnapshot snapshot,
 ) async {
-  final scene = _practiceScene(snapshot.sceneFamily, snapshot.sceneModel);
+  final scene = _practiceScene(
+    snapshot.practiceExperience,
+    snapshot.sceneCategory,
+  );
   await controller.restoreCreatedPractice(
     sessionId: snapshot.sessionId,
     scene: scene,
   );
 }
 
-SceneDefinition _practiceScene(SceneFamily family, SceneModel model) {
+SceneDefinition _practiceScene(PracticeExperience family, SceneCategory model) {
   return testScene(
-    id: model == SceneModel.ieltsSpeakingPart2
+    id: model == SceneCategory.ieltsSpeaking
         ? 'feedback-ielts-part-2'
         : 'feedback-workplace',
-    family: family,
-    model: model,
-    name: model == SceneModel.ieltsSpeakingPart2
+    experience: family,
+    category: model,
+    name: model == SceneCategory.ieltsSpeaking
         ? 'IELTS Speaking Part 2'
         : 'Workplace feedback',
   );

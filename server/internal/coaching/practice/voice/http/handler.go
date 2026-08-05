@@ -375,14 +375,25 @@ func SessionStateResponse(state practicevoice.SessionState) gin.H {
 		"practice_plan_id":        state.Session.PlanID,
 		"scene_id":                state.Session.SceneID,
 		"scene_version":           state.Session.SceneVersion,
-		"scene_family":            state.Session.SceneFamily,
-		"scene_model":             state.Session.SceneModel,
+		"practice_experience":     state.Session.PracticeExperience,
+		"scene_category":          state.Session.SceneCategory,
+		"practice_mode":           state.Session.PracticeMode,
 		"practice_session_status": state.Session.Status,
 		"session_version":         state.Session.SessionVersion,
 		"effective_turns":         state.Session.EffectiveTurns,
 		"turn_limit":              state.Session.TurnLimit,
 		"session_completed": state.Session.Completed ||
 			state.Session.Status == string(practice.SessionEndedEarly),
+		"practice_capabilities": gin.H{
+			"retry_allowed":                state.Session.RetryAllowed,
+			"question_translation_allowed": state.Session.QuestionTranslationAllowed,
+			"question_tips_allowed":        state.Session.QuestionTipsAllowed,
+			"avatar_allowed":               state.Session.AvatarAllowed,
+			"speech_feedback_allowed":      state.Session.SpeechFeedbackAllowed,
+		},
+	}
+	if state.Session.IELTSAssignment != nil {
+		result["ielts_assignment"] = state.Session.IELTSAssignment
 	}
 	if state.Question != nil {
 		result["current_question"] = QuestionResponse(*state.Question)

@@ -1,4 +1,5 @@
 import '../../support/scene_fixtures.dart';
+import '../../support/practice_fixtures.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -88,11 +89,13 @@ void main() {
                 sessionId: bootstrap.session.id,
                 planId: bootstrap.session.planId,
                 scene: scene,
+                practiceMode: bootstrap.session.practiceMode,
               );
               await practiceController.activateCreatedPractice(
                 scene: scene,
                 sessionId: bootstrap.session.id,
                 planId: bootstrap.session.planId,
+                practiceMode: bootstrap.session.practiceMode,
                 turnLimit: bootstrap.maxEffectiveTurns,
                 clientOperationId: clientOperationId,
               );
@@ -201,7 +204,6 @@ void main() {
           personaSummary: 'Structured and focused.',
           focusAreas: <String>['clarity'],
           turnBlueprints: <String>['Ask one relevant question.'],
-          suggestedDurationSeconds: 600,
         ),
       );
       await activateTestGoal(
@@ -215,11 +217,13 @@ void main() {
         sessionId: 'unrelated-legacy-session',
         planId: 'unrelated-legacy-plan',
         scene: unrelatedScene,
+        practiceMode: unrelatedScene.practiceOptions.first.mode,
       );
       await practiceController.activateCreatedPractice(
         scene: unrelatedScene,
         sessionId: 'unrelated-legacy-session',
         planId: 'unrelated-legacy-plan',
+        practiceMode: unrelatedScene.practiceOptions.first.mode,
         turnLimit: 3,
         clientOperationId: 'unrelated-legacy-voice',
       );
@@ -432,6 +436,9 @@ final class _LifecycleLaunchClient implements PreparationLaunchClient {
         earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
         retryAllowed: false,
         questionTranslationAllowed: true,
+        questionTipsAllowed: true,
+        avatarAllowed: true,
+        speechFeedbackAllowed: true,
       ),
       practiceObjectives: const <PracticeObjective>[
         PracticeObjective(
@@ -462,8 +469,9 @@ final class _LifecycleLaunchClient implements PreparationLaunchClient {
       session: PreparationPracticeSession(
         id: sessionId,
         planId: plan.id,
-        sceneFamily: plan.sceneSelection.scene.family,
-        sceneModel: plan.sceneSelection.scene.model,
+        practiceExperience: plan.sceneSelection.scene.experience,
+        sceneCategory: plan.sceneSelection.scene.category,
+        practiceMode: plan.practiceOption.mode,
         snapshotId: plan.preparationSnapshot.id,
         status: 'starting',
         version: 1,
@@ -489,8 +497,14 @@ final class _LifecyclePracticeClient
     required String sessionId,
     required String planId,
     required SceneDefinition scene,
+    required PracticeMode practiceMode,
   }) {
-    _nextStart = _StartSeed(sessionId: sessionId, planId: planId, scene: scene);
+    _nextStart = _StartSeed(
+      sessionId: sessionId,
+      planId: planId,
+      scene: scene,
+      practiceMode: practiceMode,
+    );
   }
 
   @override
@@ -522,8 +536,10 @@ final class _LifecyclePracticeClient
       sessionId: seed.sessionId,
       planId: seed.planId,
       sessionVersion: 1,
-      sceneFamily: seed.scene.family,
-      sceneModel: seed.scene.model,
+      practiceExperience: seed.scene.experience,
+      sceneCategory: seed.scene.category,
+      practiceMode: seed.practiceMode,
+      capabilities: testPracticeCapabilities,
       completedTurns: 0,
       turnLimit: 3,
       sessionCompleted: false,
@@ -600,8 +616,10 @@ final class _LifecyclePracticeClient
       sessionId: current.sessionId,
       planId: current.planId,
       sessionVersion: sessionVersion,
-      sceneFamily: current.sceneFamily,
-      sceneModel: current.sceneModel,
+      practiceExperience: current.practiceExperience,
+      sceneCategory: current.sceneCategory,
+      practiceMode: current.practiceMode,
+      capabilities: current.capabilities,
       completedTurns: completedTurns,
       turnLimit: current.turnLimit,
       sessionCompleted: false,
@@ -612,8 +630,10 @@ final class _LifecyclePracticeClient
       sessionId: sessionId,
       questionId: questionId,
       candidateId: 'text-candidate-$sessionId-$completedTurns',
-      sceneFamily: current.sceneFamily,
-      sceneModel: current.sceneModel,
+      practiceExperience: current.practiceExperience,
+      sceneCategory: current.sceneCategory,
+      practiceMode: current.practiceMode,
+      capabilities: current.capabilities,
       answer: PracticeMessage(
         id: 'answer-$sessionId-$completedTurns',
         role: PracticeMessageRole.user,
@@ -633,11 +653,13 @@ final class _StartSeed {
     required this.sessionId,
     required this.planId,
     required this.scene,
+    required this.practiceMode,
   });
 
   final String sessionId;
   final String planId;
   final SceneDefinition scene;
+  final PracticeMode practiceMode;
 }
 
 const _progressSceneId = 'scn_workplace_progress_risk_update';
@@ -645,8 +667,8 @@ const _hotelSceneId = 'scn_daily_hotel_checkin_issue';
 
 final _progressScene = testScene(
   id: _progressSceneId,
-  family: SceneFamily.workplace,
-  model: SceneModel.progressAndRiskUpdate,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayWorkplace,
   name: '项目进度同步',
   version: 1,
   prompt: _progressPrompt,
@@ -654,8 +676,8 @@ final _progressScene = testScene(
 
 final _hotelScene = testScene(
   id: _hotelSceneId,
-  family: SceneFamily.daily,
-  model: SceneModel.hotelCheckinAndIssueHandling,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayTravel,
   name: '酒店入住与问题处理',
   version: 1,
   prompt: _hotelPrompt,
@@ -683,27 +705,25 @@ final _hotelRole = testRole(
 
 final _progressDetail = testScene(
   id: _progressScene.id,
-  family: _progressScene.family,
-  model: _progressScene.model,
+  experience: _progressScene.experience,
+  category: _progressScene.category,
   name: _progressScene.name,
   version: _progressScene.version,
   status: _progressScene.status,
-  turnPolicyRef: _progressScene.turnPolicyRef,
-  sessionPolicyRef: _progressScene.sessionPolicyRef,
   prompt: _progressPrompt,
   roles: <RoleDefinition>[_progressRole],
   practiceOptions: <PracticeOption>[
     testPracticeOption(
       id: 'option-workplace-progress-full',
       sceneId: _progressSceneId,
-      type: PracticeOptionType.fullSimulation,
+      mode: PracticeMode.fullSimulation,
       displayName: '完整情景练习',
     ),
     testPracticeOption(
       id: 'option-workplace-progress-focus',
       sceneId: _progressSceneId,
       roleId: 'role-project-stakeholder',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: '风险表达专项',
     ),
   ],
@@ -711,27 +731,25 @@ final _progressDetail = testScene(
 
 final _hotelDetail = testScene(
   id: _hotelScene.id,
-  family: _hotelScene.family,
-  model: _hotelScene.model,
+  experience: _hotelScene.experience,
+  category: _hotelScene.category,
   name: _hotelScene.name,
   version: _hotelScene.version,
   status: _hotelScene.status,
-  turnPolicyRef: _hotelScene.turnPolicyRef,
-  sessionPolicyRef: _hotelScene.sessionPolicyRef,
   prompt: _hotelPrompt,
   roles: <RoleDefinition>[_hotelRole],
   practiceOptions: <PracticeOption>[
     testPracticeOption(
       id: 'option-hotel-checkin-full',
       sceneId: _hotelSceneId,
-      type: PracticeOptionType.fullSimulation,
+      mode: PracticeMode.fullSimulation,
       displayName: '完整情景练习',
     ),
     testPracticeOption(
       id: 'option-hotel-checkin-focus',
       sceneId: _hotelSceneId,
       roleId: 'role-hotel-receptionist',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: '问题处理专项',
     ),
   ],
@@ -745,7 +763,6 @@ const _progressPrompt = ScenePrompt(
   personaSummary: '关注事实、风险和行动。',
   focusAreas: <String>['progress', 'risk'],
   turnBlueprints: <String>['询问进度。', '追问风险与下一步。'],
-  suggestedDurationSeconds: 600,
 );
 
 const _hotelPrompt = ScenePrompt(
@@ -756,5 +773,4 @@ const _hotelPrompt = ScenePrompt(
   personaSummary: '专业并愿意协助。',
   focusAreas: <String>['check_in', 'issue_resolution'],
   turnBlueprints: <String>['核对预订。', '协商房间问题。'],
-  suggestedDurationSeconds: 480,
 );

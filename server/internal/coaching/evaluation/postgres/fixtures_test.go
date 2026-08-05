@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,9 @@ const (
 	evidenceTestPreparationBackground = "Evaluation evidence fixture background."
 	evidenceUnavailable               = "UNAVAILABLE"
 	evidenceNotAssessed               = "NOT_ASSESSED"
+	ieltsPostgresPart1QuestionCount   = 3
+	ieltsPostgresPart2QuestionCount   = 1
+	ieltsPostgresQuestionCount        = 7
 )
 
 func testActor(owner string) requestcontext.Actor {
@@ -63,10 +67,12 @@ func validEvidenceSnapshotPayload() json.RawMessage {
 			"session_snapshot_id":"practice-snapshot-1",
 			"session_version":2,
 			"plan_revision":1,
-			"scene_family":"INTERVIEW",
-			"scene_model":"INTERVIEW_BASIC_DIALOGUE",
+			"practice_experience":"INTERVIEW",
+			"scene_category":"INTERVIEW_PROFESSIONAL",
+			"practice_mode":"FULL_SIMULATION",
+			"evaluation_policy_ref":"interview.shadow.evaluation.v1",
 			"scene":{"id":"scene-1","version":1},
-			"practice_option":{"id":"practice-option-1","type":"FULL_SIMULATION"},
+			"practice_option":{"id":"practice-option-1","practice_mode":"FULL_SIMULATION"},
 			"user_role":"candidate",
 			"facilitator_role":"interviewer",
 			"practice_goal":"answer an interview question",
@@ -276,8 +282,9 @@ func interviewShadowTestSnapshot(t *testing.T, transcript string) evidence.Evide
 func generalSceneTestSnapshot(
 	t *testing.T,
 	sceneType evaluationcore.SceneType,
-	family scene.SceneFamily,
-	model scene.SceneModel,
+	experience scene.PracticeExperience,
+	category scene.SceneCategory,
+	mode scene.PracticeMode,
 	transcript string,
 ) evidence.EvidenceSnapshot {
 	t.Helper()
@@ -286,8 +293,11 @@ func generalSceneTestSnapshot(
 	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload.PracticeContext.SceneFamily = string(family)
-	payload.PracticeContext.SceneModel = string(model)
+	payload.PracticeContext.PracticeExperience = string(experience)
+	payload.PracticeContext.SceneCategory = string(category)
+	payload.PracticeContext.PracticeMode = string(mode)
+	payload.PracticeContext.PracticeOption.Mode = string(mode)
+	payload.PracticeContext.EvaluationPolicyRef = "general.scene.evaluation.v1"
 	payload.PracticeContext.Scene.ID = "scene-general-1"
 	return postgresTestSnapshot(t, payload, sceneType)
 }
@@ -298,18 +308,23 @@ func ieltsSpeakingTestSnapshot(t *testing.T, answered int) evidence.EvidenceSnap
 	if err := json.Unmarshal(validEvidenceSnapshotPayload(), &payload); err != nil {
 		t.Fatalf("decode IELTS EvidenceSnapshot fixture: %v", err)
 	}
-	payload.PracticeContext.SceneFamily = string(scene.SceneFamilyExam)
-	payload.PracticeContext.SceneModel = string(scene.SceneModelIELTSSpeakingFullMock)
+	payload.PracticeContext.PracticeExperience =
+		string(scene.PracticeExperienceIELTSSpeaking)
+	payload.PracticeContext.SceneCategory =
+		string(scene.SceneCategoryIELTSSpeaking)
+	payload.PracticeContext.PracticeMode = string(scene.PracticeModeFullMock)
+	payload.PracticeContext.EvaluationPolicyRef =
+		scoring.IELTSSpeakingFullMockEvaluationPolicyRef
 	payload.PracticeContext.Scene = evidence.VersionedRef{
-		ID:      "scn_ielts_speaking_full",
-		Version: 2,
+		ID:      "scn_ielts_speaking",
+		Version: 1,
 	}
 	payload.PracticeContext.Preparation.BackgroundSnapshotHash = evidenceTextHash(
 		evidenceTestPreparationBackground,
 	)
 	payload.PracticeContext.PracticeOption = evidence.PracticeOption{
-		ID:   "option_ielts_speaking_full_full",
-		Type: string(scene.PracticeOptionFullSimulation),
+		ID:   "option_ielts_speaking_full_mock",
+		Mode: string(scene.PracticeModeFullMock),
 	}
 	payload.PracticeContext.UserRole = "考生"
 	payload.PracticeContext.FacilitatorRole = "IELTS 口语考官"
@@ -325,13 +340,44 @@ func ieltsSpeakingTestSnapshot(t *testing.T, answered int) evidence.EvidenceSnap
 		FocusAreas:               []string{"part_1", "part_2", "part_3"},
 		SuggestedDurationSeconds: 900,
 	}
-	payload.PracticeContext.TaskBlueprints = make([]string, scoring.IELTSQuestionCount)
-	payload.OpportunityManifest = make([]evidence.Opportunity, 0, scoring.IELTSQuestionCount)
+	payload.PracticeContext.TaskBlueprints = make([]string, ieltsPostgresQuestionCount)
+	payload.PracticeContext.IELTSAssignment = &evidence.IELTSAssignment{
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   string(scene.PracticeModeFullMock),
+	}
+	for index := range payload.PracticeContext.TaskBlueprints {
+		payload.PracticeContext.TaskBlueprints[index] = fmt.Sprintf(
+			"IELTS question %d?",
+			index+1,
+		)
+	}
+	payload.PracticeContext.IELTSAssignment.Parts = []evidence.IELTSAssignmentPart{
+		{
+			Part:           string(scene.PracticeModePart1),
+			SourceID:       "part-1-set-1",
+			TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[:ieltsPostgresPart1QuestionCount]),
+		},
+		{
+			Part:           string(scene.PracticeModePart2),
+			SourceID:       "topic-group-1",
+			TopicTitle:     "Learning a skill",
+			CueCard:        "Describe a skill you would like to learn.",
+			TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[ieltsPostgresPart1QuestionCount : ieltsPostgresPart1QuestionCount+ieltsPostgresPart2QuestionCount]),
+		},
+		{
+			Part:           string(scene.PracticeModePart3),
+			SourceID:       "topic-group-1",
+			TopicTitle:     "Learning a skill",
+			TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[ieltsPostgresPart1QuestionCount+ieltsPostgresPart2QuestionCount:]),
+		},
+	}
+	payload.OpportunityManifest = make([]evidence.Opportunity, 0, ieltsPostgresQuestionCount)
 	payload.ConfirmedTurns = make([]evidence.ConfirmedTurn, 0, answered)
 	payload.EvidenceRefs = make([]evidence.Ref, 0, answered)
 	payload.ProviderLineage.ASR = make([]evidence.ASRLineage, 0, answered)
 	payload.VersionManifest.TurnEvidence = make([]evidence.TurnVersion, 0, answered)
-	for index := 1; index <= scoring.IELTSQuestionCount; index++ {
+	for index := 1; index <= ieltsPostgresQuestionCount; index++ {
 		questionID := fmt.Sprintf("question-%d", index)
 		turnID := fmt.Sprintf("turn-%d", index)
 		transcriptID := fmt.Sprintf("transcript-%d", index)
@@ -342,12 +388,12 @@ func ieltsSpeakingTestSnapshot(t *testing.T, answered int) evidence.EvidenceSnap
 			index,
 		)
 		objectiveID := "part_3_discussion"
-		if index <= 8 {
+		if index <= ieltsPostgresPart1QuestionCount {
 			objectiveID = "part_1_familiar_topics"
-		} else if index == 9 {
+		} else if index ==
+			ieltsPostgresPart1QuestionCount+ieltsPostgresPart2QuestionCount {
 			objectiveID = "part_2_long_turn"
 		}
-		payload.PracticeContext.TaskBlueprints[index-1] = questionText
 		opportunity := evidence.Opportunity{
 			Sequence:                index,
 			QuestionID:              questionID,

@@ -146,7 +146,7 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		PromptVersion: IELTSSpeakingShadowPromptVersion,
 		RubricVersion: IELTSSpeakingShadowRubricVersion,
 		SceneType:     evaluation.SceneIELTSSpeaking,
-		SceneModel:    "IELTS_SPEAKING_FULL_MOCK",
+		PracticeMode:  "FULL_MOCK",
 		AssessableCriteria: []IELTSCriterion{
 			IELTSCriterionFC,
 			IELTSCriterionLR,
@@ -234,7 +234,9 @@ func TestGeneralSceneTextProviderUsesEvaluationContract(t *testing.T) {
 			SchemaVersion:        GeneralSceneProviderSchemaVersion,
 			PromptVersion:        GeneralScenePromptVersion,
 			SceneType:            evaluation.SceneOverseasDaily,
-			SceneModel:           "DAILY_BASIC_DIALOGUE",
+			PracticeExperience:   "ROLEPLAY",
+			SceneCategory:        "ROLEPLAY_DAILY",
+			PracticeMode:         "FULL_SIMULATION",
 			AssessableDimensions: GeneralSceneDimensions(),
 			Opportunities: []GeneralSceneOpportunity{{
 				QuestionID:   "question-1",

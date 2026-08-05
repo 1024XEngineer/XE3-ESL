@@ -14,7 +14,7 @@ func TestIELTSSpeakingShadowCoordinatorFreezesThenCreatesFixedEvaluation(
 	t *testing.T,
 ) {
 	t.Parallel()
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	evaluationValue := validEvaluation()
 	evaluationValue.PracticeSessionID = snapshot.PracticeSessionID
 	evaluationValue.InputSnapshotID = snapshot.ID

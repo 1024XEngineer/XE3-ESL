@@ -76,6 +76,7 @@ void main() {
         scene: _scene,
         sessionId: _newSessionId,
         planId: 'plan-new',
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 3,
         clientOperationId: 'voice-new-practice',
       );
@@ -206,8 +207,16 @@ Map<String, Object?> _activeSessionJson(String sessionId) {
     'practice_plan_id': 'plan-new',
     'scene_id': 'scene-project-deep-dive',
     'scene_version': 1,
-    'scene_family': 'INTERVIEW',
-    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'practice_experience': 'INTERVIEW',
+    'scene_category': 'INTERVIEW_PROFESSIONAL',
+    'practice_mode': 'FULL_SIMULATION',
+    'practice_capabilities': {
+      'retry_allowed': true,
+      'question_translation_allowed': true,
+      'question_tips_allowed': true,
+      'avatar_allowed': true,
+      'speech_feedback_allowed': true,
+    },
     'practice_session_status': 'in_progress',
     'session_version': 2,
     'effective_turns': 0,
@@ -435,8 +444,8 @@ const _newSessionId = '30000000-0000-4000-8000-000000000113';
 const _timestamp = '2026-07-26T08:00:00Z';
 final _scene = testScene(
   id: 'programmer-interview',
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'Programmer interview',
   prompt: const ScenePrompt(
     publicSceneBrief: 'Formal interview practice.',
@@ -446,6 +455,5 @@ final _scene = testScene(
     personaSummary: 'Professional and focused.',
     focusAreas: <String>['clarity'],
     turnBlueprints: <String>['Ask one interview question.'],
-    suggestedDurationSeconds: 600,
   ),
 );

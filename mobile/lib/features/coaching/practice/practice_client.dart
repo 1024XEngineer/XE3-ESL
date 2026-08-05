@@ -1,4 +1,5 @@
 import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 
@@ -91,22 +92,38 @@ final class FakePracticeClient
     implements PracticeClient, PracticeLifecycleClient {
   FakePracticeClient({
     this.delay = Duration.zero,
-    this.sceneFamily = SceneFamily.interview,
-    this.sceneModel = SceneModel.projectExperienceDeepDive,
+    this.practiceExperience = PracticeExperience.interview,
+    this.sceneCategory = SceneCategory.interviewProfessional,
+    this.practiceMode = PracticeMode.fullSimulation,
+    this.capabilities = const PracticeCapabilities(
+      retryAllowed: false,
+      questionTranslationAllowed: false,
+      questionTipsAllowed: true,
+      avatarAllowed: false,
+      speechFeedbackAllowed: false,
+    ),
     this.turnLimit = 3,
+    this.ieltsAssignment,
     PracticeSessionSnapshot? initialSnapshot,
   }) : _snapshot = initialSnapshot {
-    if (!validPracticeSceneIdentity(sceneFamily, sceneModel) ||
-        turnLimit < 1 ||
-        turnLimit > 24) {
+    if (turnLimit < 1 ||
+        turnLimit > practiceTurnSafetyLimit ||
+        (practiceExperience == PracticeExperience.ieltsSpeaking) !=
+            (ieltsAssignment != null) ||
+        (ieltsAssignment != null &&
+            (ieltsAssignment!.mode != practiceMode ||
+                ieltsAssignment!.turnBlueprints.length != turnLimit))) {
       throw ArgumentError('Invalid Fake Practice Session configuration.');
     }
   }
 
   final Duration delay;
-  final SceneFamily sceneFamily;
-  final SceneModel sceneModel;
+  final PracticeExperience practiceExperience;
+  final SceneCategory sceneCategory;
+  final PracticeMode practiceMode;
+  final PracticeCapabilities capabilities;
   final int turnLimit;
+  final IeltsPracticeAssignment? ieltsAssignment;
   int _generation = 0;
   int _messageSequence = 0;
   PracticeSessionSnapshot? _snapshot;
@@ -150,12 +167,15 @@ final class FakePracticeClient
     final snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
       planId: 'practice-plan-$sessionId',
-      sceneFamily: sceneFamily,
-      sceneModel: sceneModel,
+      practiceExperience: practiceExperience,
+      sceneCategory: sceneCategory,
+      practiceMode: practiceMode,
+      capabilities: capabilities,
       sessionVersion: 1,
       completedTurns: 0,
       turnLimit: turnLimit,
       sessionCompleted: false,
+      ieltsAssignment: ieltsAssignment,
       currentQuestion: PracticeQuestion(
         id: 'question-$generation-1',
         sessionId: sessionId,
@@ -241,8 +261,10 @@ final class FakePracticeClient
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,
       sessionCompleted: completed,
-      sceneFamily: snapshot.sceneFamily,
-      sceneModel: snapshot.sceneModel,
+      practiceExperience: snapshot.practiceExperience,
+      sceneCategory: snapshot.sceneCategory,
+      practiceMode: snapshot.practiceMode,
+      capabilities: snapshot.capabilities,
       sessionVersion: nextSessionVersion,
       nextQuestion: nextQuestion,
     );
@@ -250,8 +272,10 @@ final class FakePracticeClient
     _snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
       planId: snapshot.planId,
-      sceneFamily: snapshot.sceneFamily,
-      sceneModel: snapshot.sceneModel,
+      practiceExperience: snapshot.practiceExperience,
+      sceneCategory: snapshot.sceneCategory,
+      practiceMode: snapshot.practiceMode,
+      capabilities: snapshot.capabilities,
       sessionVersion: nextSessionVersion,
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,

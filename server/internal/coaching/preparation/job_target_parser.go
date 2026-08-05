@@ -137,11 +137,12 @@ type jobTargetCatalogManifestDocument struct {
 }
 
 type jobTargetCatalogScene struct {
-	SceneID         string                 `json:"scene_id"`
-	SceneVersion    int                    `json:"scene_version"`
-	SceneFamily     scene.SceneFamily      `json:"scene_family"`
-	Roles           []jobTargetCatalogRole `json:"roles"`
-	PracticeOptions []scene.PracticeOption `json:"practice_options"`
+	SceneID            string                   `json:"scene_id"`
+	SceneVersion       int                      `json:"scene_version"`
+	PracticeExperience scene.PracticeExperience `json:"practice_experience"`
+	SceneCategory      scene.SceneCategory      `json:"scene_category"`
+	Roles              []jobTargetCatalogRole   `json:"roles"`
+	PracticeOptions    []scene.PracticeOption   `json:"practice_options"`
 }
 
 type jobTargetCatalogRole struct {
@@ -173,8 +174,7 @@ func jobTargetCatalogManifest(
 		),
 	}
 	for _, definition := range definitions {
-		if definition.Family != scene.SceneFamilyInterview ||
-			definition.Model != scene.SceneModelProjectExperienceDeepDive {
+		if definition.Experience != scene.PracticeExperienceInterview {
 			continue
 		}
 		detail, err := catalog.GetScene(ctx, definition.ID)
@@ -199,9 +199,10 @@ func jobTargetCatalogManifest(
 			)
 		}
 		catalogScene := jobTargetCatalogScene{
-			SceneID:      definition.ID,
-			SceneVersion: definition.Version,
-			SceneFamily:  definition.Family,
+			SceneID:            definition.ID,
+			SceneVersion:       definition.Version,
+			PracticeExperience: definition.Experience,
+			SceneCategory:      definition.Category,
 			Roles: make(
 				[]jobTargetCatalogRole,
 				0,

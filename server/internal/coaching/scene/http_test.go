@@ -17,7 +17,6 @@ func TestCatalogHTTPRoutesExposeCanonicalScenes(t *testing.T) {
 		"/v1/scenes",
 		"/v1/scenes/" + testSceneID,
 		"/v1/scenes/" + testSceneID + "/roles",
-		"/v1/scenes/ielts-speaking/question-bank",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -54,8 +53,8 @@ func TestCatalogHTTPRoutesExposeCanonicalScenes(t *testing.T) {
 		t.Fatalf("decode Scene: %v", err)
 	}
 	if definition.ID != testSceneID ||
-		definition.Family != SceneFamilyInterview ||
-		definition.Model != SceneModelProjectExperienceDeepDive ||
+		definition.Experience != PracticeExperienceInterview ||
+		definition.Category != SceneCategoryInterviewProfessional ||
 		definition.Version != 1 || len(definition.Roles) != 1 ||
 		len(definition.PracticeOptions) != 2 || definition.Prompt.PublicSceneBrief == "" {
 		t.Fatalf("Scene = %#v", definition)
@@ -75,14 +74,6 @@ func TestCatalogHTTPRoutesExposeCanonicalScenes(t *testing.T) {
 		t.Fatalf("roles = %#v", roles.Roles)
 	}
 
-	bankResponse := serveCatalogRequest(router, "/v1/scenes/ielts-speaking/question-bank")
-	var bank IELTSQuestionBank
-	if err := json.Unmarshal(bankResponse.Body.Bytes(), &bank); err != nil {
-		t.Fatalf("decode IELTS bank: %v", err)
-	}
-	if len(bank.Part1Sets) != 38 || len(bank.TopicGroups) != 56 {
-		t.Fatalf("IELTS bank counts = %d/%d", len(bank.Part1Sets), len(bank.TopicGroups))
-	}
 }
 
 func TestCatalogHTTPHidesUnknownAndInactiveScenes(t *testing.T) {

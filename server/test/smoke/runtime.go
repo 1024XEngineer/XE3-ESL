@@ -96,15 +96,12 @@ func NewRuntime(catalog scene.CatalogReader) *Runtime {
 func newDeterministicSceneCatalog() scene.CatalogReader {
 	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
 		{
-			ID:                  DemoScene,
-			Family:              scene.SceneFamilyInterview,
-			Model:               scene.SceneModelProjectExperienceDeepDive,
-			Name:                "项目经历深挖",
-			Version:             1,
-			Status:              scene.SceneStatusActive,
-			TurnPolicyRef:       "interview.project_deep_dive.turn.v1",
-			SessionPolicyRef:    "interview.project_deep_dive.session.v1",
-			EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+			ID:         DemoScene,
+			Experience: scene.PracticeExperienceInterview,
+			Category:   scene.SceneCategoryInterviewProfessional,
+			Name:       "项目经历深挖",
+			Version:    1,
+			Status:     scene.SceneStatusActive,
 			Prompt: scene.ScenePrompt{
 				PublicSceneBrief: "围绕一个真实项目说明个人职责、关键难点、技术取舍和结果。",
 				PracticeGoal:     "清楚表达个人贡献、决策依据、结果与反思。",
@@ -117,8 +114,7 @@ func newDeterministicSceneCatalog() scene.CatalogReader {
 					"project_depth",
 					"collaboration",
 				},
-				TurnBlueprints:           []string{"追问项目证据与技术取舍"},
-				SuggestedDurationSeconds: 900,
+				TurnBlueprints: []string{"追问项目证据与技术取舍"},
 			},
 			Roles: []scene.RoleDefinition{
 				{
@@ -139,19 +135,27 @@ func newDeterministicSceneCatalog() scene.CatalogReader {
 			},
 			PracticeOptions: []scene.PracticeOption{
 				{
-					ID:           DemoPracticeOption,
-					SceneID:      DemoScene,
-					Type:         scene.PracticeOptionFullSimulation,
-					DisplayName:  "完整模拟",
-					DisplayOrder: 10,
+					ID:                       DemoPracticeOption,
+					SceneID:                  DemoScene,
+					Mode:                     scene.PracticeModeFullSimulation,
+					DisplayName:              "完整模拟",
+					SuggestedDurationSeconds: 900,
+					TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+					SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+					EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+					DisplayOrder:             10,
 				},
 				{
-					ID:               "option_technical_focus",
-					SceneID:          DemoScene,
-					RoleDefinitionID: DemoRoleDefinition,
-					Type:             scene.PracticeOptionFocus,
-					DisplayName:      "技术深挖",
-					DisplayOrder:     20,
+					ID:                       "option_technical_focus",
+					SceneID:                  DemoScene,
+					RoleDefinitionID:         DemoRoleDefinition,
+					Mode:                     scene.PracticeModeFocus,
+					DisplayName:              "技术深挖",
+					SuggestedDurationSeconds: 600,
+					TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+					SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+					EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+					DisplayOrder:             20,
 				},
 			},
 			DisplayOrder: 10,
@@ -330,17 +334,20 @@ func (r *Runtime) createSession() (
 
 func (r *Runtime) sessionLocked() practice.Session {
 	plan := r.planProjectionLocked()
+	option := mustPracticeOption(plan.SceneSelection)
 	session := practice.Session{
-		ID:             demoPracticeSession,
-		PlanID:         plan.ID,
-		PlanRevision:   plan.Revision,
-		SceneFamily:    plan.SceneSelection.Scene.Family,
-		SceneModel:     plan.SceneSelection.Scene.Model,
-		SnapshotID:     "snapshot_session_demo_001",
-		Status:         r.sessionStatus,
-		EffectiveTurns: r.effectiveTurns,
-		Version:        r.sessionVersion,
-		CreatedAt:      r.now.Add(4 * time.Second),
+		ID:                  demoPracticeSession,
+		PlanID:              plan.ID,
+		PlanRevision:        plan.Revision,
+		Experience:          plan.SceneSelection.Scene.Experience,
+		Category:            plan.SceneSelection.Scene.Category,
+		PracticeMode:        option.Mode,
+		EvaluationPolicyRef: option.EvaluationPolicyRef,
+		SnapshotID:          "snapshot_session_demo_001",
+		Status:              r.sessionStatus,
+		EffectiveTurns:      r.effectiveTurns,
+		Version:             r.sessionVersion,
+		CreatedAt:           r.now.Add(4 * time.Second),
 	}
 	if r.sessionStatus != practice.SessionStarting {
 		startedAt := r.now.Add(5 * time.Second)
@@ -645,6 +652,7 @@ func (r *Runtime) lastEventSequenceLocked() int {
 
 func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 	plan := r.planProjectionLocked()
+	option := mustPracticeOption(plan.SceneSelection)
 	roles, err := plan.SceneSelection.SelectedRoles()
 	if err != nil || len(roles) != 1 {
 		panic("resolve deterministic Scene role")
@@ -654,8 +662,9 @@ func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 		ID:             "snapshot_session_demo_001",
 		SessionID:      demoPracticeSession,
 		PlanRevision:   plan.Revision,
-		SceneFamily:    plan.SceneSelection.Scene.Family,
-		SceneModel:     plan.SceneSelection.Scene.Model,
+		Experience:     plan.SceneSelection.Scene.Experience,
+		Category:       plan.SceneSelection.Scene.Category,
+		PracticeMode:   option.Mode,
 		SceneSelection: plan.SceneSelection,
 		Preparation:    plan.Preparation,
 		Participants: []practice.Participant{
@@ -681,6 +690,14 @@ func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 		IELTSAssignment:    plan.IELTSAssignment,
 		CreatedAt:          r.now.Add(4 * time.Second),
 	}
+}
+
+func mustPracticeOption(selection practice.SceneSelection) practice.PracticeOption {
+	option, err := selection.PracticeOption()
+	if err != nil {
+		panic("resolve deterministic Practice option")
+	}
+	return option
 }
 
 func (r *Runtime) planProjectionLocked() practice.PlanProjection {

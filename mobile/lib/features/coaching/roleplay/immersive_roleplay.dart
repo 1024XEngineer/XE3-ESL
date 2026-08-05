@@ -1,14 +1,13 @@
-import 'package:speakup/features/coaching/scene/scene.dart';
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
-import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
@@ -32,12 +31,11 @@ class ImmersiveRoleplayPage extends StatefulWidget {
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
-    this.onOpenInterviewReport,
+    this.onPracticeCompleted,
     this.speechFeedbackController,
     this.replayLoading = false,
     this.replayPlaying = false,
     this.onExitRequested,
-    this.onContinueWithAgent,
     this.previewMode = false,
     super.key,
   });
@@ -48,12 +46,11 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final ImmersiveAsyncAction? onBeforeSubmitText;
   final ImmersiveAsyncAction? onReplayQuestion;
-  final OpenInterviewPracticeReport? onOpenInterviewReport;
+  final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
   final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
   final bool previewMode;
 
   @override
@@ -74,11 +71,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _exitApproved = false;
   final Map<String, String> _questionTranslations = <String, String>{};
   bool _feedbackRebuildScheduled = false;
-  bool _conversationTextVisible = true;
-  String? _scheduledInterviewReportSessionId;
-  String? _autoOpenedInterviewReportSessionId;
-  bool _interviewReportRouteActive = false;
-  IeltsExaminerSpeaker? _ownedTipSpeaker;
+  bool _completionInFlight = false;
+  PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
 
   @override
@@ -89,7 +83,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
-    _scheduleInterviewReportIfNeeded();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _conversationScrollController.hasClients) {
         _conversationScrollController.jumpTo(
@@ -121,7 +114,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       _syncRecordingTimer();
     }
     _syncSpeechFeedbackSources();
-    _scheduleInterviewReportIfNeeded();
   }
 
   @override
@@ -156,7 +148,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (tip == null || _visibleTipQuestionId != tip.questionId) {
       return;
     }
-    final speaker = _ownedTipSpeaker ??= SystemIeltsExaminerSpeaker();
+    final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
     await speaker.speak(tip.content);
   }
 
@@ -195,7 +187,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
-    _scheduleInterviewReportIfNeeded();
     if (shouldFollowConversation) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_conversationScrollController.hasClients) {
@@ -210,10 +201,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
         );
       });
     }
-  }
-
-  void _toggleConversationText() {
-    setState(() => _conversationTextVisible = !_conversationTextVisible);
   }
 
   void _syncSpeechFeedbackSources() {
@@ -305,69 +292,33 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     }
   }
 
-  void _scheduleInterviewReportIfNeeded() {
-    final controller = widget.practiceController;
-    final sessionId = controller.practiceSessionId;
-    if (widget.onOpenInterviewReport == null ||
-        sessionId == null ||
-        controller.recordingState != PracticeRecordingState.completed ||
-        !isInterviewPracticeScene(
-          controller.practiceSceneFamily,
-          controller.practiceSceneModel,
-        ) ||
-        _interviewReportRouteActive ||
-        _scheduledInterviewReportSessionId == sessionId ||
-        _autoOpenedInterviewReportSessionId == sessionId) {
+  Future<void> _completePractice() async {
+    if (!mounted || _completionInFlight) {
       return;
     }
-    _scheduledInterviewReportSessionId = sessionId;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          widget.practiceController.practiceSessionId != sessionId ||
-          widget.practiceController.recordingState !=
-              PracticeRecordingState.completed) {
-        if (_scheduledInterviewReportSessionId == sessionId) {
-          _scheduledInterviewReportSessionId = null;
-        }
-        return;
-      }
-      _scheduledInterviewReportSessionId = null;
-      _autoOpenedInterviewReportSessionId = sessionId;
-      unawaited(_openInterviewReport());
-    });
-  }
-
-  Future<void> _openInterviewReport() async {
-    final openReport = widget.onOpenInterviewReport;
-    final practiceController = widget.practiceController;
-    final sessionId = practiceController.practiceSessionId;
-    if (openReport == null ||
-        sessionId == null ||
-        practiceController.recordingState != PracticeRecordingState.completed ||
-        _interviewReportRouteActive ||
-        !isInterviewPracticeScene(
-          practiceController.practiceSceneFamily,
-          practiceController.practiceSceneModel,
-        )) {
+    final callback = widget.onPracticeCompleted;
+    if (callback == null) {
+      await Navigator.of(context).maybePop();
       return;
     }
-    _interviewReportRouteActive = true;
+    setState(() => _completionInFlight = true);
+    var completed = false;
     try {
-      final result = await openReport(
-        InterviewPracticeCompletion(
-          practiceSessionId: sessionId,
-          title: '${widget.practiceController.scene?.name ?? '面试'} · 复盘',
-          speechFeedbackSourceKeys: List<String>.unmodifiable(
-            _feedbackSources.keys,
-          ),
-        ),
-      );
-      if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
-        Navigator.of(context).pop(result);
-      }
-    } finally {
-      _interviewReportRouteActive = false;
+      completed = await callback();
+    } on Object {
+      completed = false;
     }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _completionInFlight = false);
+    if (completed) {
+      Navigator.of(context).pop(CompletedPracticeRouteResult.continueWithAgent);
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('练习正在完成，请稍后重试。')));
   }
 
   Future<void> _submitText() async {
@@ -478,18 +429,15 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                         constraints.maxWidth > constraints.maxHeight;
                     final avatar = _AvatarStage(
                       scene: scene,
-                      surfaceBuilder: _exitApproved
+                      surfaceBuilder:
+                          _exitApproved ||
+                              !widget.practiceController.canUseAvatar
                           ? null
                           : widget.avatarSurfaceBuilder,
                       statusLabel: widget.avatarStatusLabel,
-                      latestAssistantMessage:
-                          widget.practiceController.practiceSceneFamily ==
-                              SceneFamily.interview
-                          ? null
-                          : _latestAssistantMessage(
-                              widget.practiceController.practiceMessages,
-                            ),
-                      conversationTextVisible: _conversationTextVisible,
+                      latestAssistantMessage: _latestAssistantMessage(
+                        widget.practiceController.practiceMessages,
+                      ),
                       exitInFlight: _exitInFlight,
                       onExit: _requestExit,
                     );
@@ -501,7 +449,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       textMode: _textMode,
                       recordingSeconds: _recordingSeconds,
                       previewMode: widget.previewMode,
-                      conversationTextVisible: _conversationTextVisible,
                       onBeforeStartRecording: _beforeStartRecording,
                       onReplayQuestion: widget.onReplayQuestion,
                       speechFeedbackController: widget.speechFeedbackController,
@@ -509,10 +456,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       replayPlaying: widget.replayPlaying,
                       onToggleTextMode: _toggleTextMode,
                       onSubmitText: _submitText,
-                      onToggleConversationText: _toggleConversationText,
                       onTranslateQuestion:
-                          widget.practiceController.practiceSceneFamily ==
-                                  SceneFamily.interview &&
+                          widget.practiceController.canTranslateQuestion &&
                               widget.practiceController.client
                                   is PracticeQuestionTranslationClient
                           ? _translateQuestion
@@ -521,7 +466,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       onHideTip: _hideQuestionTip,
                       onSpeakTip: _speakQuestionTip,
                       visibleTipQuestionId: _visibleTipQuestionId,
-                      onOpenReport: _openInterviewReport,
+                      onPracticeCompleted: _completePractice,
                     );
                     if (landscape) {
                       return Row(
@@ -559,7 +504,6 @@ class _AvatarStage extends StatelessWidget {
     required this.surfaceBuilder,
     required this.statusLabel,
     required this.latestAssistantMessage,
-    required this.conversationTextVisible,
     required this.exitInFlight,
     required this.onExit,
   });
@@ -568,7 +512,6 @@ class _AvatarStage extends StatelessWidget {
   final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
   final String? statusLabel;
   final PracticeMessage? latestAssistantMessage;
-  final bool conversationTextVisible;
   final bool exitInFlight;
   final VoidCallback onExit;
 
@@ -683,23 +626,17 @@ class _AvatarStage extends StatelessWidget {
                   color: Colors.black.withValues(alpha: 0.58),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Visibility(
+                child: Text(
+                  message.text,
                   key: const Key('immersive-live-subtitle-text'),
-                  visible: conversationTextVisible,
-                  maintainAnimation: true,
-                  maintainSize: true,
-                  maintainState: true,
-                  child: Text(
-                    message.text,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      height: 1.35,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    height: 1.35,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -738,7 +675,6 @@ class _ConversationPanel extends StatelessWidget {
     required this.textMode,
     required this.recordingSeconds,
     required this.previewMode,
-    required this.conversationTextVisible,
     required this.onBeforeStartRecording,
     required this.onReplayQuestion,
     required this.speechFeedbackController,
@@ -746,13 +682,12 @@ class _ConversationPanel extends StatelessWidget {
     required this.replayPlaying,
     required this.onToggleTextMode,
     required this.onSubmitText,
-    required this.onToggleConversationText,
     required this.onTranslateQuestion,
     required this.onShowTip,
     required this.onHideTip,
     required this.onSpeakTip,
     required this.visibleTipQuestionId,
-    required this.onOpenReport,
+    required this.onPracticeCompleted,
   });
 
   final PracticeController controller;
@@ -762,7 +697,6 @@ class _ConversationPanel extends StatelessWidget {
   final bool textMode;
   final int recordingSeconds;
   final bool previewMode;
-  final bool conversationTextVisible;
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final ImmersiveAsyncAction? onReplayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
@@ -770,13 +704,12 @@ class _ConversationPanel extends StatelessWidget {
   final bool replayPlaying;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
-  final VoidCallback onToggleConversationText;
   final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
   final VoidCallback onShowTip;
   final VoidCallback onHideTip;
   final Future<void> Function() onSpeakTip;
   final String? visibleTipQuestionId;
-  final VoidCallback onOpenReport;
+  final VoidCallback onPracticeCompleted;
 
   @override
   Widget build(BuildContext context) {
@@ -787,8 +720,6 @@ class _ConversationPanel extends StatelessWidget {
         children: [
           _ConversationHeader(
             controller: controller,
-            conversationTextVisible: conversationTextVisible,
-            onToggleConversationText: onToggleConversationText,
             onShowTip: onShowTip,
             onReplayQuestion: onReplayQuestion,
             replayLoading: replayLoading,
@@ -818,7 +749,7 @@ class _ConversationPanel extends StatelessWidget {
                               message: message,
                               polishedText: _polishedText(projection),
                               polishLoading: projection?.isPolling ?? false,
-                              messageTextVisible: conversationTextVisible,
+                              messageTextVisible: true,
                               onTranslate:
                                   message.role == PracticeMessageRole.assistant
                                   ? onTranslateQuestion
@@ -901,7 +832,7 @@ class _ConversationPanel extends StatelessWidget {
             onBeforeStartRecording: onBeforeStartRecording,
             onToggleTextMode: onToggleTextMode,
             onSubmitText: onSubmitText,
-            onOpenReport: onOpenReport,
+            onPracticeCompleted: onPracticeCompleted,
           ),
         ],
       ),
@@ -946,8 +877,6 @@ class _ConversationPanel extends StatelessWidget {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.controller,
-    required this.conversationTextVisible,
-    required this.onToggleConversationText,
     required this.onShowTip,
     required this.onReplayQuestion,
     required this.replayLoading,
@@ -955,8 +884,6 @@ class _ConversationHeader extends StatelessWidget {
   });
 
   final PracticeController controller;
-  final bool conversationTextVisible;
-  final VoidCallback onToggleConversationText;
   final VoidCallback onShowTip;
   final ImmersiveAsyncAction? onReplayQuestion;
   final bool replayLoading;
@@ -986,19 +913,8 @@ class _ConversationHeader extends StatelessWidget {
               style: SpeakUpDesign.meta,
             ),
           ),
-          if (controller.practiceSceneFamily == SceneFamily.interview)
-            IconButton(
-              key: const Key('immersive-toggle-conversation-text'),
-              tooltip: conversationTextVisible ? '隐藏文字' : '显示文字',
-              onPressed: onToggleConversationText,
-              visualDensity: VisualDensity.compact,
-              icon: Icon(
-                conversationTextVisible
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-              ),
-            ),
-          if (controller.isInterviewPractice) ...[
+          if (controller.practiceCapabilities?.questionTipsAllowed ??
+              false) ...[
             const SizedBox(width: 8),
             TextButton.icon(
               key: const Key('immersive-question-tip'),
@@ -1104,7 +1020,7 @@ class _ImmersiveComposer extends StatefulWidget {
     required this.onBeforeStartRecording,
     required this.onToggleTextMode,
     required this.onSubmitText,
-    required this.onOpenReport,
+    required this.onPracticeCompleted,
   });
 
   final PracticeController controller;
@@ -1115,7 +1031,7 @@ class _ImmersiveComposer extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
-  final VoidCallback onOpenReport;
+  final VoidCallback onPracticeCompleted;
 
   @override
   State<_ImmersiveComposer> createState() => _ImmersiveComposerState();
@@ -1206,14 +1122,14 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
             controller: widget.controller,
           ),
           PracticeRecordingState.submitting => _ComposerProgress(
-            label: widget.controller.isFinalInterviewSubmission
-                ? '正在提交最后一轮回答，完成后将生成报告…'
+            label: widget.controller.isFinalSubmission
+                ? '正在提交最后一轮回答…'
                 : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.completed => _ComposerAction(
-            label: '练习已完成，可先查看最后一轮回答与评分。',
-            actionLabel: '查看报告',
-            onPressed: widget.onOpenReport,
+            label: '练习已完成，可以返回继续对话。',
+            actionLabel: '完成并返回',
+            onPressed: widget.onPracticeCompleted,
           ),
         },
       ),

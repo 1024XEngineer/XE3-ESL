@@ -1,3 +1,4 @@
+import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -8,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
@@ -60,18 +61,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('toggles interview text without an avatar subtitle', (
+  testWidgets('keeps roleplay text and avatar subtitle visible', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController(
-      practiceClient: _AsyncReviewPracticeClient(
-        sceneFamily: SceneFamily.interview,
-        sceneModel: SceneModel.interviewBasicDialogue,
-      ),
-    );
+    final controller = await _roleplayController();
     addTearDown(controller.dispose);
     final question = controller.currentQuestion!.text;
     final questionMessage = controller.practiceMessages.last;
@@ -81,90 +77,60 @@ void main() {
     );
     await tester.pump();
 
-    final toggle = find.byKey(const Key('immersive-toggle-conversation-text'));
-    expect(toggle, findsOneWidget);
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
-    expect(find.text(question), findsOneWidget);
+    expect(
+      find.byKey(const Key('immersive-toggle-conversation-text')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.text(question), findsNWidgets(2));
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),
     );
-    final messageBubbleSize = tester.getSize(messageBubble);
-
-    await tester.tap(toggle);
-    await tester.pump();
-
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
     expect(messageBubble, findsOneWidget);
-    expect(
-      tester
-          .widget<Visibility>(
-            find.byKey(Key('practice-message-text-${questionMessage.id}')),
-          )
-          .visible,
-      isFalse,
-    );
-    expect(tester.getSize(messageBubble), messageBubbleSize);
     expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
-
-    await tester.tap(toggle);
-    await tester.pump();
-
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
-    expect(find.text(question), findsOneWidget);
-    expect(
-      tester
-          .widget<Visibility>(
-            find.byKey(Key('practice-message-text-${questionMessage.id}')),
-          )
-          .visible,
-      isTrue,
-    );
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'translates an interview question once and toggles the read aid',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final practice = _TranslationPracticeClient();
-      final controller = await _roleplayController(practiceClient: practice);
-      addTearDown(controller.dispose);
-      final question = controller.currentQuestion!;
+  testWidgets('translates a roleplay question once and toggles the read aid', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final practice = _TranslationPracticeClient();
+    final controller = await _roleplayController(practiceClient: practice);
+    addTearDown(controller.dispose);
+    final question = controller.currentQuestion!;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ImmersiveRoleplayPage(practiceController: controller),
-        ),
-      );
-      await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+    );
+    await tester.pump();
 
-      final button = find.byKey(
-        Key('practice-assistant-translate-${question.id}'),
-      );
-      expect(button, findsOneWidget);
+    final button = find.byKey(
+      Key('practice-assistant-translate-${question.id}'),
+    );
+    expect(button, findsOneWidget);
 
-      await tester.tap(button);
-      await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
 
-      expect(find.text(practice.translation), findsOneWidget);
-      expect(practice.translationCalls, 1);
-      expect(controller.completedTurns, 0);
+    expect(find.text(practice.translation), findsOneWidget);
+    expect(practice.translationCalls, 1);
+    expect(controller.completedTurns, 0);
 
-      await tester.tap(button);
-      await tester.pump();
-      expect(find.text(practice.translation), findsNothing);
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.text(practice.translation), findsNothing);
 
-      await tester.tap(button);
-      await tester.pump();
-      expect(find.text(practice.translation), findsOneWidget);
-      expect(practice.translationCalls, 1);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.text(practice.translation), findsOneWidget);
+    expect(practice.translationCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
 
-  testWidgets('shows inline interview Tips without blocking the composer', (
+  testWidgets('shows capability-gated Tips without blocking the composer', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -275,13 +241,13 @@ void main() {
     expect(interruptedBeforeSubmit, isTrue);
   });
 
-  testWidgets('keeps a follow-up in the current displayed interview round', (
+  testWidgets('keeps a follow-up in the current displayed roleplay round', (
     tester,
   ) async {
     final controller = await _roleplayController(
       practiceClient: _AsyncReviewPracticeClient(
-        sceneFamily: SceneFamily.interview,
-        sceneModel: SceneModel.interviewBasicDialogue,
+        practiceExperience: PracticeExperience.roleplay,
+        sceneCategory: SceneCategory.roleplayTravel,
         followUpAfterAnswer: true,
       ),
     );
@@ -504,18 +470,13 @@ void main() {
       isTrue,
     );
     expect(find.text('正在生成评分与纠错…'), findsWidgets);
-    expect(find.text('查看报告'), findsOneWidget);
+    expect(find.text('完成并返回'), findsOneWidget);
   });
 
-  testWidgets('hands the completed interview to the report route', (
+  testWidgets('hands completed roleplay to the generic completion callback', (
     tester,
   ) async {
-    final controller = await _roleplayController(
-      practiceClient: _AsyncReviewPracticeClient(
-        sceneFamily: SceneFamily.interview,
-        sceneModel: SceneModel.interviewBasicDialogue,
-      ),
-    );
+    final controller = await _roleplayController();
     addTearDown(controller.dispose);
     for (var turn = 0; turn < 3; turn++) {
       await controller.startRecording();
@@ -524,23 +485,23 @@ void main() {
     }
     expect(controller.recordingState, PracticeRecordingState.completed);
 
-    InterviewPracticeCompletion? completion;
+    var completionCalls = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
           practiceController: controller,
-          onOpenInterviewReport: (value) async {
-            completion = value;
-            return null;
+          onPracticeCompleted: () async {
+            completionCalls++;
+            return false;
           },
         ),
       ),
     );
-    await tester.pump();
+    await tester.tap(find.text('完成并返回'));
     await tester.pump();
 
-    expect(completion?.practiceSessionId, controller.practiceSessionId);
-    expect(completion?.title, '${controller.scene?.name} · 复盘');
+    expect(completionCalls, 1);
+    expect(find.text('练习正在完成，请稍后重试。'), findsOneWidget);
   });
 
   testWidgets('prefers the injected avatar replay action over audio playback', (
@@ -630,25 +591,13 @@ void main() {
 Future<PracticeController> _roleplayController({
   PracticeClient? practiceClient,
 }) async {
-  final sceneFamily = switch (practiceClient) {
-    final _AsyncReviewPracticeClient client => client.resolvedSceneFamily,
-    final _TranslationPracticeClient client => client.resolvedSceneFamily,
-    _QuestionTipPracticeClient() => SceneFamily.interview,
-    _ => SceneFamily.daily,
-  };
-  final sceneModel = switch (practiceClient) {
-    final _AsyncReviewPracticeClient client => client.resolvedSceneModel,
-    final _TranslationPracticeClient client => client.resolvedSceneModel,
-    _QuestionTipPracticeClient() => SceneModel.interviewBasicDialogue,
-    _ => SceneModel.hotelCheckinAndIssueHandling,
-  };
+  const practiceExperience = PracticeExperience.roleplay;
+  const sceneCategory = SceneCategory.roleplayTravel;
   final scene = testScene(
-    id: sceneFamily == SceneFamily.interview
-        ? 'interview-roleplay'
-        : 'daily-hotel',
-    family: sceneFamily,
-    model: sceneModel,
-    name: sceneFamily == SceneFamily.interview ? '英文面试' : '酒店入住',
+    id: 'daily-hotel',
+    experience: practiceExperience,
+    category: sceneCategory,
+    name: '酒店入住',
     prompt: const ScenePrompt(
       publicSceneBrief: '练习办理入住与需求沟通。',
       practiceGoal: 'Complete the hotel check-in conversation.',
@@ -657,17 +606,20 @@ Future<PracticeController> _roleplayController({
       personaSummary: 'Professional and helpful.',
       focusAreas: <String>['check_in'],
       turnBlueprints: <String>['Confirm the booking.'],
-      suggestedDurationSeconds: 600,
     ),
   );
   final resolvedPracticeClient =
       practiceClient ??
-      _ScenePracticeClient(sceneFamily: sceneFamily, sceneModel: sceneModel);
+      _ScenePracticeClient(
+        practiceExperience: practiceExperience,
+        sceneCategory: sceneCategory,
+      );
   final controller = PracticeController(client: resolvedPracticeClient);
   await controller.activateCreatedPractice(
     scene: scene,
     sessionId: _roleplaySessionId,
     planId: 'practice-plan-$_roleplaySessionId',
+    practiceMode: scene.practiceOptions.first.mode,
     turnLimit: 3,
     clientOperationId: 'activate-$_roleplaySessionId',
   );
@@ -675,11 +627,14 @@ Future<PracticeController> _roleplayController({
 }
 
 final class _ScenePracticeClient implements PracticeClient {
-  _ScenePracticeClient({required this.sceneFamily, required this.sceneModel});
+  _ScenePracticeClient({
+    required this.practiceExperience,
+    required this.sceneCategory,
+  });
 
-  final _delegate = FakePracticeClient();
-  final SceneFamily sceneFamily;
-  final SceneModel sceneModel;
+  final _delegate = FakePracticeClient(capabilities: testPracticeCapabilities);
+  final PracticeExperience practiceExperience;
+  final SceneCategory sceneCategory;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -689,8 +644,8 @@ final class _ScenePracticeClient implements PracticeClient {
     required String sessionId,
   }) async => _withSceneIdentity(
     await _delegate.restorePractice(sessionId: sessionId),
-    sceneFamily,
-    sceneModel,
+    practiceExperience,
+    sceneCategory,
   );
 
   @override
@@ -702,8 +657,8 @@ final class _ScenePracticeClient implements PracticeClient {
       sessionId: sessionId,
       clientOperationId: clientOperationId,
     ),
-    sceneFamily,
-    sceneModel,
+    practiceExperience,
+    sceneCategory,
   );
 
   @override
@@ -724,8 +679,8 @@ final class _ScenePracticeClient implements PracticeClient {
       candidateId: candidateId,
       idempotencyKey: idempotencyKey,
     ),
-    sceneFamily,
-    sceneModel,
+    practiceExperience,
+    sceneCategory,
   );
 
   @override
@@ -741,23 +696,23 @@ final class _ScenePracticeClient implements PracticeClient {
       answerText: answerText,
       idempotencyKey: idempotencyKey,
     ),
-    sceneFamily,
-    sceneModel,
+    practiceExperience,
+    sceneCategory,
   );
 }
 
 final class _TranslationPracticeClient
     implements PracticeClient, PracticeQuestionTranslationClient {
   final _delegate = _AsyncReviewPracticeClient(
-    sceneFamily: SceneFamily.interview,
-    sceneModel: SceneModel.interviewBasicDialogue,
+    practiceExperience: PracticeExperience.roleplay,
+    sceneCategory: SceneCategory.roleplayTravel,
   );
 
   final String translation = '请介绍一次你解决团队分歧的经历。';
   int translationCalls = 0;
 
-  SceneFamily get resolvedSceneFamily => _delegate.resolvedSceneFamily;
-  SceneModel get resolvedSceneModel => _delegate.resolvedSceneModel;
+  PracticeExperience get resolvedExperience => _delegate.resolvedExperience;
+  SceneCategory get resolvedCategory => _delegate.resolvedCategory;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -821,7 +776,7 @@ final class _TranslationPracticeClient
 }
 
 final class _FailOncePracticeClient implements PracticeClient {
-  final _delegate = FakePracticeClient();
+  final _delegate = FakePracticeClient(capabilities: testPracticeCapabilities);
   bool _shouldFail = true;
 
   @override
@@ -832,8 +787,8 @@ final class _FailOncePracticeClient implements PracticeClient {
     required String sessionId,
   }) async => _withSceneIdentity(
     await _delegate.restorePractice(sessionId: sessionId),
-    SceneFamily.daily,
-    SceneModel.hotelCheckinAndIssueHandling,
+    PracticeExperience.roleplay,
+    SceneCategory.roleplayTravel,
   );
 
   @override
@@ -845,8 +800,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       sessionId: sessionId,
       clientOperationId: clientOperationId,
     ),
-    SceneFamily.daily,
-    SceneModel.hotelCheckinAndIssueHandling,
+    PracticeExperience.roleplay,
+    SceneCategory.roleplayTravel,
   );
 
   @override
@@ -876,8 +831,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       candidateId: candidateId,
       idempotencyKey: idempotencyKey,
     ),
-    SceneFamily.daily,
-    SceneModel.hotelCheckinAndIssueHandling,
+    PracticeExperience.roleplay,
+    SceneCategory.roleplayTravel,
   );
 
   @override
@@ -893,16 +848,16 @@ final class _FailOncePracticeClient implements PracticeClient {
       answerText: answerText,
       idempotencyKey: idempotencyKey,
     ),
-    SceneFamily.daily,
-    SceneModel.hotelCheckinAndIssueHandling,
+    PracticeExperience.roleplay,
+    SceneCategory.roleplayTravel,
   );
 }
 
 final class _QuestionTipPracticeClient
     implements PracticeClient, PracticeQuestionTipClient {
   final _delegate = FakePracticeClient(
-    sceneFamily: SceneFamily.interview,
-    sceneModel: SceneModel.interviewBasicDialogue,
+    practiceExperience: PracticeExperience.roleplay,
+    sceneCategory: SceneCategory.roleplayTravel,
   );
 
   @override
@@ -969,19 +924,20 @@ final class _QuestionTipPracticeClient
 
 final class _AsyncReviewPracticeClient implements PracticeClient {
   _AsyncReviewPracticeClient({
-    this.sceneFamily,
-    this.sceneModel,
+    this.practiceExperience,
+    this.sceneCategory,
     this.followUpAfterAnswer = false,
   });
 
-  final _delegate = FakePracticeClient();
-  final SceneFamily? sceneFamily;
-  final SceneModel? sceneModel;
+  final _delegate = FakePracticeClient(capabilities: testPracticeCapabilities);
+  final PracticeExperience? practiceExperience;
+  final SceneCategory? sceneCategory;
   final bool followUpAfterAnswer;
 
-  SceneFamily get resolvedSceneFamily => sceneFamily ?? SceneFamily.daily;
-  SceneModel get resolvedSceneModel =>
-      sceneModel ?? SceneModel.hotelCheckinAndIssueHandling;
+  PracticeExperience get resolvedExperience =>
+      practiceExperience ?? PracticeExperience.roleplay;
+  SceneCategory get resolvedCategory =>
+      sceneCategory ?? SceneCategory.roleplayTravel;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -991,8 +947,8 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
     required String sessionId,
   }) async => _withSceneIdentity(
     await _delegate.restorePractice(sessionId: sessionId),
-    resolvedSceneFamily,
-    resolvedSceneModel,
+    resolvedExperience,
+    resolvedCategory,
   );
 
   @override
@@ -1004,11 +960,7 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       sessionId: sessionId,
       clientOperationId: clientOperationId,
     );
-    return _withSceneIdentity(
-      snapshot,
-      resolvedSceneFamily,
-      resolvedSceneModel,
-    );
+    return _withSceneIdentity(snapshot, resolvedExperience, resolvedCategory);
   }
 
   @override
@@ -1045,8 +997,10 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,
-      sceneFamily: resolvedSceneFamily,
-      sceneModel: resolvedSceneModel,
+      practiceExperience: resolvedExperience,
+      sceneCategory: resolvedCategory,
+      practiceMode: confirmation.practiceMode,
+      capabilities: confirmation.capabilities,
       sessionVersion: confirmation.sessionVersion,
       nextQuestion: confirmation.nextQuestion,
       audioAssetId: confirmation.audioAssetId,
@@ -1070,8 +1024,8 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
     if (!followUpAfterAnswer || confirmation.nextQuestion == null) {
       return _withSceneIdentityConfirmation(
         confirmation,
-        resolvedSceneFamily,
-        resolvedSceneModel,
+        resolvedExperience,
+        resolvedCategory,
       );
     }
     final nextQuestion = confirmation.nextQuestion!;
@@ -1084,8 +1038,10 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,
-      sceneFamily: resolvedSceneFamily,
-      sceneModel: resolvedSceneModel,
+      practiceExperience: resolvedExperience,
+      sceneCategory: resolvedCategory,
+      practiceMode: confirmation.practiceMode,
+      capabilities: confirmation.capabilities,
       sessionVersion: confirmation.sessionVersion,
       nextQuestion: PracticeQuestion(
         id: nextQuestion.id,
@@ -1105,13 +1061,15 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
 
 PracticeSessionSnapshot _withSceneIdentity(
   PracticeSessionSnapshot snapshot,
-  SceneFamily sceneFamily,
-  SceneModel sceneModel,
+  PracticeExperience practiceExperience,
+  SceneCategory sceneCategory,
 ) => PracticeSessionSnapshot(
   sessionId: snapshot.sessionId,
   planId: snapshot.planId,
-  sceneFamily: sceneFamily,
-  sceneModel: sceneModel,
+  practiceExperience: practiceExperience,
+  sceneCategory: sceneCategory,
+  practiceMode: snapshot.practiceMode,
+  capabilities: snapshot.capabilities,
   sessionVersion: snapshot.sessionVersion,
   completedTurns: snapshot.completedTurns,
   turnLimit: snapshot.turnLimit,
@@ -1123,8 +1081,8 @@ PracticeSessionSnapshot _withSceneIdentity(
 
 PracticeTurnConfirmation _withSceneIdentityConfirmation(
   PracticeTurnConfirmation confirmation,
-  SceneFamily sceneFamily,
-  SceneModel sceneModel,
+  PracticeExperience practiceExperience,
+  SceneCategory sceneCategory,
 ) => PracticeTurnConfirmation(
   turnId: confirmation.turnId,
   sessionId: confirmation.sessionId,
@@ -1134,8 +1092,10 @@ PracticeTurnConfirmation _withSceneIdentityConfirmation(
   completedTurns: confirmation.completedTurns,
   turnLimit: confirmation.turnLimit,
   sessionCompleted: confirmation.sessionCompleted,
-  sceneFamily: sceneFamily,
-  sceneModel: sceneModel,
+  practiceExperience: practiceExperience,
+  sceneCategory: sceneCategory,
+  practiceMode: confirmation.practiceMode,
+  capabilities: confirmation.capabilities,
   sessionVersion: confirmation.sessionVersion,
   nextQuestion: confirmation.nextQuestion,
   audioAssetId: confirmation.audioAssetId,

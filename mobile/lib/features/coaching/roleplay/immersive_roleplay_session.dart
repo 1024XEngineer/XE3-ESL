@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -19,19 +19,17 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   const ImmersiveRoleplaySession({
     required this.practiceController,
     required this.avatarControllerFactory,
-    this.onOpenInterviewReport,
+    this.onPracticeCompleted,
     this.speechFeedbackController,
     this.onExitRequested,
-    this.onContinueWithAgent,
     super.key,
   });
 
   final PracticeController practiceController;
   final AvatarControllerFactory avatarControllerFactory;
-  final OpenInterviewPracticeReport? onOpenInterviewReport;
+  final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<ImmersiveRoleplaySession> createState() =>
@@ -569,12 +567,11 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
           widget.practiceController.currentQuestion?.speechPath == null
           ? null
           : _replayQuestion,
-      onOpenInterviewReport: widget.onOpenInterviewReport,
+      onPracticeCompleted: widget.onPracticeCompleted,
       speechFeedbackController: widget.speechFeedbackController,
       replayLoading: _replayLoading,
       replayPlaying: _isAvatarSpeaking,
       onExitRequested: widget.onExitRequested,
-      onContinueWithAgent: widget.onContinueWithAgent,
     );
   }
 

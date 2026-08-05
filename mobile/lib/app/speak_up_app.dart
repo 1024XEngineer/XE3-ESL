@@ -14,14 +14,16 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
-import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_wizard.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
@@ -45,6 +47,7 @@ class SpeakUpApp extends StatelessWidget {
     required this.messageAudioController,
     required this.practiceController,
     required this.preparationController,
+    required this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
     this.practicePlanHandoffController,
@@ -64,6 +67,7 @@ class SpeakUpApp extends StatelessWidget {
     this.messageAudioController,
     this.practiceController,
     this.preparationController,
+    this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
     this.practicePlanHandoffController,
@@ -83,6 +87,7 @@ class SpeakUpApp extends StatelessWidget {
   final AgentMessageAudioController? messageAudioController;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
+  final IeltsPreparationController? ieltsPreparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final PracticePlanHandoffController? practicePlanHandoffController;
@@ -108,6 +113,7 @@ class SpeakUpApp extends StatelessWidget {
               messageAudioController: messageAudioController,
               practiceController: practiceController,
               preparationController: preparationController,
+              ieltsPreparationController: ieltsPreparationController,
               jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
               practicePlanHandoffController: practicePlanHandoffController,
@@ -129,6 +135,7 @@ class SpeakUpApp extends StatelessWidget {
                 messageAudioController: messageAudioController,
                 practiceController: practiceController,
                 preparationController: preparationController,
+                ieltsPreparationController: ieltsPreparationController,
                 jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
                 practicePlanHandoffController: practicePlanHandoffController,
@@ -154,6 +161,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.messageAudioController,
     this.practiceController,
     this.preparationController,
+    this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
     this.practicePlanHandoffController,
@@ -173,6 +181,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final AgentMessageAudioController? messageAudioController;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
+  final IeltsPreparationController? ieltsPreparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final PracticePlanHandoffController? practicePlanHandoffController;
@@ -270,6 +279,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user?.id != widget.user?.id ||
         oldWidget.preparationController != widget.preparationController ||
+        oldWidget.ieltsPreparationController !=
+            widget.ieltsPreparationController ||
         oldWidget.jobPreparationController != widget.jobPreparationController ||
         oldWidget.preparationLaunchController !=
             widget.preparationLaunchController) {
@@ -285,7 +296,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     if (!mounted || widget.user?.id != accountId) {
       return;
     }
-    await widget.preparationController?.activateAccount(accountId);
+    await widget.ieltsPreparationController?.activateAccount(accountId);
     if (!mounted || widget.user?.id != accountId) {
       return;
     }
@@ -348,6 +359,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             messageAudioController: _messageAudioController,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
+            ieltsPreparationController: widget.ieltsPreparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
             practicePlanHandoffController: widget.practicePlanHandoffController,
@@ -362,6 +374,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
+            ieltsController: widget.ieltsPreparationController,
             launchController: widget.preparationLaunchController,
             onOpenJobPreparation: widget.jobPreparationController == null
                 ? null
@@ -390,6 +403,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             messageAudioController: _messageAudioController,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
+            ieltsPreparationController: widget.ieltsPreparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
             practicePlanHandoffController: widget.practicePlanHandoffController,
@@ -404,6 +418,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             practiceAvailable: true,
             historyController: widget.reviewHistoryController,
+            ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
           ),
           _ => null,
         };
@@ -420,6 +435,21 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   Widget _buildPracticePage() {
     final launchController = widget.preparationLaunchController;
+    if (_practiceController.practiceExperience ==
+        PracticeExperience.ieltsSpeaking) {
+      return IeltsSpeakingMockPage(
+        controller: _practiceController,
+        onExitRequested: launchController?.parkCurrentPractice,
+        ieltsController: widget.ieltsPreparationController,
+        completedReportBuilder: widget.ieltsSpeakingReportController == null
+            ? null
+            : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
+                practiceSessionId: practiceSessionId,
+                controller: widget.ieltsSpeakingReportController!,
+              ),
+        speechFeedbackController: widget.speechFeedbackController,
+      );
+    }
     final presentationMode = launchController?.hasResumablePractice ?? false
         ? launchController!.resumablePresentationMode
         : _practiceController.scene?.presentationMode ??
@@ -430,38 +460,25 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         return ImmersiveRoleplaySession(
           practiceController: _practiceController,
           avatarControllerFactory: factory,
-          onOpenInterviewReport: widget.interviewReportController == null
-              ? null
-              : _openInterviewReport,
+          onPracticeCompleted: launchController?.completeAndContinueWithAgent,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
-          onContinueWithAgent: launchController?.completeAndContinueWithAgent,
         );
       }
       return ImmersiveRoleplayPage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
-        onOpenInterviewReport: widget.interviewReportController == null
-            ? null
-            : _openInterviewReport,
+        onPracticeCompleted: launchController?.completeAndContinueWithAgent,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
-        onContinueWithAgent: launchController?.completeAndContinueWithAgent,
       );
     }
-    return PracticePage(
+    return InterviewPracticePage(
       previewMode: widget.allowFakePreview,
       practiceController: _practiceController,
-      preparationController: widget.preparationController,
       onOpenInterviewReport: widget.interviewReportController == null
           ? null
           : _openInterviewReport,
-      ieltsCompletedReportBuilder: widget.ieltsSpeakingReportController == null
-          ? null
-          : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
-              practiceSessionId: practiceSessionId,
-              controller: widget.ieltsSpeakingReportController!,
-            ),
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
       onContinueWithAgent: launchController?.completeAndContinueWithAgent,

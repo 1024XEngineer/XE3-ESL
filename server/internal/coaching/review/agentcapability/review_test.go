@@ -12,13 +12,15 @@ import (
 func TestReviewSearchToolReturnsReportsAndEvaluationSources(t *testing.T) {
 	t.Parallel()
 	port := &reviewPortStub{summaries: []ReviewSummary{{
-		ID:                "10000000-0000-4000-8000-000000000001",
-		PracticeSessionID: "practice-session-1",
-		SceneType:         "OVERSEAS_DAILY_LIFE",
-		SceneModel:        "DAILY_BASIC_DIALOGUE",
-		Scoreability:      "PROVISIONAL",
-		Summary:           "Completed report",
-		CompletedAt:       "2026-08-04T08:00:00Z",
+		ID:                 "10000000-0000-4000-8000-000000000001",
+		PracticeSessionID:  "practice-session-1",
+		SceneType:          "OVERSEAS_DAILY_LIFE",
+		PracticeExperience: "ROLEPLAY",
+		SceneCategory:      "ROLEPLAY_DAILY",
+		PracticeMode:       "FULL_SIMULATION",
+		Scoreability:       "PROVISIONAL",
+		Summary:            "Completed report",
+		CompletedAt:        "2026-08-04T08:00:00Z",
 		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   "10000000-0000-4000-8000-000000000001",

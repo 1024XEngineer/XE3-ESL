@@ -140,6 +140,7 @@ func buildIdentityAgentComposition(
 			"bootstrap: Agent Run dependencies are required",
 		)
 	}
+	// 1. 装配身份、Goal 与 Conversation 主链。
 	identityContext, err := buildIdentityComposition(
 		database,
 		trustedProxyCIDRs,
@@ -184,6 +185,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	// 2. 注册 Goal、复盘与评估业务工具。
 	evaluationRepository := evaluationpostgres.NewPostgresRepository(database)
 	learningProfileReader, err := evaluationagentcontext.NewLearningProfileReader(
 		evaluationRepository,
@@ -223,6 +225,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	// 3. 装配 Memory 读取与 Context Assembler。
 	contextMemorySearcher, err := contextmemorysource.NewSearcher(memorySearcher)
 	if err != nil {
 		return nil, err
@@ -270,6 +273,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	// 4. 装配 Agent Run Service。
 	toolOptions, err := agentRunServiceOptions(productionTools)
 	if err != nil {
 		return nil, err
@@ -330,6 +334,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	// 5. 装配 Memory 抽取与 Thread Summary 后处理。
 	memorySources, err := memoryagentsource.NewCompletedRunReader(
 		runRepository,
 		conversationRepository,
@@ -404,6 +409,7 @@ func buildIdentityAgentComposition(
 			return nil, err
 		}
 	}
+	// 6. 装配 HTTP Handler 与受保护路由。
 	errorRenderer := httpresponse.NewRenderer(nil)
 	goalHTTP, err := goalhttp.NewHandler(goalService, errorRenderer)
 	if err != nil {

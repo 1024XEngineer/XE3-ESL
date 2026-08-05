@@ -324,7 +324,7 @@ final class WireAvatarSessionTokenClient implements AvatarSessionTokenClient {
           })) {
         throw const FormatException();
       }
-      final region = AvatarRegion.fromWireName(rawRegion);
+      final region = AvatarRegion.fromWireValue(rawRegion);
       if (region == null ||
           !_rfc3339UtcPattern.hasMatch(rawExpiresAt) ||
           rawAudioFormat['encoding'] !=

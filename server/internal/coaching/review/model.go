@@ -46,7 +46,9 @@ type Report struct {
 	Revision             int
 	SchemaVersion        string
 	SceneType            string
-	SceneModel           string
+	PracticeExperience   string
+	SceneCategory        string
+	PracticeMode         string
 	ScoreabilityStatus   string
 	Summary              string
 	Dimensions           []ReportDimension
@@ -96,7 +98,9 @@ func (report Report) Valid() bool {
 		!validReviewText(report.PracticeSessionID, 128) ||
 		report.Revision < 1 || !reviewVersionPattern.MatchString(report.SchemaVersion) ||
 		!reviewVersionPattern.MatchString(report.SceneType) ||
-		!validReviewText(report.SceneModel, 128) ||
+		!validReviewText(report.PracticeExperience, 128) ||
+		!validReviewText(report.SceneCategory, 128) ||
+		!validReviewText(report.PracticeMode, 128) ||
 		(report.ScoreabilityStatus != "PROVISIONAL" &&
 			report.ScoreabilityStatus != "INSUFFICIENT") ||
 		!validReviewText(report.Summary, 2048) ||

@@ -4,13 +4,13 @@ enum AvatarRegion {
   usWest('us-west'),
   apNortheast('ap-northeast');
 
-  const AvatarRegion(this.wireName);
+  const AvatarRegion(this.wireValue);
 
-  final String wireName;
+  final String wireValue;
 
-  static AvatarRegion? fromWireName(String value) {
+  static AvatarRegion? fromWireValue(String value) {
     for (final region in values) {
-      if (region.wireName == value) {
+      if (region.wireValue == value) {
         return region;
       }
     }
@@ -65,7 +65,7 @@ final class AvatarSessionGrant {
 
   @override
   String toString() =>
-      'AvatarSessionGrant(region: ${region.wireName}, '
+      'AvatarSessionGrant(region: ${region.wireValue}, '
       'expiresAt: $expiresAt, audioFormat: ${audioFormat.encoding}/'
       '${audioFormat.sampleRateHz}/${audioFormat.channels})';
 }

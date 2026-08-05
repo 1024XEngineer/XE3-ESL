@@ -1,8 +1,9 @@
 import 'dart:convert';
 
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment_codec.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/scene/scene_wire_codec.dart';
 
@@ -193,7 +194,14 @@ PracticePlan decodePracticePlan(
   final ieltsAssignment = object.containsKey('ielts_assignment')
       ? decodeIeltsPracticeAssignment(object['ielts_assignment'])
       : null;
-  final expectedIeltsMode = _ieltsModeForScene(sceneSelection.scene.model);
+  final selectedOption = sceneSelection.scene.practiceOptions
+      .where((option) => option.id == sceneSelection.practiceOptionId)
+      .firstOrNull;
+  final expectedIeltsMode =
+      selectedOption == null ||
+          sceneSelection.scene.experience != PracticeExperience.ieltsSpeaking
+      ? null
+      : selectedOption.mode;
   if (ieltsAssignment?.mode != expectedIeltsMode ||
       (ieltsAssignment != null &&
           (ieltsAssignment.turnBlueprints.length !=
@@ -234,113 +242,12 @@ PracticePlan decodePracticePlan(
 }
 
 IeltsPracticeAssignment decodeIeltsPracticeAssignment(Object? value) {
-  final object = _object(
-    value,
-    required: const <String>{
-      'bank_id',
-      'season',
-      'mode',
-      'part_1_questions',
-      'part_2_questions',
-      'part_3_questions',
-      'turn_blueprints',
-    },
-    optional: const <String>{
-      'part_1_set_id',
-      'topic_group_id',
-      'topic_title',
-      'part_2_cue_card',
-    },
-  );
-  final mode = IeltsPracticeMode.fromWireName(
-    _text(object['mode'], maximumBytes: 16),
-  );
-  if (mode == null) {
+  try {
+    return decodeIeltsAssignment(value);
+  } on IeltsAssignmentWireFormatException {
     throw const PreparationWireFormatException();
   }
-  final part1SetId = object.containsKey('part_1_set_id')
-      ? _resourceId(object['part_1_set_id'])
-      : null;
-  final topicGroupId = object.containsKey('topic_group_id')
-      ? _resourceId(object['topic_group_id'])
-      : null;
-  final topicTitle = object.containsKey('topic_title')
-      ? _text(object['topic_title'])
-      : null;
-  final part2CueCard = object.containsKey('part_2_cue_card')
-      ? _text(object['part_2_cue_card'])
-      : null;
-  final part1QuestionCount = _count(object['part_1_questions'], maximum: 24);
-  final part2QuestionCount = _count(object['part_2_questions'], maximum: 1);
-  final part3QuestionCount = _count(object['part_3_questions'], maximum: 6);
-  final turnBlueprints = _textList(
-    object['turn_blueprints'],
-    minimumLength: 1,
-    maximumLength: 24,
-  );
-  final validShape = switch (mode) {
-    IeltsPracticeMode.fullMock =>
-      part1SetId != null &&
-          topicGroupId != null &&
-          topicTitle != null &&
-          part2CueCard != null &&
-          part1QuestionCount == 8 &&
-          part2QuestionCount == 1 &&
-          part3QuestionCount >= 1 &&
-          turnBlueprints.length == 9 + part3QuestionCount,
-    IeltsPracticeMode.part1 =>
-      part1SetId != null &&
-          topicGroupId == null &&
-          topicTitle == null &&
-          part2CueCard == null &&
-          part1QuestionCount >= 2 &&
-          part2QuestionCount == 0 &&
-          part3QuestionCount == 0 &&
-          turnBlueprints.length == part1QuestionCount,
-    IeltsPracticeMode.part2 =>
-      part1SetId == null &&
-          topicGroupId != null &&
-          topicTitle != null &&
-          part2CueCard != null &&
-          part1QuestionCount == 0 &&
-          part2QuestionCount == 1 &&
-          part3QuestionCount >= 1 &&
-          turnBlueprints.length == 1 + part3QuestionCount,
-    IeltsPracticeMode.part3 =>
-      part1SetId == null &&
-          topicGroupId != null &&
-          topicTitle != null &&
-          part2CueCard == null &&
-          part1QuestionCount == 0 &&
-          part2QuestionCount == 0 &&
-          part3QuestionCount >= 1 &&
-          turnBlueprints.length == part3QuestionCount,
-  };
-  if (!validShape) {
-    throw const PreparationWireFormatException();
-  }
-  return IeltsPracticeAssignment(
-    bankId: _resourceId(object['bank_id']),
-    season: _text(object['season']),
-    mode: mode,
-    part1SetId: part1SetId,
-    topicGroupId: topicGroupId,
-    topicTitle: topicTitle,
-    part2CueCard: part2CueCard,
-    part1QuestionCount: part1QuestionCount,
-    part2QuestionCount: part2QuestionCount,
-    part3QuestionCount: part3QuestionCount,
-    turnBlueprints: turnBlueprints,
-  );
 }
-
-IeltsPracticeMode? _ieltsModeForScene(SceneModel model) => switch (model) {
-  SceneModel.ieltsSpeakingFullMock => IeltsPracticeMode.fullMock,
-  SceneModel.ieltsSpeakingPart1 => IeltsPracticeMode.part1,
-  SceneModel.ieltsSpeakingPart2 => IeltsPracticeMode.part2,
-  SceneModel.ieltsSpeakingPart3 => IeltsPracticeMode.part3,
-  _ => null,
-};
 
 PreparationGoalSnapshot _goalSnapshot(Object? value) {
   final object = _object(
@@ -366,6 +273,9 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
       'early_completion_rule',
       'retry_allowed',
       'question_translation_allowed',
+      'question_tips_allowed',
+      'avatar_allowed',
+      'speech_feedback_allowed',
     },
   );
   final minimum = _version(object['min_effective_turns']);
@@ -375,6 +285,9 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
   final rule = _text(object['early_completion_rule'], maximumBytes: 128);
   final retryAllowed = object['retry_allowed'];
   final questionTranslationAllowed = object['question_translation_allowed'];
+  final questionTipsAllowed = object['question_tips_allowed'];
+  final avatarAllowed = object['avatar_allowed'];
+  final speechFeedbackAllowed = object['speech_feedback_allowed'];
   if (minimum > checkpoint ||
       checkpoint > maximum ||
       followUps is! int ||
@@ -382,6 +295,9 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
       followUps > 3 ||
       retryAllowed is! bool ||
       questionTranslationAllowed is! bool ||
+      questionTipsAllowed is! bool ||
+      avatarAllowed is! bool ||
+      speechFeedbackAllowed is! bool ||
       !RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(rule)) {
     throw const PreparationWireFormatException();
   }
@@ -394,6 +310,9 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
     earlyCompletionRule: rule,
     retryAllowed: retryAllowed,
     questionTranslationAllowed: questionTranslationAllowed,
+    questionTipsAllowed: questionTipsAllowed,
+    avatarAllowed: avatarAllowed,
+    speechFeedbackAllowed: speechFeedbackAllowed,
   );
 }
 
@@ -463,26 +382,6 @@ int _version(Object? value) {
   return value;
 }
 
-int _count(Object? value, {required int maximum}) {
-  if (value is! int || value < 0 || value > maximum) {
-    throw const PreparationWireFormatException();
-  }
-  return value;
-}
-
-List<String> _textList(
-  Object? value, {
-  required int minimumLength,
-  required int maximumLength,
-}) {
-  if (value is! List<Object?> ||
-      value.length < minimumLength ||
-      value.length > maximumLength) {
-    throw const PreparationWireFormatException();
-  }
-  return List<String>.unmodifiable(value.map(_text));
-}
-
 DateTime _dateTime(Object? value) {
   if (value is! String) {
     throw const PreparationWireFormatException();
@@ -530,21 +429,16 @@ bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
 
 bool _sameSceneCore(SceneDefinition left, SceneDefinition right) =>
     left.id == right.id &&
-    left.family == right.family &&
-    left.model == right.model &&
+    left.experience == right.experience &&
+    left.category == right.category &&
     left.name == right.name &&
     left.version == right.version &&
     left.status == right.status &&
-    left.turnPolicyRef == right.turnPolicyRef &&
-    left.sessionPolicyRef == right.sessionPolicyRef &&
-    left.evaluationPolicyRef == right.evaluationPolicyRef &&
     left.prompt.publicSceneBrief == right.prompt.publicSceneBrief &&
     left.prompt.practiceGoal == right.prompt.practiceGoal &&
     left.prompt.userRole == right.prompt.userRole &&
     left.prompt.aiRole == right.prompt.aiRole &&
     left.prompt.personaSummary == right.prompt.personaSummary &&
-    left.prompt.suggestedDurationSeconds ==
-        right.prompt.suggestedDurationSeconds &&
     _sameStrings(left.prompt.focusAreas, right.prompt.focusAreas) &&
     _sameStrings(left.prompt.turnBlueprints, right.prompt.turnBlueprints);
 
@@ -585,9 +479,14 @@ bool _sameOptions(List<PracticeOption> left, List<PracticeOption> right) =>
       (index) =>
           left[index].id == right[index].id &&
           left[index].sceneId == right[index].sceneId &&
-          left[index].type == right[index].type &&
+          left[index].mode == right[index].mode &&
           left[index].displayName == right[index].displayName &&
-          left[index].roleId == right[index].roleId,
+          left[index].roleId == right[index].roleId &&
+          left[index].suggestedDurationSeconds ==
+              right[index].suggestedDurationSeconds &&
+          left[index].turnPolicyRef == right[index].turnPolicyRef &&
+          left[index].sessionPolicyRef == right[index].sessionPolicyRef &&
+          left[index].evaluationPolicyRef == right[index].evaluationPolicyRef,
     ).every((same) => same);
 
 bool _sameStrings(List<String> left, List<String> right) =>

@@ -63,9 +63,12 @@ func ProjectConfirmedPlan(
 	selection := projectSceneSelection(plan.SceneSelection, roles, option)
 	policy, err := projectSessionPolicy(
 		plan.SessionPolicy,
-		selection.Scene.SessionPolicyRef,
+		practice.PracticeOption{
+			Mode:                     practice.PracticeMode(option.Mode),
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+			SessionPolicyRef:         option.SessionPolicyRef,
+		},
 		selection.Scene.Prompt,
-		option,
 	)
 	if err != nil {
 		return practice.PlanProjection{}, err
@@ -102,17 +105,16 @@ func projectSceneSelection(
 	}
 	return practice.SceneSelection{
 		Scene: practice.SceneDefinition{
-			ID:                  selection.Scene.ID,
-			Family:              practice.SceneFamily(selection.Scene.Family),
-			Model:               practice.SceneModel(selection.Scene.Model),
-			Name:                selection.Scene.Name,
-			Version:             selection.Scene.Version,
-			Status:              practice.SceneStatus(selection.Scene.Status),
-			TurnPolicyRef:       selection.Scene.TurnPolicyRef,
-			SessionPolicyRef:    selection.Scene.SessionPolicyRef,
-			EvaluationPolicyRef: selection.Scene.EvaluationPolicyRef,
-			Prompt:              projectPrompt(selection.Scene.Prompt),
-			Roles:               roles,
+			ID: selection.Scene.ID,
+			Experience: practice.PracticeExperience(
+				selection.Scene.Experience,
+			),
+			Category: practice.SceneCategory(selection.Scene.Category),
+			Name:     selection.Scene.Name,
+			Version:  selection.Scene.Version,
+			Status:   practice.SceneStatus(selection.Scene.Status),
+			Prompt:   projectPrompt(selection.Scene.Prompt),
+			Roles:    roles,
 			PracticeOptions: []practice.PracticeOption{
 				projectPracticeOption(selectedOption),
 			},
@@ -134,7 +136,6 @@ func projectPrompt(prompt scene.ScenePrompt) practice.ScenePrompt {
 			[]string(nil),
 			prompt.TurnBlueprints...,
 		),
-		SuggestedDurationSeconds: prompt.SuggestedDurationSeconds,
 	}
 }
 
@@ -164,24 +165,27 @@ func projectPracticeOption(
 	option scene.PracticeOption,
 ) practice.PracticeOption {
 	return practice.PracticeOption{
-		ID:               option.ID,
-		SceneID:          option.SceneID,
-		RoleDefinitionID: option.RoleDefinitionID,
-		Type:             practice.PracticeOptionType(option.Type),
-		DisplayName:      option.DisplayName,
+		ID:                       option.ID,
+		SceneID:                  option.SceneID,
+		RoleDefinitionID:         option.RoleDefinitionID,
+		Mode:                     practice.PracticeMode(option.Mode),
+		DisplayName:              option.DisplayName,
+		SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+		TurnPolicyRef:            option.TurnPolicyRef,
+		SessionPolicyRef:         option.SessionPolicyRef,
+		EvaluationPolicyRef:      option.EvaluationPolicyRef,
 	}
 }
 
 func projectSessionPolicy(
 	policy preparation.SessionPolicy,
-	reference string,
+	option practice.PracticeOption,
 	prompt practice.ScenePrompt,
-	option scene.PracticeOption,
 ) (practice.SessionPolicy, error) {
 	registered, err := practice.ResolveSessionPolicy(
-		reference,
+		option.SessionPolicyRef,
 		prompt,
-		projectPracticeOption(option),
+		option,
 		policy.MaxEffectiveTurns,
 	)
 	if err != nil {
@@ -198,6 +202,9 @@ func projectSessionPolicy(
 		),
 		RetryAllowed:               policy.RetryAllowed,
 		QuestionTranslationAllowed: policy.QuestionTranslationAllowed,
+		QuestionTipsAllowed:        policy.QuestionTipsAllowed,
+		AvatarAllowed:              policy.AvatarAllowed,
+		SpeechFeedbackAllowed:      policy.SpeechFeedbackAllowed,
 	}
 	if projected != registered {
 		return practice.SessionPolicy{}, practice.ErrConflict
@@ -308,19 +315,22 @@ func projectIELTSAssignment(
 	if assignment == nil {
 		return nil
 	}
-	return &practice.IELTSAssignment{
-		BankID:         assignment.BankID,
-		Season:         assignment.Season,
-		Mode:           practice.IELTSPracticeMode(assignment.Mode),
-		Part1SetID:     assignment.Part1SetID,
-		TopicGroupID:   assignment.TopicGroupID,
-		TopicTitle:     assignment.TopicTitle,
-		Part2CueCard:   assignment.Part2CueCard,
-		Part1Questions: assignment.Part1Questions,
-		Part2Questions: assignment.Part2Questions,
-		Part3Questions: assignment.Part3Questions,
-		TurnBlueprints: append([]string(nil), assignment.TurnBlueprints...),
+	result := &practice.IELTSAssignment{
+		BankID: assignment.BankID,
+		Season: assignment.Season,
+		Mode:   practice.PracticeMode(assignment.Mode),
+		Parts:  make([]practice.IELTSPart, len(assignment.Parts)),
 	}
+	for index, part := range assignment.Parts {
+		result.Parts[index] = practice.IELTSPart{
+			Part:           practice.PracticeMode(part.Part),
+			SourceID:       part.SourceID,
+			TopicTitle:     part.TopicTitle,
+			CueCard:        part.CueCard,
+			TurnBlueprints: append([]string(nil), part.TurnBlueprints...),
+		}
+	}
+	return result
 }
 
 func mapReadError(err error) error {

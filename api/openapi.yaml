@@ -32,7 +32,9 @@ tags:
   - name: Agent
     description: Durable Agent Threads, Goal links, and committed Messages.
   - name: Scene
-    description: Versioned training Scenes, roles, options, and question banks.
+    description: Versioned training Scenes, roles, and practice options.
+  - name: IELTS Speaking
+    description: Published IELTS Speaking question-bank resources.
   - name: Preparation
     description: User materials, immutable snapshots, and versioned practice plans.
   - name: Practice
@@ -93,8 +95,8 @@ paths:
     $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1parse-retries
   /v1/scenes:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
-  /v1/scenes/ielts-speaking/question-bank:
-    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1ielts-speaking~1question-bank
+  /v1/ielts-speaking/question-bank:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1question-bank
   /v1/goals:
     $ref: ./modules/goal.yaml#/paths/~1v1~1goals
   /v1/goals/{goal_id}:
@@ -312,10 +314,10 @@ components:
       $ref: ./modules/scene.yaml#/components/schemas/SceneDefinition
     SceneDefinitionList:
       $ref: ./modules/scene.yaml#/components/schemas/SceneDefinitionList
-    SceneFamily:
-      $ref: ./modules/scene.yaml#/components/schemas/SceneFamily
-    SceneModel:
-      $ref: ./modules/scene.yaml#/components/schemas/SceneModel
+    PracticeExperience:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeExperience
+    SceneCategory:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneCategory
     SceneStatus:
       $ref: ./modules/scene.yaml#/components/schemas/SceneStatus
     ScenePrompt:
@@ -324,6 +326,18 @@ components:
       $ref: ./modules/scene.yaml#/components/schemas/RoleDefinition
     PracticeOption:
       $ref: ./modules/scene.yaml#/components/schemas/PracticeOption
+    PracticeMode:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeMode
+    IeltsQuestionBank:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsQuestionBank
+    IeltsPart1Set:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Set
+    IeltsPart1Topic:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Topic
+    IeltsTopicGroup:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsTopicGroup
+    IeltsPart2CueCard:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart2CueCard
     PreparationProfile:
       $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
     PreparationSnapshot:

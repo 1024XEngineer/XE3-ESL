@@ -29,7 +29,9 @@ func TestProjectGeneralSceneFormalReportPreservesGroundedResult(t *testing.T) {
 	}
 	if !formal.Valid() ||
 		formal.SceneType != evaluation.SceneOverseasDaily ||
-		formal.SceneModel != string(scene.SceneModelHotelCheckinAndIssueHandling) ||
+		formal.PracticeExperience != string(scene.PracticeExperienceRoleplay) ||
+		formal.SceneCategory != string(scene.SceneCategoryRoleplayTravel) ||
+		formal.PracticeMode != string(scene.PracticeModeFullSimulation) ||
 		formal.ScoreabilityStatus != ReportScoreabilityProvisional ||
 		len(formal.Dimensions) != len(scoring.GeneralSceneDimensions()) {
 		t.Fatalf("formal report = %#v", formal)
@@ -134,9 +136,16 @@ func generalSceneReportTestSnapshot(
 	if err := json.Unmarshal(reportTestEvidencePayload(), &payload); err != nil {
 		t.Fatalf("decode general Scene report fixture: %v", err)
 	}
-	payload.PracticeContext.SceneFamily = string(scene.SceneFamilyDaily)
-	payload.PracticeContext.SceneModel =
-		string(scene.SceneModelHotelCheckinAndIssueHandling)
+	payload.PracticeContext.PracticeExperience =
+		string(scene.PracticeExperienceRoleplay)
+	payload.PracticeContext.SceneCategory =
+		string(scene.SceneCategoryRoleplayTravel)
+	payload.PracticeContext.PracticeMode =
+		string(scene.PracticeModeFullSimulation)
+	payload.PracticeContext.PracticeOption.Mode =
+		string(scene.PracticeModeFullSimulation)
+	payload.PracticeContext.EvaluationPolicyRef =
+		"general.scene.evaluation.v1"
 	payload.PracticeContext.Scene.ID = "scene-general-1"
 	payload.PracticeContext.Preparation.BackgroundSnapshotHash =
 		reportTestTextHash(reportTestPreparationBackground)

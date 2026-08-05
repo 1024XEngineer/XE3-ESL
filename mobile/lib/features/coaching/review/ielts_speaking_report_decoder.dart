@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 
 final class IeltsSpeakingReportDecodeException implements Exception {
@@ -174,7 +175,20 @@ IeltsSpeakingReport _report(Object? value) {
     throw const IeltsSpeakingReportDecodeException();
   }
 
-  final questions = _questions(root['questions']);
+  final questions = _questions(
+    root['questions'],
+    expectedCount: testSummary.questionCount,
+  );
+  final answeredQuestionCount = questions
+      .where(
+        (question) =>
+            question.opportunityStatus ==
+            IeltsSpeakingOpportunityStatus.provided,
+      )
+      .length;
+  if (testSummary.answeredCount != answeredQuestionCount) {
+    throw const IeltsSpeakingReportDecodeException();
+  }
   final questionsByTurnId = <String, IeltsSpeakingQuestionReview>{};
   final questionsByEvidenceRefId = <String, IeltsSpeakingQuestionReview>{};
   final questionIds = <String>{};
@@ -226,10 +240,24 @@ IeltsSpeakingReport _report(Object? value) {
     }
   }
 
-  final partReviews = _partReviews(root['part_reviews']);
+  final expectedPartIndexes = <IeltsSpeakingPartId, List<int>>{
+    for (final part in _partOrder)
+      part: <int>[
+        for (final question in questions)
+          if (question.partId == part) question.index,
+      ],
+  };
+  if (expectedPartIndexes.values.any((indexes) => indexes.isEmpty) ||
+      !_partsAreContiguous(questions)) {
+    throw const IeltsSpeakingReportDecodeException();
+  }
+  final partReviews = _partReviews(
+    root['part_reviews'],
+    questionCount: questions.length,
+  );
   for (var index = 0; index < partReviews.length; index++) {
     final part = partReviews[index];
-    final expectedIndexes = _partQuestionIndexes[index];
+    final expectedIndexes = expectedPartIndexes[part.id]!;
     if (!_sameIntList(part.questionIndexes, expectedIndexes)) {
       throw const IeltsSpeakingReportDecodeException();
     }
@@ -352,7 +380,7 @@ IeltsSpeakingTestSummary _testSummary(Object? value) {
   final questionCount = _positiveInt(root['question_count']);
   final answeredCount = root['answered_count'];
   final recordingDurationMs = root['recording_duration_ms'];
-  if (questionCount != 14 ||
+  if (questionCount > practiceTurnSafetyLimit ||
       answeredCount is! int ||
       answeredCount < 0 ||
       answeredCount > questionCount ||
@@ -567,8 +595,11 @@ IeltsSpeakingEvidence _evidence(Object? value) {
   );
 }
 
-List<IeltsSpeakingQuestionReview> _questions(Object? value) {
-  if (value is! List<Object?> || value.length != 14) {
+List<IeltsSpeakingQuestionReview> _questions(
+  Object? value, {
+  required int expectedCount,
+}) {
+  if (value is! List<Object?> || value.length != expectedCount) {
     throw const IeltsSpeakingReportDecodeException();
   }
   return List<IeltsSpeakingQuestionReview>.unmodifiable([
@@ -599,9 +630,6 @@ IeltsSpeakingQuestionReview _question(
     throw const IeltsSpeakingReportDecodeException();
   }
   final part = _partId(root['part_id']);
-  if (part != _partForIndex(expectedIndex)) {
-    throw const IeltsSpeakingReportDecodeException();
-  }
   final opportunity = _opportunity(root['opportunity_status']);
   final assessment = _assessment(root['assessment_status']);
   final evidenceRefIds = _uniqueIdentifiers(root['evidence_ref_ids']);
@@ -697,19 +725,27 @@ IeltsSpeakingQuestionCriterionFindings _questionCriterionFinding(
   return result;
 }
 
-List<IeltsSpeakingPartReview> _partReviews(Object? value) {
+List<IeltsSpeakingPartReview> _partReviews(
+  Object? value, {
+  required int questionCount,
+}) {
   if (value is! List<Object?> || value.length != _partOrder.length) {
     throw const IeltsSpeakingReportDecodeException();
   }
   return List<IeltsSpeakingPartReview>.unmodifiable([
     for (var index = 0; index < value.length; index++)
-      _partReview(value[index], expected: _partOrder[index]),
+      _partReview(
+        value[index],
+        expected: _partOrder[index],
+        questionCount: questionCount,
+      ),
   ]);
 }
 
 IeltsSpeakingPartReview _partReview(
   Object? value, {
   required IeltsSpeakingPartId expected,
+  required int questionCount,
 }) {
   final root = _exactObject(
     value,
@@ -728,8 +764,10 @@ IeltsSpeakingPartReview _partReview(
   final indexValue = root['question_indexes'];
   if (indexValue is! List<Object?> ||
       indexValue.isEmpty ||
-      indexValue.length > 8 ||
-      indexValue.any((item) => item is! int || item < 1 || item > 14) ||
+      indexValue.length > practiceTurnSafetyLimit ||
+      indexValue.any(
+        (item) => item is! int || item < 1 || item > questionCount,
+      ) ||
       indexValue.toSet().length != indexValue.length) {
     throw const IeltsSpeakingReportDecodeException();
   }
@@ -939,11 +977,19 @@ IeltsSpeakingAssessmentStatus _assessment(Object? value) => switch (value) {
   _ => throw const IeltsSpeakingReportDecodeException(),
 };
 
-IeltsSpeakingPartId _partForIndex(int index) {
-  if (index <= 8) {
-    return IeltsSpeakingPartId.part1;
+bool _partsAreContiguous(List<IeltsSpeakingQuestionReview> questions) {
+  var questionIndex = 0;
+  for (final part in _partOrder) {
+    if (questionIndex >= questions.length ||
+        questions[questionIndex].partId != part) {
+      return false;
+    }
+    while (questionIndex < questions.length &&
+        questions[questionIndex].partId == part) {
+      questionIndex++;
+    }
   }
-  return index == 9 ? IeltsSpeakingPartId.part2 : IeltsSpeakingPartId.part3;
+  return questionIndex == questions.length;
 }
 
 bool _validCriterionGate({
@@ -1009,12 +1055,6 @@ const _partOrder = <IeltsSpeakingPartId>[
   IeltsSpeakingPartId.part1,
   IeltsSpeakingPartId.part2,
   IeltsSpeakingPartId.part3,
-];
-
-const _partQuestionIndexes = <List<int>>[
-  <int>[1, 2, 3, 4, 5, 6, 7, 8],
-  <int>[9],
-  <int>[10, 11, 12, 13, 14],
 ];
 
 const _reportReasonCodes = <String>{

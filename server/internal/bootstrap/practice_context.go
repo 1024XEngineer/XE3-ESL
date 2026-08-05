@@ -17,6 +17,7 @@ import (
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	resumeapp "github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
@@ -67,6 +68,7 @@ func NewIdentityAgentAndPracticeComposition(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -79,6 +81,7 @@ func NewIdentityAgentAndPracticeComposition(
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		ieltsQuestions,
 		jobTargetGenerator,
 		nil,
 		nil,
@@ -99,6 +102,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	memoryExtractionNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
@@ -112,6 +116,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		ieltsQuestions,
 		jobTargetGenerator,
 		memoryExtractionNotifier,
 		nil,
@@ -135,6 +140,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	wakeups AgentWorkerWakeups,
 	voiceConfigurations ...VoiceConfiguration,
@@ -148,6 +154,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		ieltsQuestions,
 		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
@@ -166,6 +173,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	wakeups AgentWorkerWakeups,
 	imageConfiguration *AgentImageConfiguration,
@@ -180,6 +188,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		ieltsQuestions,
 		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
@@ -198,6 +207,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsImagesAndMemes(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	wakeups AgentWorkerWakeups,
 	imageConfiguration *AgentImageConfiguration,
@@ -213,6 +223,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsImagesAndMemes(
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		ieltsQuestions,
 		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
@@ -231,6 +242,7 @@ func newIdentityAgentAndPracticeComposition(
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	jobTargetGenerator preparation.JobTargetGenerator,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
@@ -238,7 +250,7 @@ func newIdentityAgentAndPracticeComposition(
 	memeConfiguration *AgentMemeConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
-	if catalog == nil || jobTargetGenerator == nil {
+	if catalog == nil || ieltsQuestions == nil || jobTargetGenerator == nil {
 		return nil, errors.New("bootstrap: Preparation dependencies are required")
 	}
 	base, err := buildIdentityAgentComposition(
@@ -323,6 +335,7 @@ func newIdentityAgentAndPracticeComposition(
 		base.goalService,
 		threadReader,
 		catalog,
+		ieltsQuestions,
 		practiceplanpolicy.NewResolver(),
 	)
 	if err != nil {

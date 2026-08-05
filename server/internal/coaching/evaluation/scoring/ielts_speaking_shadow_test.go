@@ -15,8 +15,14 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
+const (
+	ieltsTestPart1QuestionCount = 3
+	ieltsTestPart2QuestionCount = 1
+	ieltsTestQuestionCount      = 7
+)
+
 func TestIELTSSpeakingShadowProducesHonestPartialResult(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	provider := &ieltsProviderStub{}
 	engine := NewIELTSSpeakingShadowEngine(provider)
 
@@ -52,7 +58,7 @@ func TestIELTSSpeakingShadowProducesHonestPartialResult(t *testing.T) {
 func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	provider := &ieltsProviderStub{}
 	acoustics := &ieltsAcousticSourceStub{}
 	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
@@ -75,7 +81,7 @@ func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 }
 
 func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	provider := &ieltsProviderStub{}
 	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
 		provider,
@@ -86,7 +92,7 @@ func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
 	}
 	pronunciation := result.Criteria[3]
 	if pronunciation.EstimatedBand == nil ||
-		!sameRatio(pronunciation.Coverage, ratio(4, IELTSQuestionCount)) {
+		!sameRatio(pronunciation.Coverage, ratio(4, ieltsTestQuestionCount)) {
 		t.Fatalf("pronunciation = %#v", pronunciation)
 	}
 }
@@ -137,10 +143,10 @@ func TestIELTSSpeakingShadowRejectsChineseOnlySessionAsUnscoreable(
 	}
 }
 
-func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
+func TestIELTSSpeakingShadowDoesNotCallProviderWithoutEveryFrozenAnswer(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, 13)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount-1)
 	provider := &ieltsProviderStub{}
 	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
 		context.Background(),
@@ -156,8 +162,8 @@ func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
 		IELTSSpeakingScoreabilityInsufficient ||
 		result.Gate != IELTSSpeakingGateBlocked ||
 		result.Provider != nil ||
-		len(result.QuestionResults) != IELTSQuestionCount ||
-		result.QuestionResults[13].OpportunityStatus !=
+		len(result.QuestionResults) != ieltsTestQuestionCount ||
+		result.QuestionResults[ieltsTestQuestionCount-1].OpportunityStatus !=
 			IELTSOpportunityNotProvided ||
 		!slices.Equal(
 			result.Criteria[3].ReasonCodes,
@@ -178,7 +184,7 @@ func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
 func TestIELTSSpeakingShadowRejectsProviderGateAndNumericScore(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -212,24 +218,25 @@ func TestIELTSSpeakingShadowRejectsProviderGateAndNumericScore(
 	}
 }
 
-func TestIELTSSpeakingShadowRejectsNonFrozenModelVersion(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+func TestIELTSSpeakingShadowRejectsNonFullMockEvaluationPolicy(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	var payload evidence.SnapshotPayload
 	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload.PracticeContext.Scene.Version = 1
+	payload.PracticeContext.EvaluationPolicyRef =
+		"ielts.speaking_practice.evaluation.v1"
 	snapshot = rebuildIELTSSpeakingSnapshot(t, payload)
 	if _, err := prepareIELTSSpeakingShadow(snapshot); !errors.Is(
 		err,
 		evaluation.ErrInvalidRequest,
 	) {
-		t.Fatalf("non-frozen model error = %v", err)
+		t.Fatalf("non-full-mock evaluation policy error = %v", err)
 	}
 }
 
 func TestIELTSSpeakingShadowRepairsUniquelyMispairedAnchor(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +257,7 @@ func TestIELTSSpeakingShadowRepairsUniquelyMispairedAnchor(t *testing.T) {
 }
 
 func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +278,7 @@ func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
 func TestIELTSSpeakingShadowIgnoresFCDescriptorWithoutAcoustics(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +301,7 @@ func TestIELTSSpeakingShadowIgnoresFCDescriptorWithoutAcoustics(
 func TestIELTSSpeakingShadowRejectsCompleteResultDowngrades(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +358,7 @@ func TestIELTSSpeakingShadowRejectsCompleteResultDowngrades(
 func TestIELTSSpeakingShadowRejectsFindingKindConfusion(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -542,21 +549,25 @@ func ieltsSpeakingTestSnapshot(
 	); err != nil {
 		t.Fatalf("decode evidence.EvidenceSnapshot fixture: %v", err)
 	}
-	payload.PracticeContext.SceneFamily =
-		string(scene.SceneFamilyExam)
-	payload.PracticeContext.SceneModel =
-		string(scene.SceneModelIELTSSpeakingFullMock)
+	payload.PracticeContext.PracticeExperience =
+		string(scene.PracticeExperienceIELTSSpeaking)
+	payload.PracticeContext.SceneCategory =
+		string(scene.SceneCategoryIELTSSpeaking)
+	payload.PracticeContext.PracticeMode =
+		string(scene.PracticeModeFullMock)
+	payload.PracticeContext.EvaluationPolicyRef =
+		IELTSSpeakingFullMockEvaluationPolicyRef
 	payload.PracticeContext.Scene =
 		evidence.VersionedRef{
-			ID:      "scn_ielts_speaking_full",
-			Version: ieltsFullMockSceneVersion,
+			ID:      "scn_ielts_speaking",
+			Version: 1,
 		}
 	payload.PracticeContext.Preparation.BackgroundSnapshotHash = evidenceTextHash(
 		evidenceTestPreparationBackground,
 	)
 	payload.PracticeContext.PracticeOption = evidence.PracticeOption{
-		ID:   "option_ielts_speaking_full_full",
-		Type: string(scene.PracticeOptionFullSimulation),
+		ID:   "option_ielts_speaking_full_mock",
+		Mode: string(scene.PracticeModeFullMock),
 	}
 	payload.PracticeContext.UserRole = "考生"
 	payload.PracticeContext.FacilitatorRole = "IELTS 口语考官"
@@ -596,22 +607,40 @@ func ieltsSpeakingTestSnapshot(
 		"Part 1 question: Where is your hometown?",
 		"Part 1 question: Is there anything you do not like about your hometown?",
 		"Part 1 question: Would you say it is a good place for young people?",
-		"Part 1 question: Do you use artificial intelligence in your daily life?",
-		"Part 1 question: Has technology changed the way you learn things?",
-		"Part 1 question: Is there any technology you find difficult to use?",
-		"Part 1 question: What do you usually do in your free time?",
-		"Part 1 question: Do you prefer spending your free time alone or with other people?",
 		"Part 2 cue card: Describe a skill you would like to learn.\n" +
 			"You should say:\n• What the skill is\n• Why you want to learn it\n" +
 			"• How you would learn it\n• And explain how learning this skill would benefit you",
 		"Part 3 question: What kinds of skills are most valuable in today's society?",
 		"Part 3 question: Some people say it is never too late to learn a new skill. Do you agree?",
 		"Part 3 question: Do you think schools should focus more on practical skills?",
-		"Part 3 question: How has technology changed the way people learn skills?",
-		"Part 3 question: Do you think some skills will become obsolete in the future?",
+	}
+	payload.PracticeContext.IELTSAssignment = &evidence.IELTSAssignment{
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   string(scene.PracticeModeFullMock),
+		Parts: []evidence.IELTSAssignmentPart{
+			{
+				Part:           string(scene.PracticeModePart1),
+				SourceID:       "part-1-set-1",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[:ieltsTestPart1QuestionCount]),
+			},
+			{
+				Part:           string(scene.PracticeModePart2),
+				SourceID:       "topic-group-1",
+				TopicTitle:     "Learning a skill",
+				CueCard:        "Describe a skill you would like to learn.",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[ieltsTestPart1QuestionCount : ieltsTestPart1QuestionCount+ieltsTestPart2QuestionCount]),
+			},
+			{
+				Part:           string(scene.PracticeModePart3),
+				SourceID:       "topic-group-1",
+				TopicTitle:     "Learning a skill",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints[ieltsTestPart1QuestionCount+ieltsTestPart2QuestionCount:]),
+			},
+		},
 	}
 	payload.OpportunityManifest =
-		make([]evidence.Opportunity, 0, IELTSQuestionCount)
+		make([]evidence.Opportunity, 0, ieltsTestQuestionCount)
 	payload.ConfirmedTurns =
 		make([]evidence.ConfirmedTurn, 0, answered)
 	payload.EvidenceRefs = make([]evidence.Ref, 0, answered)
@@ -620,7 +649,7 @@ func ieltsSpeakingTestSnapshot(
 	payload.VersionManifest.TurnEvidence =
 		make([]evidence.TurnVersion, 0, answered)
 
-	for index := 1; index <= IELTSQuestionCount; index++ {
+	for index := 1; index <= ieltsTestQuestionCount; index++ {
 		questionID := fmt.Sprintf("question-%d", index)
 		turnID := fmt.Sprintf("turn-%d", index)
 		transcriptID := fmt.Sprintf("transcript-%d", index)
@@ -631,9 +660,10 @@ func ieltsSpeakingTestSnapshot(
 			index,
 		)
 		objectiveID := "part_3_discussion"
-		if index <= 8 {
+		if index <= ieltsTestPart1QuestionCount {
 			objectiveID = "part_1_familiar_topics"
-		} else if index == 9 {
+		} else if index ==
+			ieltsTestPart1QuestionCount+ieltsTestPart2QuestionCount {
 			objectiveID = "part_2_long_turn"
 		}
 		opportunity := evidence.Opportunity{
@@ -730,7 +760,7 @@ func ieltsSpeakingSnapshotWithTranscript(
 	transcript string,
 ) evidence.EvidenceSnapshot {
 	t.Helper()
-	snapshot := ieltsSpeakingTestSnapshot(t, IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	var payload evidence.SnapshotPayload
 	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
 		t.Fatalf("decode IELTS Snapshot: %v", err)

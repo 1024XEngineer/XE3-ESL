@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+	"slices"
 	"testing"
 	"time"
 
@@ -18,8 +19,9 @@ func TestGeneralSceneEngineProducesGroundedResult(t *testing.T) {
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneOverseasDaily,
-		scene.SceneFamilyDaily,
-		scene.SceneModelHotelCheckinAndIssueHandling,
+		scene.PracticeExperienceRoleplay,
+		scene.SceneCategoryRoleplayTravel,
+		scene.PracticeModeFullSimulation,
 		"I need to change my room because the air conditioner is not working.",
 	)
 	provider := &generalSceneProviderStub{}
@@ -30,9 +32,10 @@ func TestGeneralSceneEngineProducesGroundedResult(t *testing.T) {
 	}
 	if provider.calls != 1 ||
 		provider.input.SceneType != evaluation.SceneOverseasDaily ||
-		provider.input.SceneModel != string(
-			scene.SceneModelHotelCheckinAndIssueHandling,
-		) || result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional ||
+		provider.input.PracticeExperience != string(scene.PracticeExperienceRoleplay) ||
+		provider.input.SceneCategory != string(scene.SceneCategoryRoleplayTravel) ||
+		provider.input.PracticeMode != string(scene.PracticeModeFullSimulation) ||
+		result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional ||
 		len(result.Dimensions) != 4 || len(result.PriorityActions) != 3 ||
 		result.Provider == nil {
 		t.Fatalf("provider=%#v result=%#v", provider, result)
@@ -53,8 +56,9 @@ func TestGeneralSceneEngineDoesNotCallProviderForInsufficientEvidence(
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneOverseasWorkplace,
-		scene.SceneFamilyWorkplace,
-		scene.SceneModelWorkplaceBasicDialogue,
+		scene.PracticeExperienceRoleplay,
+		scene.SceneCategoryRoleplayWorkplace,
+		scene.PracticeModeFullSimulation,
 		"Okay.",
 	)
 	provider := &generalSceneProviderStub{}
@@ -82,8 +86,9 @@ func TestGeneralSceneEngineRejectsUngroundedProviderQuote(t *testing.T) {
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneIELTSSpeaking,
-		scene.SceneFamilyExam,
-		scene.SceneModelIELTSSpeakingPart1,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
 		"I usually read a book after work because it helps me relax.",
 	)
 	provider := &generalSceneProviderStub{mutate: func(
@@ -97,24 +102,6 @@ func TestGeneralSceneEngineRejectsUngroundedProviderQuote(t *testing.T) {
 		snapshot,
 	)
 	if !errors.Is(err, ErrInvalidGeneralSceneResult) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestGeneralSceneRejectsIELTSFullMockSpecializedModel(t *testing.T) {
-	t.Parallel()
-	snapshot := generalSceneTestSnapshot(
-		t,
-		evaluation.SceneIELTSSpeaking,
-		scene.SceneFamilyExam,
-		scene.SceneModelIELTSSpeakingFullMock,
-		"I usually read books after work because they help me relax.",
-	)
-	_, err := NewGeneralSceneEngine(&generalSceneProviderStub{}).Evaluate(
-		context.Background(),
-		snapshot,
-	)
-	if !errors.Is(err, evaluation.ErrInvalidRequest) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -197,8 +184,9 @@ func validGeneralSceneProviderPayload(
 func generalSceneTestSnapshot(
 	t *testing.T,
 	sceneType evaluation.SceneType,
-	family scene.SceneFamily,
-	model scene.SceneModel,
+	experience scene.PracticeExperience,
+	category scene.SceneCategory,
+	mode scene.PracticeMode,
 	transcript string,
 ) evidence.EvidenceSnapshot {
 	t.Helper()
@@ -211,8 +199,58 @@ func generalSceneTestSnapshot(
 	if err := json.Unmarshal(source.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload.PracticeContext.SceneFamily = string(family)
-	payload.PracticeContext.SceneModel = string(model)
+	payload.PracticeContext.PracticeExperience = string(experience)
+	payload.PracticeContext.SceneCategory = string(category)
+	payload.PracticeContext.PracticeMode = string(mode)
+	payload.PracticeContext.PracticeOption.Mode = string(mode)
+	payload.PracticeContext.EvaluationPolicyRef = "general.scene.evaluation.v1"
+	if experience == scene.PracticeExperienceIELTSSpeaking {
+		assignment := &evidence.IELTSAssignment{
+			BankID: "ielts-bank-1",
+			Season: "2026-05",
+			Mode:   string(mode),
+		}
+		switch mode {
+		case scene.PracticeModePart1:
+			assignment.Parts = []evidence.IELTSAssignmentPart{{
+				Part:           string(scene.PracticeModePart1),
+				SourceID:       "part-1-set-1",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints),
+			}}
+		case scene.PracticeModePart2:
+			payload.PracticeContext.TaskBlueprints = append(
+				payload.PracticeContext.TaskBlueprints,
+				"Discuss the topic more broadly.",
+			)
+			assignment.Parts = []evidence.IELTSAssignmentPart{
+				{
+					Part:       string(scene.PracticeModePart2),
+					SourceID:   "topic-group-1",
+					TopicTitle: "Fixture topic",
+					CueCard:    "Discuss the fixture topic.",
+					TurnBlueprints: slices.Clone(
+						payload.PracticeContext.TaskBlueprints[:1],
+					),
+				},
+				{
+					Part:       string(scene.PracticeModePart3),
+					SourceID:   "topic-group-1",
+					TopicTitle: "Fixture topic",
+					TurnBlueprints: slices.Clone(
+						payload.PracticeContext.TaskBlueprints[1:],
+					),
+				},
+			}
+		case scene.PracticeModePart3:
+			assignment.Parts = []evidence.IELTSAssignmentPart{{
+				Part:           string(scene.PracticeModePart3),
+				SourceID:       "topic-group-1",
+				TopicTitle:     "Fixture topic",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints),
+			}}
+		}
+		payload.PracticeContext.IELTSAssignment = assignment
+	}
 	payload.PracticeContext.Scene.ID = "scene-general-1"
 	payload.PracticeContext.Preparation.BackgroundSnapshotHash =
 		evidenceTextHash(evidenceTestPreparationBackground)

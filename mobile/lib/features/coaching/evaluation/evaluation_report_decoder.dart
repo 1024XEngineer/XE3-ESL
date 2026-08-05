@@ -20,7 +20,7 @@ EvaluationReport decodeEvaluationReport(Object? value) {
       'revision',
       'schema_version',
       'scene_type',
-      'scene_model',
+      'scene_category',
       'scoreability_status',
       'summary',
       'dimensions',
@@ -42,7 +42,7 @@ EvaluationReport decodeEvaluationReport(Object? value) {
     throw const EvaluationReportDecodeException();
   }
   final sceneType = _sceneType(root['scene_type']);
-  final sceneModel = _version(root['scene_model']);
+  final sceneCategory = _version(root['scene_category']);
   final scoreability = _scoreability(root['scoreability_status']);
   final summary = _text(root['summary'], maximumBytes: 2048);
   final findings = <String>{};
@@ -68,7 +68,7 @@ EvaluationReport decodeEvaluationReport(Object? value) {
     practiceSessionId: practiceSessionId,
     revision: revision,
     sceneType: sceneType,
-    sceneModel: sceneModel,
+    sceneCategory: sceneCategory,
     scoreability: scoreability,
     summary: summary,
     dimensions: dimensions,

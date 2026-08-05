@@ -108,6 +108,51 @@ void main() {
     expect(decoded.criteria[3].estimatedBand, 6);
   });
 
+  test('derives non-default Part boundaries from the report questions', () {
+    final value = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['ready_insufficient'],
+    );
+    final report = _report(value);
+    final originalQuestions = report['questions']! as List<Object?>;
+    final questions = <Map<String, Object?>>[
+      originalQuestions[0]! as Map<String, Object?>,
+      originalQuestions[1]! as Map<String, Object?>,
+      originalQuestions[8]! as Map<String, Object?>,
+      originalQuestions[9]! as Map<String, Object?>,
+      originalQuestions[10]! as Map<String, Object?>,
+    ];
+    for (var index = 0; index < questions.length; index++) {
+      questions[index]['index'] = index + 1;
+    }
+    report['questions'] = questions;
+    final summary = report['test_summary']! as Map<String, Object?>;
+    summary
+      ..['question_count'] = questions.length
+      ..['answered_count'] = questions.length;
+    final parts = report['part_reviews']! as List<Object?>;
+    for (var index = 0; index < parts.length; index++) {
+      final part = parts[index]! as Map<String, Object?>;
+      final indexes = switch (index) {
+        0 => <int>[1, 2],
+        1 => <int>[3],
+        _ => <int>[4, 5],
+      };
+      part['question_indexes'] = indexes;
+      part['evidence_ref_ids'] = <Object?>[
+        for (final questionIndex in indexes)
+          ...(questions[questionIndex - 1]['evidence_ref_ids']!
+              as List<Object?>),
+      ];
+    }
+
+    final decoded = decodeIeltsSpeakingReport(value).report!;
+
+    expect(decoded.questions, hasLength(5));
+    expect(decoded.partReviews[0].questionIndexes, <int>[1, 2]);
+    expect(decoded.partReviews[1].questionIndexes, <int>[3]);
+    expect(decoded.partReviews[2].questionIndexes, <int>[4, 5]);
+  });
+
   test('accepts only false for an explicitly non-retryable failure', () {
     final value = cloneIeltsSpeakingReportFixture(
       ieltsSpeakingReportContractFixture()['failed'],
@@ -182,6 +227,17 @@ void main() {
     );
   });
 
+  test('rejects answered_count that differs from provided responses', () {
+    final invalid = _readyClone();
+    final summary = _report(invalid)['test_summary']! as Map<String, Object?>;
+    summary['answered_count'] = (summary['answered_count']! as int) - 1;
+
+    expect(
+      () => decodeIeltsSpeakingReport(invalid),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
+  });
+
   test('rejects forged excerpts and cross-reference corruption', () {
     final forgedExcerpt = _readyClone();
     final strengths = _criterion(forgedExcerpt, 0)['strengths']! as List;
@@ -248,6 +304,8 @@ void main() {
       question.remove('confirmed_transcript');
       question.remove('response_turn_id');
       question['evidence_ref_ids'] = <String>[];
+      final summary = _report(partial)['test_summary']! as Map<String, Object?>;
+      summary['answered_count'] = (summary['answered_count']! as int) - 1;
       final partEvidence =
           _part(partial, 2)['evidence_ref_ids']! as List<Object?>;
       partEvidence.removeLast();

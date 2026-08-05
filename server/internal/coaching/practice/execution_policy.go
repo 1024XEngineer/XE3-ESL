@@ -39,8 +39,8 @@ const (
 )
 
 type TurnPolicy struct {
-	Kind      TurnPolicyKind
-	IELTSMode IELTSPracticeMode
+	Kind TurnPolicyKind
+	Mode PracticeMode
 }
 
 type sessionPolicyRegistration struct {
@@ -51,6 +51,9 @@ type sessionPolicyRegistration struct {
 	turnsFromBlueprints        bool
 	retryAllowed               bool
 	questionTranslationAllowed bool
+	questionTipsAllowed        bool
+	avatarAllowed              bool
+	speechFeedbackAllowed      bool
 }
 
 func ResolveTurnPolicy(reference string) (TurnPolicy, error) {
@@ -63,19 +66,19 @@ func ResolveTurnPolicy(reference string) (TurnPolicy, error) {
 		return TurnPolicy{Kind: TurnPolicyInterview}, nil
 	case IELTSSpeakingPart1TurnPolicy:
 		return TurnPolicy{
-			Kind: TurnPolicyFrozenIELTS, IELTSMode: IELTSPracticeModePart1,
+			Kind: TurnPolicyFrozenIELTS, Mode: PracticeModePart1,
 		}, nil
 	case IELTSSpeakingPart2TurnPolicy:
 		return TurnPolicy{
-			Kind: TurnPolicyFrozenIELTS, IELTSMode: IELTSPracticeModePart2,
+			Kind: TurnPolicyFrozenIELTS, Mode: PracticeModePart2,
 		}, nil
 	case IELTSSpeakingPart3TurnPolicy:
 		return TurnPolicy{
-			Kind: TurnPolicyFrozenIELTS, IELTSMode: IELTSPracticeModePart3,
+			Kind: TurnPolicyFrozenIELTS, Mode: PracticeModePart3,
 		}, nil
 	case IELTSSpeakingFullMockTurnPolicy:
 		return TurnPolicy{
-			Kind: TurnPolicyFrozenIELTS, IELTSMode: IELTSPracticeModeFullMock,
+			Kind: TurnPolicyFrozenIELTS, Mode: PracticeModeFullMock,
 		}, nil
 	default:
 		return TurnPolicy{}, ErrExecutionPolicyNotFound
@@ -84,11 +87,12 @@ func ResolveTurnPolicy(reference string) (TurnPolicy, error) {
 
 func ValidSessionPolicy(
 	reference string,
-	optionType PracticeOptionType,
+	mode PracticeMode,
 	blueprintCount int,
+	suggestedDurationSeconds int,
 	policy SessionPolicy,
 ) bool {
-	if policy.SuggestedDurationSeconds < 1 || blueprintCount < 1 {
+	if suggestedDurationSeconds < 1 || blueprintCount < 1 {
 		return false
 	}
 	registration, found := resolveSessionPolicyRegistration(reference)
@@ -97,9 +101,9 @@ func ValidSessionPolicy(
 	}
 	expected, ok := buildSessionPolicy(
 		registration,
-		optionType,
+		mode,
 		blueprintCount,
-		policy.SuggestedDurationSeconds,
+		suggestedDurationSeconds,
 		policy.MaxEffectiveTurns,
 	)
 	if !ok {
@@ -112,7 +116,10 @@ func ValidSessionPolicy(
 		policy.MaxFollowUpsPerQuestion == expected.MaxFollowUpsPerQuestion &&
 		policy.EarlyCompletionRule == expected.EarlyCompletionRule &&
 		policy.RetryAllowed == expected.RetryAllowed &&
-		policy.QuestionTranslationAllowed == expected.QuestionTranslationAllowed
+		policy.QuestionTranslationAllowed == expected.QuestionTranslationAllowed &&
+		policy.QuestionTipsAllowed == expected.QuestionTipsAllowed &&
+		policy.AvatarAllowed == expected.AvatarAllowed &&
+		policy.SpeechFeedbackAllowed == expected.SpeechFeedbackAllowed
 }
 
 // ResolveSessionPolicy builds the complete frozen policy named by one Scene
@@ -124,19 +131,20 @@ func ResolveSessionPolicy(
 	option PracticeOption,
 	requestedMaxEffectiveTurns int,
 ) (SessionPolicy, error) {
-	if prompt.SuggestedDurationSeconds < 1 || len(prompt.TurnBlueprints) < 1 {
+	if option.SuggestedDurationSeconds < 1 || len(prompt.TurnBlueprints) < 1 {
 		return SessionPolicy{}, ErrConflict
 	}
 	registration, found := resolveSessionPolicyRegistration(reference)
 	if !found {
 		return SessionPolicy{}, ErrExecutionPolicyNotFound
 	}
-	switch option.Type {
-	case PracticeOptionFullSimulation:
+	switch option.Mode {
+	case PracticeModeFullSimulation, PracticeModeFullMock,
+		PracticeModePart1, PracticeModePart2, PracticeModePart3:
 		if option.RoleDefinitionID != "" {
 			return SessionPolicy{}, ErrInvalidArgument
 		}
-	case PracticeOptionFocus:
+	case PracticeModeFocus:
 		if option.RoleDefinitionID == "" {
 			return SessionPolicy{}, ErrInvalidArgument
 		}
@@ -145,9 +153,9 @@ func ResolveSessionPolicy(
 	}
 	policy, ok := buildSessionPolicy(
 		registration,
-		option.Type,
+		option.Mode,
 		len(prompt.TurnBlueprints),
-		prompt.SuggestedDurationSeconds,
+		option.SuggestedDurationSeconds,
 		requestedMaxEffectiveTurns,
 	)
 	if !ok {
@@ -171,22 +179,33 @@ func resolveSessionPolicyRegistration(
 		return standard, true
 	case InterviewPracticeSessionPolicy:
 		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
+		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
 		return standard, true
 	case DailyPracticeSessionPolicy,
 		DailyHotelCheckinIssueSessionPolicy,
 		WorkplacePracticeSessionPolicy,
 		WorkplaceProgressRiskUpdateSessionPolicy:
 		standard.retryAllowed = true
+		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewProjectDeepDiveSessionPolicy:
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
+		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
 		return standard, true
 	case IELTSSpeakingPart1SessionPolicy,
 		IELTSSpeakingPart2SessionPolicy,
 		IELTSSpeakingPart3SessionPolicy,
 		IELTSSpeakingFullMockSessionPolicy:
-		return sessionPolicyRegistration{turnsFromBlueprints: true}, true
+		return sessionPolicyRegistration{
+			turnsFromBlueprints:   true,
+			speechFeedbackAllowed: true,
+		}, true
 	default:
 		return sessionPolicyRegistration{}, false
 	}
@@ -194,7 +213,7 @@ func resolveSessionPolicyRegistration(
 
 func buildSessionPolicy(
 	registration sessionPolicyRegistration,
-	optionType PracticeOptionType,
+	mode PracticeMode,
 	blueprintCount int,
 	suggestedDurationSeconds int,
 	requestedMaxEffectiveTurns int,
@@ -204,17 +223,19 @@ func buildSessionPolicy(
 		return SessionPolicy{}, false
 	}
 	if registration.turnsFromBlueprints {
-		if optionType != PracticeOptionFullSimulation || blueprintCount > 14 {
+		if (mode != PracticeModeFullMock && mode != PracticeModePart1 &&
+			mode != PracticeModePart2 && mode != PracticeModePart3) ||
+			blueprintCount > MaxPracticeTurns {
 			return SessionPolicy{}, false
 		}
 		registration.minEffectiveTurns = blueprintCount
 		registration.maxEffectiveTurns = blueprintCount
 		registration.coverageCheckpointTurn = blueprintCount
-	} else if optionType == PracticeOptionFocus {
+	} else if mode == PracticeModeFocus {
 		registration.minEffectiveTurns = 1
 		registration.maxEffectiveTurns = 3
 		registration.coverageCheckpointTurn = 1
-	} else if optionType != PracticeOptionFullSimulation {
+	} else if mode != PracticeModeFullSimulation {
 		return SessionPolicy{}, false
 	}
 	if requestedMaxEffectiveTurns > 0 {
@@ -233,5 +254,8 @@ func buildSessionPolicy(
 		EarlyCompletionRule:        EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		RetryAllowed:               registration.retryAllowed,
 		QuestionTranslationAllowed: registration.questionTranslationAllowed,
+		QuestionTipsAllowed:        registration.questionTipsAllowed,
+		AvatarAllowed:              registration.avatarAllowed,
+		SpeechFeedbackAllowed:      registration.speechFeedbackAllowed,
 	}, true
 }

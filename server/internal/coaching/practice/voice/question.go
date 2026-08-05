@@ -208,8 +208,9 @@ func questionGenerationRequest(
 ) (QuestionGenerationRequest, error) {
 	prompt := session.Prompt
 	if sequence < 1 || sequence > session.TurnLimit ||
-		strings.TrimSpace(session.SceneFamily) == "" ||
-		strings.TrimSpace(session.SceneModel) == "" ||
+		strings.TrimSpace(session.PracticeExperience) == "" ||
+		strings.TrimSpace(session.SceneCategory) == "" ||
+		strings.TrimSpace(session.PracticeMode) == "" ||
 		strings.TrimSpace(prompt.PublicSceneBrief) == "" ||
 		strings.TrimSpace(prompt.PracticeGoal) == "" ||
 		strings.TrimSpace(prompt.UserRole) == "" ||
@@ -224,8 +225,9 @@ func questionGenerationRequest(
 		blueprintIndex = len(prompt.TurnBlueprints) - 1
 	}
 	contextParts := []string{
-		fmt.Sprintf("Scenario family: %s.", session.SceneFamily),
-		fmt.Sprintf("Scenario model: %s.", session.SceneModel),
+		fmt.Sprintf("Practice experience: %s.", session.PracticeExperience),
+		fmt.Sprintf("Scene category: %s.", session.SceneCategory),
+		fmt.Sprintf("Practice mode: %s.", session.PracticeMode),
 		fmt.Sprintf("Scene: %s", prompt.PublicSceneBrief),
 		fmt.Sprintf("Practice goal: %s", prompt.PracticeGoal),
 		fmt.Sprintf("Learner role: %s", prompt.UserRole),

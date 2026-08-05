@@ -16,17 +16,19 @@ import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/goal/goal_client.dart';
 import 'package:speakup/features/coaching/goal/wire_goal_client.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/ielts_practice_history_store.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/ielts/ielts_practice_history_store.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/ielts/wire_ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
-import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
 import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
@@ -66,6 +68,7 @@ void main() {
       messageAudioController: dependencies.messageAudioController,
       practiceController: dependencies.practiceController,
       preparationController: dependencies.preparationController,
+      ieltsPreparationController: dependencies.ieltsPreparationController,
       jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
       practicePlanHandoffController: dependencies.practicePlanHandoffController,
@@ -88,6 +91,7 @@ final class ProductionAppDependencies {
     required this.practiceController,
     required this.goalClient,
     required this.preparationController,
+    required this.ieltsPreparationController,
     required this.jobPreparationController,
     required this.preparationLaunchController,
     required this.practicePlanHandoffController,
@@ -106,6 +110,7 @@ final class ProductionAppDependencies {
   final PracticeController practiceController;
   final GoalClient goalClient;
   final PreparationController preparationController;
+  final IeltsPreparationController ieltsPreparationController;
   final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
   final PracticePlanHandoffController practicePlanHandoffController;
@@ -332,6 +337,10 @@ ProductionAppDependencies createProductionAppDependencies({
     baseUri: baseUri,
     transport: preparationTransport,
   );
+  final ieltsQuestionBankClient = WireIeltsQuestionBankClient(
+    baseUri: baseUri,
+    transport: preparationTransport,
+  );
   final ieltsSpeakingReportClient = WireIeltsSpeakingReportClient(
     baseUri: baseUri,
     credentialProvider: () => authController.currentCredential,
@@ -363,8 +372,10 @@ ProductionAppDependencies createProductionAppDependencies({
   );
   final preparationController = PreparationController(
     client: preparationCatalogClient,
-    ieltsQuestionBankClient: preparationCatalogClient,
-    ieltsHistoryStore: const SecureIeltsPracticeHistoryStore(),
+  );
+  final ieltsPreparationController = IeltsPreparationController(
+    client: ieltsQuestionBankClient,
+    historyStore: const SecureIeltsPracticeHistoryStore(),
   );
   final practiceWorkspaceController = PracticeWorkspaceController(
     conversationController: conversationController,
@@ -423,6 +434,7 @@ ProductionAppDependencies createProductionAppDependencies({
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
+          practiceMode: bootstrap.session.practiceMode,
           turnLimit: bootstrap.maxEffectiveTurns,
           clientOperationId: clientOperationId,
         ),
@@ -489,6 +501,7 @@ ProductionAppDependencies createProductionAppDependencies({
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
+          practiceMode: bootstrap.session.practiceMode,
           turnLimit: bootstrap.maxEffectiveTurns,
           clientOperationId: clientOperationId,
         ),
@@ -540,6 +553,7 @@ ProductionAppDependencies createProductionAppDependencies({
       practiceController.clearPrivateState,
       goalClient.clearAccountState,
       preparationController.clearPrivateState,
+      ieltsPreparationController.clearPrivateState,
       jobPreparationController.clearPrivateState,
       reviewHistoryController.clearPrivateState,
     ]),
@@ -552,6 +566,7 @@ ProductionAppDependencies createProductionAppDependencies({
     practiceController: practiceController,
     goalClient: goalClient,
     preparationController: preparationController,
+    ieltsPreparationController: ieltsPreparationController,
     jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
     practicePlanHandoffController: practicePlanHandoffController,

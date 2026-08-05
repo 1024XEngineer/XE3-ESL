@@ -15,7 +15,7 @@ void main() {
 
   test('rejects malformed or ambiguous handoff payloads', () {
     final unknownField = _validHandoff()..['unexpected'] = true;
-    final invalidScene = _validHandoff()..['scene_family'] = 'UNKNOWN';
+    final invalidScene = _validHandoff()..['practice_experience'] = 'UNKNOWN';
     final duplicateRoles = _validHandoff()..['roles'] = <String>['面试官', '面试官'];
 
     for (final payload in <Object?>[
@@ -39,8 +39,9 @@ Map<String, Object?> _validHandoff() => <String, Object?>{
   'plan_revision': 2,
   'target': '准备 Java 后端面试',
   'scene_name': '项目经历深挖',
-  'scene_family': 'INTERVIEW',
-  'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+  'practice_experience': 'INTERVIEW',
+  'scene_category': 'INTERVIEW_PROFESSIONAL',
+  'practice_mode': 'FULL_SIMULATION',
   'roles': <String>['面试官'],
   'practice_scope': '完整模拟',
   'suggested_duration_seconds': 600,

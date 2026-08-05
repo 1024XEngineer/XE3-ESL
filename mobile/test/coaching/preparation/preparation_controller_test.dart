@@ -53,33 +53,30 @@ void main() {
     },
   );
 
-  test(
-    'keeps the IELTS full mock entry on the full simulation option',
-    () async {
-      final controller = PreparationController(client: _IeltsCatalogClient());
-      addTearDown(controller.dispose);
+  test('keeps the IELTS full mock entry on the FULL_MOCK option', () async {
+    final controller = PreparationController(client: _IeltsCatalogClient());
+    addTearDown(controller.dispose);
 
-      await controller.loadIfNeeded();
-      await controller.selectScene(_ieltsScene);
+    await controller.loadIfNeeded();
+    await controller.selectScene(_ieltsScene);
 
-      expect(controller.selectRecommendedConfiguration(), isTrue);
-      expect(controller.selectedRole, _ieltsRole);
-      expect(controller.selectedOption, _ieltsFullOption);
-    },
-  );
+    expect(controller.selectRecommendedConfiguration(), isTrue);
+    expect(controller.selectedRole, _ieltsRole);
+    expect(controller.selectedOption, _ieltsFullOption);
+  });
 
   test('keeps IELTS section practice on its complete section option', () async {
     final scene = testScene(
-      id: 'scn_ielts_speaking_part_2',
-      family: SceneFamily.exam,
-      model: SceneModel.ieltsSpeakingPart2,
+      id: 'scn_ielts_speaking_test',
+      experience: PracticeExperience.ieltsSpeaking,
+      category: SceneCategory.ieltsSpeaking,
       name: 'IELTS Speaking Part 2',
       version: 2,
       prompt: _prompt,
     );
     final role = testRole(
       id: 'role_ielts_part_2_examiner',
-      sceneId: 'scn_ielts_speaking_part_2',
+      sceneId: 'scn_ielts_speaking_test',
       type: 'IELTS_EXAMINER',
       displayName: 'IELTS 口语考官',
       responsibilities: 'Run Part 2 and the bound Part 3.',
@@ -88,29 +85,38 @@ void main() {
     );
     final full = testPracticeOption(
       id: 'option_ielts_part_2_full',
-      sceneId: 'scn_ielts_speaking_part_2',
-      type: PracticeOptionType.fullSimulation,
-      displayName: '完整练习',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part1,
+      displayName: 'Part 1',
     );
-    final focus = testPracticeOption(
-      id: 'option_ielts_part_2_focus',
-      sceneId: 'scn_ielts_speaking_part_2',
-      roleId: 'role_ielts_part_2_examiner',
-      type: PracticeOptionType.focus,
-      displayName: '短练习',
+    final part2 = testPracticeOption(
+      id: 'option_ielts_part_2',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part2,
+      displayName: 'Part 2',
+    );
+    final part3 = testPracticeOption(
+      id: 'option_ielts_part_3',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part3,
+      displayName: 'Part 3',
+    );
+    final fullMock = testPracticeOption(
+      id: 'option_ielts_full_mock',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.fullMock,
+      displayName: '完整模考',
     );
     final detail = testScene(
       id: scene.id,
-      family: scene.family,
-      model: scene.model,
+      experience: scene.experience,
+      category: scene.category,
       name: scene.name,
       version: scene.version,
       status: scene.status,
-      turnPolicyRef: scene.turnPolicyRef,
-      sessionPolicyRef: scene.sessionPolicyRef,
       prompt: _prompt,
       roles: [role],
-      practiceOptions: [full, focus],
+      practiceOptions: [fullMock, full, part2, part3],
     );
     final controller = PreparationController(
       client: _IeltsCatalogClient(scene: scene, detail: detail, role: role),
@@ -120,9 +126,14 @@ void main() {
     await controller.loadIfNeeded();
     await controller.selectScene(scene);
 
-    expect(controller.selectRecommendedConfiguration(), isTrue);
+    expect(
+      controller.selectRecommendedConfiguration(
+        practiceMode: PracticeMode.part2,
+      ),
+      isTrue,
+    );
     expect(controller.selectedRole, role);
-    expect(controller.selectedOption, full);
+    expect(controller.selectedOption, part2);
   });
 
   test('retries the failed directory request', () async {
@@ -166,13 +177,11 @@ void main() {
       client: _FixtureCatalogClient(
         detail: testScene(
           id: _scene.id,
-          family: _scene.family,
-          model: _scene.model,
+          experience: _scene.experience,
+          category: _scene.category,
           name: _scene.name,
           version: _scene.version,
           status: _scene.status,
-          turnPolicyRef: _scene.turnPolicyRef,
-          sessionPolicyRef: _scene.sessionPolicyRef,
           prompt: _scene.prompt,
           roles: [_technicalRole, _recruiterRole],
           practiceOptions: [_fullOption, _technicalFocus],
@@ -269,8 +278,8 @@ const _sceneId = 'scn_programmer_interview';
 
 final _scene = testScene(
   id: _sceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'English interview for technical roles',
   version: 1,
   prompt: _prompt,
@@ -284,7 +293,6 @@ const _prompt = ScenePrompt(
   personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['system_design'],
   turnBlueprints: ['Ask for a project overview.'],
-  suggestedDurationSeconds: 900,
 );
 
 final _technicalRole = testRole(
@@ -310,7 +318,7 @@ final _recruiterRole = testRole(
 final _fullOption = testPracticeOption(
   id: 'option_full_simulation',
   sceneId: _sceneId,
-  type: PracticeOptionType.fullSimulation,
+  mode: PracticeMode.fullSimulation,
   displayName: 'Full simulation',
 );
 
@@ -318,7 +326,7 @@ final _technicalFocus = testPracticeOption(
   id: 'option_technical_focus',
   sceneId: _sceneId,
   roleId: 'role_technical_interviewer',
-  type: PracticeOptionType.focus,
+  mode: PracticeMode.focus,
   displayName: 'Technical depth focus',
 );
 
@@ -326,30 +334,28 @@ final _recruiterFocus = testPracticeOption(
   id: 'option_hr_focus',
   sceneId: _sceneId,
   roleId: 'role_hr_interviewer',
-  type: PracticeOptionType.focus,
+  mode: PracticeMode.focus,
   displayName: 'Recruiter and motivation focus',
 );
 
 final _detail = testScene(
   id: _scene.id,
-  family: _scene.family,
-  model: _scene.model,
+  experience: _scene.experience,
+  category: _scene.category,
   name: _scene.name,
   version: _scene.version,
   status: _scene.status,
-  turnPolicyRef: _scene.turnPolicyRef,
-  sessionPolicyRef: _scene.sessionPolicyRef,
   prompt: _scene.prompt,
   roles: [_technicalRole, _recruiterRole],
   practiceOptions: [_fullOption, _technicalFocus, _recruiterFocus],
 );
 
-const _ieltsSceneId = 'scn_ielts_speaking_full';
+const _ieltsSceneId = 'scn_ielts_speaking_test';
 
 final _ieltsScene = testScene(
   id: _ieltsSceneId,
-  family: SceneFamily.exam,
-  model: SceneModel.ieltsSpeakingFullMock,
+  experience: PracticeExperience.ieltsSpeaking,
+  category: SceneCategory.ieltsSpeaking,
   name: 'IELTS 口语完整模拟',
   version: 2,
   prompt: _prompt,
@@ -368,28 +374,44 @@ final _ieltsRole = testRole(
 final _ieltsFullOption = testPracticeOption(
   id: 'option_ielts_speaking_full_full',
   sceneId: _ieltsSceneId,
-  type: PracticeOptionType.fullSimulation,
+  mode: PracticeMode.fullMock,
   displayName: '完整模考',
 );
 
-final _ieltsFocusOption = testPracticeOption(
-  id: 'option_ielts_speaking_full_focus',
+final _ieltsPart1Option = testPracticeOption(
+  id: 'option_ielts_speaking_part_1',
   sceneId: _ieltsSceneId,
-  roleId: 'role_ielts_examiner',
-  type: PracticeOptionType.focus,
-  displayName: '专项练习',
+  mode: PracticeMode.part1,
+  displayName: 'Part 1',
+);
+
+final _ieltsPart2Option = testPracticeOption(
+  id: 'option_ielts_speaking_part_2',
+  sceneId: _ieltsSceneId,
+  mode: PracticeMode.part2,
+  displayName: 'Part 2',
+);
+
+final _ieltsPart3Option = testPracticeOption(
+  id: 'option_ielts_speaking_part_3',
+  sceneId: _ieltsSceneId,
+  mode: PracticeMode.part3,
+  displayName: 'Part 3',
 );
 
 final _ieltsDetail = testScene(
   id: _ieltsScene.id,
-  family: _ieltsScene.family,
-  model: _ieltsScene.model,
+  experience: _ieltsScene.experience,
+  category: _ieltsScene.category,
   name: _ieltsScene.name,
   version: _ieltsScene.version,
   status: _ieltsScene.status,
-  turnPolicyRef: _ieltsScene.turnPolicyRef,
-  sessionPolicyRef: _ieltsScene.sessionPolicyRef,
   prompt: _ieltsScene.prompt,
   roles: [_ieltsRole],
-  practiceOptions: [_ieltsFullOption, _ieltsFocusOption],
+  practiceOptions: [
+    _ieltsFullOption,
+    _ieltsPart1Option,
+    _ieltsPart2Option,
+    _ieltsPart3Option,
+  ],
 );

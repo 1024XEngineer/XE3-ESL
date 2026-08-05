@@ -651,7 +651,7 @@ func validateJobTargetCandidate(
 	if err != nil {
 		return errors.Join(ErrJobTargetInvalid, err)
 	}
-	if selection.Scene.Family == scene.SceneFamilyInterview &&
+	if selection.Scene.Experience == scene.PracticeExperienceInterview &&
 		len(selection.SelectedRoleIDs) != 1 {
 		return ErrJobTargetInvalid
 	}

@@ -432,8 +432,9 @@ void main() {
           session: PreparationPracticeSession(
             id: 'session-1',
             planId: 'plan-1',
-            sceneFamily: SceneFamily.interview,
-            sceneModel: SceneModel.projectExperienceDeepDive,
+            practiceExperience: PracticeExperience.interview,
+            sceneCategory: SceneCategory.interviewProfessional,
+            practiceMode: PracticeMode.fullSimulation,
             snapshotId: 'session-snapshot-1',
             status: 'starting',
             version: 1,
@@ -783,6 +784,9 @@ final class _PageLaunchClient implements PreparationLaunchClient {
         earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
         retryAllowed: false,
         questionTranslationAllowed: true,
+        questionTipsAllowed: true,
+        avatarAllowed: true,
+        speechFeedbackAllowed: true,
       ),
       practiceObjectives: const <PracticeObjective>[
         PracticeObjective(
@@ -808,8 +812,9 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       session: PreparationPracticeSession(
         id: 'session-1',
         planId: plan.id,
-        sceneFamily: plan.sceneSelection.scene.family,
-        sceneModel: plan.sceneSelection.scene.model,
+        practiceExperience: plan.sceneSelection.scene.experience,
+        sceneCategory: plan.sceneSelection.scene.category,
+        practiceMode: plan.practiceOption.mode,
         snapshotId: 'session-snapshot-1',
         status: 'starting',
         version: 1,
@@ -831,8 +836,8 @@ const _sceneId = 'scn_programmer_interview';
 
 final _scene = testScene(
   id: _sceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'English interview for technical roles',
   version: 1,
   prompt: _interviewPrompt,
@@ -840,8 +845,8 @@ final _scene = testScene(
 
 final _secondInterviewScene = testScene(
   id: 'scn_interview_recruiter_screening',
-  family: SceneFamily.interview,
-  model: SceneModel.interviewBasicDialogue,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewRecruiter,
   name: 'Recruiter screening',
   version: 1,
   prompt: _recruiterPrompt,
@@ -849,25 +854,25 @@ final _secondInterviewScene = testScene(
 
 final _otherScene = testScene(
   id: 'scn_general_speaking',
-  family: SceneFamily.workplace,
-  model: SceneModel.progressAndRiskUpdate,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayWorkplace,
   name: 'General speaking practice',
   version: 1,
   prompt: _workplacePrompt,
 );
 
 final _examScene = testScene(
-  id: 'scn_ielts_speaking_part_2',
-  family: SceneFamily.exam,
-  model: SceneModel.ieltsSpeakingPart2,
+  id: 'scn_ielts_speaking_test',
+  experience: PracticeExperience.ieltsSpeaking,
+  category: SceneCategory.ieltsSpeaking,
   name: 'IELTS Speaking Part 2',
   version: 1,
 );
 
 final _dailyScene = testScene(
   id: 'scn_daily_hotel_checkin_issue',
-  family: SceneFamily.daily,
-  model: SceneModel.hotelCheckinAndIssueHandling,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayTravel,
   name: 'Hotel check-in and issue handling',
   version: 1,
 );
@@ -884,27 +889,25 @@ final _otherRole = testRole(
 
 final _otherDetail = testScene(
   id: _otherScene.id,
-  family: _otherScene.family,
-  model: _otherScene.model,
+  experience: _otherScene.experience,
+  category: _otherScene.category,
   name: _otherScene.name,
   version: _otherScene.version,
   status: _otherScene.status,
-  turnPolicyRef: _otherScene.turnPolicyRef,
-  sessionPolicyRef: _otherScene.sessionPolicyRef,
   prompt: _workplacePrompt,
   roles: [_otherRole],
   practiceOptions: [
     testPracticeOption(
       id: 'option_general_full',
       sceneId: 'scn_general_speaking',
-      type: PracticeOptionType.fullSimulation,
+      mode: PracticeMode.fullSimulation,
       displayName: 'Full practice',
     ),
     testPracticeOption(
       id: 'option_general_focus',
       sceneId: 'scn_general_speaking',
       roleId: 'role_general_coach',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'Fluency focus',
     ),
   ],
@@ -918,7 +921,6 @@ const _interviewPrompt = ScenePrompt(
   personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['introduction', 'system_design'],
   turnBlueprints: ['Ask for a project overview.'],
-  suggestedDurationSeconds: 900,
 );
 
 const _workplacePrompt = ScenePrompt(
@@ -929,7 +931,6 @@ const _workplacePrompt = ScenePrompt(
   personaSummary: 'Direct and supportive.',
   focusAreas: ['fluency'],
   turnBlueprints: ['Ask for current progress.'],
-  suggestedDurationSeconds: 600,
 );
 
 const _recruiterPrompt = ScenePrompt(
@@ -940,7 +941,6 @@ const _recruiterPrompt = ScenePrompt(
   personaSummary: 'Warm and structured.',
   focusAreas: ['motivation'],
   turnBlueprints: ['Ask about motivation and role fit.'],
-  suggestedDurationSeconds: 600,
 );
 
 final _technicalRole = testRole(
@@ -987,48 +987,46 @@ final _roles = [_technicalRole, _recruiterRole, _projectRole, _leadershipRole];
 
 final _detail = testScene(
   id: _scene.id,
-  family: _scene.family,
-  model: _scene.model,
+  experience: _scene.experience,
+  category: _scene.category,
   name: _scene.name,
   version: _scene.version,
   status: _scene.status,
-  turnPolicyRef: _scene.turnPolicyRef,
-  sessionPolicyRef: _scene.sessionPolicyRef,
   prompt: _interviewPrompt,
   roles: _roles,
   practiceOptions: [
     testPracticeOption(
       id: 'option_full_simulation',
       sceneId: _sceneId,
-      type: PracticeOptionType.fullSimulation,
+      mode: PracticeMode.fullSimulation,
       displayName: 'Full simulation',
     ),
     testPracticeOption(
       id: 'option_technical_focus',
       sceneId: _sceneId,
       roleId: 'role_technical_interviewer',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'Technical depth focus',
     ),
     testPracticeOption(
       id: 'option_hr_focus',
       sceneId: _sceneId,
       roleId: 'role_hr_interviewer',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'Recruiter and motivation focus',
     ),
     testPracticeOption(
       id: 'option_project_manager_focus',
       sceneId: _sceneId,
       roleId: 'role_project_manager',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'Delivery and collaboration focus',
     ),
     testPracticeOption(
       id: 'option_executive_focus',
       sceneId: _sceneId,
       roleId: 'role_executive_interviewer',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'Leadership and impact focus',
     ),
   ],

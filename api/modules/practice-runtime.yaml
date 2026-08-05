@@ -870,13 +870,15 @@ components:
         - practice_plan_id
         - scene_id
         - scene_version
-        - scene_family
-        - scene_model
+        - practice_experience
+        - scene_category
+        - practice_mode
         - practice_session_status
         - session_version
         - effective_turns
         - turn_limit
         - session_completed
+        - practice_capabilities
       properties:
         practice_session_id:
           $ref: '#/components/schemas/ResourceId'
@@ -887,10 +889,12 @@ components:
         scene_version:
           type: integer
           minimum: 1
-        scene_family:
-          $ref: ./scene.yaml#/components/schemas/SceneFamily
-        scene_model:
-          $ref: ./scene.yaml#/components/schemas/SceneModel
+        practice_experience:
+          $ref: ./scene.yaml#/components/schemas/PracticeExperience
+        scene_category:
+          $ref: ./scene.yaml#/components/schemas/SceneCategory
+        practice_mode:
+          $ref: ./scene.yaml#/components/schemas/PracticeMode
         practice_session_status:
           type: string
           enum:
@@ -907,24 +911,30 @@ components:
         turn_limit:
           type: integer
           minimum: 1
+          maximum: 64
         session_completed:
           type: boolean
           description: |
             True when the Practice Session is terminal, whether it completed
             normally or ended early. `practice_session_status` remains the
             authoritative reason for the terminal state.
+        practice_capabilities:
+          $ref: '#/components/schemas/PracticeCapabilities'
+        ielts_assignment:
+          $ref: ./preparation.yaml#/components/schemas/IELTSPracticeAssignment
         current_question:
           $ref: '#/components/schemas/VoiceQuestion'
         current_turn:
           $ref: '#/components/schemas/ConfirmedVoiceTurn'
         turn_history:
           type: array
-          maxItems: 56
+          maxItems: 256
           description: |
             Confirmed `EFFECTIVE` turns ordered by Question sequence. A
             `PRIMARY` Turn advances `effective_turns`; a `FOLLOW_UP` Turn keeps
-            the previous value. With at most 14 primary Questions and three
-            follow-ups per Question, the projection is bounded to 56 entries.
+            the previous value. With the protocol safety limit of 64 primary
+            Questions and three follow-ups per Question, the projection is
+            bounded to 256 entries.
             `RETRY` turns are intentionally excluded so same-question practice
             cannot change the Session's current Question, latest effective
             checkpoint, or `effective_turns` history invariant. This projection
@@ -934,6 +944,67 @@ components:
           items:
             $ref: '#/components/schemas/VoiceTurnHistoryEntry'
       allOf:
+        - if:
+            properties:
+              practice_experience:
+                const: IELTS_SPEAKING
+            required:
+              - practice_experience
+          then:
+            required:
+              - ielts_assignment
+          else:
+            not:
+              required:
+                - ielts_assignment
+        - if:
+            properties:
+              practice_mode:
+                const: FULL_MOCK
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: FULL_MOCK
+        - if:
+            properties:
+              practice_mode:
+                const: PART_1
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_1
+        - if:
+            properties:
+              practice_mode:
+                const: PART_2
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_2
+        - if:
+            properties:
+              practice_mode:
+                const: PART_3
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_3
         - if:
             properties:
               session_completed:
@@ -952,6 +1023,27 @@ components:
           then:
             required:
               - current_question
+    PracticeCapabilities:
+      type: object
+      additionalProperties: false
+      readOnly: true
+      required:
+        - retry_allowed
+        - question_translation_allowed
+        - question_tips_allowed
+        - avatar_allowed
+        - speech_feedback_allowed
+      properties:
+        retry_allowed:
+          type: boolean
+        question_translation_allowed:
+          type: boolean
+        question_tips_allowed:
+          type: boolean
+        avatar_allowed:
+          type: boolean
+        speech_feedback_allowed:
+          type: boolean
     VoiceQuestion:
       type: object
       additionalProperties: false

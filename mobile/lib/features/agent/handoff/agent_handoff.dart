@@ -9,8 +9,9 @@ final class ConfirmPracticePlanHandoff extends AgentHandoff {
     required this.planRevision,
     required this.target,
     required this.sceneName,
-    required this.sceneFamily,
-    required this.sceneModel,
+    required this.practiceExperience,
+    required this.sceneCategory,
+    required this.practiceMode,
     required this.roles,
     required this.practiceScope,
     required this.suggestedDuration,
@@ -25,8 +26,9 @@ final class ConfirmPracticePlanHandoff extends AgentHandoff {
   final int planRevision;
   final String target;
   final String sceneName;
-  final String sceneFamily;
-  final String sceneModel;
+  final String practiceExperience;
+  final String sceneCategory;
+  final String practiceMode;
   final List<String> roles;
   final String practiceScope;
   final Duration suggestedDuration;

@@ -1,20 +1,6 @@
 import 'dart:math';
 
-enum IeltsPracticeMode {
-  fullMock('FULL_MOCK'),
-  part1('PART_1'),
-  part2('PART_2'),
-  part3('PART_3');
-
-  const IeltsPracticeMode(this.wireName);
-
-  final String wireName;
-
-  static IeltsPracticeMode? fromWireName(String value) => IeltsPracticeMode
-      .values
-      .where((mode) => mode.wireName == value)
-      .firstOrNull;
-}
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 enum IeltsTopicCategory {
   person('person'),
@@ -38,7 +24,7 @@ final class IeltsQuestionBank {
     required this.season,
     required this.sourceCutoff,
     required this.part1Sets,
-    this.part1Topics = const <IeltsPart1PracticeTopic>[],
+    required this.part1Topics,
     required this.topicGroups,
   });
 
@@ -101,7 +87,7 @@ final class IeltsTopicGroup {
     required this.id,
     required this.title,
     required this.release,
-    this.category = IeltsTopicCategory.thing,
+    required this.category,
     required this.cueCard,
     required this.part3Questions,
     required this.supplementedQuestionCount,
@@ -124,25 +110,20 @@ final class IeltsCueCard {
 }
 
 final class IeltsPracticeSelection {
-  const IeltsPracticeSelection({
-    required this.mode,
-    this.part1SetId,
-    this.topicGroupId,
-  });
+  const IeltsPracticeSelection({this.part1SetId, this.topicGroupId});
 
-  final IeltsPracticeMode mode;
   final String? part1SetId;
   final String? topicGroupId;
 
-  bool get isValid => switch (mode) {
-    IeltsPracticeMode.fullMock => part1SetId != null && topicGroupId != null,
-    IeltsPracticeMode.part1 => part1SetId != null && topicGroupId == null,
-    IeltsPracticeMode.part2 ||
-    IeltsPracticeMode.part3 => part1SetId == null && topicGroupId != null,
+  bool isValidForMode(PracticeMode mode) => switch (mode) {
+    PracticeMode.fullMock => part1SetId != null && topicGroupId != null,
+    PracticeMode.part1 => part1SetId != null && topicGroupId == null,
+    PracticeMode.part2 ||
+    PracticeMode.part3 => part1SetId == null && topicGroupId != null,
+    _ => false,
   };
 
   Map<String, Object> toJson() => <String, Object>{
-    'mode': mode.wireName,
     'part_1_set_id': ?part1SetId,
     'topic_group_id': ?topicGroupId,
   };
@@ -150,16 +131,11 @@ final class IeltsPracticeSelection {
   @override
   bool operator ==(Object other) =>
       other is IeltsPracticeSelection &&
-      other.mode == mode &&
       other.part1SetId == part1SetId &&
       other.topicGroupId == topicGroupId;
 
   @override
-  int get hashCode => Object.hash(mode, part1SetId, topicGroupId);
-}
-
-abstract interface class SceneQuestionBankClient {
-  Future<IeltsQuestionBank> getIeltsQuestionBank();
+  int get hashCode => Object.hash(part1SetId, topicGroupId);
 }
 
 IeltsPracticeSelection randomIeltsFullMockSelection({
@@ -175,12 +151,14 @@ IeltsPracticeSelection randomIeltsFullMockSelection({
   final availableGroups = bank.topicGroups
       .where((group) => !completedTopicGroupIds.contains(group.id))
       .toList(growable: false);
+  if (bank.part1Sets.isEmpty || bank.topicGroups.isEmpty) {
+    throw StateError('IELTS full mock requires a non-empty question bank.');
+  }
   final part1Pool = availablePart1.isEmpty ? bank.part1Sets : availablePart1;
   final groupPool = availableGroups.isEmpty
       ? bank.topicGroups
       : availableGroups;
   return IeltsPracticeSelection(
-    mode: IeltsPracticeMode.fullMock,
     part1SetId: part1Pool[generator.nextInt(part1Pool.length)].id,
     topicGroupId: groupPool[generator.nextInt(groupPool.length)].id,
   );

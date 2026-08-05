@@ -1,4 +1,4 @@
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 final class PreparationLaunchSelection {
@@ -61,8 +61,9 @@ final class PreparationPracticeSession {
   const PreparationPracticeSession({
     required this.id,
     required this.planId,
-    required this.sceneFamily,
-    required this.sceneModel,
+    required this.practiceExperience,
+    required this.sceneCategory,
+    required this.practiceMode,
     required this.snapshotId,
     required this.status,
     required this.version,
@@ -71,8 +72,9 @@ final class PreparationPracticeSession {
 
   final String id;
   final String planId;
-  final SceneFamily sceneFamily;
-  final SceneModel sceneModel;
+  final PracticeExperience practiceExperience;
+  final SceneCategory sceneCategory;
+  final PracticeMode practiceMode;
   final String snapshotId;
   final String status;
   final int version;

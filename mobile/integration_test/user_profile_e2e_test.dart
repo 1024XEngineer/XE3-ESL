@@ -32,6 +32,7 @@ void main() {
         messageAudioController: dependencies.messageAudioController,
         practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
+        ieltsPreparationController: dependencies.ieltsPreparationController,
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,

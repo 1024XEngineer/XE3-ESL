@@ -49,7 +49,9 @@ paths:
                     revision: 1
                     schema_version: evaluation-report/v1
                     scene_type: INTERVIEW
-                    scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                    practice_experience: INTERVIEW
+                    scene_category: INTERVIEW_PROFESSIONAL
+                    practice_mode: FULL_SIMULATION
                     scoreability_status: PROVISIONAL
                     summary: 本次练习已形成面试表达评估，可按优先行动继续复练。
                     dimensions:

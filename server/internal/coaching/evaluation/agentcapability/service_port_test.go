@@ -23,7 +23,9 @@ func TestMapLatestFormalReportProjectsCanonicalUserFacingContent(t *testing.T) {
 		Report: report.FormalReport{
 			SchemaVersion:      report.FormalReportSchemaVersion,
 			SceneType:          evaluation.SceneInterview,
-			SceneModel:         "PROJECT_EXPERIENCE_DEEP_DIVE",
+			PracticeExperience: "INTERVIEW",
+			SceneCategory:      "INTERVIEW_PROFESSIONAL",
+			PracticeMode:       "FULL_SIMULATION",
 			ScoreabilityStatus: report.ReportScoreabilityProvisional,
 			Summary:            "本次练习已形成面试表达评估。",
 			Dimensions: []report.ReportDimension{{
@@ -61,7 +63,10 @@ func TestMapLatestFormalReportProjectsCanonicalUserFacingContent(t *testing.T) {
 	}
 
 	got := mapLatestFormalReport(stored)
-	if got.Scene != "面试英语" || got.SceneModel != stored.Report.SceneModel ||
+	if got.Scene != "面试英语" ||
+		got.PracticeExperience != stored.Report.PracticeExperience ||
+		got.SceneCategory != stored.Report.SceneCategory ||
+		got.PracticeMode != stored.Report.PracticeMode ||
 		got.AssessmentMode != "暂定评分与反馈" ||
 		got.Summary != stored.Report.Summary ||
 		got.CompletedAt != completedAt.Format(time.RFC3339Nano) ||

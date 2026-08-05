@@ -107,6 +107,7 @@ final class PracticePlanHandoffController extends ChangeNotifier {
         scene: plan.sceneSelection.scene,
         sessionId: bootstrap.session.id,
         planId: bootstrap.session.planId,
+        practiceMode: bootstrap.session.practiceMode,
         turnLimit: bootstrap.maxEffectiveTurns,
         clientOperationId: attempt.voiceKey,
       );
@@ -206,8 +207,10 @@ bool _matchesPlan(ConfirmPracticePlanHandoff handoff, PracticePlan plan) {
       plan.revision != handoff.planRevision ||
       plan.status != PracticePlanStatus.ready ||
       plan.sceneSelection.scene.name != handoff.sceneName ||
-      plan.sceneSelection.scene.family.wireValue != handoff.sceneFamily ||
-      plan.sceneSelection.scene.model.wireValue != handoff.sceneModel ||
+      plan.sceneSelection.scene.experience.wireValue !=
+          handoff.practiceExperience ||
+      plan.sceneSelection.scene.category.wireValue != handoff.sceneCategory ||
+      plan.practiceOption.mode.wireValue != handoff.practiceMode ||
       plan.practiceOption.displayName != handoff.practiceScope ||
       Duration(seconds: plan.sessionPolicy.suggestedDurationSeconds) !=
           handoff.suggestedDuration ||

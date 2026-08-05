@@ -11,8 +11,7 @@ import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
-import 'package:speakup/features/coaching/practice/practice.dart';
-import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/review/interview_report.dart';
 import 'package:speakup/features/coaching/review/interview_report_client.dart';
@@ -763,7 +762,7 @@ void main() {
       AppRoutes.preparation,
       backButton: find.byKey(const Key('preparation-route-back-button')),
     );
-    await _expectNamedRoute<PracticePage>(
+    await _expectNamedRoute<InterviewPracticePage>(
       tester,
       AppRoutes.practice,
       backButton: find.byType(BackButton),
@@ -796,7 +795,9 @@ void main() {
     Navigator.of(shellContext).pushNamed(AppRoutes.practice);
     await tester.pumpAndSettle();
 
-    final practicePage = tester.widget<PracticePage>(find.byType(PracticePage));
+    final practicePage = tester.widget<InterviewPracticePage>(
+      find.byType(InterviewPracticePage),
+    );
     unawaited(
       practicePage.onOpenInterviewReport!(
         const InterviewPracticeCompletion(

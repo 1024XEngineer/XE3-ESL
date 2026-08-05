@@ -43,15 +43,15 @@ func TestResolveTurnPolicyUsesExactRegisteredReference(t *testing.T) {
 }
 
 func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
-	t.Run("generic policy ignores interview family", func(t *testing.T) {
+	t.Run("generic policy ignores Scene classification", func(t *testing.T) {
 		repository := newTurnPolicyQuestionRepository()
 		generator := &turnPolicyQuestionGenerator{
 			response: "What outcome do you need?",
 		}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.GenericPracticeTurnPolicy
-		session.SceneFamily = "INTERVIEW"
-		session.SceneModel = "IELTS_SPEAKING_FULL_MOCK"
+		session.PracticeExperience = "IELTS_SPEAKING"
+		session.SceneCategory = "IELTS_SPEAKING"
 		session.Prompt.TurnBlueprints = []string{"Open", "Clarify"}
 
 		question, err := (&questionAdapter{
@@ -68,7 +68,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		}
 	})
 
-	t.Run("interview policy ignores daily family", func(t *testing.T) {
+	t.Run("interview policy ignores Scene classification", func(t *testing.T) {
 		repository := newTurnPolicyQuestionRepository()
 		repository.history = []practice.Question{{
 			ID:   "primary-1",
@@ -79,8 +79,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.InterviewProjectDeepDiveTurnPolicy
-		session.SceneFamily = "DAILY"
-		session.SceneModel = "DAILY_BASIC_DIALOGUE"
+		session.PracticeExperience = "ROLEPLAY"
+		session.SceneCategory = "ROLEPLAY_DAILY"
 		session.EffectiveTurns = 1
 		session.PreviousQuestion = "What did you deliver?"
 		session.PreviousUserResponse = "I led the launch."
@@ -106,8 +106,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		generator := &turnPolicyQuestionGenerator{response: "must not be used"}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.IELTSSpeakingPart1TurnPolicy
-		session.SceneFamily = "DAILY"
-		session.SceneModel = "DAILY_BASIC_DIALOGUE"
+		session.PracticeExperience = "ROLEPLAY"
+		session.SceneCategory = "ROLEPLAY_DAILY"
 		session.Prompt.TurnBlueprints = []string{"Part 1: What do you do?"}
 
 		question, err := (&questionAdapter{
@@ -183,7 +183,7 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 		t.Fatalf("TurnPolicyRef = %q", mapped.TurnPolicyRef)
 	}
 
-	bootstrap.Snapshot.SceneSelection.Scene.TurnPolicyRef =
+	bootstrap.Snapshot.SceneSelection.Scene.PracticeOptions[0].TurnPolicyRef =
 		"unknown.practice.turn.v1"
 	if _, err := mapPracticeSession(
 		bootstrap,
@@ -193,24 +193,69 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 	}
 }
 
+func TestMapPracticeSessionCopiesFrozenIELTSParts(t *testing.T) {
+	bootstrap := turnPolicySessionBootstrap(
+		practice.IELTSSpeakingPart1TurnPolicy,
+	)
+	blueprints := []string{"Part 1 question: What do you do?"}
+	definition := &bootstrap.Snapshot.SceneSelection.Scene
+	definition.Experience = practice.PracticeExperienceIELTSSpeaking
+	definition.Category = practice.SceneCategory("IELTS_SPEAKING")
+	definition.Prompt.TurnBlueprints = append([]string(nil), blueprints...)
+	definition.PracticeOptions[0].Mode = practice.PracticeModePart1
+	definition.PracticeOptions[0].SessionPolicyRef =
+		practice.IELTSSpeakingPart1SessionPolicy
+	bootstrap.Session.Experience = definition.Experience
+	bootstrap.Session.Category = definition.Category
+	bootstrap.Session.PracticeMode = practice.PracticeModePart1
+	bootstrap.Snapshot.Experience = definition.Experience
+	bootstrap.Snapshot.Category = definition.Category
+	bootstrap.Snapshot.PracticeMode = practice.PracticeModePart1
+	bootstrap.Snapshot.SessionPolicy.MinEffectiveTurns = 1
+	bootstrap.Snapshot.SessionPolicy.MaxEffectiveTurns = 1
+	bootstrap.Snapshot.SessionPolicy.CoverageCheckpointTurn = 1
+	bootstrap.Snapshot.IELTSAssignment = &practice.IELTSAssignment{
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   practice.PracticeModePart1,
+		Parts: []practice.IELTSPart{{
+			Part:           practice.PracticeModePart1,
+			SourceID:       "part-1-set-1",
+			TurnBlueprints: append([]string(nil), blueprints...),
+		}},
+	}
+
+	mapped, err := mapPracticeSession(bootstrap, "user-1")
+	if err != nil {
+		t.Fatalf("mapPracticeSession: %v", err)
+	}
+	bootstrap.Snapshot.IELTSAssignment.Parts[0].TurnBlueprints[0] = "changed"
+	if mapped.IELTSAssignment == nil ||
+		mapped.IELTSAssignment.Parts[0].TurnBlueprints[0] != blueprints[0] {
+		t.Fatalf("mapped IELTS assignment = %#v", mapped.IELTSAssignment)
+	}
+}
+
 func turnPolicySessionBootstrap(
 	turnPolicyRef string,
 ) practice.SessionBootstrap {
 	role := practice.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
 	definition := practice.SceneDefinition{
-		ID:                  "scene-1",
-		Family:              practice.SceneFamilyInterview,
-		Model:               practice.SceneModelProjectExperienceDeepDive,
-		Version:             1,
-		Status:              practice.SceneStatusActive,
-		TurnPolicyRef:       turnPolicyRef,
-		SessionPolicyRef:    practice.InterviewProjectDeepDiveSessionPolicy,
-		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
-		Prompt:              sessionFixture().Prompt,
-		Roles:               []practice.RoleDefinition{role},
+		ID:         "scene-1",
+		Experience: practice.PracticeExperienceInterview,
+		Category:   practice.SceneCategory("INTERVIEW_PROFESSIONAL"),
+		Version:    1,
+		Status:     practice.SceneStatusActive,
+		Prompt:     sessionFixture().Prompt,
+		Roles:      []practice.RoleDefinition{role},
 		PracticeOptions: []practice.PracticeOption{{
-			ID: "option-1", SceneID: "scene-1",
-			Type: practice.PracticeOptionFullSimulation,
+			ID:                       "option-1",
+			SceneID:                  "scene-1",
+			Mode:                     practice.PracticeModeFullSimulation,
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            turnPolicyRef,
+			SessionPolicyRef:         practice.InterviewProjectDeepDiveSessionPolicy,
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 		}},
 	}
 	return practice.SessionBootstrap{
@@ -218,9 +263,10 @@ func turnPolicySessionBootstrap(
 			ID:                  "session-1",
 			PlanID:              "plan-1",
 			PlanRevision:        1,
-			SceneFamily:         definition.Family,
-			SceneModel:          definition.Model,
-			EvaluationPolicyRef: definition.EvaluationPolicyRef,
+			Experience:          definition.Experience,
+			Category:            definition.Category,
+			PracticeMode:        practice.PracticeModeFullSimulation,
+			EvaluationPolicyRef: definition.PracticeOptions[0].EvaluationPolicyRef,
 			SnapshotID:          "snapshot-1",
 			Status:              practice.SessionStarting,
 			Version:             1,
@@ -230,8 +276,9 @@ func turnPolicySessionBootstrap(
 			ID:           "snapshot-1",
 			SessionID:    "session-1",
 			PlanRevision: 1,
-			SceneFamily:  definition.Family,
-			SceneModel:   definition.Model,
+			Experience:   definition.Experience,
+			Category:     definition.Category,
+			PracticeMode: practice.PracticeModeFullSimulation,
 			SceneSelection: practice.SceneSelection{
 				Scene:            definition,
 				SelectedRoleIDs:  []string{role.ID},
@@ -259,12 +306,16 @@ func turnPolicySessionBootstrap(
 				},
 			},
 			SessionPolicy: practice.SessionPolicy{
-				SuggestedDurationSeconds: 600,
-				MinEffectiveTurns:        4,
-				MaxEffectiveTurns:        6,
-				CoverageCheckpointTurn:   4,
-				MaxFollowUpsPerQuestion:  3,
-				EarlyCompletionRule:      practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+				SuggestedDurationSeconds:   600,
+				MinEffectiveTurns:          4,
+				MaxEffectiveTurns:          6,
+				CoverageCheckpointTurn:     4,
+				MaxFollowUpsPerQuestion:    3,
+				EarlyCompletionRule:        practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+				QuestionTranslationAllowed: true,
+				QuestionTipsAllowed:        true,
+				AvatarAllowed:              true,
+				SpeechFeedbackAllowed:      true,
 			},
 		},
 	}

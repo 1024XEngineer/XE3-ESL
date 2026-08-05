@@ -40,8 +40,10 @@ func lockCurrentEvidenceSources(
 	var sessionVersion int
 	var effectiveTurns int
 	var snapshotID string
-	var scenarioType string
-	var scenarioModel string
+	var practiceExperience string
+	var sceneCategory string
+	var practiceMode string
+	var evaluationPolicyRef string
 	var status string
 	var startedAt *time.Time
 	var completedAt *time.Time
@@ -51,8 +53,10 @@ func lockCurrentEvidenceSources(
 			version,
 			effective_turns,
 			coalesce(snapshot_id, ''),
-			coalesce(scene_family, ''),
-			coalesce(scene_model, ''),
+			coalesce(practice_experience, ''),
+			coalesce(scene_category, ''),
+			coalesce(practice_mode, ''),
+			coalesce(evaluation_policy_ref, ''),
 			status,
 			started_at,
 			completed_at,
@@ -64,8 +68,10 @@ func lockCurrentEvidenceSources(
 		&sessionVersion,
 		&effectiveTurns,
 		&snapshotID,
-		&scenarioType,
-		&scenarioModel,
+		&practiceExperience,
+		&sceneCategory,
+		&practiceMode,
+		&evaluationPolicyRef,
 		&status,
 		&startedAt,
 		&completedAt,
@@ -82,8 +88,10 @@ func lockCurrentEvidenceSources(
 		sessionVersion != context.SessionVersion ||
 		effectiveTurns != len(payload.ConfirmedTurns) ||
 		snapshotID != context.SessionSnapshotID ||
-		scenarioType != context.SceneFamily ||
-		scenarioModel != context.SceneModel {
+		practiceExperience != context.PracticeExperience ||
+		sceneCategory != context.SceneCategory ||
+		practiceMode != context.PracticeMode ||
+		evaluationPolicyRef != context.EvaluationPolicyRef {
 		return evaluation.ErrInvalidRequest
 	}
 	var persistedSnapshotID string
@@ -114,21 +122,22 @@ func lockCurrentEvidenceSources(
 		return evaluation.ErrInvalidRequest
 	}
 	sourceSession := practice.Session{
-		ID:             command.PracticeSessionID,
-		SceneFamily:    practice.SceneFamily(scenarioType),
-		SceneModel:     practice.SceneModel(scenarioModel),
-		SnapshotID:     snapshotID,
-		Status:         practice.SessionStatus(status),
-		Version:        sessionVersion,
-		EffectiveTurns: effectiveTurns,
-		StartedAt:      startedAt,
-		EndedAt:        completedAt,
-		EndReason:      endReason,
+		ID:                  command.PracticeSessionID,
+		Experience:          practice.PracticeExperience(practiceExperience),
+		Category:            practice.SceneCategory(sceneCategory),
+		PracticeMode:        practice.PracticeMode(practiceMode),
+		EvaluationPolicyRef: evaluationPolicyRef,
+		SnapshotID:          snapshotID,
+		Status:              practice.SessionStatus(status),
+		Version:             sessionVersion,
+		EffectiveTurns:      effectiveTurns,
+		StartedAt:           startedAt,
+		EndedAt:             completedAt,
+		EndReason:           endReason,
 	}
 	if !validCompletedEvidenceSession(
 		command.OwnerUserID,
 		command.PracticeSessionID,
-		command.SceneType,
 		sourceSession,
 		sourceSnapshot,
 	) {

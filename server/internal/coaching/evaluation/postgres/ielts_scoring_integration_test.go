@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -213,6 +214,125 @@ func TestPostgresIELTSSpeakingResultConstraintRejectsFCBand(
 		providerRequestID, claim.FencingToken, payload)
 	if err == nil {
 		t.Fatal("database accepted an FC Band")
+	}
+}
+
+func TestPostgresIELTSSpeakingResultBindingRejectsSnapshotMismatch(
+	t *testing.T,
+) {
+	pool, repository, configuration, _ :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	result := evaluateIELTSSpeakingClaim(t, claim)
+
+	var emptyPart2Valid bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT ielts_assignment_is_valid_v1(
+			'FULL_MOCK',
+			canonical_payload #> '{practice_context,task_blueprints}',
+			jsonb_set(
+				canonical_payload #>
+					'{practice_context,ielts_assignment}',
+				'{parts,1,turn_blueprints}',
+				'[]'::jsonb
+			)
+		)
+		FROM evaluation_evidence_snapshots
+		WHERE id = $1
+	`, claim.Snapshot.ID).Scan(&emptyPart2Valid); err != nil {
+		t.Fatalf("validate empty IELTS Part 2 assignment: %v", err)
+	}
+	if emptyPart2Valid {
+		t.Fatal("database accepted an empty IELTS Part 2 assignment")
+	}
+
+	statusMismatch := result
+	statusMismatch.QuestionResults = append(
+		[]scoring.IELTSSpeakingShadowQuestionResult(nil),
+		result.QuestionResults...,
+	)
+	statusMismatch.QuestionResults[0].OpportunityStatus =
+		scoring.IELTSOpportunityNotProvided
+	statusMismatch.QuestionResults[0].AssessmentStatus =
+		scoring.IELTSAssessmentNotAssessed
+	statusMismatch.QuestionResults[0].ResponseTurnID = ""
+	statusMismatch.QuestionResults[0].EvidenceRefIDs = []string{}
+	assertIELTSResultPartBindingRejected(
+		t,
+		insertRawIELTSSpeakingResult(t, pool, claim, statusMismatch),
+	)
+
+	wrongPositionRef := result
+	wrongPositionRef.QuestionResults = append(
+		[]scoring.IELTSSpeakingShadowQuestionResult(nil),
+		result.QuestionResults...,
+	)
+	wrongPositionRef.QuestionResults[0].EvidenceRefIDs = []string{
+		result.QuestionResults[1].EvidenceRefIDs[0],
+	}
+	assertIELTSResultPartBindingRejected(
+		t,
+		insertRawIELTSSpeakingResult(t, pool, claim, wrongPositionRef),
+	)
+}
+
+func insertRawIELTSSpeakingResult(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	claim scoring.IELTSSpeakingShadowClaim,
+	result scoring.IELTSSpeakingShadowResult,
+) error {
+	t.Helper()
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode raw IELTS result: %v", err)
+	}
+	var providerRequestID any
+	if result.Provider != nil {
+		providerRequestID = result.Provider.RequestID
+	}
+	_, err = pool.Exec(context.Background(), `
+		INSERT INTO evaluation_ielts_speaking_scene_results (
+			module_run_id,
+			evaluation_id,
+			evaluation_revision_id,
+			owner_user_id,
+			channel,
+			strategy_ref,
+			practice_session_id,
+			input_snapshot_id,
+			input_revision,
+			scene_type,
+			snapshot_hash,
+			full_config_hash,
+			prompt_version,
+			provider,
+			model,
+			provider_request_id,
+			fencing_token,
+			result_payload
+		)
+		VALUES (
+			$1, $2, $3, $4, 'SCENE', $5, $6, $7, $8,
+			'IELTS_SPEAKING', $9, $10, $11, $12, $13,
+			$14, $15, $16
+		)
+	`, claim.ModuleRunID, claim.EvaluationID,
+		claim.EvaluationRevisionID, claim.OwnerUserID,
+		claim.StrategyRef, claim.Snapshot.PracticeSessionID,
+		claim.Snapshot.ID, claim.Snapshot.InputRevision,
+		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
+		claim.PromptVersion, claim.Provider, claim.Model,
+		providerRequestID, claim.FencingToken, payload)
+	return err
+}
+
+func assertIELTSResultPartBindingRejected(t *testing.T, err error) {
+	t.Helper()
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "23514" ||
+		databaseError.Message != "invalid IELTS Part result binding" {
+		t.Fatalf("IELTS result Part binding error = %v", err)
 	}
 }
 
@@ -452,7 +572,7 @@ func prepareIELTSSpeakingShadowRuntime(
 	)
 	repository := NewPostgresRepository(pool)
 	evidenceRepository := evidence.NewPostgresRepository(pool)
-	snapshot := ieltsSpeakingTestSnapshot(t, scoring.IELTSQuestionCount)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
 	persistEvidenceSnapshotFixture(t, pool, snapshot)
 	service := evaluationcore.NewService(repository, evidenceRepository)
 	evaluation, replayed, err := service.Create(

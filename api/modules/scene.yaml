@@ -63,27 +63,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/scenes/ielts-speaking/question-bank:
-    get:
-      tags:
-        - Scene
-      summary: Get the published IELTS Speaking question bank
-      description: |
-        Returns the current published Part 1 sets and Part 2/Part 3 topic
-        groups. Hidden or incomplete topic groups are never exposed.
-      operationId: getIeltsSpeakingQuestionBank
-      security: []
-      responses:
-        '200':
-          description: Published IELTS Speaking sets in stable catalog order.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IeltsQuestionBank'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   parameters:
     SceneId:
@@ -100,27 +79,25 @@ components:
     Version:
       type: integer
       minimum: 1
-    SceneFamily:
+    PracticeExperience:
       type: string
       enum:
         - INTERVIEW
-        - EXAM
-        - WORKPLACE
-        - DAILY
-    SceneModel:
+        - IELTS_SPEAKING
+        - ROLEPLAY
+    SceneCategory:
       type: string
       enum:
-        - PROJECT_EXPERIENCE_DEEP_DIVE
-        - INTERVIEW_BASIC_DIALOGUE
-        - IELTS_SPEAKING_PART_1
-        - IELTS_SPEAKING_PART_2
-        - IELTS_SPEAKING_PART_3
-        - IELTS_SPEAKING_FULL_MOCK
-        - EXAM_BASIC_DIALOGUE
-        - PROGRESS_AND_RISK_UPDATE
-        - WORKPLACE_BASIC_DIALOGUE
-        - HOTEL_CHECKIN_AND_ISSUE_HANDLING
-        - DAILY_BASIC_DIALOGUE
+        - INTERVIEW_RECRUITER
+        - INTERVIEW_BEHAVIORAL
+        - INTERVIEW_PROFESSIONAL
+        - INTERVIEW_HIRING_MANAGER
+        - INTERVIEW_CUSTOM
+        - IELTS_SPEAKING
+        - ROLEPLAY_WORKPLACE
+        - ROLEPLAY_TRAVEL
+        - ROLEPLAY_DAILY
+        - ROLEPLAY_CUSTOM
     SceneStatus:
       type: string
       enum:
@@ -137,7 +114,6 @@ components:
         - persona_summary
         - focus_areas
         - turn_blueprints
-        - suggested_duration_seconds
       properties:
         public_scene_brief:
           type: string
@@ -167,9 +143,6 @@ components:
           items:
             type: string
             minLength: 1
-        suggested_duration_seconds:
-          type: integer
-          minimum: 1
     PracticeObjectiveDefinition:
       type: object
       additionalProperties: false
@@ -230,19 +203,27 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RoleDefinition'
-    PracticeOptionType:
+    PracticeMode:
       type: string
       enum:
         - FULL_SIMULATION
         - FOCUS
+        - FULL_MOCK
+        - PART_1
+        - PART_2
+        - PART_3
     PracticeOption:
       type: object
       additionalProperties: false
       required:
         - practice_option_id
         - scene_id
-        - practice_option_type
+        - practice_mode
         - display_name
+        - suggested_duration_seconds
+        - turn_policy_ref
+        - session_policy_ref
+        - evaluation_policy_ref
       properties:
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
@@ -250,34 +231,40 @@ components:
           $ref: '#/components/schemas/ResourceId'
         role_definition_id:
           $ref: '#/components/schemas/ResourceId'
-        practice_option_type:
-          $ref: '#/components/schemas/PracticeOptionType'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
         display_name:
           type: string
           minLength: 1
+        suggested_duration_seconds:
+          type: integer
+          minimum: 1
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        evaluation_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
     SceneDefinition:
       type: object
       additionalProperties: false
       required:
         - scene_id
-        - scene_family
-        - scene_model
+        - practice_experience
+        - scene_category
         - name
         - scene_version
         - status
-        - turn_policy_ref
-        - session_policy_ref
-        - evaluation_policy_ref
         - prompt
         - roles
         - practice_options
       properties:
         scene_id:
           $ref: '#/components/schemas/ResourceId'
-        scene_family:
-          $ref: '#/components/schemas/SceneFamily'
-        scene_model:
-          $ref: '#/components/schemas/SceneModel'
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
         name:
           type: string
           minLength: 1
@@ -285,12 +272,6 @@ components:
           $ref: '#/components/schemas/Version'
         status:
           $ref: '#/components/schemas/SceneStatus'
-        turn_policy_ref:
-          $ref: '#/components/schemas/ResourceId'
-        session_policy_ref:
-          $ref: '#/components/schemas/ResourceId'
-        evaluation_policy_ref:
-          $ref: '#/components/schemas/ResourceId'
         prompt:
           $ref: '#/components/schemas/ScenePrompt'
         roles:
@@ -313,199 +294,3 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SceneDefinition'
-    IeltsQuestionBank:
-      type: object
-      additionalProperties: false
-      required:
-        - schema_version
-        - bank_id
-        - season
-        - source_cutoff
-        - part1_sets
-        - part1_topics
-        - topic_groups
-      properties:
-        schema_version:
-          type: integer
-          const: 2
-        bank_id:
-          $ref: '#/components/schemas/ResourceId'
-        season:
-          type: string
-          minLength: 1
-        source_cutoff:
-          type: string
-          format: date-time
-        part1_sets:
-          type: array
-          minItems: 38
-          maxItems: 38
-          items:
-            $ref: '#/components/schemas/IeltsPart1Set'
-        part1_topics:
-          type: array
-          minItems: 38
-          maxItems: 38
-          items:
-            $ref: '#/components/schemas/IeltsPart1PracticeTopic'
-        topic_groups:
-          type: array
-          minItems: 56
-          maxItems: 56
-          items:
-            $ref: '#/components/schemas/IeltsTopicGroup'
-    IeltsPart1Set:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - title
-        - topics
-        - question_count
-        - published
-      properties:
-        id:
-          $ref: '#/components/schemas/ResourceId'
-        title:
-          type: string
-          minLength: 1
-        topics:
-          type: array
-          minItems: 3
-          maxItems: 3
-          items:
-            $ref: '#/components/schemas/IeltsPart1Topic'
-        question_count:
-          type: integer
-          const: 8
-        published:
-          type: boolean
-          const: true
-    IeltsPart1Topic:
-      type: object
-      additionalProperties: false
-      required:
-        - title
-        - release
-        - questions
-      properties:
-        title:
-          type: string
-          minLength: 1
-        release:
-          type: string
-          enum:
-            - new
-            - carry_over
-            - evergreen
-        questions:
-          type: array
-          minItems: 2
-          items:
-            type: string
-            minLength: 1
-    IeltsPart1PracticeTopic:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - title_zh
-        - title_en
-        - release
-        - category
-        - questions
-        - published
-      properties:
-        id:
-          $ref: '#/components/schemas/ResourceId'
-        title_zh:
-          type: string
-          minLength: 1
-        title_en:
-          type: string
-          minLength: 1
-        release:
-          type: string
-          enum:
-            - new
-            - carry_over
-            - evergreen
-        category:
-          $ref: '#/components/schemas/IeltsTopicCategory'
-        questions:
-          type: array
-          minItems: 2
-          items:
-            type: string
-            minLength: 1
-        published:
-          type: boolean
-          const: true
-    IeltsTopicGroup:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - title_zh
-        - release
-        - region
-        - category
-        - part2
-        - part3_questions
-        - published
-        - supplemented_question_count
-      properties:
-        id:
-          $ref: '#/components/schemas/ResourceId'
-        title_zh:
-          type: string
-          minLength: 1
-        release:
-          type: string
-          enum:
-            - new
-            - carry_over
-        region:
-          type: string
-          const: mainland
-        category:
-          $ref: '#/components/schemas/IeltsTopicCategory'
-        part2:
-          $ref: '#/components/schemas/IeltsPart2CueCard'
-        part3_questions:
-          type: array
-          minItems: 1
-          maxItems: 6
-          items:
-            type: string
-            minLength: 1
-        published:
-          type: boolean
-          const: true
-        supplemented_question_count:
-          type: integer
-          minimum: 0
-          maximum: 5
-    IeltsPart2CueCard:
-      type: object
-      additionalProperties: false
-      required:
-        - prompt
-        - points
-      properties:
-        prompt:
-          type: string
-          minLength: 1
-        points:
-          type: array
-          minItems: 3
-          items:
-            type: string
-            minLength: 1
-    IeltsTopicCategory:
-      type: string
-      enum:
-        - person
-        - place
-        - thing
-        - event

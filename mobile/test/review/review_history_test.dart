@@ -1409,8 +1409,8 @@ _ReviewShellHarness _configuredCompletedShellHarness(String identity) {
     composer: ComposerController(conversationController: conversation),
     practice: PracticeController(
       client: FakePracticeClient(
-        sceneFamily: scene.family,
-        sceneModel: scene.model,
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
         initialSnapshot: testPracticeSnapshot(
           scene: scene,
           sessionId: sessionId,
@@ -1494,7 +1494,7 @@ ReviewHistoryItem _sceneItem({
     practiceSessionId: 'session-$id',
     revision: 1,
     sceneType: sceneType,
-    sceneModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    sceneCategory: 'INTERVIEW_PROFESSIONAL',
     scoreability: scoreability,
     summary: scoreability == EvaluationReportScoreability.insufficient
         ? '当前回答不足以形成可靠结论。'

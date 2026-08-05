@@ -36,7 +36,9 @@ func ProjectGeneralSceneFormalReport(
 	formal := FormalReport{
 		SchemaVersion:      FormalReportSchemaVersion,
 		SceneType:          result.SceneType,
-		SceneModel:         result.SceneModel,
+		PracticeExperience: result.PracticeExperience,
+		SceneCategory:      result.SceneCategory,
+		PracticeMode:       result.PracticeMode,
 		ScoreabilityStatus: scoreability,
 		Summary:            summary,
 		Dimensions:         dimensions,

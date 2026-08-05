@@ -62,13 +62,15 @@ func mapLatestFormalReport(
 ) LatestPracticeReport {
 	report := stored.Report
 	result := LatestPracticeReport{
-		Scene:           sceneName(report.SceneType),
-		SceneModel:      report.SceneModel,
-		AssessmentMode:  assessmentMode(report.ScoreabilityStatus),
-		Summary:         report.Summary,
-		Dimensions:      make([]ReportDimension, len(report.Dimensions)),
-		PriorityActions: make([]ReportFinding, 0, len(report.PriorityActions)),
-		CompletedAt:     stored.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Scene:              sceneName(report.SceneType),
+		PracticeExperience: report.PracticeExperience,
+		SceneCategory:      report.SceneCategory,
+		PracticeMode:       report.PracticeMode,
+		AssessmentMode:     assessmentMode(report.ScoreabilityStatus),
+		Summary:            report.Summary,
+		Dimensions:         make([]ReportDimension, len(report.Dimensions)),
+		PriorityActions:    make([]ReportFinding, 0, len(report.PriorityActions)),
+		CompletedAt:        stored.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	findings := make(map[string]ReportFinding)
 	for index, dimension := range report.Dimensions {

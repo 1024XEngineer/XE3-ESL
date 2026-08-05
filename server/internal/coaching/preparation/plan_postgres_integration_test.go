@@ -9,12 +9,14 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 )
 
 const (
@@ -256,6 +258,27 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 		actor.SessionID,
 		"ielts",
 	)
+	nonIELTSCommand := command
+	nonIELTSCommand.PlanID = "plan-pg-ielts-presence-non-ielts"
+	nonIELTSCommand.Intent = planTestIntent(
+		"POST",
+		"/v1/practice-plans",
+		"plan-create-key-ielts-presence-non-ielts",
+		map[string]any{"plan_id": nonIELTSCommand.PlanID},
+	)
+	nonIELTSPlan, replayed, err := repository.CreatePlan(
+		context.Background(),
+		actor,
+		nonIELTSCommand,
+	)
+	if err != nil || replayed {
+		t.Fatalf(
+			"CreatePlan non-IELTS presence fixture = (%#v, %t, %v)",
+			nonIELTSPlan,
+			replayed,
+			err,
+		)
+	}
 	catalog, err := scene.NewPostgresCatalog(
 		pool,
 		scoring.NewEvaluationPolicyRegistry(),
@@ -265,41 +288,50 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	}
 	selection, err := catalog.ResolveSelection(
 		context.Background(),
-		"scn_ielts_speaking_part_2",
+		"scn_ielts_speaking",
 		1,
-		[]string{"role_ielts_examiner"},
-		"option_ielts_full_simulation",
+		[]string{"role_ielts_speaking_examiner"},
+		"option_ielts_speaking_part_2",
 	)
 	if err != nil {
 		t.Fatalf("ResolveSelection IELTS: %v", err)
 	}
-	bank, err := catalog.IELTSQuestionBank()
+	questionBank, err := ielts.NewBank()
+	if err != nil {
+		t.Fatalf("New IELTS Bank: %v", err)
+	}
+	bank, err := questionBank.QuestionBank()
 	if err != nil || len(bank.TopicGroups) == 0 {
 		t.Fatalf("IELTSQuestionBank = (%d, %v)", len(bank.TopicGroups), err)
 	}
-	questionSelection := scene.IELTSQuestionSetSelection{
-		Mode:         scene.IELTSPracticeModePart2,
+	questionSelection := ielts.QuestionSetSelection{
+		Mode:         ielts.PracticeModePart2,
 		TopicGroupID: bank.TopicGroups[0].ID,
 	}
-	resolved, err := catalog.ResolveIELTSQuestionSet(questionSelection)
+	resolved, err := questionBank.ResolveQuestionSet(questionSelection)
 	if err != nil {
 		t.Fatalf("ResolveIELTSQuestionSet: %v", err)
 	}
 	assignment := &preparation.IELTSAssignmentSnapshot{
-		BankID:         resolved.BankID,
-		Season:         resolved.Season,
-		Mode:           resolved.Mode,
-		TopicGroupID:   resolved.TopicGroupID,
-		TopicTitle:     resolved.TopicTitle,
-		Part2CueCard:   resolved.Part2CueCard,
-		Part1Questions: resolved.Part1Questions,
-		Part2Questions: resolved.Part2Questions,
-		Part3Questions: resolved.Part3Questions,
-		TurnBlueprints: append([]string(nil), resolved.TurnBlueprints...),
+		BankID: resolved.BankID,
+		Season: resolved.Season,
+		Mode:   scene.PracticeMode(resolved.Mode),
+		Parts:  make([]preparation.IELTSAssignmentPartSnapshot, len(resolved.Parts)),
+	}
+	var turnBlueprints []string
+	for index, part := range resolved.Parts {
+		assignment.Parts[index] = preparation.IELTSAssignmentPartSnapshot{
+			Part:           scene.PracticeMode(part.Part),
+			SourceID:       part.SourceID,
+			TopicTitle:     part.TopicTitle,
+			CueCard:        part.CueCard,
+			TurnBlueprints: append([]string(nil), part.TurnBlueprints...),
+		}
+		turnBlueprints = append(turnBlueprints, part.TurnBlueprints...)
 	}
 	selection.Scene.Prompt.TurnBlueprints = append(
 		[]string(nil),
-		resolved.TurnBlueprints...,
+		turnBlueprints...,
 	)
 	selection.Scene.Prompt.PublicSceneBrief =
 		"This IELTS Part 2 brief is frozen with the Plan revision."
@@ -333,7 +365,6 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 			PracticeOptionID:      selection.PracticeOptionID,
 			MaxEffectiveTurns:     policy.MaxEffectiveTurns,
 			IELTSSelection: &preparation.IELTSQuestionSelection{
-				Mode:         questionSelection.Mode,
 				TopicGroupID: questionSelection.TopicGroupID,
 			},
 		},
@@ -388,7 +419,13 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	changed := revise
 	changed.ExpectedPlanRevision = revised.Revision
 	changedAssignment := *assignment
-	changedAssignment.TopicGroupID = "different-topic"
+	changedAssignment.Parts = append(
+		[]preparation.IELTSAssignmentPartSnapshot(nil),
+		assignment.Parts...,
+	)
+	for index := range changedAssignment.Parts {
+		changedAssignment.Parts[index].SourceID = "different-topic"
+	}
 	changed.IELTSAssignment = &changedAssignment
 	changed.Intent = planTestIntent(
 		"PUT",
@@ -402,6 +439,97 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 		changed,
 	); !errors.Is(err, preparation.ErrPlanConflict) {
 		t.Fatalf("changed frozen IELTS assignment error = %v", err)
+	}
+
+	assertIELTSAssignmentPresenceRejected(
+		t,
+		insertRawPlanRevision(
+			t,
+			pool,
+			nonIELTSPlan,
+			nonIELTSPlan.Revision+1,
+			assignment,
+		),
+	)
+	assertIELTSAssignmentPresenceRejected(
+		t,
+		insertRawPlanRevision(
+			t,
+			pool,
+			revised,
+			revised.Revision+1,
+			nil,
+		),
+	)
+}
+
+func insertRawPlanRevision(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	plan preparation.PracticePlan,
+	revision int,
+	assignment any,
+) error {
+	t.Helper()
+	encode := func(value any) []byte {
+		document, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("encode raw Plan revision fixture: %v", err)
+		}
+		return document
+	}
+	var assignmentDocument any
+	if assignment != nil {
+		assignmentDocument = encode(assignment)
+	}
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO preparation_practice_plan_revisions (
+			owner_user_id,
+			plan_id,
+			revision,
+			goal_id,
+			goal_version,
+			goal_snapshot,
+			preparation_snapshot_id,
+			preparation_snapshot,
+			scene_id,
+			scene_version,
+			scene_selection,
+			session_policy,
+			practice_objectives,
+			ielts_assignment
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12, $13, $14
+		)
+	`,
+		plan.UserID,
+		plan.ID,
+		revision,
+		plan.GoalSnapshot.ID,
+		plan.GoalSnapshot.Version,
+		encode(plan.GoalSnapshot),
+		plan.PreparationSnapshot.ID,
+		encode(plan.PreparationSnapshot),
+		plan.SceneSelection.Scene.ID,
+		plan.SceneSelection.Scene.Version,
+		encode(plan.SceneSelection),
+		encode(plan.SessionPolicy),
+		encode(plan.PracticeObjectives),
+		assignmentDocument,
+	)
+	return err
+}
+
+func assertIELTSAssignmentPresenceRejected(t *testing.T, err error) {
+	t.Helper()
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) ||
+		databaseError.Code != "23514" ||
+		databaseError.ConstraintName !=
+			"preparation_practice_plan_revisions_ielts_check" {
+		t.Fatalf("IELTS assignment presence error = %v", err)
 	}
 }
 
@@ -779,35 +907,41 @@ func seedBlockingPracticeSession(
 		t.Fatalf("begin Practice Session fixture: %v", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	option, err := plan.SceneSelection.PracticeOption()
+	if err != nil {
+		t.Fatalf("resolve blocking Practice option: %v", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, status, version,
 			effective_turns, started_at, snapshot_id,
-			scene_family, scene_model, evaluation_policy_ref, plan_revision
+			practice_experience, scene_category, practice_mode,
+			evaluation_policy_ref, plan_revision
 		) VALUES (
 			$1, 'session-blocking-delete', $2, 'in_progress', 1,
 			0, transaction_timestamp(), 'session-blocking-snapshot',
-			$3, $4, $5, $6
+			$3, $4, $5, $6, $7
 		)
 	`,
 		plan.UserID,
 		plan.ID,
-		plan.SceneSelection.Scene.Family,
-		plan.SceneSelection.Scene.Model,
-		plan.SceneSelection.Scene.EvaluationPolicyRef,
+		plan.SceneSelection.Scene.Experience,
+		plan.SceneSelection.Scene.Category,
+		option.Mode,
+		option.EvaluationPolicyRef,
 		plan.Revision,
 	); err != nil {
 		t.Fatalf("insert blocking Practice Session: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO practice_session_snapshots (
-			owner_user_id, session_id, mode, target_ids, participants,
+			owner_user_id, session_id, practice_mode, target_ids, participants,
 			turn_limit, snapshot_id, snapshot_document
 		) VALUES (
-			$1, 'session-blocking-delete', 'formal', '[]'::jsonb,
+			$1, 'session-blocking-delete', $2, '[]'::jsonb,
 			'[]'::jsonb, 1, 'session-blocking-snapshot', '{}'::jsonb
 		)
-	`, plan.UserID); err != nil {
+	`, plan.UserID, option.Mode); err != nil {
 		t.Fatalf("insert blocking Practice Session Snapshot: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -99,8 +99,9 @@ func prepareGeneralScenePostgresRuntime(
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluationcore.SceneOverseasWorkplace,
-		scene.SceneFamilyWorkplace,
-		scene.SceneModelProgressAndRiskUpdate,
+		scene.PracticeExperienceRoleplay,
+		scene.SceneCategoryRoleplayWorkplace,
+		scene.PracticeModeFullSimulation,
 		transcript,
 	)
 	persistEvidenceSnapshotFixture(t, pool, snapshot)

@@ -4,9 +4,9 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_client.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';

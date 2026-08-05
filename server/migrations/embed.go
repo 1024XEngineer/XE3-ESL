@@ -59,4 +59,5 @@ import "embed"
 //go:embed 000071_practice_execution_policy_refs.*.sql
 //go:embed 000072_ielts_dedicated_assignment_limits.*.sql
 //go:embed 000073_agent_message_memes.*.sql
+//go:embed 000074_scene_experience_policy_boundary.*.sql
 var Files embed.FS

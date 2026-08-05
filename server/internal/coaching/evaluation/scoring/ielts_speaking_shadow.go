@@ -17,7 +17,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 const (
@@ -26,15 +25,12 @@ const (
 	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v4"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
-	ieltsFullMockSceneID      = "scn_ielts_speaking_full"
-	ieltsFullMockSceneVersion = 2
-
 	ieltsMaximumProviderPayload = 64 * 1024
 	ieltsMaximumFindingText     = 2048
 	ieltsMaximumFindings        = 3
 	ieltsMaximumAnchors         = 4
 	ieltsMaximumOccurrence      = 16
-	IELTSQuestionCount          = 14
+	ieltsMaximumQuestions       = 64
 	ieltsMinimumEnglishWords    = 10
 	ieltsMinimumEnglishTurns    = 3
 	ieltsMinimumAcousticMS      = 3000
@@ -155,7 +151,7 @@ type IELTSSpeakingShadowProviderInput struct {
 	PromptVersion      string                          `json:"prompt_version"`
 	RubricVersion      string                          `json:"rubric_version"`
 	SceneType          evaluation.SceneType            `json:"scene_type"`
-	SceneModel         string                          `json:"scene_model"`
+	PracticeMode       string                          `json:"practice_mode"`
 	RubricDescriptors  []IELTSRubricDescriptorSet      `json:"rubric_descriptors"`
 	AssessableCriteria []IELTSCriterion                `json:"assessable_criteria"`
 	Questions          []IELTSSpeakingProviderQuestion `json:"questions"`
@@ -466,17 +462,18 @@ func validOptionalIELTSSpeakingSpeed(value *float64) bool {
 }
 
 type preparedIELTSSpeakingShadow struct {
-	evidence     evidence.SnapshotPayload
-	input        IELTSSpeakingShadowProviderInput
-	result       IELTSSpeakingShadowResult
-	turnsByID    map[string]evidence.ConfirmedTurn
-	refsByID     map[string]evidence.Ref
-	refsByTurnID map[string]evidence.Ref
-	responseRefs map[string]struct{}
-	englishTurns int
-	englishWords int
-	acousticRefs map[string]struct{}
-	acousticMS   int64
+	evidence      evidence.SnapshotPayload
+	input         IELTSSpeakingShadowProviderInput
+	result        IELTSSpeakingShadowResult
+	turnsByID     map[string]evidence.ConfirmedTurn
+	refsByID      map[string]evidence.Ref
+	refsByTurnID  map[string]evidence.Ref
+	responseRefs  map[string]struct{}
+	questionParts []IELTSPart
+	englishTurns  int
+	englishWords  int
+	acousticRefs  map[string]struct{}
+	acousticMS    int64
 }
 
 const (
@@ -496,9 +493,14 @@ func prepareIELTSSpeakingShadow(
 	var payload evidence.SnapshotPayload
 	decoder := json.NewDecoder(bytes.NewReader(snapshot.Payload))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil ||
-		!isFrozenIELTSFullMock(payload.PracticeContext) ||
-		len(payload.OpportunityManifest) != IELTSQuestionCount {
+	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil {
+		return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
+	}
+	questionParts, validAssignment := frozenIELTSFullMockQuestionParts(
+		payload.PracticeContext,
+	)
+	questionCount := len(questionParts)
+	if !validAssignment || len(payload.OpportunityManifest) != questionCount {
 		return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
 	}
 
@@ -516,11 +518,11 @@ func prepareIELTSSpeakingShadow(
 		refsByTurnID[ref.TurnID] = ref
 	}
 
-	responseRefs := make(map[string]struct{}, IELTSQuestionCount)
+	responseRefs := make(map[string]struct{}, questionCount)
 	questions := make(
 		[]IELTSSpeakingProviderQuestion,
 		0,
-		IELTSQuestionCount,
+		questionCount,
 	)
 	answered := 0
 	englishTurns := 0
@@ -532,7 +534,7 @@ func prepareIELTSSpeakingShadow(
 		}
 		providerQuestion := IELTSSpeakingProviderQuestion{
 			QuestionID:   opportunity.QuestionID,
-			PartID:       IELTSPartForQuestionIndex(sequence),
+			PartID:       questionParts[index],
 			Index:        sequence,
 			QuestionText: opportunity.QuestionText,
 		}
@@ -572,17 +574,18 @@ func prepareIELTSSpeakingShadow(
 	}
 
 	prepared := preparedIELTSSpeakingShadow{
-		evidence:     payload,
-		result:       ieltsSpeakingResultSkeleton(snapshot),
-		turnsByID:    turnsByID,
-		refsByID:     refsByID,
-		refsByTurnID: refsByTurnID,
-		responseRefs: responseRefs,
-		englishTurns: englishTurns,
-		englishWords: englishWords,
-		acousticRefs: make(map[string]struct{}),
+		evidence:      payload,
+		result:        ieltsSpeakingResultSkeleton(snapshot),
+		turnsByID:     turnsByID,
+		refsByID:      refsByID,
+		refsByTurnID:  refsByTurnID,
+		responseRefs:  responseRefs,
+		questionParts: questionParts,
+		englishTurns:  englishTurns,
+		englishWords:  englishWords,
+		acousticRefs:  make(map[string]struct{}),
 	}
-	if answered != IELTSQuestionCount {
+	if answered != questionCount {
 		prepared.result.Scoreability =
 			IELTSSpeakingScoreabilityInsufficient
 		prepared.result.Gate = IELTSSpeakingGateBlocked
@@ -590,7 +593,7 @@ func prepareIELTSSpeakingShadow(
 			IELTSReasonOpportunityNotProvided,
 		}
 		prepared.result.Criteria = blockedIELTSCriteria(
-			ratio(answered, IELTSQuestionCount),
+			ratio(answered, questionCount),
 			IELTSReasonOpportunityNotProvided,
 		)
 		prepared.result.QuestionResults =
@@ -608,7 +611,7 @@ func prepareIELTSSpeakingShadow(
 			IELTSReasonInsufficientEvidence,
 		}
 		prepared.result.Criteria = blockedIELTSCriteria(
-			ratio(englishTurns, IELTSQuestionCount),
+			ratio(englishTurns, questionCount),
 			IELTSReasonInsufficientEvidence,
 		)
 		prepared.result.QuestionResults = ieltsSpeakingQuestionResults(
@@ -631,7 +634,7 @@ func prepareIELTSSpeakingShadow(
 		PromptVersion:     IELTSSpeakingShadowPromptVersion,
 		RubricVersion:     IELTSSpeakingShadowRubricVersion,
 		SceneType:         evaluation.SceneIELTSSpeaking,
-		SceneModel:        string(scene.SceneModelIELTSSpeakingFullMock),
+		PracticeMode:      payload.PracticeContext.PracticeMode,
 		RubricDescriptors: ieltsRubricDescriptorSets(),
 		AssessableCriteria: []IELTSCriterion{
 			IELTSCriterionFC,
@@ -666,27 +669,65 @@ func ieltsLanguageEvidence(text string) (englishWords int, cjkCharacters int) {
 	return englishWords, cjkCharacters
 }
 
-func isFrozenIELTSFullMock(context evidence.PracticeContext) bool {
-	return context.SceneFamily ==
-		string(scene.SceneFamilyExam) &&
-		context.SceneModel ==
-			string(scene.SceneModelIELTSSpeakingFullMock) &&
-		context.Scene.ID == ieltsFullMockSceneID &&
-		context.Scene.Version == ieltsFullMockSceneVersion &&
-		len(context.TaskBlueprints) == IELTSQuestionCount
-}
-
-func IELTSPartForQuestionIndex(index int) IELTSPart {
-	switch {
-	case index >= 1 && index <= 8:
-		return IELTSPart1
-	case index == 9:
-		return IELTSPart2
-	case index >= 10 && index <= 14:
-		return IELTSPart3
-	default:
-		return ""
+func frozenIELTSFullMockQuestionParts(
+	context evidence.PracticeContext,
+) ([]IELTSPart, bool) {
+	assignment := context.IELTSAssignment
+	if context.EvaluationPolicyRef !=
+		IELTSSpeakingFullMockEvaluationPolicyRef ||
+		context.PracticeMode != "FULL_MOCK" || assignment == nil ||
+		assignment.Mode != "FULL_MOCK" ||
+		!validIdentifier(assignment.BankID) ||
+		strings.TrimSpace(assignment.Season) == "" ||
+		strings.TrimSpace(assignment.Season) != assignment.Season ||
+		len(assignment.Parts) != 3 {
+		return nil, false
 	}
+	expectedParts := [...]IELTSPart{IELTSPart1, IELTSPart2, IELTSPart3}
+	questionParts := make([]IELTSPart, 0, len(context.TaskBlueprints))
+	blueprints := make([]string, 0, len(context.TaskBlueprints))
+	for index, part := range assignment.Parts {
+		partID := IELTSPart(part.Part)
+		if partID != expectedParts[index] || !validIdentifier(part.SourceID) ||
+			len(part.TurnBlueprints) == 0 {
+			return nil, false
+		}
+		for _, blueprint := range part.TurnBlueprints {
+			if strings.TrimSpace(blueprint) == "" ||
+				strings.TrimSpace(blueprint) != blueprint {
+				return nil, false
+			}
+			questionParts = append(questionParts, partID)
+			blueprints = append(blueprints, blueprint)
+		}
+		switch partID {
+		case IELTSPart1:
+			if part.TopicTitle != "" || part.CueCard != "" {
+				return nil, false
+			}
+		case IELTSPart2:
+			if strings.TrimSpace(part.TopicTitle) == "" ||
+				strings.TrimSpace(part.TopicTitle) != part.TopicTitle ||
+				strings.TrimSpace(part.CueCard) == "" ||
+				strings.TrimSpace(part.CueCard) != part.CueCard ||
+				len(part.TurnBlueprints) != 1 {
+				return nil, false
+			}
+		case IELTSPart3:
+			if strings.TrimSpace(part.TopicTitle) == "" ||
+				strings.TrimSpace(part.TopicTitle) != part.TopicTitle ||
+				part.CueCard != "" {
+				return nil, false
+			}
+		}
+	}
+	if assignment.Parts[1].SourceID != assignment.Parts[2].SourceID ||
+		assignment.Parts[1].TopicTitle != assignment.Parts[2].TopicTitle ||
+		len(questionParts) == 0 || len(questionParts) > ieltsMaximumQuestions ||
+		!slices.Equal(blueprints, context.TaskBlueprints) {
+		return nil, false
+	}
+	return questionParts, true
 }
 
 func ieltsSpeakingResultSkeleton(
@@ -1052,12 +1093,12 @@ func normalizeIELTSProviderCriterion(
 	}
 	result.Coverage = ratio(
 		len(result.EvidenceRefIDs),
-		IELTSQuestionCount,
+		len(prepared.questionParts),
 	)
 	if source.CriterionID == IELTSCriterionPR && fullAcoustics {
 		result.Coverage = ratio(
 			len(prepared.acousticRefs),
-			IELTSQuestionCount,
+			len(prepared.questionParts),
 		)
 	}
 	return result, nil
@@ -1255,12 +1296,12 @@ func ieltsSpeakingQuestionResults(
 	results := make(
 		[]IELTSSpeakingShadowQuestionResult,
 		0,
-		IELTSQuestionCount,
+		len(prepared.questionParts),
 	)
 	for index, opportunity := range prepared.evidence.OpportunityManifest {
 		question := IELTSSpeakingShadowQuestionResult{
 			QuestionID:        opportunity.QuestionID,
-			PartID:            IELTSPartForQuestionIndex(index + 1),
+			PartID:            prepared.questionParts[index],
 			Index:             index + 1,
 			OpportunityStatus: IELTSOpportunityNotProvided,
 			AssessmentStatus:  IELTSAssessmentNotAssessed,
@@ -1443,9 +1484,10 @@ func validIELTSSpeakingProviderInput(
 		input.PromptVersion != IELTSSpeakingShadowPromptVersion ||
 		input.RubricVersion != IELTSSpeakingShadowRubricVersion ||
 		input.SceneType != evaluation.SceneIELTSSpeaking ||
-		input.SceneModel !=
-			string(scene.SceneModelIELTSSpeakingFullMock) ||
-		len(input.Questions) != IELTSQuestionCount {
+		input.PracticeMode != "FULL_MOCK" ||
+		len(input.Questions) == 0 ||
+		len(input.Questions) > ieltsMaximumQuestions ||
+		!validIELTSFullMockQuestionSequence(input.Questions) {
 		return false
 	}
 	fullAcoustics := slices.Equal(
@@ -1480,14 +1522,13 @@ func validIELTSSpeakingProviderInput(
 			return false
 		}
 	}
-	seenQuestions := make(map[string]struct{}, IELTSQuestionCount)
-	seenTurns := make(map[string]struct{}, IELTSQuestionCount)
-	seenRefs := make(map[string]struct{}, IELTSQuestionCount)
+	seenQuestions := make(map[string]struct{}, len(input.Questions))
+	seenTurns := make(map[string]struct{}, len(input.Questions))
+	seenRefs := make(map[string]struct{}, len(input.Questions))
 	acousticResponses := 0
 	for index, question := range input.Questions {
 		expected := index + 1
 		if question.Index != expected ||
-			question.PartID != IELTSPartForQuestionIndex(expected) ||
 			!validIdentifier(question.QuestionID) ||
 			!validInterviewText(
 				question.QuestionText,
@@ -1562,6 +1603,26 @@ func validIELTSSpeakingProviderInput(
 	return !fullAcoustics || acousticResponses > 0
 }
 
+func validIELTSFullMockQuestionSequence(
+	questions []IELTSSpeakingProviderQuestion,
+) bool {
+	if len(questions) == 0 || questions[0].PartID != IELTSPart1 {
+		return false
+	}
+	partIndex := 0
+	for _, question := range questions[1:] {
+		if question.PartID == ieltsPartOrder[partIndex] {
+			continue
+		}
+		if partIndex+1 >= len(ieltsPartOrder) ||
+			question.PartID != ieltsPartOrder[partIndex+1] {
+			return false
+		}
+		partIndex++
+	}
+	return partIndex == len(ieltsPartOrder)-1
+}
+
 func stableIELTSFindingID(
 	snapshotID string,
 	criterion IELTSCriterion,
@@ -1610,7 +1671,7 @@ func ValidateIELTSSpeakingShadowResult(
 		result.Scoreability != prepared.result.Scoreability ||
 		result.Gate != prepared.result.Gate ||
 		len(result.Criteria) != len(ieltsCriterionOrder) ||
-		len(result.QuestionResults) != IELTSQuestionCount {
+		len(result.QuestionResults) != len(prepared.questionParts) {
 		return ErrInvalidIELTSSpeakingShadow
 	}
 	switch result.Scoreability {
@@ -1664,6 +1725,7 @@ func ValidateIELTSSpeakingShadowResult(
 		result.Criteria[len(result.Criteria)-1].CriterionID == IELTSCriterionPR &&
 		result.Criteria[len(result.Criteria)-1].Scoreability ==
 			IELTSSpeakingScoreabilityProvisional
+	questionCount := len(prepared.questionParts)
 	for index, criterion := range result.Criteria {
 		expectedScoreability := result.Scoreability
 		if criterion.CriterionID == IELTSCriterionPR && !fullAcoustics {
@@ -1749,13 +1811,13 @@ func ValidateIELTSSpeakingShadowResult(
 			}
 			expectedCoverage := ratio(
 				len(criterion.EvidenceRefIDs),
-				IELTSQuestionCount,
+				questionCount,
 			)
 			if criterion.CriterionID == IELTSCriterionPR && fullAcoustics {
 				if criterion.Coverage <= 0 || criterion.Coverage > 1 ||
 					!sameRatio(
-						criterion.Coverage*IELTSQuestionCount,
-						math.Round(criterion.Coverage*IELTSQuestionCount),
+						criterion.Coverage*float64(questionCount),
+						math.Round(criterion.Coverage*float64(questionCount)),
 					) {
 					return ErrInvalidIELTSSpeakingShadow
 				}
@@ -1807,12 +1869,12 @@ func ValidateIELTSSpeakingShadowResult(
 				return ErrInvalidIELTSSpeakingShadow
 			}
 		case IELTSSpeakingScoreabilityInsufficient:
-			expectedBlockedCoverage := ratio(answered, IELTSQuestionCount)
+			expectedBlockedCoverage := ratio(answered, questionCount)
 			if len(result.ReasonCodes) == 1 &&
 				result.ReasonCodes[0] == IELTSReasonInsufficientEvidence {
 				expectedBlockedCoverage = ratio(
 					prepared.englishTurns,
-					IELTSQuestionCount,
+					questionCount,
 				)
 			}
 			if criterion.Gate != IELTSSpeakingGateBlocked ||
@@ -1840,7 +1902,7 @@ func ValidateIELTSSpeakingShadowResult(
 		opportunity := prepared.evidence.OpportunityManifest[index]
 		if question.QuestionID != opportunity.QuestionID ||
 			question.Index != index+1 ||
-			question.PartID != IELTSPartForQuestionIndex(index+1) ||
+			question.PartID != prepared.questionParts[index] ||
 			question.EvidenceRefIDs == nil ||
 			len(question.CriterionFindings) !=
 				len(ieltsCriterionOrder) {

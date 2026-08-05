@@ -1103,6 +1103,7 @@ func newVoiceProductionIntegrationServer(
 		},
 		emptyBootstrapMemorySearcher{},
 		catalog,
+		newBootstrapTestIELTSQuestionBank(t),
 		testJobTargetGenerator(generator),
 		configuration,
 	)

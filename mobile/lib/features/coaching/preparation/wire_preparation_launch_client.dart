@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
@@ -13,19 +14,30 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
-const _sceneFamilies = <String>{'INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY'};
-const _sceneModels = <String>{
-  'PROJECT_EXPERIENCE_DEEP_DIVE',
-  'INTERVIEW_BASIC_DIALOGUE',
-  'IELTS_SPEAKING_PART_1',
-  'IELTS_SPEAKING_PART_2',
-  'IELTS_SPEAKING_PART_3',
-  'IELTS_SPEAKING_FULL_MOCK',
-  'EXAM_BASIC_DIALOGUE',
-  'PROGRESS_AND_RISK_UPDATE',
-  'WORKPLACE_BASIC_DIALOGUE',
-  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
-  'DAILY_BASIC_DIALOGUE',
+const _practiceExperiences = <String>{
+  'INTERVIEW',
+  'IELTS_SPEAKING',
+  'ROLEPLAY',
+};
+const _sceneCategories = <String>{
+  'INTERVIEW_RECRUITER',
+  'INTERVIEW_BEHAVIORAL',
+  'INTERVIEW_PROFESSIONAL',
+  'INTERVIEW_HIRING_MANAGER',
+  'INTERVIEW_CUSTOM',
+  'IELTS_SPEAKING',
+  'ROLEPLAY_WORKPLACE',
+  'ROLEPLAY_TRAVEL',
+  'ROLEPLAY_DAILY',
+  'ROLEPLAY_CUSTOM',
+};
+const _practiceModes = <String>{
+  'FULL_SIMULATION',
+  'FOCUS',
+  'FULL_MOCK',
+  'PART_1',
+  'PART_2',
+  'PART_3',
 };
 
 final class WirePreparationLaunchClient implements PreparationLaunchClient {
@@ -467,8 +479,9 @@ PreparationPracticeBootstrap _bootstrap(
       'practice_session_id',
       'practice_plan_id',
       'plan_revision',
-      'scene_family',
-      'scene_model',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
       'evaluation_policy_ref',
       'snapshot_id',
       'practice_session_status',
@@ -483,23 +496,35 @@ PreparationPracticeBootstrap _bootstrap(
     'starting',
     'in_progress',
   });
-  final sceneFamily =
-      SceneFamily.fromWireValue(
-        _enumText(sessionObject['scene_family'], _sceneFamilies),
+  final practiceExperience =
+      PracticeExperience.fromWireValue(
+        _enumText(sessionObject['practice_experience'], _practiceExperiences),
       ) ??
       (throw _invalidResponse());
-  final sceneModel =
-      SceneModel.fromWireValue(
-        _enumText(sessionObject['scene_model'], _sceneModels),
+  final sceneCategory =
+      SceneCategory.fromWireValue(
+        _enumText(sessionObject['scene_category'], _sceneCategories),
+      ) ??
+      (throw _invalidResponse());
+  final practiceMode =
+      PracticeMode.fromWireValue(
+        _enumText(sessionObject['practice_mode'], _practiceModes),
       ) ??
       (throw _invalidResponse());
   final expectedScene = expectedPlan.sceneSelection.scene;
+  final expectedOption = expectedScene.practiceOptions
+      .where(
+        (option) => option.id == expectedPlan.sceneSelection.practiceOptionId,
+      )
+      .firstOrNull;
   if (_resourceId(sessionObject['practice_plan_id']) != expectedPlan.id ||
       _version(sessionObject['plan_revision']) != expectedPlan.revision ||
-      sceneFamily != expectedScene.family ||
-      sceneModel != expectedScene.model ||
+      practiceExperience != expectedScene.experience ||
+      sceneCategory != expectedScene.category ||
+      expectedOption == null ||
+      practiceMode != expectedOption.mode ||
       _resourceId(sessionObject['evaluation_policy_ref']) !=
-          expectedScene.evaluationPolicyRef ||
+          expectedOption.evaluationPolicyRef ||
       (status == 'starting' && sessionObject['started_at'] != null) ||
       (status == 'in_progress' && sessionObject['started_at'] == null) ||
       sessionObject['ended_at'] != null ||
@@ -515,8 +540,9 @@ PreparationPracticeBootstrap _bootstrap(
       'snapshot_id',
       'practice_session_id',
       'plan_revision',
-      'scene_family',
-      'scene_model',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
       'scene_selection',
       'preparation_snapshot',
       'participants',
@@ -529,10 +555,12 @@ PreparationPracticeBootstrap _bootstrap(
   if (_resourceId(snapshotObject['snapshot_id']) != snapshotId ||
       _resourceId(snapshotObject['practice_session_id']) != sessionId ||
       _version(snapshotObject['plan_revision']) != expectedPlan.revision ||
-      _enumText(snapshotObject['scene_family'], _sceneFamilies) !=
-          expectedScene.family.wireValue ||
-      _enumText(snapshotObject['scene_model'], _sceneModels) !=
-          expectedScene.model.wireValue) {
+      _enumText(snapshotObject['practice_experience'], _practiceExperiences) !=
+          expectedScene.experience.wireValue ||
+      _enumText(snapshotObject['scene_category'], _sceneCategories) !=
+          expectedScene.category.wireValue ||
+      _enumText(snapshotObject['practice_mode'], _practiceModes) !=
+          practiceMode.wireValue) {
     throw _invalidResponse();
   }
   final sceneSelection = _decodeSceneSelection(
@@ -584,8 +612,9 @@ PreparationPracticeBootstrap _bootstrap(
     session: PreparationPracticeSession(
       id: sessionId,
       planId: expectedPlan.id,
-      sceneFamily: sceneFamily,
-      sceneModel: sceneModel,
+      practiceExperience: practiceExperience,
+      sceneCategory: sceneCategory,
+      practiceMode: practiceMode,
       snapshotId: snapshotId,
       status: status,
       version: _version(sessionObject['session_version']),
@@ -719,7 +748,10 @@ bool _sameSessionPolicy(
     left.maxFollowUpsPerQuestion == right.maxFollowUpsPerQuestion &&
     left.earlyCompletionRule == right.earlyCompletionRule &&
     left.retryAllowed == right.retryAllowed &&
-    left.questionTranslationAllowed == right.questionTranslationAllowed;
+    left.questionTranslationAllowed == right.questionTranslationAllowed &&
+    left.questionTipsAllowed == right.questionTipsAllowed &&
+    left.avatarAllowed == right.avatarAllowed &&
+    left.speechFeedbackAllowed == right.speechFeedbackAllowed;
 
 bool _sameObjectives(
   List<PracticeObjective> left,
@@ -882,7 +914,7 @@ void _requirePlanInput(CreatePreparationPlanInput input) {
     _requireResourceId(roleId);
   }
   if (input.ieltsSelection case final selection?) {
-    if (!selection.isValid) {
+    if ((selection.part1SetId == null && selection.topicGroupId == null)) {
       throw const PreparationLaunchException(
         kind: PreparationLaunchFailureKind.invalidRequest,
         stage: PreparationLaunchStage.plan,

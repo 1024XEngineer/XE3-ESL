@@ -74,8 +74,8 @@ void main() {
   test('never confirms a fourth Turn after Practice completion', () async {
     final scene = testScene(
       id: 'daily-review',
-      family: SceneFamily.daily,
-      model: SceneModel.dailyBasicDialogue,
+      experience: PracticeExperience.roleplay,
+      category: SceneCategory.roleplayDaily,
       name: 'Daily review',
     );
     final client = _CountingPracticeClient(scene);
@@ -138,8 +138,8 @@ void main() {
   test('restores a completed Practice without a retry state', () async {
     final scene = testScene(
       id: 'daily-restored-review',
-      family: SceneFamily.daily,
-      model: SceneModel.dailyBasicDialogue,
+      experience: PracticeExperience.roleplay,
+      category: SceneCategory.roleplayDaily,
       name: 'Daily restored review',
     );
     final practice = _CountingPracticeClient(
@@ -170,8 +170,8 @@ class _CountingPracticeClient implements PracticeClient {
     PracticeSessionSnapshot? initialSnapshot,
     this.confirmationFailuresRemaining = 0,
   }) : _delegate = FakePracticeClient(
-         sceneFamily: scene.family,
-         sceneModel: scene.model,
+         practiceExperience: scene.experience,
+         sceneCategory: scene.category,
          initialSnapshot: initialSnapshot,
        );
 

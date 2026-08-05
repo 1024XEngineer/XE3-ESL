@@ -119,7 +119,9 @@ func storedFormalReport() report.StoredFormalReport {
 		Report: report.FormalReport{
 			SchemaVersion:      report.FormalReportSchemaVersion,
 			SceneType:          evaluation.SceneInterview,
-			SceneModel:         "PROJECT_EXPERIENCE_DEEP_DIVE",
+			PracticeExperience: "INTERVIEW",
+			SceneCategory:      "INTERVIEW_PROFESSIONAL",
+			PracticeMode:       "FULL_SIMULATION",
 			ScoreabilityStatus: report.ReportScoreabilityProvisional,
 			Summary:            "本次练习已形成面试表达评估。",
 			Dimensions: []report.ReportDimension{{

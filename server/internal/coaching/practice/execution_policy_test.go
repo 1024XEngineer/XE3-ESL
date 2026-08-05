@@ -8,10 +8,12 @@ import (
 func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 	t.Parallel()
 	prompt := ScenePrompt{
-		SuggestedDurationSeconds: 600,
-		TurnBlueprints:           []string{"one", "two", "three", "four"},
+		TurnBlueprints: []string{"one", "two", "three", "four"},
 	}
-	option := PracticeOption{Type: PracticeOptionFullSimulation}
+	option := PracticeOption{
+		Mode:                     PracticeModeFullSimulation,
+		SuggestedDurationSeconds: 600,
+	}
 	tests := []struct {
 		name        string
 		reference   string
@@ -41,8 +43,9 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 				policy.MaxFollowUpsPerQuestion != test.followUps ||
 				!ValidSessionPolicy(
 					test.reference,
-					option.Type,
+					option.Mode,
 					len(prompt.TurnBlueprints),
+					option.SuggestedDurationSeconds,
 					policy,
 				) {
 				t.Fatalf("ResolveSessionPolicy() = %#v, %v", policy, err)
@@ -56,10 +59,12 @@ func TestValidSessionPolicyRejectsPolicyValueThatContradictsReference(
 ) {
 	t.Parallel()
 	prompt := ScenePrompt{
-		SuggestedDurationSeconds: 480,
-		TurnBlueprints:           []string{"one", "two", "three", "four"},
+		TurnBlueprints: []string{"one", "two", "three", "four"},
 	}
-	option := PracticeOption{Type: PracticeOptionFullSimulation}
+	option := PracticeOption{
+		Mode:                     PracticeModeFullSimulation,
+		SuggestedDurationSeconds: 480,
+	}
 	policy, err := ResolveSessionPolicy(
 		DailyPracticeSessionPolicy,
 		prompt,
@@ -72,8 +77,9 @@ func TestValidSessionPolicyRejectsPolicyValueThatContradictsReference(
 	policy.RetryAllowed = false
 	if ValidSessionPolicy(
 		DailyPracticeSessionPolicy,
-		option.Type,
+		option.Mode,
 		len(prompt.TurnBlueprints),
+		option.SuggestedDurationSeconds,
 		policy,
 	) {
 		t.Fatal("daily policy accepted contradictory retry value")
@@ -82,21 +88,27 @@ func TestValidSessionPolicyRejectsPolicyValueThatContradictsReference(
 
 func TestResolveSessionPolicyFreezesIELTSBlueprintCount(t *testing.T) {
 	t.Parallel()
+	blueprints := make([]string, 15)
+	for index := range blueprints {
+		blueprints[index] = "question"
+	}
 	prompt := ScenePrompt{
-		SuggestedDurationSeconds: 900,
-		TurnBlueprints:           []string{"one", "two", "three"},
+		TurnBlueprints: blueprints,
 	}
 	policy, err := ResolveSessionPolicy(
 		IELTSSpeakingPart2SessionPolicy,
 		prompt,
-		PracticeOption{Type: PracticeOptionFullSimulation},
+		PracticeOption{
+			Mode: PracticeModePart2, SuggestedDurationSeconds: 900,
+		},
 		0,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.MinEffectiveTurns != 3 || policy.MaxEffectiveTurns != 3 ||
-		policy.CoverageCheckpointTurn != 3 ||
+	if policy.MinEffectiveTurns != len(blueprints) ||
+		policy.MaxEffectiveTurns != len(blueprints) ||
+		policy.CoverageCheckpointTurn != len(blueprints) ||
 		policy.MaxFollowUpsPerQuestion != 0 || policy.RetryAllowed {
 		t.Fatalf("IELTS policy = %#v", policy)
 	}

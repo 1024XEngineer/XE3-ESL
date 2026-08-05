@@ -1,3 +1,4 @@
+import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 
 import 'dart:async';
@@ -5,16 +6,17 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
-import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
-import 'package:speakup/features/coaching/practice/practice.dart';
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
-import 'package:speakup/features/coaching/scene/scene_client.dart';
-import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
+import 'package:speakup/features/coaching/interview/interview_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
@@ -120,11 +122,7 @@ void main() {
     final speaker = _ImmediateExaminerSpeaker();
     final media = _QuestionMediaClient();
     final player = _QuestionAudioPlayer();
-    final practice = _IeltsPracticeClient(
-      initialCompleted: 0,
-      turnLimit: 1,
-      scenarioModel: 'IELTS_SPEAKING_PART_3',
-    );
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
     final controller = PracticeController(
       client: practice,
       mediaClient: media,
@@ -132,7 +130,12 @@ void main() {
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await _activatePractice(controller, practice, _ieltsPart3Scene);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part3,
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -240,11 +243,7 @@ void main() {
     'Part 2 section hides the Cue Card after formal recording starts',
     (tester) async {
       final now = DateTime.utc(2026, 8, 4, 8);
-      final practice = _IeltsPracticeClient(
-        initialCompleted: 0,
-        turnLimit: 6,
-        scenarioModel: 'IELTS_SPEAKING_PART_2',
-      );
+      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 6);
       final controller = PracticeController(
         client: practice,
         recorder: _Recorder(),
@@ -258,7 +257,12 @@ void main() {
         ),
       );
       addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, _ieltsPart2Scene);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: PracticeMode.part2,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
@@ -302,10 +306,10 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            practiceController: controller,
-            ieltsMockProgressStore: store,
-            ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: store,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -399,10 +403,10 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            practiceController: controller,
-            ieltsMockProgressStore: store,
-            ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: store,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -448,10 +452,10 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            practiceController: controller,
-            ieltsMockProgressStore: _MemoryProgressStore(),
-            ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -523,10 +527,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
-          ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -562,10 +566,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
-          ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -612,10 +616,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
-          ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -858,9 +862,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
       ),
     );
@@ -892,9 +896,9 @@ void main() {
                 key: const Key('open-completed-mock'),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => PracticePage(
-                      practiceController: controller,
-                      ieltsMockProgressStore: _MemoryProgressStore(),
+                    builder: (_) => IeltsSpeakingMockPage(
+                      controller: controller,
+                      progressStore: _MemoryProgressStore(),
                       onExitRequested: () async => true,
                     ),
                   ),
@@ -967,7 +971,9 @@ void main() {
       client: practice,
       recorder: _Recorder(),
     );
-    final preparation = PreparationController(client: _EmptySceneClient());
+    final preparation = IeltsPreparationController(
+      client: _UnusedQuestionBankClient(),
+    );
     final reportClient = _PendingReportClient();
     final reportController = IeltsSpeakingReportController(
       client: reportClient,
@@ -975,15 +981,18 @@ void main() {
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
     addTearDown(reportController.dispose);
-    await _activatePractice(controller, practice, _ieltsPart1Scene);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
     expect(controller.errorMessage, isNull);
     expect(controller.practiceSessionId, _sessionId);
-    await preparation.beginIeltsSession(
+    await preparation.beginSession(
       _sessionId,
-      const IeltsPracticeSelection(
-        mode: IeltsPracticeMode.part1,
-        part1SetId: 'p1-set-02',
-      ),
+      PracticeMode.part1,
+      const IeltsPracticeSelection(part1SetId: 'p1-set-02'),
     );
 
     await tester.pumpWidget(
@@ -991,7 +1000,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
-          preparationController: preparation,
+          ieltsController: preparation,
           completedReportBuilder: (_, practiceSessionId) =>
               IeltsSpeakingSessionReportPanel(
                 practiceSessionId: practiceSessionId,
@@ -1018,7 +1027,7 @@ void main() {
     expect(reportController.practiceSessionId, isNull);
   });
 
-  testWidgets('the full-mock Scene model opens the three-part flow', (
+  testWidgets('the full-mock PracticeOption opens the three-part flow', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8);
@@ -1031,9 +1040,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
       ),
     );
@@ -1050,7 +1059,8 @@ void main() {
         id: 'scn_same_title_general_exam',
         name: 'IELTS 口语完整模拟',
         brief: '同名但不是完整模考',
-        model: SceneModel.examBasicDialogue,
+        experience: PracticeExperience.roleplay,
+        category: SceneCategory.roleplayDaily,
       );
       final practice = _IeltsPracticeClient(initialCompleted: 8);
       final controller = PracticeController(
@@ -1058,14 +1068,16 @@ void main() {
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, sameTitleScene);
+      await _activatePractice(
+        controller,
+        practice,
+        sameTitleScene,
+        mode: PracticeMode.fullSimulation,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            practiceController: controller,
-            ieltsMockProgressStore: _MemoryProgressStore(),
-          ),
+          home: InterviewPracticePage(practiceController: controller),
         ),
       );
       await tester.pump();
@@ -1134,16 +1146,21 @@ void main() {
       client: practice,
       recorder: _Recorder(),
     );
-    final preparation = PreparationController(client: _EmptySceneClient());
+    final preparation = IeltsPreparationController(
+      client: _UnusedQuestionBankClient(),
+    );
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
-    await _activatePractice(controller, practice, _ieltsPart1Scene);
-    await preparation.beginIeltsSession(
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+    await preparation.beginSession(
       _sessionId,
-      const IeltsPracticeSelection(
-        mode: IeltsPracticeMode.part1,
-        part1SetId: 'p1-set-02',
-      ),
+      PracticeMode.part1,
+      const IeltsPracticeSelection(part1SetId: 'p1-set-02'),
     );
 
     await tester.pumpWidget(
@@ -1157,7 +1174,7 @@ void main() {
                   builder: (_) => IeltsSpeakingMockPage(
                     controller: controller,
                     progressStore: _MemoryProgressStore(),
-                    preparationController: preparation,
+                    ieltsController: preparation,
                     onExitRequested: () async => true,
                   ),
                 ),
@@ -1175,8 +1192,8 @@ void main() {
     await tester.tap(find.text('Save & exit'));
     await tester.pumpAndSettle();
 
-    final request = preparation.takeIeltsNavigationRequest();
-    expect(request?.mode, IeltsPracticeMode.part1);
+    final request = preparation.takeNavigationRequest();
+    expect(request?.mode, PracticeMode.part1);
     expect(request?.selection, isNull);
     expect(find.byKey(const Key('open-section')), findsOneWidget);
   });
@@ -1190,13 +1207,18 @@ void main() {
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, _ieltsPart2Scene);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: PracticeMode.part2,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            practiceController: controller,
-            ieltsMockProgressStore: _MemoryProgressStore(),
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
           ),
         ),
       );
@@ -1223,13 +1245,18 @@ void main() {
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await _activatePractice(controller, practice, _ieltsPart3Scene);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part3,
+    );
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
       ),
     );
@@ -1266,9 +1293,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PracticePage(
-          practiceController: controller,
-          ieltsMockProgressStore: _MemoryProgressStore(),
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
       ),
     );
@@ -1316,27 +1343,26 @@ void main() {
     expect(find.text('1 题'), findsOneWidget);
   });
 
-  testWidgets('section Scene models open the matching IELTS flow', (
+  testWidgets('section PracticeOption modes open the matching IELTS flow', (
     tester,
   ) async {
-    for (final testCase
-        in <({SceneDefinition selected, int turnLimit, Key expected})>[
-          (
-            selected: _ieltsPart1Scene,
-            turnLimit: 8,
-            expected: const Key('ielts-mock-part-1'),
-          ),
-          (
-            selected: _ieltsPart2Scene,
-            turnLimit: 6,
-            expected: const Key('ielts-mock-part-2-intro'),
-          ),
-          (
-            selected: _ieltsPart3Scene,
-            turnLimit: 5,
-            expected: const Key('ielts-part3-topic-intro'),
-          ),
-        ]) {
+    for (final testCase in <({PracticeMode mode, int turnLimit, Key expected})>[
+      (
+        mode: PracticeMode.part1,
+        turnLimit: 8,
+        expected: const Key('ielts-mock-part-1'),
+      ),
+      (
+        mode: PracticeMode.part2,
+        turnLimit: 6,
+        expected: const Key('ielts-mock-part-2-intro'),
+      ),
+      (
+        mode: PracticeMode.part3,
+        turnLimit: 5,
+        expected: const Key('ielts-part3-topic-intro'),
+      ),
+    ]) {
       final practice = _IeltsPracticeClient(
         initialCompleted: 0,
         turnLimit: testCase.turnLimit,
@@ -1345,14 +1371,19 @@ void main() {
         client: practice,
         recorder: _Recorder(),
       );
-      await _activatePractice(controller, practice, testCase.selected);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: testCase.mode,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PracticePage(
-            key: ValueKey(testCase.selected.id),
-            practiceController: controller,
-            ieltsMockProgressStore: _MemoryProgressStore(),
+          home: IeltsSpeakingMockPage(
+            key: ValueKey(testCase.mode),
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
           ),
         ),
       );
@@ -1369,13 +1400,16 @@ void main() {
 Future<void> _activatePractice(
   PracticeController controller,
   _IeltsPracticeClient practice,
-  SceneDefinition scene,
-) async {
+  SceneDefinition scene, {
+  PracticeMode mode = PracticeMode.fullMock,
+}) async {
   practice.activeScene = scene;
+  practice.activeMode = mode;
   await controller.activateCreatedPractice(
     scene: scene,
     sessionId: _sessionId,
     planId: _planId,
+    practiceMode: mode,
     turnLimit: practice.turnLimit,
     clientOperationId: 'activate-${scene.id}',
   );
@@ -1404,19 +1438,9 @@ final class _MemoryProgressStore implements IeltsMockProgressStore {
   }
 }
 
-final class _EmptySceneClient implements SceneClient {
+final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   @override
-  Future<SceneDefinition> getScene(String sceneId) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<List<SceneDefinition>> listScenes() {
+  Future<IeltsQuestionBank> getQuestionBank() {
     throw UnimplementedError();
   }
 }
@@ -1427,7 +1451,6 @@ final class _IeltsPracticeClient implements PracticeClient {
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
     this.transcriptionText,
-    this.scenarioModel = 'IELTS_SPEAKING_FULL_MOCK',
   }) : completed = initialCompleted;
 
   final int initialCompleted;
@@ -1436,9 +1459,9 @@ final class _IeltsPracticeClient implements PracticeClient {
   final int turnLimit;
   int transcriptionFailuresRemaining;
   final String? transcriptionText;
-  final String scenarioModel;
   int completed;
   SceneDefinition? activeScene;
+  PracticeMode activeMode = PracticeMode.fullMock;
   final List<String> confirmedQuestionIds = [];
   final List<String> transcribedQuestionIds = [];
 
@@ -1461,17 +1484,47 @@ final class _IeltsPracticeClient implements PracticeClient {
   PracticeSessionSnapshot _snapshot() {
     final scene = activeScene ?? (throw StateError('No active IELTS Scene.'));
     final done = completed == turnLimit;
+    final assignment = scene.experience == PracticeExperience.ieltsSpeaking
+        ? _assignmentForActiveMode()
+        : null;
     return PracticeSessionSnapshot(
       sessionId: _sessionId,
       planId: _planId,
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
+      practiceExperience: scene.experience,
+      sceneCategory: scene.category,
+      practiceMode: activeMode,
+      capabilities: _practiceCapabilities,
       sessionVersion: completed + 1,
       completedTurns: completed,
       turnLimit: turnLimit,
       sessionCompleted: done,
+      ieltsAssignment: assignment,
       currentQuestion: done ? null : _question(completed + 1),
     );
+  }
+
+  IeltsPracticeAssignment _assignmentForActiveMode() {
+    return switch (activeMode) {
+      PracticeMode.fullMock => testIeltsAssignment(
+        mode: activeMode,
+        part3QuestionCount: turnLimit - 9,
+      ),
+      PracticeMode.part1 => testIeltsAssignment(
+        mode: activeMode,
+        part1QuestionCount: turnLimit,
+      ),
+      PracticeMode.part2 => testIeltsAssignment(
+        mode: activeMode,
+        part3QuestionCount: turnLimit - 1,
+      ),
+      PracticeMode.part3 => testIeltsAssignment(
+        mode: activeMode,
+        part3QuestionCount: turnLimit,
+      ),
+      PracticeMode.fullSimulation || PracticeMode.focus => throw StateError(
+        'Unsupported IELTS practice mode: $activeMode',
+      ),
+    };
   }
 
   @override
@@ -1523,8 +1576,10 @@ final class _IeltsPracticeClient implements PracticeClient {
       completedTurns: completed,
       turnLimit: turnLimit,
       sessionCompleted: done,
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
+      practiceExperience: scene.experience,
+      sceneCategory: scene.category,
+      practiceMode: activeMode,
+      capabilities: _practiceCapabilities,
       sessionVersion: completed + 1,
       nextQuestion: done ? null : _question(completed + 1),
     );
@@ -1575,7 +1630,7 @@ final class _Recorder implements PracticeRecorder {
   }
 }
 
-final class _ImmediateExaminerSpeaker implements IeltsExaminerSpeaker {
+final class _ImmediateExaminerSpeaker implements PracticePromptSpeaker {
   final List<String> spoken = <String>[];
 
   @override
@@ -1590,7 +1645,7 @@ final class _ImmediateExaminerSpeaker implements IeltsExaminerSpeaker {
   Future<void> dispose() async {}
 }
 
-final class _ControlledExaminerSpeaker implements IeltsExaminerSpeaker {
+final class _ControlledExaminerSpeaker implements PracticePromptSpeaker {
   final List<String> spoken = <String>[];
   Completer<void>? _current;
 
@@ -1687,40 +1742,72 @@ final class _QuestionAudioPlayer implements PracticeAudioPlayer {
 
 const _sessionId = 'session-ielts-full';
 const _planId = 'plan-ielts-full';
+const _ieltsSceneId = 'scn_ielts_speaking_test';
+const _practiceCapabilities = PracticeCapabilities(
+  retryAllowed: false,
+  questionTranslationAllowed: false,
+  questionTipsAllowed: false,
+  avatarAllowed: false,
+  speechFeedbackAllowed: false,
+);
 final _ieltsScene = _sceneFixture(
-  id: ieltsSpeakingFullMockSceneId,
+  id: _ieltsSceneId,
   name: 'IELTS 口语完整模拟',
   brief: 'Part 1, Part 2, Part 3',
-  model: SceneModel.ieltsSpeakingFullMock,
-);
-final _ieltsPart2Scene = _sceneFixture(
-  id: 'scn_ielts_speaking_part_2',
-  name: 'IELTS Speaking Part 2',
-  brief: 'Part 2 cue card with bound Part 3',
-  model: SceneModel.ieltsSpeakingPart2,
-);
-final _ieltsPart1Scene = _sceneFixture(
-  id: 'scn_ielts_speaking_part_1',
-  name: 'IELTS Speaking Part 1',
-  brief: 'Part 1 familiar-topic questions',
-  model: SceneModel.ieltsSpeakingPart1,
-);
-final _ieltsPart3Scene = _sceneFixture(
-  id: 'scn_ielts_speaking_part_3',
-  name: 'IELTS Speaking Part 3',
-  brief: 'Part 3 discussion',
-  model: SceneModel.ieltsSpeakingPart3,
+  practiceOptions: const <PracticeOption>[
+    PracticeOption(
+      id: 'option-ielts-full-mock',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.fullMock,
+      displayName: '完整模考',
+      suggestedDurationSeconds: 900,
+      turnPolicyRef: 'ielts.full_mock.turn.v1',
+      sessionPolicyRef: 'ielts.full_mock.session.v1',
+      evaluationPolicyRef: 'ielts.full_mock.evaluation.v1',
+    ),
+    PracticeOption(
+      id: 'option-ielts-part-1',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part1,
+      displayName: 'Part 1',
+      suggestedDurationSeconds: 300,
+      turnPolicyRef: 'ielts.part_1.turn.v1',
+      sessionPolicyRef: 'ielts.part_1.session.v1',
+      evaluationPolicyRef: 'ielts.section.evaluation.v1',
+    ),
+    PracticeOption(
+      id: 'option-ielts-part-2',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part2,
+      displayName: 'Part 2',
+      suggestedDurationSeconds: 420,
+      turnPolicyRef: 'ielts.part_2.turn.v1',
+      sessionPolicyRef: 'ielts.part_2.session.v1',
+      evaluationPolicyRef: 'ielts.section.evaluation.v1',
+    ),
+    PracticeOption(
+      id: 'option-ielts-part-3',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part3,
+      displayName: 'Part 3',
+      suggestedDurationSeconds: 300,
+      turnPolicyRef: 'ielts.part_3.turn.v1',
+      sessionPolicyRef: 'ielts.part_3.session.v1',
+      evaluationPolicyRef: 'ielts.section.evaluation.v1',
+    ),
+  ],
 );
 SceneDefinition _sceneFixture({
   required String id,
   required String name,
   required String brief,
-  SceneFamily family = SceneFamily.exam,
-  SceneModel model = SceneModel.examBasicDialogue,
+  PracticeExperience experience = PracticeExperience.ieltsSpeaking,
+  SceneCategory category = SceneCategory.ieltsSpeaking,
+  List<PracticeOption>? practiceOptions,
 }) => testScene(
   id: id,
-  family: family,
-  model: model,
+  experience: experience,
+  category: category,
   name: name,
   prompt: ScenePrompt(
     publicSceneBrief: brief,
@@ -1730,6 +1817,6 @@ SceneDefinition _sceneFixture({
     personaSummary: 'Neutral and concise.',
     focusAreas: const <String>['fluency'],
     turnBlueprints: const <String>['Ask the next speaking question.'],
-    suggestedDurationSeconds: 600,
   ),
+  practiceOptions: practiceOptions,
 );

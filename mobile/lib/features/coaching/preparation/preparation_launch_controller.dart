@@ -82,7 +82,8 @@ final class PreparationLaunchController extends ChangeNotifier {
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
   String? get resumableGoalId => workspaceController?.currentGoalId;
   String? get resumableSceneId => workspaceController?.currentSceneId;
-  String? get resumableSceneFamily => workspaceController?.currentSceneFamily;
+  String? get resumablePracticeExperience =>
+      workspaceController?.currentPracticeExperience;
   ScenePresentationMode get resumablePresentationMode =>
       workspaceController?.currentPresentationMode ??
       ScenePresentationMode.standard;

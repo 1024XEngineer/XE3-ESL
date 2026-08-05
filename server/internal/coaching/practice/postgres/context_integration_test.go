@@ -91,7 +91,11 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 		owner,
 		"plan-turn-policy",
 	)
-	originalReference := plan.SceneSelection.Scene.TurnPolicyRef
+	originalOption, err := plan.SceneSelection.PracticeOption()
+	if err != nil {
+		t.Fatalf("PracticeOption: %v", err)
+	}
+	originalReference := originalOption.TurnPolicyRef
 	command := contextSessionCommand(
 		owner,
 		plan,
@@ -107,10 +111,12 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	if err != nil || replayed {
 		t.Fatalf("CreateSession = (%#v,%t,%v)", created, replayed, err)
 	}
-	if created.Snapshot.SceneSelection.Scene.TurnPolicyRef != originalReference {
+	createdOption, err := created.Snapshot.SceneSelection.PracticeOption()
+	if err != nil || createdOption.TurnPolicyRef != originalReference {
 		t.Fatalf(
-			"created TurnPolicyRef = %q, want %q",
-			created.Snapshot.SceneSelection.Scene.TurnPolicyRef,
+			"created Practice option = (%#v,%v), want TurnPolicyRef %q",
+			createdOption,
+			err,
 			originalReference,
 		)
 	}
@@ -121,20 +127,36 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	}
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO coaching_scene_versions (
-			scene_id, scene_version, scene_family, scene_model, name,
-			status, turn_policy_ref, session_policy_ref, evaluation_policy_ref, prompt, roles,
-			practice_options, display_order
+			scene_id, scene_version, practice_experience, scene_category,
+			name, status, prompt, roles, practice_options, display_order
 		)
 		SELECT
-			scene_id, scene_version + 1, scene_family, scene_model, name,
-			status, $3, session_policy_ref, evaluation_policy_ref, prompt, roles,
-			practice_options, display_order
+			scene_id, scene_version + 1, practice_experience, scene_category,
+			name, status, prompt, roles,
+			(
+				SELECT jsonb_agg(
+					CASE
+						WHEN option_payload ->> 'practice_option_id' = $4
+						THEN jsonb_set(
+							option_payload,
+							'{turn_policy_ref}',
+							to_jsonb($3::text)
+						)
+						ELSE option_payload
+					END
+					ORDER BY option_order
+				)
+				FROM jsonb_array_elements(practice_options)
+					WITH ORDINALITY AS option(option_payload, option_order)
+			),
+			display_order
 		FROM coaching_scene_versions
 		WHERE scene_id = $1 AND scene_version = $2
 	`,
 		plan.SceneSelection.Scene.ID,
 		plan.SceneSelection.Scene.Version,
 		replacementReference,
+		plan.SceneSelection.PracticeOptionID,
 	); err != nil {
 		t.Fatalf("publish later Scene version: %v", err)
 	}
@@ -149,7 +171,11 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 		context.Background(),
 		plan.SceneSelection.Scene.ID,
 	)
-	if err != nil || latest.TurnPolicyRef != replacementReference {
+	latestOption, optionErr := (scene.SelectionSnapshot{
+		Scene:            latest,
+		PracticeOptionID: plan.SceneSelection.PracticeOptionID,
+	}).PracticeOption()
+	if err != nil || optionErr != nil || latestOption.TurnPolicyRef != replacementReference {
 		t.Fatalf("latest Scene = (%#v,%v)", latest, err)
 	}
 
@@ -165,10 +191,12 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ResolveSessionByPlan: %v", err)
 	}
-	if recovered.Snapshot.SceneSelection.Scene.TurnPolicyRef != originalReference {
+	recoveredOption, err := recovered.Snapshot.SceneSelection.PracticeOption()
+	if err != nil || recoveredOption.TurnPolicyRef != originalReference {
 		t.Fatalf(
-			"recovered TurnPolicyRef = %q, want frozen %q",
-			recovered.Snapshot.SceneSelection.Scene.TurnPolicyRef,
+			"recovered Practice option = (%#v,%v), want frozen TurnPolicyRef %q",
+			recoveredOption,
+			err,
 			originalReference,
 		)
 	}
@@ -414,7 +442,7 @@ func createContextPlan(
 	roleIDs := []string{definition.Roles[0].ID}
 	optionID := ""
 	for _, option := range definition.PracticeOptions {
-		if option.Type == scene.PracticeOptionFullSimulation {
+		if option.Mode == scene.PracticeModeFullSimulation {
 			roleIDs = make([]string, len(definition.Roles))
 			for index, role := range definition.Roles {
 				roleIDs[index] = role.ID
@@ -422,7 +450,7 @@ func createContextPlan(
 			optionID = option.ID
 			break
 		}
-		if option.Type == scene.PracticeOptionFocus &&
+		if option.Mode == scene.PracticeModeFocus &&
 			option.RoleDefinitionID == roleIDs[0] {
 			optionID = option.ID
 		}
@@ -493,6 +521,7 @@ func contextSessionCommand(
 ) practice.CreateSessionCommand {
 	projection := mustProjectContextPlan(plan)
 	roles, _ := projection.SceneSelection.SelectedRoles()
+	option, _ := projection.SceneSelection.PracticeOption()
 	participants := make([]practice.Participant, 0, len(roles)+1)
 	for _, role := range roles {
 		roleCopy := role
@@ -511,8 +540,9 @@ func contextSessionCommand(
 	})
 	snapshot := practice.SessionSnapshot{
 		ID: snapshotID, SessionID: sessionID, PlanRevision: plan.Revision,
-		SceneFamily:        projection.SceneSelection.Scene.Family,
-		SceneModel:         projection.SceneSelection.Scene.Model,
+		Experience:         projection.SceneSelection.Scene.Experience,
+		Category:           projection.SceneSelection.Scene.Category,
+		PracticeMode:       option.Mode,
 		SceneSelection:     projection.SceneSelection,
 		Preparation:        projection.Preparation,
 		Participants:       participants,

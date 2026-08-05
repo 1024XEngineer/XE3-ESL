@@ -64,16 +64,18 @@ func (r *Repository) AuthorizeRetryTurn(
 	}
 
 	var (
-		scenarioType  practice.SceneFamily
-		scenarioModel practice.SceneModel
+		experience    practice.PracticeExperience
+		category      practice.SceneCategory
+		practiceMode  practice.PracticeMode
 		sessionStatus practice.SessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT
-			session.scene_family,
-			session.scene_model,
+			session.practice_experience,
+			session.scene_category,
+			session.practice_mode,
 			session.status,
 			session.snapshot_id,
 			snapshot.snapshot_document
@@ -86,8 +88,9 @@ func (r *Repository) AuthorizeRetryTurn(
 		  AND session.session_id = $2
 		FOR UPDATE OF session
 	`, actor.UserID, command.PracticeSessionID).Scan(
-		&scenarioType,
-		&scenarioModel,
+		&experience,
+		&category,
+		&practiceMode,
 		&sessionStatus,
 		&snapshotID,
 		&snapshotJSON,
@@ -104,8 +107,9 @@ func (r *Repository) AuthorizeRetryTurn(
 	if decodeErr != nil ||
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.PracticeSessionID ||
-		snapshot.SceneFamily != scenarioType ||
-		snapshot.SceneModel != scenarioModel {
+		snapshot.Experience != experience ||
+		snapshot.Category != category ||
+		snapshot.PracticeMode != practiceMode {
 		return practice.RetryTurnAuthorization{},
 			practice.ErrConflict
 	}
@@ -122,15 +126,16 @@ func (r *Repository) AuthorizeRetryTurn(
 			practice_session_id,
 			original_turn_id,
 			question_id,
-			scene_family,
-			scene_model,
+				practice_experience,
+				scene_category,
+				practice_mode,
 			session_status_at_authorization,
 			counts_toward_effective_turn_limit
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
 	`, actor.UserID, command.RetryRequestID,
 		command.PracticeSessionID, command.OriginalTurnID,
-		command.QuestionID, scenarioType, scenarioModel,
+		command.QuestionID, experience, category, practiceMode,
 		sessionStatus); err != nil {
 		return practice.RetryTurnAuthorization{},
 			classifyRetryAuthorizationWrite(err)
@@ -172,8 +177,9 @@ func (r *Repository) ResolveRetryParticipant(
 	}
 	var (
 		sessionID     string
-		scenarioType  practice.SceneFamily
-		scenarioModel practice.SceneModel
+		experience    practice.PracticeExperience
+		category      practice.SceneCategory
+		practiceMode  practice.PracticeMode
 		sessionStatus practice.SessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
@@ -182,8 +188,9 @@ func (r *Repository) ResolveRetryParticipant(
 	err = tx.QueryRow(ctx, `
 		SELECT
 			retry_auth.practice_session_id,
-			retry_auth.scene_family,
-			retry_auth.scene_model,
+			retry_auth.practice_experience,
+			retry_auth.scene_category,
+			retry_auth.practice_mode,
 			practice_session.status,
 			practice_session.snapshot_id,
 			practice_snapshot.snapshot_document,
@@ -202,8 +209,9 @@ func (r *Repository) ResolveRetryParticipant(
 		FOR SHARE OF retry_auth, practice_session, practice_snapshot
 	`, actor.UserID, command.RetryRequestID).Scan(
 		&sessionID,
-		&scenarioType,
-		&scenarioModel,
+		&experience,
+		&category,
+		&practiceMode,
 		&sessionStatus,
 		&snapshotID,
 		&snapshotJSON,
@@ -219,8 +227,9 @@ func (r *Repository) ResolveRetryParticipant(
 	if err != nil ||
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != sessionID ||
-		snapshot.SceneFamily != scenarioType ||
-		snapshot.SceneModel != scenarioModel ||
+		snapshot.Experience != experience ||
+		snapshot.Category != category ||
+		snapshot.PracticeMode != practiceMode ||
 		countsToward ||
 		!validRetryExecutionPolicy(snapshot) ||
 		(sessionStatus != practice.SessionInProgress &&
@@ -247,8 +256,9 @@ const retryAuthorizationSelect = `
 		practice_session_id,
 		original_turn_id,
 		question_id,
-		scene_family,
-		scene_model,
+			practice_experience,
+			scene_category,
+			practice_mode,
 		session_status_at_authorization,
 		counts_toward_effective_turn_limit,
 		created_at
@@ -273,8 +283,9 @@ func getRetryTurnAuthorization(
 		&authorization.PracticeSessionID,
 		&authorization.OriginalTurnID,
 		&authorization.QuestionID,
-		&authorization.SceneFamily,
-		&authorization.SceneModel,
+		&authorization.Experience,
+		&authorization.Category,
+		&authorization.PracticeMode,
 		&authorization.SessionStatusAtAuthorization,
 		&authorization.CountsTowardEffectiveLimit,
 		&authorization.CreatedAt,
@@ -292,15 +303,16 @@ func validRetryExecutionPolicy(snapshot practice.SessionSnapshot) bool {
 	}
 	option, err := snapshot.SceneSelection.PracticeOption()
 	if err != nil || !practice.ValidSessionPolicy(
-		snapshot.SceneSelection.Scene.SessionPolicyRef,
-		option.Type,
+		option.SessionPolicyRef,
+		option.Mode,
 		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+		option.SuggestedDurationSeconds,
 		snapshot.SessionPolicy,
 	) {
 		return false
 	}
 	_, err = practice.ResolveTurnPolicy(
-		snapshot.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	)
 	return err == nil
 }

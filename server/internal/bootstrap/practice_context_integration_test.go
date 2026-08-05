@@ -416,6 +416,7 @@ func newPracticeContextIntegrationComposition(
 		},
 		emptyBootstrapMemorySearcher{},
 		catalog,
+		newBootstrapTestIELTSQuestionBank(t),
 		testJobTargetGenerator(generator),
 	)
 	if err != nil {

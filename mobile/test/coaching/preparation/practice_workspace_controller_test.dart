@@ -1,4 +1,5 @@
 import '../../support/scene_fixtures.dart';
+import '../../support/practice_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 import 'package:speakup/features/coaching/goal/goal.dart';
@@ -90,7 +91,7 @@ void main() {
         sceneId: 'interview-screening',
         sceneTitle: '招聘初筛',
         sessionId: 'practice-session-1',
-        sceneFamily: 'INTERVIEW',
+        practiceExperience: PracticeExperience.interview,
       );
 
       expect(firstWorkspace.hasResumable, isTrue);
@@ -230,9 +231,9 @@ void main() {
         sceneId: 'daily-hotel',
         sceneTitle: '酒店入住',
         sessionId: 'practice-roleplay-session',
-        sceneFamily: 'DAILY',
+        practiceExperience: PracticeExperience.roleplay,
       );
-      expect(firstWorkspace.currentSceneFamily, 'DAILY');
+      expect(firstWorkspace.currentPracticeExperience, 'ROLEPLAY');
       expect(
         firstWorkspace.currentPresentationMode,
         ScenePresentationMode.immersiveRoleplay,
@@ -248,7 +249,7 @@ void main() {
       addTearDown(restoredWorkspace.dispose);
       await restoredWorkspace.activateAccount('account-1');
 
-      expect(restoredWorkspace.currentSceneFamily, 'DAILY');
+      expect(restoredWorkspace.currentPracticeExperience, 'ROLEPLAY');
       expect(
         restoredWorkspace.currentPresentationMode,
         ScenePresentationMode.immersiveRoleplay,
@@ -256,7 +257,7 @@ void main() {
       final record = jsonDecode((await store.read('account-1'))!);
       expect(
         record,
-        containsPair('scene', containsPair('scene_family', 'DAILY')),
+        containsPair('scene', containsPair('practice_experience', 'ROLEPLAY')),
       );
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
       expect(restoredWorkspace.currentSceneId, 'daily-hotel');
@@ -374,7 +375,6 @@ void main() {
           personaSummary: 'Professional and focused.',
           focusAreas: <String>['clarity'],
           turnBlueprints: <String>['Ask one interview question.'],
-          suggestedDurationSeconds: 600,
         ),
       );
       final goal = await activateTestGoal(
@@ -394,6 +394,7 @@ void main() {
         scene: scene,
         sessionId: 'practice-session-without-record',
         planId: 'practice-plan-without-record',
+        practiceMode: scene.practiceOptions.first.mode,
         turnLimit: 3,
         clientOperationId: 'practice-voice-without-record',
       );
@@ -901,7 +902,7 @@ void main() {
         sceneId: 'interview-screening',
         sceneTitle: '招聘初筛',
         sessionId: 'practice-session-1',
-        sceneFamily: 'INTERVIEW',
+        practiceExperience: PracticeExperience.interview,
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
       harness.practiceClient.complete(launched.lease.practiceThreadId);
@@ -1071,26 +1072,19 @@ Future<_LaunchedPractice> _launchPractice({
   required String sceneId,
   required String sceneTitle,
   required String sessionId,
-  String? sceneFamily,
+  PracticeExperience practiceExperience = PracticeExperience.interview,
 }) async {
   final lease = await workspace.acquireThread(operationId);
   expect(lease, isNotNull);
-  final family = switch (sceneFamily) {
-    'DAILY' => SceneFamily.daily,
-    'WORKPLACE' => SceneFamily.workplace,
-    'EXAM' => SceneFamily.exam,
-    _ => SceneFamily.interview,
-  };
-  final model = switch (family) {
-    SceneFamily.interview => SceneModel.interviewBasicDialogue,
-    SceneFamily.exam => SceneModel.examBasicDialogue,
-    SceneFamily.workplace => SceneModel.workplaceBasicDialogue,
-    SceneFamily.daily => SceneModel.dailyBasicDialogue,
+  final category = switch (practiceExperience) {
+    PracticeExperience.interview => SceneCategory.interviewRecruiter,
+    PracticeExperience.ieltsSpeaking => SceneCategory.ieltsSpeaking,
+    PracticeExperience.roleplay => SceneCategory.roleplayTravel,
   };
   final scene = testScene(
     id: sceneId,
-    family: family,
-    model: model,
+    experience: practiceExperience,
+    category: category,
     name: sceneTitle,
     prompt: const ScenePrompt(
       publicSceneBrief: 'Test practice scene.',
@@ -1100,7 +1094,6 @@ Future<_LaunchedPractice> _launchPractice({
       personaSummary: 'Structured and focused.',
       focusAreas: <String>['clarity'],
       turnBlueprints: <String>['Ask one relevant question.'],
-      suggestedDurationSeconds: 600,
     ),
   );
   final goal = await activateTestGoal(
@@ -1129,6 +1122,7 @@ Future<_LaunchedPractice> _launchPractice({
     scene: scene,
     sessionId: sessionId,
     planId: 'practice-plan-$sessionId',
+    practiceMode: scene.practiceOptions.first.mode,
     turnLimit: 3,
     clientOperationId: 'voice-$operationId',
   );
@@ -1296,8 +1290,9 @@ final class _WorkspacePracticeClient
     _sessions[sessionId] = _activeSnapshot(
       sessionId: sessionId,
       planId: 'practice-plan-$sessionId',
-      sceneFamily: current.sceneFamily,
-      sceneModel: current.sceneModel,
+      practiceExperience: current.practiceExperience,
+      sceneCategory: current.sceneCategory,
+      practiceMode: current.practiceMode,
       version: current.sessionVersion + 1,
     );
     _sessionsByThread[threadId] = sessionId;
@@ -1310,8 +1305,10 @@ final class _WorkspacePracticeClient
       sessionId: current.sessionId,
       planId: current.planId,
       sessionVersion: current.sessionVersion + 1,
-      sceneFamily: current.sceneFamily,
-      sceneModel: current.sceneModel,
+      practiceExperience: current.practiceExperience,
+      sceneCategory: current.sceneCategory,
+      practiceMode: current.practiceMode,
+      capabilities: current.capabilities,
       completedTurns: current.turnLimit,
       turnLimit: current.turnLimit,
       sessionCompleted: true,
@@ -1356,8 +1353,9 @@ final class _WorkspacePracticeClient
     final snapshot = _activeSnapshot(
       sessionId: next.sessionId,
       planId: next.planId,
-      sceneFamily: next.scene.family,
-      sceneModel: next.scene.model,
+      practiceExperience: next.scene.experience,
+      sceneCategory: next.scene.category,
+      practiceMode: next.scene.practiceOptions.first.mode,
       version: 1,
     );
     _sessions[sessionId] = snapshot;
@@ -1431,8 +1429,10 @@ final class _WorkspacePracticeClient
       sessionId: current.sessionId,
       planId: current.planId,
       sessionVersion: current.sessionVersion + 1,
-      sceneFamily: current.sceneFamily,
-      sceneModel: current.sceneModel,
+      practiceExperience: current.practiceExperience,
+      sceneCategory: current.sceneCategory,
+      practiceMode: current.practiceMode,
+      capabilities: current.capabilities,
       completedTurns: completedTurns,
       turnLimit: current.turnLimit,
       sessionCompleted: completed,
@@ -1452,8 +1452,10 @@ final class _WorkspacePracticeClient
         completedTurns: completedTurns,
         turnLimit: current.turnLimit,
         sessionCompleted: completed,
-        sceneFamily: current.sceneFamily,
-        sceneModel: current.sceneModel,
+        practiceExperience: current.practiceExperience,
+        sceneCategory: current.sceneCategory,
+        practiceMode: current.practiceMode,
+        capabilities: current.capabilities,
         sessionVersion: current.sessionVersion + 1,
         nextQuestion: nextQuestion,
       ),
@@ -1463,15 +1465,18 @@ final class _WorkspacePracticeClient
   PracticeSessionSnapshot _activeSnapshot({
     required String sessionId,
     required String planId,
-    required SceneFamily sceneFamily,
-    required SceneModel sceneModel,
+    required PracticeExperience practiceExperience,
+    required SceneCategory sceneCategory,
+    required PracticeMode practiceMode,
     required int version,
   }) {
     return PracticeSessionSnapshot(
       sessionId: sessionId,
       planId: planId,
-      sceneFamily: sceneFamily,
-      sceneModel: sceneModel,
+      practiceExperience: practiceExperience,
+      sceneCategory: sceneCategory,
+      practiceMode: practiceMode,
+      capabilities: testPracticeCapabilities,
       sessionVersion: version,
       completedTurns: 0,
       turnLimit: 3,

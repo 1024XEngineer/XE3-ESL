@@ -61,7 +61,6 @@ func TestServiceIssuesFrozenClientContractForOwnedInteractiveSession(
 func TestServiceIssuesSessionTokenForInterview(t *testing.T) {
 	now := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
 	session := interactiveSession()
-	session.SceneFamily = practice.SceneFamilyInterview
 	provider := &tokenProviderStub{
 		token: ProviderSessionToken{
 			Value:     "provider-session-token",
@@ -129,13 +128,17 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 			expectedCode: "resource_conflict",
 		},
 		{
-			name: "unsupported scenario",
+			name: "avatar disabled",
 			reader: contextSessionReaderStub{
 				session: func() practice.Session {
-					session := interactiveSession()
-					session.SceneFamily = practice.SceneFamilyExam
-					return session
+					return interactiveSession()
 				}(),
+				snapshot: practice.SessionSnapshot{
+					SessionID: "practice-session-1",
+					SessionPolicy: practice.SessionPolicy{
+						AvatarAllowed: false,
+					},
+				},
 			},
 			expected:     apperror.Conflict,
 			expectedCode: "resource_conflict",
@@ -283,9 +286,8 @@ func newTestService(
 
 func interactiveSession() practice.Session {
 	return practice.Session{
-		ID:          "practice-session-1",
-		SceneFamily: practice.SceneFamilyWorkplace,
-		Status:      practice.SessionInProgress,
+		ID:     "practice-session-1",
+		Status: practice.SessionInProgress,
 	}
 }
 
@@ -297,8 +299,28 @@ func testActor() requestcontext.Actor {
 }
 
 type contextSessionReaderStub struct {
-	session practice.Session
-	err     error
+	session  practice.Session
+	snapshot practice.SessionSnapshot
+	err      error
+}
+
+func (stub contextSessionReaderStub) GetSessionSnapshot(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (practice.SessionSnapshot, error) {
+	if stub.err != nil {
+		return practice.SessionSnapshot{}, stub.err
+	}
+	if stub.snapshot.SessionID != "" {
+		return stub.snapshot, nil
+	}
+	return practice.SessionSnapshot{
+		SessionID: stub.session.ID,
+		SessionPolicy: practice.SessionPolicy{
+			AvatarAllowed: true,
+		},
+	}, nil
 }
 
 func (stub contextSessionReaderStub) GetSession(

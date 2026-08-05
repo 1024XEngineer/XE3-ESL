@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
+import 'package:speakup/features/coaching/ielts/wire_ielts_question_bank_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
 void main() {
@@ -27,7 +28,7 @@ void main() {
       expect(scenes.single.id, _sceneId);
       expect(scenes.single.name, 'English interview for technical roles');
       expect(
-        scenes.single.evaluationPolicyRef,
+        scenes.single.practiceOptions.first.evaluationPolicyRef,
         'interview.shadow.evaluation.v1',
       );
       expect(
@@ -66,8 +67,12 @@ void main() {
   });
 
   test('rejects a scene without its evaluation policy reference', () async {
-    final scene = <String, Object?>{..._sceneJson}
+    final option = <String, Object?>{..._fullOptionJson}
       ..remove('evaluation_policy_ref');
+    final scene = <String, Object?>{
+      ..._sceneJson,
+      'practice_options': <Object?>[option],
+    };
     final client = WireSceneClient(
       baseUri: Uri.parse('https://api.speak-up.test'),
       transport: _QueueTransport([
@@ -105,10 +110,10 @@ void main() {
     final roles = await client.listRoles(_sceneId);
 
     expect(detail.prompt.publicSceneBrief, 'Discuss one backend project.');
-    expect(detail.practiceOptions.map((option) => option.type), const [
-      PracticeOptionType.fullSimulation,
-      PracticeOptionType.focus,
-      PracticeOptionType.focus,
+    expect(detail.practiceOptions.map((option) => option.mode), const [
+      PracticeMode.fullSimulation,
+      PracticeMode.focus,
+      PracticeMode.focus,
     ]);
     expect(roles.map((role) => role.id), const [
       'role_technical_interviewer',
@@ -147,30 +152,30 @@ void main() {
     expect(utf8.encode(cueCard).length, greaterThan(128));
   });
 
-  test('accepts the four supported scene family and model pairs', () async {
+  test('accepts supported experience and category pairs', () async {
     final scenes = <Map<String, Object?>>[
       _sceneJsonFor(
         id: 'scn_interview_project',
-        family: 'INTERVIEW',
-        model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
+        experience: 'INTERVIEW',
+        category: 'INTERVIEW_PROFESSIONAL',
         name: 'Project interview',
       ),
       _sceneJsonFor(
-        id: 'scn_ielts_speaking_part_2',
-        family: 'EXAM',
-        model: 'IELTS_SPEAKING_PART_2',
+        id: 'scn_ielts_speaking_test',
+        experience: 'IELTS_SPEAKING',
+        category: 'IELTS_SPEAKING',
         name: 'IELTS Speaking Part 2',
       ),
       _sceneJsonFor(
         id: 'scn_workplace_progress_risk_update',
-        family: 'WORKPLACE',
-        model: 'PROGRESS_AND_RISK_UPDATE',
+        experience: 'ROLEPLAY',
+        category: 'ROLEPLAY_WORKPLACE',
         name: 'Progress and risk update',
       ),
       _sceneJsonFor(
         id: 'scn_daily_hotel_checkin_issue',
-        family: 'DAILY',
-        model: 'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+        experience: 'ROLEPLAY',
+        category: 'ROLEPLAY_TRAVEL',
         name: 'Hotel check-in and issue handling',
       ),
     ];
@@ -183,11 +188,11 @@ void main() {
 
     final result = await client.listScenes();
 
-    expect(result.map((scene) => scene.family), [
-      SceneFamily.interview,
-      SceneFamily.exam,
-      SceneFamily.workplace,
-      SceneFamily.daily,
+    expect(result.map((scene) => scene.experience), [
+      PracticeExperience.interview,
+      PracticeExperience.ieltsSpeaking,
+      PracticeExperience.roleplay,
+      PracticeExperience.roleplay,
     ]);
   });
 
@@ -249,12 +254,12 @@ void main() {
 
   test('decodes the published IELTS set catalog without credentials', () async {
     final transport = _QueueTransport([_response(_ieltsQuestionBankJson())]);
-    final client = WireSceneClient(
+    final client = WireIeltsQuestionBankClient(
       baseUri: Uri.parse('https://api.speak-up.test'),
       transport: transport,
     );
 
-    final bank = await client.getIeltsQuestionBank();
+    final bank = await client.getQuestionBank();
 
     expect(bank.part1Sets, hasLength(38));
     expect(bank.part1Topics, hasLength(38));
@@ -264,10 +269,7 @@ void main() {
     expect(bank.topicGroups, hasLength(56));
     expect(bank.topicGroups.first.part3Questions, hasLength(5));
     expect(bank.topicGroups.first.cueCard.points, hasLength(4));
-    expect(
-      transport.calls.single.path,
-      '/v1/scenes/ielts-speaking/question-bank',
-    );
+    expect(transport.calls.single.path, '/v1/ielts-speaking/question-bank');
     expect(transport.calls.single.authorization, isNull);
   });
 
@@ -281,12 +283,12 @@ void main() {
         'How important is it for schools to help children become smarter?',
       ];
       final transport = _QueueTransport([_response(response)]);
-      final client = WireSceneClient(
+      final client = WireIeltsQuestionBankClient(
         baseUri: Uri.parse('https://api.speak-up.test'),
         transport: transport,
       );
 
-      final bank = await client.getIeltsQuestionBank();
+      final bank = await client.getQuestionBank();
 
       expect(bank.topicGroups.first.part3Questions, hasLength(1));
       expect(bank.topicGroups.first.supplementedQuestionCount, 0);
@@ -416,24 +418,36 @@ const _sceneId = 'scn_programmer_interview';
 const _fullOptionJson = <String, Object?>{
   'practice_option_id': 'option_full_simulation',
   'scene_id': _sceneId,
-  'practice_option_type': 'FULL_SIMULATION',
+  'practice_mode': 'FULL_SIMULATION',
   'display_name': 'Full simulation',
+  'suggested_duration_seconds': 900,
+  'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+  'session_policy_ref': 'interview.project_deep_dive.session.v1',
+  'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
 };
 
 const _technicalOptionJson = <String, Object?>{
   'practice_option_id': 'option_technical_focus',
   'scene_id': _sceneId,
   'role_definition_id': 'role_technical_interviewer',
-  'practice_option_type': 'FOCUS',
+  'practice_mode': 'FOCUS',
   'display_name': 'Technical depth focus',
+  'suggested_duration_seconds': 600,
+  'turn_policy_ref': 'interview.technical_focus.turn.v1',
+  'session_policy_ref': 'interview.technical_focus.session.v1',
+  'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
 };
 
 const _recruiterOptionJson = <String, Object?>{
   'practice_option_id': 'option_hr_focus',
   'scene_id': _sceneId,
   'role_definition_id': 'role_hr_interviewer',
-  'practice_option_type': 'FOCUS',
+  'practice_mode': 'FOCUS',
   'display_name': 'Recruiter and motivation focus',
+  'suggested_duration_seconds': 600,
+  'turn_policy_ref': 'interview.recruiter_focus.turn.v1',
+  'session_policy_ref': 'interview.recruiter_focus.session.v1',
+  'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
 };
 
 const _technicalRoleJson = <String, Object?>{
@@ -476,14 +490,11 @@ const _recruiterRoleJson = <String, Object?>{
 
 const _sceneJson = <String, Object?>{
   'scene_id': _sceneId,
-  'scene_family': 'INTERVIEW',
-  'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+  'practice_experience': 'INTERVIEW',
+  'scene_category': 'INTERVIEW_PROFESSIONAL',
   'name': 'English interview for technical roles',
   'scene_version': 1,
   'status': 'active',
-  'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
-  'session_policy_ref': 'interview.project_deep_dive.session.v1',
-  'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
   'prompt': {
     'public_scene_brief': 'Discuss one backend project.',
     'practice_goal': 'Explain decisions with evidence.',
@@ -492,7 +503,6 @@ const _sceneJson = <String, Object?>{
     'persona_summary': 'Precise and evidence seeking.',
     'focus_areas': ['introduction', 'system_design'],
     'turn_blueprints': ['Ask for a project overview.'],
-    'suggested_duration_seconds': 900,
   },
   'roles': [_technicalRoleJson, _recruiterRoleJson],
   'practice_options': [
@@ -506,21 +516,18 @@ const _detailJson = _sceneJson;
 
 Map<String, Object?> _sceneJsonFor({
   required String id,
-  required String family,
-  required String model,
+  required String experience,
+  required String category,
   required String name,
 }) {
   final roleId = 'role-$id';
   return <String, Object?>{
     'scene_id': id,
-    'scene_family': family,
-    'scene_model': model,
+    'practice_experience': experience,
+    'scene_category': category,
     'name': name,
     'scene_version': 1,
     'status': 'active',
-    'turn_policy_ref': 'turn-$id',
-    'session_policy_ref': 'session-$id',
-    'evaluation_policy_ref': 'evaluation-$id',
     'prompt': <String, Object?>{
       'public_scene_brief': 'Practice $name.',
       'practice_goal': 'Complete this practice.',
@@ -529,7 +536,6 @@ Map<String, Object?> _sceneJsonFor({
       'persona_summary': 'Structured and focused.',
       'focus_areas': <String>['clarity'],
       'turn_blueprints': <String>['Ask one relevant question.'],
-      'suggested_duration_seconds': 600,
     },
     'roles': <Object?>[
       <String, Object?>{
@@ -551,8 +557,14 @@ Map<String, Object?> _sceneJsonFor({
       <String, Object?>{
         'practice_option_id': 'option-$id',
         'scene_id': id,
-        'practice_option_type': 'FULL_SIMULATION',
+        'practice_mode': experience == 'IELTS_SPEAKING'
+            ? 'FULL_MOCK'
+            : 'FULL_SIMULATION',
         'display_name': 'Full practice',
+        'suggested_duration_seconds': 600,
+        'turn_policy_ref': 'turn-$id',
+        'session_policy_ref': 'session-$id',
+        'evaluation_policy_ref': 'evaluation-$id',
       },
     ],
   };

@@ -184,9 +184,11 @@ func TestServicePortCreatesSnapshotBeforeCanonicalPlan(t *testing.T) {
 
 func TestServicePortIELTSWithoutQuestionSelectionNeedsInput(t *testing.T) {
 	candidate := previewCatalogCandidate()
-	candidate.Scene.Family = scene.SceneFamilyExam
-	candidate.Scene.Model = scene.SceneModelIELTSSpeakingPart2
+	candidate.Scene.Experience = scene.PracticeExperienceIELTSSpeaking
+	candidate.Scene.Category = scene.SceneCategoryIELTSSpeaking
 	candidate.Scene.Name = "IELTS Speaking Part 2"
+	candidate.Scene.PracticeOptions[0].Mode = scene.PracticeModePart2
+	candidate.DefaultOption.Mode = scene.PracticeModePart2
 	plans := &planApplicationStub{}
 	profiles := &profileApplicationStub{}
 	port, err := NewServicePort(plans, previewCatalogStub{
@@ -231,11 +233,11 @@ func previewCallContext() capability.CallContext {
 func previewCatalogCandidate() scene.PreviewCatalogCandidate {
 	return scene.PreviewCatalogCandidate{
 		Scene: scene.SceneDefinition{
-			ID:      "scene-1",
-			Family:  scene.SceneFamilyInterview,
-			Model:   scene.SceneModelProjectExperienceDeepDive,
-			Name:    "项目经历深挖",
-			Version: 1,
+			ID:         "scene-1",
+			Experience: scene.PracticeExperienceInterview,
+			Category:   scene.SceneCategoryInterviewProfessional,
+			Name:       "项目经历深挖",
+			Version:    1,
 			Prompt: scene.ScenePrompt{
 				PracticeGoal: "练习清晰表达项目影响力",
 			},
@@ -244,14 +246,26 @@ func previewCatalogCandidate() scene.PreviewCatalogCandidate {
 				DisplayName: "面试官",
 			}},
 			PracticeOptions: []scene.PracticeOption{{
-				ID:          "option-1",
-				DisplayName: "完整模拟",
+				ID:                       "option-1",
+				SceneID:                  "scene-1",
+				Mode:                     scene.PracticeModeFullSimulation,
+				DisplayName:              "完整模拟",
+				SuggestedDurationSeconds: 600,
+				TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+				SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+				EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 			}},
 		},
 		DefaultRoleIDs: []string{"role-1"},
 		DefaultOption: scene.PracticeOption{
-			ID:          "option-1",
-			DisplayName: "完整模拟",
+			ID:                       "option-1",
+			SceneID:                  "scene-1",
+			Mode:                     scene.PracticeModeFullSimulation,
+			DisplayName:              "完整模拟",
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 		},
 	}
 }

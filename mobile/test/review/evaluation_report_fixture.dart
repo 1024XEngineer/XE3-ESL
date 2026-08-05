@@ -23,7 +23,7 @@ EvaluationReport evaluationReportFixture({
     practiceSessionId: practiceSessionId,
     revision: 1,
     sceneType: sceneType,
-    sceneModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    sceneCategory: 'INTERVIEW_PROFESSIONAL',
     scoreability: scoreability,
     summary: review.summary,
     dimensions: <EvaluationReportDimension>[
@@ -83,7 +83,7 @@ Map<String, Object?> evaluationReportWireFixture({
   String createdAt = '2026-07-26T10:00:00Z',
   double score = 82,
   String sceneType = 'INTERVIEW',
-  String sceneModel = 'PROJECT_EXPERIENCE_DEEP_DIVE',
+  String sceneCategory = 'INTERVIEW_PROFESSIONAL',
   String scoreability = 'PROVISIONAL',
 }) {
   final insufficient = scoreability == 'INSUFFICIENT';
@@ -95,7 +95,7 @@ Map<String, Object?> evaluationReportWireFixture({
     'revision': 1,
     'schema_version': 'evaluation-report/v1',
     'scene_type': sceneType,
-    'scene_model': sceneModel,
+    'scene_category': sceneCategory,
     'scoreability_status': scoreability,
     'summary': insufficient ? '本次练习的有效证据不足，暂不形成能力结论。' : '本次练习已形成面试表达评估。',
     'dimensions': <Object?>[

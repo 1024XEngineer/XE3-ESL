@@ -58,10 +58,8 @@ func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	t.Parallel()
 	plan := practicePlanFixture()
-	plan.SceneSelection.Scene.Family = SceneFamilyExam
-	plan.SceneSelection.Scene.Model = SceneModelIELTSSpeakingPart1
-	plan.SceneSelection.Scene.TurnPolicyRef = IELTSSpeakingPart1TurnPolicy
-	plan.SceneSelection.Scene.SessionPolicyRef = IELTSSpeakingPart1SessionPolicy
+	plan.SceneSelection.Scene.Experience = PracticeExperienceIELTSSpeaking
+	plan.SceneSelection.Scene.Category = SceneCategory("EXAM")
 	blueprints := []string{
 		"question-1", "question-2", "question-3", "question-4",
 		"question-5", "question-6", "question-7", "question-8",
@@ -72,17 +70,30 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 		[]string(nil),
 		blueprints...,
 	)
+	plan.SceneSelection.Scene.PracticeOptions[0] = PracticeOption{
+		ID:                       "option-full",
+		SceneID:                  plan.SceneSelection.Scene.ID,
+		Mode:                     PracticeModePart1,
+		DisplayName:              "Part 1",
+		SuggestedDurationSeconds: 600,
+		TurnPolicyRef:            IELTSSpeakingPart1TurnPolicy,
+		SessionPolicyRef:         IELTSSpeakingPart1SessionPolicy,
+		EvaluationPolicyRef:      "ielts.speaking_part1.evaluation.v1",
+	}
 	plan.SessionPolicy.MinEffectiveTurns = len(blueprints)
 	plan.SessionPolicy.MaxEffectiveTurns = len(blueprints)
 	plan.SessionPolicy.CoverageCheckpointTurn = len(blueprints)
 	plan.SessionPolicy.MaxFollowUpsPerQuestion = 0
+	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	plan.IELTSAssignment = &IELTSAssignment{
-		BankID:         "ielts-bank-1",
-		Season:         "2026-05",
-		Mode:           IELTSPracticeModePart1,
-		Part1SetID:     "part-1-set-1",
-		Part1Questions: 8,
-		TurnBlueprints: append([]string(nil), blueprints...),
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   PracticeModePart1,
+		Parts: []IELTSPart{{
+			Part:           PracticeModePart1,
+			SourceID:       "part-1-set-1",
+			TurnBlueprints: append([]string(nil), blueprints...),
+		}},
 	}
 	repository := &sessionRepositoryStub{}
 	application := newContextTestApplication(
@@ -106,10 +117,13 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	assignment := repository.created.Snapshot.IELTSAssignment
 	if assignment == nil || assignment == plan.IELTSAssignment ||
 		assignment.Mode != plan.IELTSAssignment.Mode ||
-		assignment.Part1SetID != plan.IELTSAssignment.Part1SetID ||
+		len(assignment.Parts) != 1 ||
+		assignment.Parts[0].SourceID !=
+			plan.IELTSAssignment.Parts[0].SourceID ||
+		assignment.Parts[0].TurnBlueprints == nil ||
 		!equalStrings(
-			assignment.TurnBlueprints,
-			plan.IELTSAssignment.TurnBlueprints,
+			assignment.Parts[0].TurnBlueprints,
+			plan.IELTSAssignment.Parts[0].TurnBlueprints,
 		) {
 		t.Fatalf("Session IELTS assignment = %#v", assignment)
 	}
@@ -163,14 +177,14 @@ func TestSessionApplicationRejectsUnknownPoliciesBeforeRepositoryWrite(
 		{
 			name: "unknown Session policy",
 			mutate: func(plan *PlanProjection) {
-				plan.SceneSelection.Scene.SessionPolicyRef =
+				plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 					"unknown.practice.session.v1"
 			},
 		},
 		{
 			name: "unknown Turn policy",
 			mutate: func(plan *PlanProjection) {
-				plan.SceneSelection.Scene.TurnPolicyRef =
+				plan.SceneSelection.Scene.PracticeOptions[0].TurnPolicyRef =
 					"unknown.practice.turn.v1"
 			},
 		},
@@ -250,24 +264,20 @@ func newContextTestApplication(
 func practicePlanFixture() PlanProjection {
 	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
 	definition := SceneDefinition{
-		ID:                  "scene-1",
-		Family:              SceneFamilyInterview,
-		Model:               SceneModelInterviewBasicDialogue,
-		Name:                "Interview",
-		Version:             1,
-		Status:              SceneStatusActive,
-		TurnPolicyRef:       GenericPracticeTurnPolicy,
-		SessionPolicyRef:    GenericPracticeSessionPolicy,
-		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+		ID:         "scene-1",
+		Experience: PracticeExperienceInterview,
+		Category:   SceneCategory("PROFESSIONAL"),
+		Name:       "Interview",
+		Version:    1,
+		Status:     SceneStatusActive,
 		Prompt: ScenePrompt{
-			PublicSceneBrief:         "Brief",
-			PracticeGoal:             "Goal",
-			UserRole:                 "Candidate",
-			AIRole:                   "Interviewer",
-			PersonaSummary:           "Interviewer",
-			FocusAreas:               []string{"clarity"},
-			TurnBlueprints:           []string{"question"},
-			SuggestedDurationSeconds: 600,
+			PublicSceneBrief: "Brief",
+			PracticeGoal:     "Goal",
+			UserRole:         "Candidate",
+			AIRole:           "Interviewer",
+			PersonaSummary:   "Interviewer",
+			FocusAreas:       []string{"clarity"},
+			TurnBlueprints:   []string{"question"},
 		},
 		Roles: []RoleDefinition{{
 			ID:               "role-1",
@@ -281,10 +291,14 @@ func practicePlanFixture() PlanProjection {
 			}},
 		}},
 		PracticeOptions: []PracticeOption{{
-			ID:          "option-full",
-			SceneID:     "scene-1",
-			Type:        PracticeOptionFullSimulation,
-			DisplayName: "Full",
+			ID:                       "option-full",
+			SceneID:                  "scene-1",
+			Mode:                     PracticeModeFullSimulation,
+			DisplayName:              "Full",
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            GenericPracticeTurnPolicy,
+			SessionPolicyRef:         GenericPracticeSessionPolicy,
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 		}},
 	}
 	return PlanProjection{

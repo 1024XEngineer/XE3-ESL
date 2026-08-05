@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
 
@@ -42,7 +41,7 @@ func TestProjectInterviewFormalReportPreservesCanonicalDetail(t *testing.T) {
 
 func TestProjectIELTSFormalReportPreservesCanonicalDetail(t *testing.T) {
 	t.Parallel()
-	snapshot := ieltsReportTestSnapshot(t, scoring.IELTSQuestionCount)
+	snapshot := ieltsReportTestSnapshot(t, ieltsReportQuestionCount)
 	result := ieltsReportTestResult(t, snapshot)
 
 	report, err := ProjectIELTSFormalReport(snapshot, result)
@@ -59,8 +58,25 @@ func TestProjectIELTSFormalReportPreservesCanonicalDetail(t *testing.T) {
 	if err := json.Unmarshal(report.Detail, &detail); err != nil {
 		t.Fatalf("decode IELTS detail: %v", err)
 	}
-	if !detail.Valid() || len(detail.Questions) != scoring.IELTSQuestionCount {
+	if !detail.Valid() || len(detail.Questions) != ieltsReportQuestionCount {
 		t.Fatalf("IELTS detail = %#v", detail)
+	}
+}
+
+func TestIELTSSpeakingReportRejectsAnsweredCountMismatch(t *testing.T) {
+	t.Parallel()
+	snapshot := ieltsReportTestSnapshot(t, 3)
+	result := ieltsReportTestResult(t, snapshot)
+	report, err := ProjectIELTSSpeakingReport(snapshot, result)
+	if err != nil {
+		t.Fatalf("ProjectIELTSSpeakingReport: %v", err)
+	}
+	if !report.Valid() {
+		t.Fatal("projected IELTS report is invalid")
+	}
+	report.TestSummary.AnsweredCount++
+	if report.Valid() {
+		t.Fatal("answered_count mismatch was accepted")
 	}
 }
 
@@ -142,7 +158,9 @@ func validFormalReportForValidation() FormalReport {
 	return FormalReport{
 		SchemaVersion:      FormalReportSchemaVersion,
 		SceneType:          evaluation.SceneInterview,
-		SceneModel:         "PROJECT_EXPERIENCE_DEEP_DIVE",
+		PracticeExperience: "INTERVIEW",
+		SceneCategory:      "INTERVIEW_PROFESSIONAL",
+		PracticeMode:       "FULL_SIMULATION",
 		ScoreabilityStatus: ReportScoreabilityProvisional,
 		Summary:            "本次回答已经形成可复盘的文本反馈。",
 		Dimensions: []ReportDimension{{
