@@ -77,6 +77,97 @@ func TestContextRepositoryRequiresCurrentReadyPlanRevision(t *testing.T) {
 	}
 }
 
+func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) {
+	repository, pool := newContextRepository(t)
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	plan := createContextPlan(
+		t,
+		pool,
+		preparation.NewPostgresPlanRepository(pool),
+		owner,
+		"plan-turn-policy",
+	)
+	originalReference := plan.SceneSelection.Scene.TurnPolicyRef
+	command := contextSessionCommand(
+		owner,
+		plan,
+		"session-turn-policy",
+		"snapshot-turn-policy",
+		"session-turn-policy-key",
+	)
+	created, replayed, err := repository.CreateSession(
+		context.Background(),
+		owner.Actor,
+		command,
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateSession = (%#v,%t,%v)", created, replayed, err)
+	}
+	if created.Snapshot.SceneSelection.Scene.TurnPolicyRef != originalReference {
+		t.Fatalf(
+			"created TurnPolicyRef = %q, want %q",
+			created.Snapshot.SceneSelection.Scene.TurnPolicyRef,
+			originalReference,
+		)
+	}
+
+	replacementReference := "generic.practice.turn.v1"
+	if originalReference == replacementReference {
+		replacementReference = "interview.project_deep_dive.turn.v1"
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO coaching_scene_versions (
+			scene_id, scene_version, scene_family, scene_model, name,
+			status, turn_policy_ref, session_policy_ref, prompt, roles,
+			practice_options, display_order
+		)
+		SELECT
+			scene_id, scene_version + 1, scene_family, scene_model, name,
+			status, $3, session_policy_ref, prompt, roles,
+			practice_options, display_order
+		FROM coaching_scene_versions
+		WHERE scene_id = $1 AND scene_version = $2
+	`,
+		plan.SceneSelection.Scene.ID,
+		plan.SceneSelection.Scene.Version,
+		replacementReference,
+	); err != nil {
+		t.Fatalf("publish later Scene version: %v", err)
+	}
+	catalog, err := scene.NewPostgresCatalog(pool)
+	if err != nil {
+		t.Fatalf("NewPostgresCatalog: %v", err)
+	}
+	latest, err := catalog.GetScene(
+		context.Background(),
+		plan.SceneSelection.Scene.ID,
+	)
+	if err != nil || latest.TurnPolicyRef != replacementReference {
+		t.Fatalf("latest Scene = (%#v,%v)", latest, err)
+	}
+
+	restarted, err := practicepostgres.New(pool)
+	if err != nil {
+		t.Fatalf("restart Practice repository: %v", err)
+	}
+	recovered, err := restarted.ResolveSessionByPlan(
+		context.Background(),
+		owner.Actor,
+		plan.ID,
+	)
+	if err != nil {
+		t.Fatalf("ResolveSessionByPlan: %v", err)
+	}
+	if recovered.Snapshot.SceneSelection.Scene.TurnPolicyRef != originalReference {
+		t.Fatalf(
+			"recovered TurnPolicyRef = %q, want frozen %q",
+			recovered.Snapshot.SceneSelection.Scene.TurnPolicyRef,
+			originalReference,
+		)
+	}
+}
+
 func TestContextRepositoryRejectsArchivedPlanAndConflictsByPlan(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	owner := contextOwnerA()
