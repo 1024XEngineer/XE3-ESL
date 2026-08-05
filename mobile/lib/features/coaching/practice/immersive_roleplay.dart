@@ -72,6 +72,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _exitInFlight = false;
   bool _exitApproved = false;
   bool _feedbackRebuildScheduled = false;
+  bool _conversationTextVisible = true;
   String? _scheduledInterviewReportSessionId;
   String? _autoOpenedInterviewReportSessionId;
   bool _interviewReportRouteActive = false;
@@ -156,6 +157,10 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
         );
       });
     }
+  }
+
+  void _toggleConversationText() {
+    setState(() => _conversationTextVisible = !_conversationTextVisible);
   }
 
   void _syncSpeechFeedbackSources() {
@@ -414,6 +419,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       latestAssistantMessage: _latestAssistantMessage(
                         widget.practiceController.practiceMessages,
                       ),
+                      conversationTextVisible: _conversationTextVisible,
                       exitInFlight: _exitInFlight,
                       onExit: _requestExit,
                     );
@@ -425,6 +431,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       textMode: _textMode,
                       recordingSeconds: _recordingSeconds,
                       previewMode: widget.previewMode,
+                      conversationTextVisible: _conversationTextVisible,
                       onBeforeStartRecording: () => _runBoundedUserTurnAction(
                         widget.onBeforeStartRecording,
                       ),
@@ -434,6 +441,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       replayPlaying: widget.replayPlaying,
                       onToggleTextMode: _toggleTextMode,
                       onSubmitText: _submitText,
+                      onToggleConversationText: _toggleConversationText,
                       onOpenReport: _openInterviewReport,
                     );
                     if (landscape) {
@@ -472,6 +480,7 @@ class _AvatarStage extends StatelessWidget {
     required this.surfaceBuilder,
     required this.statusLabel,
     required this.latestAssistantMessage,
+    required this.conversationTextVisible,
     required this.exitInFlight,
     required this.onExit,
   });
@@ -480,6 +489,7 @@ class _AvatarStage extends StatelessWidget {
   final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
   final String? statusLabel;
   final PracticeMessage? latestAssistantMessage;
+  final bool conversationTextVisible;
   final bool exitInFlight;
   final VoidCallback onExit;
 
@@ -594,16 +604,23 @@ class _AvatarStage extends StatelessWidget {
                   color: Colors.black.withValues(alpha: 0.58),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Text(
-                  message.text,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.35,
-                    fontWeight: FontWeight.w500,
+                child: Visibility(
+                  key: const Key('immersive-live-subtitle-text'),
+                  visible: conversationTextVisible,
+                  maintainAnimation: true,
+                  maintainSize: true,
+                  maintainState: true,
+                  child: Text(
+                    message.text,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      height: 1.35,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ),
@@ -642,6 +659,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.textMode,
     required this.recordingSeconds,
     required this.previewMode,
+    required this.conversationTextVisible,
     required this.onBeforeStartRecording,
     required this.onReplayQuestion,
     required this.speechFeedbackController,
@@ -649,6 +667,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.replayPlaying,
     required this.onToggleTextMode,
     required this.onSubmitText,
+    required this.onToggleConversationText,
     required this.onOpenReport,
   });
 
@@ -659,6 +678,7 @@ class _ConversationPanel extends StatelessWidget {
   final bool textMode;
   final int recordingSeconds;
   final bool previewMode;
+  final bool conversationTextVisible;
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final ImmersiveAsyncAction? onReplayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
@@ -666,6 +686,7 @@ class _ConversationPanel extends StatelessWidget {
   final bool replayPlaying;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
+  final VoidCallback onToggleConversationText;
   final VoidCallback onOpenReport;
 
   @override
@@ -677,6 +698,8 @@ class _ConversationPanel extends StatelessWidget {
         children: [
           _ConversationHeader(
             controller: controller,
+            conversationTextVisible: conversationTextVisible,
+            onToggleConversationText: onToggleConversationText,
             onReplayQuestion: onReplayQuestion,
             replayLoading: replayLoading,
             replayPlaying: replayPlaying,
@@ -705,6 +728,7 @@ class _ConversationPanel extends StatelessWidget {
                               message: message,
                               polishedText: _polishedText(projection),
                               polishLoading: projection?.isPolling ?? false,
+                              messageTextVisible: conversationTextVisible,
                             ),
                             if (projection != null) ...[
                               const SizedBox(height: SpeakUpDesign.space8),
@@ -808,12 +832,16 @@ class _ConversationPanel extends StatelessWidget {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.controller,
+    required this.conversationTextVisible,
+    required this.onToggleConversationText,
     required this.onReplayQuestion,
     required this.replayLoading,
     required this.replayPlaying,
   });
 
   final PracticeController controller;
+  final bool conversationTextVisible;
+  final VoidCallback onToggleConversationText;
   final ImmersiveAsyncAction? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
@@ -842,6 +870,18 @@ class _ConversationHeader extends StatelessWidget {
               style: SpeakUpDesign.meta,
             ),
           ),
+          if (controller.practiceSceneFamily == SceneFamily.interview)
+            IconButton(
+              key: const Key('immersive-toggle-conversation-text'),
+              tooltip: conversationTextVisible ? '隐藏文字' : '显示文字',
+              onPressed: onToggleConversationText,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                conversationTextVisible
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
+            ),
           if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
             const SizedBox(width: 6),
             IconButton(

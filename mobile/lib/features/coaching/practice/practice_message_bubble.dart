@@ -59,17 +59,20 @@ final class PracticeMessageBubble extends StatelessWidget {
     required this.message,
     this.polishedText,
     this.polishLoading = false,
+    this.messageTextVisible = true,
     super.key,
   });
 
   final PracticeMessage message;
   final String? polishedText;
   final bool polishLoading;
+  final bool messageTextVisible;
 
   @override
   Widget build(BuildContext context) {
     final user = message.role == PracticeMessageRole.user;
     return Align(
+      key: Key('practice-message-${message.id}'),
       alignment: user ? Alignment.centerRight : Alignment.centerLeft,
       child: FractionallySizedBox(
         widthFactor: 0.82,
@@ -84,11 +87,18 @@ final class PracticeMessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  message.text,
-                  style: TextStyle(
-                    color: user ? Colors.white : SpeakUpDesign.ink,
-                    height: 1.45,
+                Visibility(
+                  key: Key('practice-message-text-${message.id}'),
+                  visible: messageTextVisible,
+                  maintainAnimation: true,
+                  maintainSize: true,
+                  maintainState: true,
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      color: user ? Colors.white : SpeakUpDesign.ink,
+                      height: 1.45,
+                    ),
                   ),
                 ),
                 if (polishLoading) ...[
