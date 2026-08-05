@@ -343,7 +343,7 @@ func (application *SessionApplication) state(
 		!validVoiceScenePrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
-		session.TurnLimit > 14 ||
+		session.TurnLimit > 24 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
 		!validVoiceSessionLifecycle(session) ||

@@ -249,7 +249,9 @@ final class WirePracticeClient
         path: _endpoints.voiceActivationPath(sessionId),
         extraHeaders: <String, String>{'Idempotency-Key': clientOperationId},
       );
-      _requireStatus(response, const {HttpStatus.ok});
+      // The server returns 200 for both the initial idempotent activation and
+      // its replay. Keep accepting 201 for compatibility with older servers.
+      _requireStatus(response, const {HttpStatus.ok, HttpStatus.created});
       return _decodeSessionState(response.body, expectedSessionId: sessionId);
     });
   }
@@ -848,7 +850,7 @@ PracticeSessionSnapshot _decodeSessionState(
       completed != terminal ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
-      turnLimit > 14 ||
+      turnLimit > 24 ||
       effectiveTurns > turnLimit ||
       (!completed && question == null) ||
       (completed &&

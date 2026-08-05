@@ -483,7 +483,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final completed = widget.controller.completedTurns;
     if (_mode == IeltsPracticeMode.part1) {
       return value.copyWith(
-        phase: completed >= 8 ? IeltsMockPhase.complete : IeltsMockPhase.part1,
+        phase: completed >= widget.controller.turnLimit
+            ? IeltsMockPhase.complete
+            : IeltsMockPhase.part1,
         clearPreparationDeadline: true,
         clearSpeakingStartedAt: true,
         clearSpeakingDeadline: true,
@@ -769,7 +771,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           complete(IeltsPracticeMode.part3);
         }
       case IeltsPracticeMode.part1:
-        if (completed >= 8) {
+        if (completed >= widget.controller.turnLimit) {
           complete(IeltsPracticeMode.part1);
         }
       case IeltsPracticeMode.part2:

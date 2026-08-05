@@ -22,8 +22,10 @@ abstract final class PreparationDesign {
 
   static const interview = Color(0xFF20252A);
   static const interviewTint = Color(0xFFE9EAEC);
-  static const ielts = Color(0xFF274B3E);
-  static const ieltsTint = Color(0xFFF4EFE4);
+  static const ielts = Color(0xFF0284C7);
+  static const ieltsDeep = Color(0xFF075985);
+  static const ieltsTint = Color(0xFFE0F2FE);
+  static const ieltsBorder = Color(0xFFBAE6FD);
   static const roleplay = Color(0xFF173B47);
   static const roleplayTint = Color(0xFFDDECF0);
 

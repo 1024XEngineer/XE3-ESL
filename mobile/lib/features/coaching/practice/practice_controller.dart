@@ -294,7 +294,7 @@ final class PracticeController extends ChangeNotifier
         scene.id.trim().isEmpty ||
         scene.name.trim().isEmpty ||
         turnLimit < 1 ||
-        turnLimit > 14 ||
+        turnLimit > 24 ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
         _disposed) {
@@ -2081,7 +2081,7 @@ final class PracticeController extends ChangeNotifier
         ) ||
         snapshot.completedTurns < 0 ||
         snapshot.turnLimit < 1 ||
-        snapshot.turnLimit > 14 ||
+        snapshot.turnLimit > 24 ||
         snapshot.completedTurns > snapshot.turnLimit ||
         snapshot.sessionVersion < 1 ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
@@ -2234,7 +2234,7 @@ final class PracticeController extends ChangeNotifier
         confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
         confirmation.turnLimit < 1 ||
-        confirmation.turnLimit > 14 ||
+        confirmation.turnLimit > 24 ||
         confirmation.completedTurns > confirmation.turnLimit ||
         (confirmation.sessionVersion != null &&
             confirmation.sessionVersion! < 1) ||

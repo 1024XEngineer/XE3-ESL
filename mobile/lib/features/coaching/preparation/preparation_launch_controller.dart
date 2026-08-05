@@ -73,6 +73,8 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get isNavigationLocked =>
       isStarting || (isSelectionLocked && !_failedAttemptSafelyParked);
   bool get canRetry => _retry != null && !isStarting;
+  bool get canDismissFailedLaunch =>
+      !isStarting && _retry != null && _errorMessage != null;
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   bool get resumableHasProgress =>
@@ -239,6 +241,23 @@ final class PreparationLaunchController extends ChangeNotifier {
     if (retryCanBeReplaced) {
       _invalidateAttempt();
     }
+    return true;
+  }
+
+  Future<bool> dismissFailedLaunch() async {
+    if (_disposed || !canDismissFailedLaunch) {
+      return false;
+    }
+    final workspace = workspaceController;
+    if (workspace != null && workspace.currentLease != null) {
+      final parked = await workspace.parkCurrentPractice();
+      if (!parked) {
+        _errorMessage = workspace.errorMessage ?? '暂时无法安全退出当前练习，请重试。';
+        notifyListeners();
+        return false;
+      }
+    }
+    _invalidateAttempt();
     return true;
   }
 

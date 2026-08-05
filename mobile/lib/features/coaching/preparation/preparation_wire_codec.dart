@@ -270,13 +270,13 @@ IeltsPracticeAssignment decodeIeltsPracticeAssignment(Object? value) {
   final part2CueCard = object.containsKey('part_2_cue_card')
       ? _text(object['part_2_cue_card'])
       : null;
-  final part1QuestionCount = _count(object['part_1_questions'], maximum: 8);
+  final part1QuestionCount = _count(object['part_1_questions'], maximum: 24);
   final part2QuestionCount = _count(object['part_2_questions'], maximum: 1);
-  final part3QuestionCount = _count(object['part_3_questions'], maximum: 5);
+  final part3QuestionCount = _count(object['part_3_questions'], maximum: 6);
   final turnBlueprints = _textList(
     object['turn_blueprints'],
     minimumLength: 1,
-    maximumLength: 14,
+    maximumLength: 24,
   );
   final validShape = switch (mode) {
     IeltsPracticeMode.fullMock =>
@@ -293,10 +293,10 @@ IeltsPracticeAssignment decodeIeltsPracticeAssignment(Object? value) {
           topicGroupId == null &&
           topicTitle == null &&
           part2CueCard == null &&
-          part1QuestionCount == 8 &&
+          part1QuestionCount >= 2 &&
           part2QuestionCount == 0 &&
           part3QuestionCount == 0 &&
-          turnBlueprints.length == 8,
+          turnBlueprints.length == part1QuestionCount,
     IeltsPracticeMode.part2 =>
       part1SetId == null &&
           topicGroupId != null &&

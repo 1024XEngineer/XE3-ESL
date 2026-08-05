@@ -281,7 +281,7 @@ void main() {
     );
   });
 
-  test('decodes the canonical IELTS Part 3 assignment shape', () {
+  test('decodes a six-question IELTS Part 3 assignment', () {
     final assignment = decodeIeltsPracticeAssignment(<String, Object?>{
       'bank_id': 'ielts-2026-05-08',
       'season': '2026-05-08',
@@ -290,13 +290,36 @@ void main() {
       'topic_title': '语言学习',
       'part_1_questions': 0,
       'part_2_questions': 0,
-      'part_3_questions': 2,
-      'turn_blueprints': <String>['Question 1', 'Question 2'],
+      'part_3_questions': 6,
+      'turn_blueprints': List<String>.generate(
+        6,
+        (index) => 'Question ${index + 1}',
+      ),
     });
 
     expect(assignment.mode, IeltsPracticeMode.part3);
     expect(assignment.part2CueCard, isNull);
-    expect(assignment.turnBlueprints, hasLength(2));
+    expect(assignment.turnBlueprints, hasLength(6));
+  });
+
+  test('decodes a complete twenty-two-question IELTS Part 1 topic', () {
+    final assignment = decodeIeltsPracticeAssignment(<String, Object?>{
+      'bank_id': 'ielts-2026-05-08',
+      'season': '2026-05-08',
+      'mode': 'PART_1',
+      'part_1_set_id': 'p1-topic-020',
+      'part_1_questions': 22,
+      'part_2_questions': 0,
+      'part_3_questions': 0,
+      'turn_blueprints': List<String>.generate(
+        22,
+        (index) => 'Question ${index + 1}',
+      ),
+    });
+
+    expect(assignment.mode, IeltsPracticeMode.part1);
+    expect(assignment.part1SetId, 'p1-topic-020');
+    expect(assignment.turnBlueprints, hasLength(22));
   });
 
   group('rejects cross-resource Session bootstrap data', () {

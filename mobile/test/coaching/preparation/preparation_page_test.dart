@@ -542,6 +542,62 @@ void main() {
       );
     },
   );
+
+  testWidgets('failed direct start can exit and preserve its retry', (
+    tester,
+  ) async {
+    final preparationController = PreparationController(
+      client: _FixtureClient(),
+    );
+    final launchController = PreparationLaunchController(
+      client: _PageLaunchClient(),
+      contextProvider: () => _pageContext,
+      threadIdProvider: () => _pageContext.threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _pageContext,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async => throw const PreparationLaunchException(
+            kind: PreparationLaunchFailureKind.invalidResponse,
+            stage: PreparationLaunchStage.voice,
+          ),
+      idFactory: (scope) => '$scope-exit-widget-key',
+    );
+    addTearDown(preparationController.dispose);
+    addTearDown(launchController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: preparationController,
+          launchController: launchController,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openFamily(tester, 'INTERVIEW');
+    await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
+    await tester.pumpAndSettle();
+
+    expect(launchController.canDismissFailedLaunch, isTrue);
+    await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
+    await tester.pumpAndSettle();
+
+    expect(launchController.canRetry, isTrue);
+    expect(preparationController.selectedScene, isNull);
+    expect(
+      find.byKey(const Key('preparation-scene-launch-status')),
+      findsNothing,
+    );
+  });
 }
 
 class _FixtureClient implements SceneClient {

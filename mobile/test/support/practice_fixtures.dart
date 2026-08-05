@@ -14,7 +14,7 @@ PracticeSessionSnapshot testPracticeSnapshot({
   if (completedTurns < 0 ||
       completedTurns > turnLimit ||
       turnLimit < 1 ||
-      turnLimit > 14) {
+      turnLimit > 24) {
     throw ArgumentError('Invalid test Practice progress.');
   }
   final completed = completedTurns == turnLimit;

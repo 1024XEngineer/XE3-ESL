@@ -57,4 +57,5 @@ import "embed"
 //go:embed 000069_scene_evaluation_policy_ref.*.sql
 //go:embed 000070_practice_question_tips.*.sql
 //go:embed 000071_practice_execution_policy_refs.*.sql
+//go:embed 000072_ielts_dedicated_assignment_limits.*.sql
 var Files embed.FS

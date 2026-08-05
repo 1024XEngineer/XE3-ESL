@@ -671,12 +671,63 @@ void main() {
     transport.expectDone();
   });
 
-  test('does not accept a noncanonical success status', () async {
+  test('accepts the server activation success status', () async {
+    final response = <String, Object?>{
+      ..._sessionJson(),
+      'scene_id': 'scn_ielts_speaking_part_1',
+      'scene_version': 1,
+    };
     final transport = _Transport([
       _Step(
         method: 'POST',
         path: '/v1/practice-sessions/$_sessionId/voice-activation',
-        response: _json(HttpStatus.created, _sessionJson()),
+        response: _json(HttpStatus.ok, response),
+      ),
+    ]);
+
+    final snapshot = await _client(transport).activatePractice(
+      sessionId: _sessionId,
+      clientOperationId: 'scene-operation',
+    );
+
+    expect(snapshot.sessionId, _sessionId);
+    transport.expectDone();
+  });
+
+  test('accepts the legacy server activation created status', () async {
+    final response = <String, Object?>{
+      ..._sessionJson(),
+      'scene_id': 'scn_ielts_speaking_part_1',
+      'scene_version': 1,
+    };
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/practice-sessions/$_sessionId/voice-activation',
+        response: _json(HttpStatus.created, response),
+      ),
+    ]);
+
+    final snapshot = await _client(transport).activatePractice(
+      sessionId: _sessionId,
+      clientOperationId: 'scene-operation',
+    );
+
+    expect(snapshot.sessionId, _sessionId);
+    transport.expectDone();
+  });
+
+  test('rejects malformed server scene identity metadata', () async {
+    final response = <String, Object?>{
+      ..._sessionJson(),
+      'scene_id': 'scn_ielts_speaking_part_1',
+      'scene_version': 0,
+    };
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/practice-sessions/$_sessionId/voice-activation',
+        response: _json(HttpStatus.ok, response),
       ),
     ]);
 

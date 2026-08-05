@@ -269,7 +269,7 @@ func mapPracticeSession(
 		result.LearnerParticipantID == "" ||
 		len(facilitatorRoles) != len(selectedRoles) ||
 		result.TurnLimit < 1 ||
-		result.TurnLimit > 14 ||
+		result.TurnLimit > 24 ||
 		result.EffectiveTurns < 0 ||
 		result.EffectiveTurns > result.TurnLimit ||
 		(result.Status == string(
@@ -292,7 +292,7 @@ func validPersistedSessionLifecycle(
 	session practice.Session,
 	turnLimit int,
 ) bool {
-	if turnLimit < 1 || turnLimit > 14 ||
+	if turnLimit < 1 || turnLimit > 24 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > turnLimit {
 		return false

@@ -130,7 +130,7 @@ func (r *Repository) advanceTurnInTransaction(
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.SessionID ||
 		snapshot.SessionPolicy.MaxEffectiveTurns != turnLimit ||
-		turnLimit < 1 || turnLimit > 14 ||
+		turnLimit < 1 || turnLimit > 24 ||
 		effectiveTurns < 0 || effectiveTurns > turnLimit {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
