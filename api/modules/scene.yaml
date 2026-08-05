@@ -322,11 +322,12 @@ components:
         - season
         - source_cutoff
         - part1_sets
+        - part1_topics
         - topic_groups
       properties:
         schema_version:
           type: integer
-          const: 1
+          const: 2
         bank_id:
           $ref: '#/components/schemas/ResourceId'
         season:
@@ -341,6 +342,12 @@ components:
           maxItems: 38
           items:
             $ref: '#/components/schemas/IeltsPart1Set'
+        part1_topics:
+          type: array
+          minItems: 38
+          maxItems: 38
+          items:
+            $ref: '#/components/schemas/IeltsPart1PracticeTopic'
         topic_groups:
           type: array
           minItems: 56
@@ -397,6 +404,43 @@ components:
           items:
             type: string
             minLength: 1
+    IeltsPart1PracticeTopic:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title_zh
+        - title_en
+        - release
+        - category
+        - questions
+        - published
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title_zh:
+          type: string
+          minLength: 1
+        title_en:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+            - evergreen
+        category:
+          $ref: '#/components/schemas/IeltsTopicCategory'
+        questions:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            minLength: 1
+        published:
+          type: boolean
+          const: true
     IeltsTopicGroup:
       type: object
       additionalProperties: false
@@ -405,6 +449,7 @@ components:
         - title_zh
         - release
         - region
+        - category
         - part2
         - part3_questions
         - published
@@ -423,6 +468,8 @@ components:
         region:
           type: string
           const: mainland
+        category:
+          $ref: '#/components/schemas/IeltsTopicCategory'
         part2:
           $ref: '#/components/schemas/IeltsPart2CueCard'
         part3_questions:
@@ -455,3 +502,10 @@ components:
           items:
             type: string
             minLength: 1
+    IeltsTopicCategory:
+      type: string
+      enum:
+        - person
+        - place
+        - thing
+        - event

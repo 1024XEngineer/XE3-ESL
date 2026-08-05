@@ -108,18 +108,22 @@ final class WireSceneClient implements SceneClient, SceneQuestionBankClient {
         'season',
         'source_cutoff',
         'part1_sets',
+        'part1_topics',
         'topic_groups',
       },
     );
-    if (root['schema_version'] != 1) {
+    if (root['schema_version'] != 2) {
       throw _invalidResponse();
     }
     final sourceCutoff = DateTime.tryParse(_string(root['source_cutoff']));
     final rawPart1Sets = root['part1_sets'];
+    final rawPart1Topics = root['part1_topics'];
     final rawTopicGroups = root['topic_groups'];
     if (sourceCutoff == null ||
         rawPart1Sets is! List<Object?> ||
         rawPart1Sets.length != 38 ||
+        rawPart1Topics is! List<Object?> ||
+        rawPart1Topics.length != 38 ||
         rawTopicGroups is! List<Object?> ||
         rawTopicGroups.length != 56) {
       throw _invalidResponse();
@@ -135,6 +139,16 @@ final class WireSceneClient implements SceneClient, SceneQuestionBankClient {
         })
         .toList(growable: false);
     final groupIds = <String>{};
+    final part1TopicIds = <String>{};
+    final part1Topics = rawPart1Topics
+        .map((raw) {
+          final topic = _ieltsPart1PracticeTopic(raw);
+          if (!part1TopicIds.add(topic.id)) {
+            throw _invalidResponse();
+          }
+          return topic;
+        })
+        .toList(growable: false);
     final topicGroups = rawTopicGroups
         .map((raw) {
           final group = _ieltsTopicGroup(raw);
@@ -149,6 +163,7 @@ final class WireSceneClient implements SceneClient, SceneQuestionBankClient {
       season: _string(root['season']),
       sourceCutoff: sourceCutoff.toUtc(),
       part1Sets: List<IeltsPart1Set>.unmodifiable(part1Sets),
+      part1Topics: List<IeltsPart1PracticeTopic>.unmodifiable(part1Topics),
       topicGroups: List<IeltsTopicGroup>.unmodifiable(topicGroups),
     );
   }
@@ -414,6 +429,40 @@ IeltsPart1Topic _ieltsPart1Topic(Object? value) {
   );
 }
 
+IeltsPart1PracticeTopic _ieltsPart1PracticeTopic(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'id',
+      'title_zh',
+      'title_en',
+      'release',
+      'category',
+      'questions',
+      'published',
+    },
+  );
+  final release = _string(object['release'], maximumBytes: 32);
+  final category = IeltsTopicCategory.fromWireName(
+    _string(object['category'], maximumBytes: 16),
+  );
+  final questions = _stringList(object['questions'], maximumItemBytes: 1024);
+  if (!const <String>{'new', 'carry_over', 'evergreen'}.contains(release) ||
+      category == null ||
+      questions.length < 2 ||
+      object['published'] != true) {
+    throw _invalidResponse();
+  }
+  return IeltsPart1PracticeTopic(
+    id: _resourceId(object['id']),
+    titleZh: _string(object['title_zh']),
+    titleEn: _string(object['title_en']),
+    release: release,
+    category: category,
+    questions: questions,
+  );
+}
+
 IeltsTopicGroup _ieltsTopicGroup(Object? value) {
   final object = _object(
     value,
@@ -422,6 +471,7 @@ IeltsTopicGroup _ieltsTopicGroup(Object? value) {
       'title_zh',
       'release',
       'region',
+      'category',
       'part2',
       'part3_questions',
       'published',
@@ -429,8 +479,12 @@ IeltsTopicGroup _ieltsTopicGroup(Object? value) {
     },
   );
   final release = _string(object['release'], maximumBytes: 32);
+  final category = IeltsTopicCategory.fromWireName(
+    _string(object['category'], maximumBytes: 16),
+  );
   final supplemented = object['supplemented_question_count'];
   if (!const <String>{'new', 'carry_over'}.contains(release) ||
+      category == null ||
       object['region'] != 'mainland' ||
       object['published'] != true ||
       supplemented is! int ||
@@ -454,6 +508,7 @@ IeltsTopicGroup _ieltsTopicGroup(Object? value) {
     id: _resourceId(object['id']),
     title: _string(object['title_zh']),
     release: release,
+    category: category,
     cueCard: IeltsCueCard(prompt: _string(cueObject['prompt']), points: points),
     part3Questions: questions,
     supplementedQuestionCount: supplemented,

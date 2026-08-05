@@ -1076,7 +1076,8 @@ func validCreatedIELTSAssignment(
 			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
 	case practice.IELTSPracticeModePart1:
 		return validContextResourceID(assignment.Part1SetID) &&
-			assignment.TopicGroupID == "" && assignment.Part1Questions == 8 &&
+			assignment.TopicGroupID == "" && assignment.Part1Questions >= 2 &&
+			assignment.Part1Questions <= 24 &&
 			assignment.Part2Questions == 0 && assignment.Part3Questions == 0
 	case practice.IELTSPracticeModePart2:
 		return assignment.Part1SetID == "" &&

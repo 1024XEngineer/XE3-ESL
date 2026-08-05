@@ -16,12 +16,29 @@ enum IeltsPracticeMode {
       .firstOrNull;
 }
 
+enum IeltsTopicCategory {
+  person('person'),
+  place('place'),
+  thing('thing'),
+  event('event');
+
+  const IeltsTopicCategory(this.wireName);
+
+  final String wireName;
+
+  static IeltsTopicCategory? fromWireName(String value) => IeltsTopicCategory
+      .values
+      .where((category) => category.wireName == value)
+      .firstOrNull;
+}
+
 final class IeltsQuestionBank {
   const IeltsQuestionBank({
     required this.bankId,
     required this.season,
     required this.sourceCutoff,
     required this.part1Sets,
+    this.part1Topics = const <IeltsPart1PracticeTopic>[],
     required this.topicGroups,
   });
 
@@ -29,7 +46,26 @@ final class IeltsQuestionBank {
   final String season;
   final DateTime sourceCutoff;
   final List<IeltsPart1Set> part1Sets;
+  final List<IeltsPart1PracticeTopic> part1Topics;
   final List<IeltsTopicGroup> topicGroups;
+}
+
+final class IeltsPart1PracticeTopic {
+  const IeltsPart1PracticeTopic({
+    required this.id,
+    required this.titleZh,
+    required this.titleEn,
+    required this.release,
+    required this.category,
+    required this.questions,
+  });
+
+  final String id;
+  final String titleZh;
+  final String titleEn;
+  final String release;
+  final IeltsTopicCategory category;
+  final List<String> questions;
 }
 
 final class IeltsPart1Set {
@@ -65,6 +101,7 @@ final class IeltsTopicGroup {
     required this.id,
     required this.title,
     required this.release,
+    this.category = IeltsTopicCategory.thing,
     required this.cueCard,
     required this.part3Questions,
     required this.supplementedQuestionCount,
@@ -73,6 +110,7 @@ final class IeltsTopicGroup {
   final String id;
   final String title;
   final String release;
+  final IeltsTopicCategory category;
   final IeltsCueCard cueCard;
   final List<String> part3Questions;
   final int supplementedQuestionCount;

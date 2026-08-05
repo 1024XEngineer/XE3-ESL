@@ -72,11 +72,12 @@ void main() {
 
       expect(find.text('IELTS 口语'), findsOneWidget);
       expect(find.text('一次完成三个 Part'), findsOneWidget);
-      expect(find.text('Part 1'), findsOneWidget);
-      expect(find.text('题卡陈述 · 可继续 Part 3'), findsOneWidget);
-      expect(find.text('承接 Part 2 主题讨论'), findsOneWidget);
+      expect(find.text('专项练习'), findsOneWidget);
+      expect(find.text('共 3 道专项题'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-part-all')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-category-all')), findsOneWidget);
       expect(
-        find.byKey(const Key('catalog-scene-scn_ielts_speaking_part_1')),
+        find.byKey(const Key('ielts-browser-card-part1-p1-topic-001')),
         findsOneWidget,
       );
       expect(find.text('自定义口语考试'), findsNothing);
@@ -92,20 +93,89 @@ void main() {
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
 
-    await tester.tap(
-      find.byKey(const Key('catalog-scene-scn_ielts_speaking_part_2')),
-    );
+    await tester.tap(find.byKey(const Key('ielts-part-part2')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Part 2 题卡'), findsOneWidget);
-    expect(find.text('已完成 0 / 1 套'), findsOneWidget);
+    expect(find.text('共 1 道专项题'), findsOneWidget);
     expect(
       find.text('Describe a skill you would like to learn'),
       findsOneWidget,
     );
-    expect(find.textContaining('可继续对应 Part 3'), findsOneWidget);
-    expect(find.textContaining('Part 2 未练习'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-browser-card-part2-p23-001')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('filters and searches IELTS topic cards by intersection', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    expect(find.text('共 3 道专项题'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('ielts-browser-search')),
+      'Music',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('共 1 道专项题'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-browser-card-part1-p1-topic-001')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.byKey(const Key('ielts-browser-search')), '');
+    await tester.tap(find.byKey(const Key('ielts-part-part3')));
+    await tester.tap(find.byKey(const Key('ielts-category-event')));
+    await tester.pumpAndSettle();
+    expect(find.text('共 1 道专项题'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-browser-card-part3-p23-001')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('ielts-source-evergreen')));
+    await tester.pumpAndSettle();
+    expect(find.text('共 0 道专项题'), findsOneWidget);
+    expect(find.text('没有找到符合条件的题目'), findsOneWidget);
+  });
+
+  testWidgets('keeps IELTS browser filters when returning to the catalog', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    await tester.tap(find.byKey(const Key('ielts-part-part3')));
+    await tester.tap(find.byKey(const Key('ielts-category-event')));
+    await tester.enterText(
+      find.byKey(const Key('ielts-browser-search')),
+      'skill',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('共 1 道专项题'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    expect(find.text('共 1 道专项题'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('ielts-browser-search')))
+          .controller!
+          .text,
+      'skill',
+    );
+    expect(
+      find.byKey(const Key('ielts-browser-card-part3-p23-001')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('combines workplace and daily templates in AI roleplay', (
@@ -252,7 +322,7 @@ void main() {
       (
         entry: Key('practice-hub-exam'),
         title: Key('practice-hub-title-ielts'),
-        scene: Key('catalog-scene-scn_ielts_speaking_part_1'),
+        scene: Key('ielts-browser-card-part1-p1-topic-001'),
       ),
       (
         entry: Key('practice-hub-roleplay'),
@@ -402,11 +472,22 @@ final _ieltsBank = IeltsQuestionBank(
       questionCount: 8,
     ),
   ],
+  part1Topics: const [
+    IeltsPart1PracticeTopic(
+      id: 'p1-topic-001',
+      titleZh: '音乐',
+      titleEn: 'Music',
+      release: 'new',
+      category: IeltsTopicCategory.thing,
+      questions: ['Q1', 'Q2', 'Q3', 'Q4'],
+    ),
+  ],
   topicGroups: const [
     IeltsTopicGroup(
       id: 'p23-001',
       title: '学习技能',
       release: 'new',
+      category: IeltsTopicCategory.event,
       cueCard: IeltsCueCard(
         prompt: 'Describe a skill you would like to learn',
         points: ['What', 'Why', 'How', 'Benefit'],

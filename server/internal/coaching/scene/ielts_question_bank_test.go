@@ -17,10 +17,12 @@ func TestEmbeddedIELTSQuestionBankPublishesOnlyCompleteMainlandGroups(
 	}
 	published := publishedIELTSQuestionBank(bank)
 	if len(published.Part1Sets) != 38 ||
+		len(published.Part1Topics) != 38 ||
 		len(published.TopicGroups) != 56 {
 		t.Fatalf(
-			"published counts = (%d, %d)",
+			"published counts = (%d, %d, %d)",
 			len(published.Part1Sets),
+			len(published.Part1Topics),
 			len(published.TopicGroups),
 		)
 	}
@@ -48,6 +50,31 @@ func TestEmbeddedIELTSQuestionBankPublishesOnlyCompleteMainlandGroups(
 			part1QuestionCount,
 		)
 	}
+	practiceQuestionCount := 0
+	part1Releases := map[string]int{}
+	part1Categories := map[string]int{}
+	for _, topic := range published.Part1Topics {
+		practiceQuestionCount += len(topic.Questions)
+		part1Releases[topic.Release]++
+		part1Categories[topic.Category]++
+	}
+	if practiceQuestionCount != 234 ||
+		!reflect.DeepEqual(
+			part1Releases,
+			map[string]int{"new": 16, "carry_over": 17, "evergreen": 5},
+		) ||
+		!reflect.DeepEqual(
+			part1Categories,
+			map[string]int{"person": 2, "place": 10, "thing": 15, "event": 11},
+		) {
+		t.Fatalf(
+			"Part 1 practice taxonomy = questions %d, releases %#v, categories %#v",
+			practiceQuestionCount,
+			part1Releases,
+			part1Categories,
+		)
+	}
+	groupCategories := map[string]int{}
 	for _, group := range published.TopicGroups {
 		if !group.Published ||
 			group.Region != "mainland" ||
@@ -56,10 +83,52 @@ func TestEmbeddedIELTSQuestionBankPublishesOnlyCompleteMainlandGroups(
 			group.SupplementedQuestionCount != 0 {
 			t.Fatalf("published incomplete group: %#v", group)
 		}
+		groupCategories[group.Category]++
+	}
+	if !reflect.DeepEqual(
+		groupCategories,
+		map[string]int{"person": 12, "place": 8, "thing": 17, "event": 19},
+	) {
+		t.Fatalf("Part 2/3 categories = %#v", groupCategories)
 	}
 	for _, group := range bank.TopicGroups {
 		if group.Region == "international" && group.Published {
 			t.Fatalf("international group was published: %#v", group)
+		}
+	}
+}
+
+func TestResolveIELTSPart1PracticeUsesOnlySelectedTopic(t *testing.T) {
+	t.Parallel()
+
+	catalog := mustTestCatalog(t)
+	bank, err := catalog.IELTSQuestionBank()
+	if err != nil {
+		t.Fatalf("IELTSQuestionBank: %v", err)
+	}
+	selected := bank.Part1Topics[0]
+	resolved, err := catalog.ResolveIELTSQuestionSet(
+		IELTSQuestionSetSelection{
+			Mode:       IELTSPracticeModePart1,
+			Part1SetID: selected.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ResolveIELTSQuestionSet Part 1 topic: %v", err)
+	}
+	if resolved.Part1Questions != len(selected.Questions) ||
+		len(resolved.TurnBlueprints) != len(selected.Questions) {
+		t.Fatalf("Part 1 topic resolution = %#v", resolved)
+	}
+	for index, question := range selected.Questions {
+		want := "Part 1 question: " + question
+		if resolved.TurnBlueprints[index] != want {
+			t.Fatalf(
+				"turn %d = %q, want %q",
+				index,
+				resolved.TurnBlueprints[index],
+				want,
+			)
 		}
 	}
 }

@@ -208,7 +208,7 @@ final class PreparationController extends ChangeNotifier {
       return null;
     }
     final ids = mode == IeltsPracticeMode.part1
-        ? bank.part1Sets.map((set) => set.id).toList(growable: false)
+        ? bank.part1Topics.map((topic) => topic.id).toList(growable: false)
         : bank.topicGroups.map((group) => group.id).toList(growable: false);
     if (ids.isEmpty) {
       return null;

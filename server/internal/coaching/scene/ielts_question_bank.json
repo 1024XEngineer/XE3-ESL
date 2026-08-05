@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "bank_id": "ielts-speaking-2026-05-08-mainland",
   "season": "2026-05-08",
   "source_cutoff": "2026-06-18T18:00:00+08:00",
@@ -1320,7 +1320,8 @@
         "Why do some people like to remodel and decorate their homes themselves?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-new-002",
@@ -1344,7 +1345,8 @@
         "Are there any differences between the videos that young men and young women like to watch?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-003",
@@ -1368,7 +1370,8 @@
         "Why do some young people feel bored when talking with old people?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-new-004",
@@ -1392,7 +1395,8 @@
         "Is it good to arrive early in any situation?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-005",
@@ -1416,7 +1420,8 @@
         "Why do some people prefer to grow their own fruits and vegetables instead of buying them from the market?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-006",
@@ -1441,7 +1446,8 @@
         "What are the benefits for people to obey rules?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-007",
@@ -1465,7 +1471,8 @@
         "What's the difference between having younger friends and older friends?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-008",
@@ -1489,7 +1496,8 @@
         "Why is some doctors' pay high and others' low?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-009",
@@ -1514,7 +1522,8 @@
         "What makes a business fail?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-010",
@@ -1538,7 +1547,8 @@
         "What kind of plans do people often make?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-011",
@@ -1562,7 +1572,8 @@
         "What advantages are there for students experiencing teamwork at school?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-012",
@@ -1586,7 +1597,8 @@
         "Do you think the influence of advertising is good?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-013",
@@ -1610,7 +1622,8 @@
         "Why do some people spend a lot going to other countries to watch sports events?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-014",
@@ -1633,7 +1646,8 @@
         "Do people today prefer eating at home or in a restaurant?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-015",
@@ -1657,7 +1671,8 @@
         "How do people learn new things?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-016",
@@ -1681,7 +1696,8 @@
         "Do you think students are overly reliant on AI?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-017",
@@ -1705,7 +1721,8 @@
         "Is advertising important for a company? Why?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-018",
@@ -1729,7 +1746,8 @@
         "Why do many countries try to attract people to visit?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-new-019",
@@ -1753,7 +1771,8 @@
         "What kind of gifts do people usually bring when they visit others?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-new-020",
@@ -1777,7 +1796,8 @@
         "What are the advantages of keeping a pet?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-021",
@@ -1797,7 +1817,8 @@
         "How important is it for schools to help children become smarter?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-022",
@@ -1821,7 +1842,8 @@
         "What are the rules people should obey at work?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-023",
@@ -1845,7 +1867,8 @@
         "How do you show your respect in your messages?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-024",
@@ -1869,7 +1892,8 @@
         "Do you think it is necessary to be ambitious when working in a team in a company?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-025",
@@ -1889,7 +1913,8 @@
         "In your country, what industry is it easier to be successful in?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-new-026",
@@ -1912,7 +1937,8 @@
         "Who do young people like to share opinions with?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-new-027",
@@ -1935,7 +1961,8 @@
         "What environmental laws does your country already have?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-028",
@@ -1958,7 +1985,8 @@
         "How can people develop their national identity?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-new-029",
@@ -1982,7 +2010,8 @@
         "Who tend to change their daily routine more, young people or old people?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-001",
@@ -2006,7 +2035,8 @@
         "Is salary the main reason why people choose a certain job?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-002",
@@ -2030,7 +2060,8 @@
         "Is it easy to become famous in your country?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-003",
@@ -2054,7 +2085,8 @@
         "What are examples of good and poor phone manners?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-004",
@@ -2078,7 +2110,8 @@
         "Why do some people think it is better to ask for advice from friends than from parents?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-005",
@@ -2102,7 +2135,8 @@
         "What negative effects does technology have on people's relationships?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-006",
@@ -2126,7 +2160,8 @@
         "Is making study plans popular among young people?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-007",
@@ -2150,7 +2185,8 @@
         "How do artworks inspire people?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-008",
@@ -2175,7 +2211,8 @@
         "Do you think young people are more and more reliant on these programs?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-009",
@@ -2199,7 +2236,8 @@
         "Is smiling important in your culture?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-010",
@@ -2223,7 +2261,8 @@
         "Do rewards help a child become better?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-011",
@@ -2247,7 +2286,8 @@
         "What are the benefits of technology for learning history?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-012",
@@ -2271,7 +2311,8 @@
         "Why do more people own and drive private vehicles now?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-013",
@@ -2295,7 +2336,8 @@
         "Do you think smart children are happier than other children?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-014",
@@ -2319,7 +2361,8 @@
         "Do you think enterprises should provide training for their employees?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-015",
@@ -2343,7 +2386,8 @@
         "Why do many people like listening to music while doing sports?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-016",
@@ -2367,7 +2411,8 @@
         "Do you think successful movies should have well-known actors or actresses in leading roles?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-017",
@@ -2391,7 +2436,8 @@
         "Do you think it's reasonable to charge an entry fee for visiting interesting buildings?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-old-018",
@@ -2415,7 +2461,8 @@
         "What games help develop children's imagination?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-019",
@@ -2439,7 +2486,8 @@
         "Do you think schools should teach children to do household chores?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-020",
@@ -2463,7 +2511,8 @@
         "Do you think it is the rich people's responsibility to donate money to people in need?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-021",
@@ -2487,7 +2536,8 @@
         "Should children do everything their parents ask them to do?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-old-022",
@@ -2511,7 +2561,8 @@
         "What kind of work can young people do in foreign countries?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-old-023",
@@ -2536,7 +2587,8 @@
         "What can people do to protect the natural world?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-old-024",
@@ -2560,7 +2612,8 @@
         "What are the differences in the shopping habits of different age groups?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-old-025",
@@ -2585,7 +2638,8 @@
         "Do you prefer to visit well-developed cities or cities with a long history?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-old-026",
@@ -2610,7 +2664,8 @@
         "Why do old people prefer to live in quiet places?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-old-027",
@@ -2634,7 +2689,8 @@
         "Do you think watching talk shows is a waste of time?"
       ],
       "published": true,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-intl-001",
@@ -2655,7 +2711,8 @@
         "Do you think a gap period in life is important?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-intl-002",
@@ -2680,7 +2737,8 @@
         "What do you think of people using their mobile phones during a meal?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "thing"
     },
     {
       "id": "p23-intl-003",
@@ -2702,7 +2760,8 @@
         "Do you think customer satisfaction is important for a company?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "person"
     },
     {
       "id": "p23-intl-004",
@@ -2727,7 +2786,8 @@
         "Some people think that technology has made it unnecessary to learn languages. What do you think?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-intl-005",
@@ -2752,7 +2812,8 @@
         "How can rivers and lakes benefit local people?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "place"
     },
     {
       "id": "p23-intl-006",
@@ -2777,7 +2838,8 @@
         "Going out to have holidays is tiring. Why do people still want to do it?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-intl-007",
@@ -2802,7 +2864,8 @@
         "Do you prefer to prepare and organize an activity or just take part in an activity?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
     },
     {
       "id": "p23-intl-008",
@@ -2827,7 +2890,624 @@
         "Would you rather be in a car or a bus in a traffic jam?"
       ],
       "published": false,
-      "supplemented_question_count": 0
+      "supplemented_question_count": 0,
+      "category": "event"
+    }
+  ],
+  "part1_topics": [
+    {
+      "id": "p1-topic-001",
+      "title_zh": "音乐",
+      "title_en": "Music",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you prefer sad or happy music?",
+        "Does happy music make you feel more excited?",
+        "Have you taken any music classes?",
+        "Do you listen to music while doing other things?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-002",
+      "title_zh": "老师",
+      "title_en": "Teachers",
+      "release": "new",
+      "category": "person",
+      "questions": [
+        "Do you have a favorite teacher?",
+        "Do you want to be a teacher in the future?",
+        "Do you have a teacher from your past that you still remember?",
+        "Do you like your primary school teachers more than your high school teachers?",
+        "Are you still in touch with your primary school teachers?",
+        "In what way has your favourite teacher helped you?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-003",
+      "title_zh": "社交媒体",
+      "title_en": "Social media",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Have you ever posted anything on social media?",
+        "When did you start using social media?",
+        "Do you think you spend too much time on social media?",
+        "Do your friends use social media?",
+        "What do people often do on social media?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-004",
+      "title_zh": "整洁",
+      "title_en": "Tidiness",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you like to keep things tidy?",
+        "Did you keep your room tidy as a child?",
+        "How do you keep your work or study space tidy?",
+        "Do you think that it is necessary to be tidy?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-005",
+      "title_zh": "网站",
+      "title_en": "Websites",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "What kinds of websites do you often visit?",
+        "What is your favourite website?",
+        "Are there any changes to the websites you often visit?",
+        "What kinds of websites are popular in your country?",
+        "Do you prefer getting information from websites or books?",
+        "Would you like to have your own website?",
+        "What have you learned from websites that help with your life or studies?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-006",
+      "title_zh": "手表",
+      "title_en": "Watch",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you wear a watch?",
+        "Have you ever got a watch as a gift?",
+        "Why do some people wear expensive watches?",
+        "Do you think it is important to wear a watch? Why?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-007",
+      "title_zh": "购物",
+      "title_en": "Shopping",
+      "release": "new",
+      "category": "event",
+      "questions": [
+        "Do you like shopping?",
+        "How often do you go shopping?",
+        "Do you prefer online shopping or in-store shopping?",
+        "Have you ever returned anything you bought online?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-008",
+      "title_zh": "汽车",
+      "title_en": "Cars",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Did you enjoy traveling by car when you were a kid?",
+        "What types of cars do you like?",
+        "Do you prefer to be a driver or a passenger?",
+        "What do you usually do when there is a traffic jam?",
+        "Do you think car colours are important?",
+        "Will you buy an expensive car in the future?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-009",
+      "title_zh": "公园与花园",
+      "title_en": "Public gardens and parks",
+      "release": "new",
+      "category": "place",
+      "questions": [
+        "Did you like going to parks as a child?",
+        "Do you still like going to parks now?",
+        "Would you like to see more parks in your city?",
+        "Would you like to play in a public garden or park?",
+        "Are there any parks you want to go to in the future?",
+        "Would you prefer to play in a personal garden or public garden?",
+        "How are the parks today different from those you visited as a kid?",
+        "What do you like to do when visiting a park?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-010",
+      "title_zh": "科学",
+      "title_en": "Science",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you like science?",
+        "When did you start to learn about science?",
+        "Which science subject is interesting to you?",
+        "What kinds of interesting things have you done with science?",
+        "Do you like watching science TV programs?",
+        "Do Chinese people often visit science museums?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-011",
+      "title_zh": "镜子",
+      "title_en": "Mirrors",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you like looking at yourself in the mirror? How often?",
+        "Have you ever bought mirrors?",
+        "Do you usually take a mirror with you?",
+        "Would you use mirrors to decorate your room?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-012",
+      "title_zh": "外太空与星星",
+      "title_en": "Outer space and stars",
+      "release": "new",
+      "category": "place",
+      "questions": [
+        "Have you ever learnt about outer space and stars?",
+        "Do you like science fiction movies? Why?",
+        "Do you want to know more about outer space?",
+        "Do you want to go into outer space in the future?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-013",
+      "title_zh": "唱歌",
+      "title_en": "Singing",
+      "release": "new",
+      "category": "event",
+      "questions": [
+        "Do you like singing? Why?",
+        "Have you ever learnt how to sing?",
+        "Who do you want to sing for?",
+        "Do you think singing can bring happiness to people?",
+        "Do you like listening to others singing?",
+        "Have you ever taken a singing class?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-014",
+      "title_zh": "服装",
+      "title_en": "Clothing",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "What kind of clothes do you like to wear?",
+        "Do you prefer to wear comfortable and casual clothes or smart clothes?",
+        "Do you like wearing T-shirts?",
+        "Do you spend a lot of time choosing clothes?",
+        "Do you wear different styles of clothes on weekdays and weekends?",
+        "What colour clothes do you like?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-015",
+      "title_zh": "笑话与喜剧",
+      "title_en": "Jokes & Comedies",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Are you good at telling jokes?",
+        "Do your friends like to tell jokes?",
+        "Do you like to watch comedies?",
+        "Have you ever watched a live show?",
+        "Are comedy shows popular in your country?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-016",
+      "title_zh": "耳机",
+      "title_en": "Headphones",
+      "release": "new",
+      "category": "thing",
+      "questions": [
+        "Do you use headphones?",
+        "What type of headphones do you use?",
+        "When would you use headphones?",
+        "In what conditions would you not use headphones?",
+        "Is wearing headphones comfortable?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-017",
+      "title_zh": "食物",
+      "title_en": "Food",
+      "release": "carry_over",
+      "category": "thing",
+      "questions": [
+        "What is your favourite food?",
+        "What kind of food did you like when you were young?",
+        "Do you eat different foods at different times of the year?",
+        "Has your favourite food changed since you were a child?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-018",
+      "title_zh": "宠物与动物",
+      "title_en": "Pets and Animals",
+      "release": "carry_over",
+      "category": "thing",
+      "questions": [
+        "What's your favourite animal? Why?",
+        "Where do you prefer to keep your pet, indoors or outdoors?",
+        "Have you ever had a pet before?",
+        "What is the most popular animal in China?",
+        "Have you ever visited a zoo?",
+        "How often do you visit a zoo?",
+        "Are there many people keeping pets in your country?",
+        "Should schools teach students knowledge about pets or animals?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-019",
+      "title_zh": "运动队",
+      "title_en": "Sports team",
+      "release": "carry_over",
+      "category": "person",
+      "questions": [
+        "Have you ever been part of a sports team?",
+        "Is team sports popular in your culture?",
+        "Do you like watching team games? Why?",
+        "What are the differences between team sports and individual sports?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-020",
+      "title_zh": "兴趣爱好",
+      "title_en": "Hobby",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you have any hobbies?",
+        "Did you have any hobbies when you were a child?",
+        "Do you have a hobby that you've had since childhood?",
+        "Do you have the same hobbies as your family members?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-021",
+      "title_zh": "早晨时光",
+      "title_en": "Morning time",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you like getting up early in the morning?",
+        "What do you usually do in the morning?",
+        "What did you do in the morning when you were little? Why?",
+        "Are there any differences between what you do in the morning now and what you did in the past?",
+        "Do you spend your mornings doing the same things on both weekends and weekdays? Why?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-022",
+      "title_zh": "礼物",
+      "title_en": "Gifts",
+      "release": "carry_over",
+      "category": "thing",
+      "questions": [
+        "Have you ever sent handmade gifts to others?",
+        "Have you ever received a great gift?",
+        "What do you consider when choosing a gift?",
+        "Do you think you are good at choosing gifts?",
+        "What gift have you received recently?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-023",
+      "title_zh": "阅读",
+      "title_en": "Reading",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you like reading?",
+        "Do you prefer to read on paper or on a screen?",
+        "When do you need to read carefully, and when not?",
+        "Do you prefer scanning or detailed reading?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-024",
+      "title_zh": "散步",
+      "title_en": "Walking",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you walk a lot?",
+        "Did you often go outside to have a walk when you were a child?",
+        "Why do people like to walk in parks?",
+        "Where would you like to take a long walk if you had the chance?",
+        "Where did you go for a walk lately?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-025",
+      "title_zh": "打字",
+      "title_en": "Typing",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you prefer typing or handwriting?",
+        "Do you type on a desktop or laptop keyboard every day?",
+        "When did you learn how to type on a keyboard?",
+        "How do you improve your typing?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-026",
+      "title_zh": "风景",
+      "title_en": "Scenery",
+      "release": "carry_over",
+      "category": "place",
+      "questions": [
+        "Do you look out the window at the scenery when travelling by bus or car?",
+        "Do you prefer the mountains or the sea?",
+        "Do you like to take scenery pictures?",
+        "What are the most beautiful sights you have seen while traveling?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-027",
+      "title_zh": "建筑",
+      "title_en": "Building",
+      "release": "carry_over",
+      "category": "place",
+      "questions": [
+        "Are there tall buildings near your home?",
+        "Do you take photos of buildings?",
+        "Is there a building that you would like to visit?",
+        "Do you want to live in a tall building?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-028",
+      "title_zh": "童年活动",
+      "title_en": "Childhood activities",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "What are your favourite activities?",
+        "What were your favourite activities when you were a child?",
+        "Did you prefer to do activities alone or with a group of people when you were a child?",
+        "Are there any differences between the activities you liked when you were a child and those you like now?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-029",
+      "title_zh": "景色",
+      "title_en": "Views",
+      "release": "carry_over",
+      "category": "place",
+      "questions": [
+        "Do you like taking pictures of different views?",
+        "Do you prefer views in urban areas or rural areas?",
+        "Do you prefer views in your own country or in other countries?",
+        "Have you seen an unforgettable and beautiful view or scenery?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-030",
+      "title_zh": "人生阶段",
+      "title_en": "Life stages",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "What did you often do with your friends in your childhood?",
+        "What do you think is the most important at the moment?",
+        "Do you have any plans for the next five years?",
+        "At what age do you think people are the happiest?",
+        "How do people remember each stage of their lives?",
+        "Do you enjoy being the age you are now?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-031",
+      "title_zh": "空闲时间",
+      "title_en": "Spare time",
+      "release": "carry_over",
+      "category": "event",
+      "questions": [
+        "Do you often have free time?",
+        "What do you usually do in your spare time?",
+        "Which day do you have more free time on, Saturday or Sunday?",
+        "Would you like to have more free time in the future?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-032",
+      "title_zh": "记忆",
+      "title_en": "Memory",
+      "release": "carry_over",
+      "category": "thing",
+      "questions": [
+        "Are you good at memorising things?",
+        "Have you ever forgotten something important?",
+        "What do you need to remember in your daily life?",
+        "How do you remember important things?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-033",
+      "title_zh": "拥挤的地方",
+      "title_en": "Crowded place",
+      "release": "carry_over",
+      "category": "place",
+      "questions": [
+        "Is the city where you live crowded?",
+        "Is there a crowded place near where you live?",
+        "Do you like crowded places?",
+        "Do most people like crowded places?",
+        "When was the last time you were in a crowded place?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-034",
+      "title_zh": "工作或学习",
+      "title_en": "Work or studies",
+      "release": "evergreen",
+      "category": "event",
+      "questions": [
+        "What subjects are you studying?",
+        "Do you like your subject?",
+        "Why did you choose to study that subject?",
+        "Do you think that your subject is popular in your country?",
+        "Do you have any plans for your studies in the next five years?",
+        "What are the benefits of being your age?",
+        "Do you want to change your major?",
+        "Do you prefer to study in the mornings or in the afternoons?",
+        "How much time do you spend on your studies each week?",
+        "Are you looking forward to working?",
+        "What technology do you use when you study?",
+        "What changes would you like to see in your school?",
+        "What work do you do?",
+        "Why did you choose to do that type of work (or that job)?",
+        "Do you like your job?",
+        "What requirements did you need to meet to get your current job?",
+        "Do you have any plans for your work in the next five years?",
+        "What do you think is the most important at the moment?",
+        "Do you want to change to another job?",
+        "Do you miss being a student?",
+        "What technology do you use at work?",
+        "Who helps you the most? And how?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-035",
+      "title_zh": "住房",
+      "title_en": "Home/accommodation",
+      "release": "evergreen",
+      "category": "place",
+      "questions": [
+        "What kind of house or apartment do you want to live in in the future?",
+        "Are the transport facilities to your home very good?",
+        "Do you prefer living in a house or an apartment?",
+        "Please describe the room you live in.",
+        "What part of your home do you like the most?",
+        "How long have you lived there?",
+        "Do you plan to live there for a long time?",
+        "What's the difference between where you are living now and where you have lived in the past?",
+        "Can you describe the place where you live?",
+        "What room does your family spend most of the time in?",
+        "What's your favorite room in your apartment or house?",
+        "What makes you feel pleasant in your home?",
+        "Do you think it is important to live in a comfortable environment?",
+        "Do you live in an apartment or a house?",
+        "Who do you live with?",
+        "What do you usually do in your apartment?",
+        "What kinds of accommodation do you live in?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-036",
+      "title_zh": "家乡",
+      "title_en": "Hometown",
+      "release": "evergreen",
+      "category": "place",
+      "questions": [
+        "Where is your hometown?",
+        "Is that a big city or a small place?",
+        "Please describe your hometown a little.",
+        "How long have you been living there?",
+        "Do you think you will continue living there for a long time?",
+        "Do you like your hometown?",
+        "Do you like living there?",
+        "What do you like (most) about your hometown?",
+        "Is there anything you dislike about it?",
+        "What's your hometown famous for?",
+        "Did you learn about the history of your hometown at school?",
+        "Are there many young people in your hometown?",
+        "Is your hometown a good place for young people to pursue their careers?",
+        "Have you learned anything about the history of your hometown?",
+        "Did you learn about the culture of your hometown in your childhood?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-037",
+      "title_zh": "居住区域",
+      "title_en": "The area you live in",
+      "release": "evergreen",
+      "category": "place",
+      "questions": [
+        "Do you like the area that you live in?",
+        "Where do you like to go in that area?",
+        "Do you know any famous people in your area?",
+        "What are some changes in the area recently?",
+        "Do you know any of your neighbors?",
+        "Are the people in your neighborhood nice and friendly?",
+        "Do you live in a noisy or a quiet area?"
+      ],
+      "published": true
+    },
+    {
+      "id": "p1-topic-038",
+      "title_zh": "居住城市",
+      "title_en": "The city you live in",
+      "release": "evergreen",
+      "category": "place",
+      "questions": [
+        "What city do you live in?",
+        "Do you like this city? Why?",
+        "How long have you lived in this city?",
+        "Are there big changes in this city?",
+        "Is this city your permanent residence?",
+        "Are there people of different ages living in this city?",
+        "Are the people friendly in the city?",
+        "Is the city friendly to children and old people?",
+        "Do you often see your neighbors?",
+        "What's the weather like where you live?",
+        "Would you recommend your city to others?"
+      ],
+      "published": true
     }
   ]
 }

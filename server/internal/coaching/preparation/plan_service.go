@@ -569,10 +569,11 @@ func validResolvedIELTSQuestionSet(
 	case scene.IELTSPracticeModePart1:
 		return resolved.TopicTitle == "" &&
 			resolved.Part2CueCard == "" &&
-			resolved.Part1Questions == 8 &&
+			resolved.Part1Questions >= 2 &&
+			resolved.Part1Questions <= 24 &&
 			resolved.Part2Questions == 0 &&
 			resolved.Part3Questions == 0 &&
-			len(resolved.TurnBlueprints) == 8
+			len(resolved.TurnBlueprints) == resolved.Part1Questions
 	case scene.IELTSPracticeModePart2:
 		return validPlanText(resolved.TopicTitle) &&
 			validPlanText(resolved.Part2CueCard) &&
@@ -627,10 +628,11 @@ func validPlanIELTSAssignment(
 			assignment.TopicGroupID == "" &&
 			assignment.TopicTitle == "" &&
 			assignment.Part2CueCard == "" &&
-			assignment.Part1Questions == 8 &&
+			assignment.Part1Questions >= 2 &&
+			assignment.Part1Questions <= 24 &&
 			assignment.Part2Questions == 0 &&
 			assignment.Part3Questions == 0 &&
-			len(assignment.TurnBlueprints) == 8
+			len(assignment.TurnBlueprints) == assignment.Part1Questions
 	case scene.IELTSPracticeModePart2:
 		return assignment.Part1SetID == "" &&
 			validPlanResourceID(assignment.TopicGroupID) &&

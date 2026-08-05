@@ -962,7 +962,7 @@ void main() {
   testWidgets('section completion never requests the full-mock report', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 7, turnLimit: 8);
+    final practice = _IeltsPracticeClient(initialCompleted: 3, turnLimit: 4);
     final controller = PracticeController(
       client: practice,
       recorder: _Recorder(),
@@ -1009,7 +1009,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 220));
 
-    expect(controller.completedTurns, 8);
+    expect(controller.completedTurns, 4);
     expect(
       find.byKey(const Key('ielts-section-practice-complete-part1')),
       findsOneWidget,

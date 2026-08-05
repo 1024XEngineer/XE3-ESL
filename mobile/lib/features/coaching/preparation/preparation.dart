@@ -61,7 +61,7 @@ class PreparationPage extends StatefulWidget {
 class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
   _PracticeHub? _selectedHub;
-  IeltsPracticeMode? _selectedIeltsSection;
+  _IeltsBrowserState _ieltsBrowserState = const _IeltsBrowserState();
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _handlingIeltsNavigation = false;
 
@@ -138,7 +138,7 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     setState(() {
       _selectedHub = _PracticeHub.ielts;
-      _selectedIeltsSection = request.mode;
+      _ieltsBrowserState = _ieltsBrowserState.copyWith(part: request.mode);
     });
     final selection = request.selection;
     if (selection != null) {
@@ -204,7 +204,6 @@ class _PreparationPageState extends State<PreparationPage> {
       catalog.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
       });
       widget.onPracticeStarted?.call();
@@ -223,7 +222,6 @@ class _PreparationPageState extends State<PreparationPage> {
       catalog?.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
       });
       widget.onPracticeStarted?.call();
@@ -574,9 +572,6 @@ class _PreparationPageState extends State<PreparationPage> {
 
   Widget _buildHub(PreparationController controller, _PracticeHub hub) {
     final scenes = _scenesForHub(controller.scenes, hub);
-    final ieltsSection = hub == _PracticeHub.ielts
-        ? _selectedIeltsSection
-        : null;
     return ListView(
       key: Key('preparation-hub-list-${hub.name}'),
       primary: false,
@@ -591,13 +586,7 @@ class _PreparationPageState extends State<PreparationPage> {
           child: IconButton(
             key: const Key('preparation-back-to-families'),
             tooltip: '返回场景练习',
-            onPressed: () => setState(() {
-              if (ieltsSection != null) {
-                _selectedIeltsSection = null;
-              } else {
-                _selectedHub = null;
-              }
-            }),
+            onPressed: () => setState(() => _selectedHub = null),
             icon: const Icon(Icons.arrow_back_rounded),
             color: PreparationDesign.ink,
             style: IconButton.styleFrom(
@@ -615,33 +604,18 @@ class _PreparationPageState extends State<PreparationPage> {
             onOpenJobPreparation: widget.onOpenJobPreparation,
           )
         else if (hub == _PracticeHub.ielts)
-          if (ieltsSection == null)
-            _IeltsHub(
-              scenes: scenes,
-              onFullMockPressed: (scene) =>
-                  unawaited(_startIeltsFullMock(controller, scene)),
-              onPartPressed: (scene) {
-                final mode = _ieltsModeForScene(scene.id);
-                if (mode != null) {
-                  setState(() => _selectedIeltsSection = mode);
-                  unawaited(controller.loadIeltsQuestionBankIfNeeded());
-                }
-              },
-            )
-          else
-            _IeltsSetList(
-              controller: controller,
-              mode: ieltsSection,
-              scene: _ieltsSceneForMode(scenes, ieltsSection),
-              onRetry: controller.loadIeltsQuestionBankIfNeeded,
-              onSelectionPressed: (scene, selection) => unawaited(
-                _startSceneDirectly(
-                  controller,
-                  scene,
-                  ieltsSelection: selection,
-                ),
-              ),
-            )
+          _IeltsHub(
+            controller: controller,
+            scenes: scenes,
+            initialBrowserState: _ieltsBrowserState,
+            onBrowserStateChanged: (value) => _ieltsBrowserState = value,
+            onRetry: controller.loadIeltsQuestionBankIfNeeded,
+            onFullMockPressed: (scene) =>
+                unawaited(_startIeltsFullMock(controller, scene)),
+            onSelectionPressed: (scene, selection) => unawaited(
+              _startSceneDirectly(controller, scene, ieltsSelection: selection),
+            ),
+          )
         else
           _RoleplayHub(
             scenes: scenes,
@@ -1232,26 +1206,131 @@ class _InterviewHub extends StatelessWidget {
   }
 }
 
-class _IeltsHub extends StatelessWidget {
-  const _IeltsHub({
-    required this.scenes,
-    required this.onFullMockPressed,
-    required this.onPartPressed,
+enum _IeltsSourceFilter { all, newSeason, carryOver, evergreen }
+
+final class _IeltsBrowserState {
+  const _IeltsBrowserState({
+    this.query = '',
+    this.source = _IeltsSourceFilter.all,
+    this.part,
+    this.category,
   });
 
+  final String query;
+  final _IeltsSourceFilter source;
+  final IeltsPracticeMode? part;
+  final IeltsTopicCategory? category;
+
+  _IeltsBrowserState copyWith({
+    String? query,
+    _IeltsSourceFilter? source,
+    IeltsPracticeMode? part,
+    IeltsTopicCategory? category,
+  }) => _IeltsBrowserState(
+    query: query ?? this.query,
+    source: source ?? this.source,
+    part: part ?? this.part,
+    category: category ?? this.category,
+  );
+}
+
+class _IeltsHub extends StatefulWidget {
+  const _IeltsHub({
+    required this.controller,
+    required this.scenes,
+    required this.onFullMockPressed,
+    required this.onSelectionPressed,
+    required this.onRetry,
+    required this.initialBrowserState,
+    required this.onBrowserStateChanged,
+  });
+
+  final PreparationController controller;
   final List<SceneDefinition> scenes;
   final ValueChanged<SceneDefinition> onFullMockPressed;
-  final ValueChanged<SceneDefinition> onPartPressed;
+  final void Function(SceneDefinition scene, IeltsPracticeSelection selection)
+  onSelectionPressed;
+  final Future<void> Function() onRetry;
+  final _IeltsBrowserState initialBrowserState;
+  final ValueChanged<_IeltsBrowserState> onBrowserStateChanged;
+
+  @override
+  State<_IeltsHub> createState() => _IeltsHubState();
+}
+
+class _IeltsHubState extends State<_IeltsHub> {
+  late final TextEditingController _searchController;
+  _IeltsSourceFilter _source = _IeltsSourceFilter.all;
+  IeltsPracticeMode? _part;
+  IeltsTopicCategory? _category;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialBrowserState;
+    _source = initial.source;
+    _part = initial.part;
+    _category = initial.category;
+    _searchController = TextEditingController(text: initial.query)
+      ..addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController
+      ..removeListener(_onSearchChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _publishBrowserState();
+  }
+
+  void _publishBrowserState() => widget.onBrowserStateChanged(
+    _IeltsBrowserState(
+      query: _searchController.text,
+      source: _source,
+      part: _part,
+      category: _category,
+    ),
+  );
+
+  void _setSource(_IeltsSourceFilter value) {
+    setState(() => _source = value);
+    _publishBrowserState();
+  }
+
+  void _setPart(IeltsPracticeMode? value) {
+    setState(() => _part = value);
+    _publishBrowserState();
+  }
+
+  void _setCategory(IeltsTopicCategory? value) {
+    setState(() => _category = value);
+    _publishBrowserState();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final fullScene = _sceneById(scenes, _ieltsFullSceneId);
-    final partScenes = _scenesByIds(scenes, const [
-      'scn_ielts_speaking_part_1',
-      'scn_ielts_speaking_part_2',
-      'scn_ielts_speaking_part_3',
-    ]);
-    if (fullScene == null && partScenes.isEmpty) {
+    final fullScene = _sceneById(widget.scenes, _ieltsFullSceneId);
+    final partScenes = <IeltsPracticeMode, SceneDefinition?>{
+      IeltsPracticeMode.part1: _ieltsSceneForMode(
+        widget.scenes,
+        IeltsPracticeMode.part1,
+      ),
+      IeltsPracticeMode.part2: _ieltsSceneForMode(
+        widget.scenes,
+        IeltsPracticeMode.part2,
+      ),
+      IeltsPracticeMode.part3: _ieltsSceneForMode(
+        widget.scenes,
+        IeltsPracticeMode.part3,
+      ),
+    };
+    if (fullScene == null &&
+        partScenes.values.every((scene) => scene == null)) {
       return const _HubEmpty(message: '当前没有可用的 IELTS 口语练习。');
     }
     return Column(
@@ -1274,253 +1353,600 @@ class _IeltsHub extends StatelessWidget {
             color: PreparationDesign.ielts,
             foregroundColor: Colors.white,
             assetPath: 'assets/images/scenes/ielts-hero.jpg',
-            onPressed: () => onFullMockPressed(fullScene),
+            onPressed: () => widget.onFullMockPressed(fullScene),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 26),
         ],
-        if (partScenes.isNotEmpty) ...[
-          const Text('分段练习', style: PreparationDesign.sectionTitle),
-          const SizedBox(height: 12),
-          for (var index = 0; index < partScenes.length; index++)
-            _IeltsPartStep(
-              scene: partScenes[index],
-              partNumber: _ieltsPartNumber(partScenes[index].id),
-              label: _ieltsPartLabel(partScenes[index].id),
-              isLast: index == partScenes.length - 1,
-              onPressed: () => onPartPressed(partScenes[index]),
-            ),
-        ],
+        const Text('专项练习', style: PreparationDesign.sectionTitle),
+        const SizedBox(height: 12),
+        _IeltsQuestionBrowser(
+          controller: widget.controller,
+          searchController: _searchController,
+          source: _source,
+          part: _part,
+          category: _category,
+          partScenes: partScenes,
+          onRetry: widget.onRetry,
+          onSourceChanged: _setSource,
+          onPartChanged: _setPart,
+          onCategoryChanged: _setCategory,
+          onSelectionPressed: widget.onSelectionPressed,
+        ),
       ],
     );
   }
 }
 
-class _IeltsSetList extends StatelessWidget {
-  const _IeltsSetList({
+class _IeltsQuestionBrowser extends StatelessWidget {
+  const _IeltsQuestionBrowser({
     required this.controller,
-    required this.mode,
-    required this.scene,
+    required this.searchController,
+    required this.source,
+    required this.part,
+    required this.category,
+    required this.partScenes,
     required this.onRetry,
+    required this.onSourceChanged,
+    required this.onPartChanged,
+    required this.onCategoryChanged,
     required this.onSelectionPressed,
   });
 
   final PreparationController controller;
-  final IeltsPracticeMode mode;
-  final SceneDefinition? scene;
+  final TextEditingController searchController;
+  final _IeltsSourceFilter source;
+  final IeltsPracticeMode? part;
+  final IeltsTopicCategory? category;
+  final Map<IeltsPracticeMode, SceneDefinition?> partScenes;
   final Future<void> Function() onRetry;
+  final ValueChanged<_IeltsSourceFilter> onSourceChanged;
+  final ValueChanged<IeltsPracticeMode?> onPartChanged;
+  final ValueChanged<IeltsTopicCategory?> onCategoryChanged;
   final void Function(SceneDefinition scene, IeltsPracticeSelection selection)
   onSelectionPressed;
 
   @override
   Widget build(BuildContext context) {
     final bank = controller.ieltsQuestionBank;
-    final title = switch (mode) {
-      IeltsPracticeMode.part1 => 'Part 1 套题',
-      IeltsPracticeMode.part2 => 'Part 2 题卡',
-      IeltsPracticeMode.part3 => 'Part 3 主题讨论',
-      IeltsPracticeMode.fullMock => '完整模考',
-    };
     if (controller.isLoadingIeltsQuestionBank && bank == null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _HubHeader(
-            title: title,
-            description: '正在读取本季题库…',
-            titleKey: Key('ielts-set-list-title-${mode.name}'),
-          ),
-          const SizedBox(height: 36),
-          const Center(child: CircularProgressIndicator()),
-        ],
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 36),
+        child: Center(
+          child: CircularProgressIndicator(color: PreparationDesign.ielts),
+        ),
       );
     }
     if (bank == null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _HubHeader(
-            title: title,
-            description: '暂时无法显示套题。',
-            titleKey: Key('ielts-set-list-title-${mode.name}'),
-          ),
-          const SizedBox(height: 24),
-          _InlineFailure(
-            message: controller.ieltsErrorMessage ?? '雅思口语题库暂时不可用。',
-            retryKey: const Key('ielts-question-bank-retry'),
-            onRetry: onRetry,
-          ),
-        ],
+      return _InlineFailure(
+        message: controller.ieltsErrorMessage ?? '雅思口语题库暂时不可用。',
+        retryKey: const Key('ielts-question-bank-retry'),
+        onRetry: onRetry,
       );
     }
-    final total = mode == IeltsPracticeMode.part1
-        ? bank.part1Sets.length
-        : bank.topicGroups.length;
-    final completed = mode == IeltsPracticeMode.part1
-        ? bank.part1Sets
-              .where(
-                (set) => controller
-                    .ieltsProgress(IeltsPracticeMode.part1, set.id)
-                    .completed,
-              )
-              .length
-        : bank.topicGroups
-              .where(
-                (group) => controller.ieltsProgress(mode, group.id).completed,
-              )
-              .length;
+    final items = _visibleItems(bank);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _HubHeader(
-          title: title,
-          description: switch (mode) {
-            IeltsPracticeMode.part1 => '每套包含 3 个熟悉话题，共 8 道题。',
-            IeltsPracticeMode.part2 => '完成题卡后，可以继续同主题 Part 3。',
-            IeltsPracticeMode.part3 => '先看对应 Part 2 背景，再练绑定讨论题。',
-            IeltsPracticeMode.fullMock => '按正式顺序完成三个 Part。',
-          },
-          titleKey: Key('ielts-set-list-title-${mode.name}'),
-        ),
-        const SizedBox(height: 14),
-        Text(
-          '已完成 $completed / $total 套',
-          key: Key('ielts-set-list-progress-${mode.name}'),
-          style: PreparationDesign.meta.copyWith(
-            color: PreparationDesign.ielts,
-            fontWeight: FontWeight.w800,
+        TextField(
+          key: const Key('ielts-browser-search'),
+          controller: searchController,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: '搜索中英文题目…',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: '清除搜索',
+                    onPressed: searchController.clear,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(vertical: 16),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(
+                color: PreparationDesign.ieltsBorder,
+              ),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(
+                color: PreparationDesign.ieltsBorder,
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(
+                color: PreparationDesign.ielts,
+                width: 1.5,
+              ),
+            ),
           ),
         ),
         const SizedBox(height: 18),
-        if (scene == null)
-          const _HubEmpty(message: '当前分段练习尚未开放。')
-        else if (mode == IeltsPracticeMode.part1)
-          for (final set in bank.part1Sets) ...[
-            _IeltsSetCard(
-              key: Key('ielts-part1-set-${set.id}'),
-              title: set.title,
-              description: set.topicSummary,
-              meta: '${set.questionCount} 道题',
-              progress: controller.ieltsProgress(mode, set.id),
-              onPressed: () => onSelectionPressed(
-                scene!,
-                IeltsPracticeSelection(mode: mode, part1SetId: set.id),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ]
-        else
-          for (final group in bank.topicGroups) ...[
-            _IeltsSetCard(
-              key: Key('ielts-${mode.name}-set-${group.id}'),
-              title: mode == IeltsPracticeMode.part2
-                  ? group.cueCard.prompt
-                  : group.title,
-              description: mode == IeltsPracticeMode.part2
-                  ? '${_ieltsReleaseLabel(group.release)} · 可继续对应 Part 3'
-                  : '对应 Part 2：${group.cueCard.prompt}',
-              meta: mode == IeltsPracticeMode.part2
-                  ? _pairedProgressLabel(controller, group.id)
-                  : '${group.part3Questions.length} 道讨论题',
-              progress: controller.ieltsProgress(mode, group.id),
-              showProgressStatus: mode != IeltsPracticeMode.part2,
-              onPressed: () => onSelectionPressed(
-                scene!,
-                IeltsPracticeSelection(mode: mode, topicGroupId: group.id),
-              ),
-            ),
-            const SizedBox(height: 10),
+        _IeltsFilterRow<_IeltsSourceFilter>(
+          values: _IeltsSourceFilter.values,
+          selected: source,
+          label: _ieltsSourceFilterLabel,
+          keyFor: (value) => Key('ielts-source-${value.name}'),
+          onChanged: onSourceChanged,
+        ),
+        const SizedBox(height: 10),
+        _IeltsNullableFilterRow<IeltsPracticeMode>(
+          values: const [
+            IeltsPracticeMode.part1,
+            IeltsPracticeMode.part2,
+            IeltsPracticeMode.part3,
           ],
+          selected: part,
+          allLabel: 'All',
+          label: _ieltsBrowserPartLabel,
+          keyFor: (value) => Key('ielts-part-${value?.name ?? 'all'}'),
+          onChanged: onPartChanged,
+        ),
+        const SizedBox(height: 10),
+        _IeltsNullableFilterRow<IeltsTopicCategory>(
+          values: IeltsTopicCategory.values,
+          selected: category,
+          allLabel: '全标签',
+          label: _ieltsCategoryLabel,
+          keyFor: (value) => Key('ielts-category-${value?.name ?? 'all'}'),
+          onChanged: onCategoryChanged,
+        ),
+        const SizedBox(height: 18),
+        Text(
+          '共 ${items.length} 道专项题',
+          key: const Key('ielts-browser-result-count'),
+          style: PreparationDesign.meta.copyWith(
+            color: PreparationDesign.ieltsDeep,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (items.isEmpty)
+          _IeltsEmptyResult(
+            onClear: () {
+              searchController.clear();
+              onSourceChanged(_IeltsSourceFilter.all);
+              onPartChanged(null);
+              onCategoryChanged(null);
+            },
+          )
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(1);
+              final columns = constraints.maxWidth < 350 || textScale >= 1.6
+                  ? 1
+                  : constraints.maxWidth >= 760
+                  ? 3
+                  : 2;
+              return GridView.builder(
+                key: const Key('ielts-browser-grid'),
+                shrinkWrap: true,
+                primary: false,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  mainAxisExtent: textScale >= 1.3 ? 184 : 154,
+                ),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final scene = partScenes[item.mode];
+                  return _IeltsTopicCard(
+                    key: Key('ielts-browser-card-${item.mode.name}-${item.id}'),
+                    item: item,
+                    progress: controller.ieltsProgress(item.mode, item.id),
+                    onPressed: scene == null
+                        ? null
+                        : () => onSelectionPressed(scene, item.selection),
+                  );
+                },
+              );
+            },
+          ),
       ],
     );
   }
+
+  List<_IeltsBrowseItem> _visibleItems(IeltsQuestionBank bank) {
+    final items = <_IeltsBrowseItem>[
+      for (final topic in bank.part1Topics) _IeltsBrowseItem.part1(topic),
+      for (final group in bank.topicGroups) ...[
+        _IeltsBrowseItem.part2(group),
+        _IeltsBrowseItem.part3(group),
+      ],
+    ];
+    final query = searchController.text.trim().toLowerCase();
+    return items
+        .where((item) {
+          if (part != null && item.mode != part) return false;
+          if (category != null && item.category != category) return false;
+          if (!_matchesSource(item.release, source)) return false;
+          return query.isEmpty || item.searchText.toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+  }
 }
 
-class _IeltsSetCard extends StatelessWidget {
-  const _IeltsSetCard({
+final class _IeltsBrowseItem {
+  const _IeltsBrowseItem({
+    required this.id,
+    required this.mode,
     required this.title,
-    required this.description,
-    required this.meta,
+    required this.subtitle,
+    required this.release,
+    required this.category,
+    required this.searchText,
+    required this.selection,
+  });
+
+  factory _IeltsBrowseItem.part1(IeltsPart1PracticeTopic topic) =>
+      _IeltsBrowseItem(
+        id: topic.id,
+        mode: IeltsPracticeMode.part1,
+        title: topic.titleZh,
+        subtitle: topic.titleEn,
+        release: topic.release,
+        category: topic.category,
+        searchText: [
+          topic.titleZh,
+          topic.titleEn,
+          ...topic.questions,
+        ].join(' '),
+        selection: IeltsPracticeSelection(
+          mode: IeltsPracticeMode.part1,
+          part1SetId: topic.id,
+        ),
+      );
+
+  factory _IeltsBrowseItem.part2(IeltsTopicGroup group) => _IeltsBrowseItem(
+    id: group.id,
+    mode: IeltsPracticeMode.part2,
+    title: group.title,
+    subtitle: group.cueCard.prompt,
+    release: group.release,
+    category: group.category,
+    searchText: [
+      group.title,
+      group.cueCard.prompt,
+      ...group.cueCard.points,
+    ].join(' '),
+    selection: IeltsPracticeSelection(
+      mode: IeltsPracticeMode.part2,
+      topicGroupId: group.id,
+    ),
+  );
+
+  factory _IeltsBrowseItem.part3(IeltsTopicGroup group) => _IeltsBrowseItem(
+    id: group.id,
+    mode: IeltsPracticeMode.part3,
+    title: group.title,
+    subtitle: group.cueCard.prompt,
+    release: group.release,
+    category: group.category,
+    searchText: [
+      group.title,
+      group.cueCard.prompt,
+      ...group.part3Questions,
+    ].join(' '),
+    selection: IeltsPracticeSelection(
+      mode: IeltsPracticeMode.part3,
+      topicGroupId: group.id,
+    ),
+  );
+
+  final String id;
+  final IeltsPracticeMode mode;
+  final String title;
+  final String subtitle;
+  final String release;
+  final IeltsTopicCategory category;
+  final String searchText;
+  final IeltsPracticeSelection selection;
+}
+
+class _IeltsTopicCard extends StatelessWidget {
+  const _IeltsTopicCard({
+    required this.item,
     required this.progress,
     required this.onPressed,
-    this.showProgressStatus = true,
     super.key,
   });
 
-  final String title;
-  final String description;
-  final String meta;
+  final _IeltsBrowseItem item;
   final IeltsSetProgress progress;
-  final VoidCallback onPressed;
-  final bool showProgressStatus;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final status = _ieltsProgressLabel(progress);
-    return Material(
-      color: PreparationDesign.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(PreparationDesign.radiusCard),
-        side: const BorderSide(color: PreparationDesign.border),
+    final badge = switch (item.mode) {
+      IeltsPracticeMode.part1 => (
+        'PART 1',
+        const Color(0xFFE0F2FE),
+        const Color(0xFF0369A1),
       ),
-      child: InkWell(
-        onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 15, 14, 15),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      IeltsPracticeMode.part2 => (
+        'PART 2',
+        const Color(0xFFDBEAFE),
+        const Color(0xFF1D4ED8),
+      ),
+      IeltsPracticeMode.part3 => (
+        'PART 3',
+        const Color(0xFFEDE9FE),
+        const Color(0xFF6D28D9),
+      ),
+      IeltsPracticeMode.fullMock => (
+        'MOCK',
+        const Color(0xFFE0F2FE),
+        const Color(0xFF075985),
+      ),
+    };
+    return Semantics(
+      button: true,
+      label: '${badge.$1}。${item.title}。${item.subtitle}',
+      child: Material(
+        color: Colors.white,
+        elevation: 0,
+        shadowColor: const Color(0x1A075985),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: progress.completed
+                ? PreparationDesign.ielts
+                : PreparationDesign.ieltsBorder,
+          ),
+        ),
+        child: InkWell(
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: PreparationDesign.cardTitle,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: PreparationDesign.meta,
-                    ),
-                    const SizedBox(height: 9),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 5,
-                      children: [
-                        Text(
-                          meta,
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: badge.$2,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 5,
+                        ),
+                        child: Text(
+                          badge.$1,
                           style: PreparationDesign.meta.copyWith(
-                            color: PreparationDesign.inkSecondary,
+                            color: badge.$3,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .4,
                           ),
                         ),
-                        if (showProgressStatus)
-                          Text(
-                            status,
-                            style: PreparationDesign.meta.copyWith(
-                              color: progress.completed || progress.inProgress
-                                  ? PreparationDesign.ielts
-                                  : PreparationDesign.inkSecondary,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                      ],
+                      ),
                     ),
+                    const Spacer(),
+                    if (progress.completed)
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        size: 18,
+                        color: PreparationDesign.ielts,
+                      ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 12),
-              const Icon(Icons.arrow_forward_rounded, size: 22),
-            ],
+                const SizedBox(height: 12),
+                Text(
+                  item.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: PreparationDesign.cardTitle.copyWith(
+                    color: const Color(0xFF102A43),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Expanded(
+                  child: Text(
+                    item.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: PreparationDesign.meta.copyWith(
+                      color: const Color(0xFF60758A),
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
+
+class _IeltsFilterRow<T> extends StatelessWidget {
+  const _IeltsFilterRow({
+    required this.values,
+    required this.selected,
+    required this.label,
+    required this.keyFor,
+    required this.onChanged,
+  });
+
+  final List<T> values;
+  final T selected;
+  final String Function(T value) label;
+  final Key Function(T value) keyFor;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        for (final value in values) ...[
+          _IeltsFilterChip(
+            key: keyFor(value),
+            label: label(value),
+            selected: value == selected,
+            onPressed: () => onChanged(value),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ],
+    ),
+  );
+}
+
+class _IeltsNullableFilterRow<T> extends StatelessWidget {
+  const _IeltsNullableFilterRow({
+    required this.values,
+    required this.selected,
+    required this.allLabel,
+    required this.label,
+    required this.keyFor,
+    required this.onChanged,
+  });
+
+  final List<T> values;
+  final T? selected;
+  final String allLabel;
+  final String Function(T value) label;
+  final Key Function(T? value) keyFor;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        _IeltsFilterChip(
+          key: keyFor(null),
+          label: allLabel,
+          selected: selected == null,
+          onPressed: () => onChanged(null),
+        ),
+        const SizedBox(width: 8),
+        for (final value in values) ...[
+          _IeltsFilterChip(
+            key: keyFor(value),
+            label: label(value),
+            selected: value == selected,
+            onPressed: () => onChanged(value),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ],
+    ),
+  );
+}
+
+class _IeltsFilterChip extends StatelessWidget {
+  const _IeltsFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+    super.key,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: selected ? PreparationDesign.ieltsTint : Colors.transparent,
+    shape: StadiumBorder(
+      side: BorderSide(
+        color: selected
+            ? PreparationDesign.ielts
+            : PreparationDesign.ieltsBorder,
+      ),
+    ),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onPressed,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+        child: Text(
+          label,
+          style: PreparationDesign.body.copyWith(
+            color: selected
+                ? PreparationDesign.ieltsDeep
+                : PreparationDesign.inkSecondary,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _IeltsEmptyResult extends StatelessWidget {
+  const _IeltsEmptyResult({required this.onClear});
+
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(24),
+    decoration: BoxDecoration(
+      color: PreparationDesign.ieltsTint,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: PreparationDesign.ieltsBorder),
+    ),
+    child: Column(
+      children: [
+        const Icon(
+          Icons.search_off_rounded,
+          color: PreparationDesign.ieltsDeep,
+        ),
+        const SizedBox(height: 10),
+        const Text('没有找到符合条件的题目'),
+        const SizedBox(height: 8),
+        TextButton(onPressed: onClear, child: const Text('清除筛选')),
+      ],
+    ),
+  );
+}
+
+bool _matchesSource(String release, _IeltsSourceFilter source) =>
+    switch (source) {
+      _IeltsSourceFilter.all => true,
+      _IeltsSourceFilter.newSeason => release == 'new',
+      _IeltsSourceFilter.carryOver => release == 'carry_over',
+      _IeltsSourceFilter.evergreen => release == 'evergreen',
+    };
+
+String _ieltsSourceFilterLabel(_IeltsSourceFilter value) => switch (value) {
+  _IeltsSourceFilter.all => '全部',
+  _IeltsSourceFilter.newSeason => '5–8月新题',
+  _IeltsSourceFilter.carryOver => '5–8月保留题',
+  _IeltsSourceFilter.evergreen => '万年老题',
+};
+
+String _ieltsBrowserPartLabel(IeltsPracticeMode value) => switch (value) {
+  IeltsPracticeMode.part1 => 'Part 1',
+  IeltsPracticeMode.part2 => 'Part 2',
+  IeltsPracticeMode.part3 => 'Part 3',
+  IeltsPracticeMode.fullMock => '完整模拟',
+};
+
+String _ieltsCategoryLabel(IeltsTopicCategory value) => switch (value) {
+  IeltsTopicCategory.person => '人物类',
+  IeltsTopicCategory.place => '地点类',
+  IeltsTopicCategory.thing => '事物类',
+  IeltsTopicCategory.event => '事件类',
+};
 
 enum _RoleplayFilter { recommended, workplace, travel, daily }
 
@@ -1943,92 +2369,6 @@ class _InterviewModeCard extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _IeltsPartStep extends StatelessWidget {
-  const _IeltsPartStep({
-    required this.scene,
-    required this.partNumber,
-    required this.label,
-    required this.isLast,
-    required this.onPressed,
-  });
-
-  final SceneDefinition scene;
-  final String partNumber;
-  final String label;
-  final bool isLast;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
-      child: Material(
-        color: PreparationDesign.surface,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(PreparationDesign.radiusCard),
-          side: const BorderSide(color: PreparationDesign.border),
-        ),
-        child: Semantics(
-          button: true,
-          label: 'Part $partNumber，$label。${scene.prompt.publicSceneBrief}',
-          onTap: onPressed,
-          excludeSemantics: true,
-          child: InkWell(
-            key: Key('catalog-scene-${scene.id}'),
-            onTap: onPressed,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                      color: PreparationDesign.ieltsTint,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      partNumber,
-                      style: const TextStyle(
-                        color: PreparationDesign.ielts,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Part $partNumber',
-                          style: PreparationDesign.cardTitle,
-                        ),
-                        const SizedBox(height: 3),
-                        Text(label, style: PreparationDesign.meta),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Icon(
-                    Icons.arrow_forward_rounded,
-                    size: 20,
-                    color: PreparationDesign.ink,
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ),
@@ -2478,34 +2818,6 @@ List<SceneDefinition> _scenesByIds(
   return [for (final id in ids) ?byId[id]];
 }
 
-String _ieltsPartNumber(String sceneId) {
-  return switch (sceneId) {
-    'scn_ielts_speaking_part_1' => '1',
-    'scn_ielts_speaking_part_2' => '2',
-    'scn_ielts_speaking_part_3' => '3',
-    _ => '•',
-  };
-}
-
-String _ieltsPartLabel(String sceneId) {
-  return switch (sceneId) {
-    'scn_ielts_speaking_part_1' => '熟悉话题问答',
-    'scn_ielts_speaking_part_2' => '题卡陈述 · 可继续 Part 3',
-    'scn_ielts_speaking_part_3' => '承接 Part 2 主题讨论',
-    _ => '专项练习',
-  };
-}
-
-IeltsPracticeMode? _ieltsModeForScene(String sceneId) {
-  return switch (sceneId) {
-    'scn_ielts_speaking_part_1' => IeltsPracticeMode.part1,
-    'scn_ielts_speaking_part_2' => IeltsPracticeMode.part2,
-    'scn_ielts_speaking_part_3' => IeltsPracticeMode.part3,
-    _ieltsFullSceneId => IeltsPracticeMode.fullMock,
-    _ => null,
-  };
-}
-
 SceneDefinition? _ieltsSceneForMode(
   List<SceneDefinition> scenes,
   IeltsPracticeMode mode,
@@ -2517,48 +2829,6 @@ SceneDefinition? _ieltsSceneForMode(
     IeltsPracticeMode.part3 => 'scn_ielts_speaking_part_3',
   };
   return _sceneById(scenes, id);
-}
-
-String _ieltsReleaseLabel(String release) {
-  return switch (release) {
-    'new' => '当季新题',
-    'carry_over' => '老题沿用',
-    _ => '本季题目',
-  };
-}
-
-String _pairedProgressLabel(PreparationController controller, String groupId) {
-  final part2 = controller.ieltsProgress(IeltsPracticeMode.part2, groupId);
-  final part3 = controller.ieltsProgress(IeltsPracticeMode.part3, groupId);
-  return '${_ieltsPartProgressLabel('Part 2', part2)}'
-      ' · ${_ieltsPartProgressLabel('Part 3', part3)}';
-}
-
-String _ieltsPartProgressLabel(String part, IeltsSetProgress progress) {
-  if (progress.inProgress) {
-    return '$part 进行中';
-  }
-  if (progress.completed) {
-    final date = progress.lastPracticedAt?.toLocal();
-    final recent = date == null ? '' : ' · ${date.month}月${date.day}日';
-    return '$part 已完成 ✓ · ${progress.attemptCount} 次$recent';
-  }
-  return '$part 未练习';
-}
-
-String _ieltsProgressLabel(IeltsSetProgress progress) {
-  if (progress.inProgress) {
-    final completed = progress.attemptCount == 0
-        ? ''
-        : ' · 已练 ${progress.attemptCount} 次';
-    return '进行中$completed';
-  }
-  if (progress.completed) {
-    final date = progress.lastPracticedAt?.toLocal();
-    final recent = date == null ? '' : ' · 最近 ${date.month}月${date.day}日';
-    return '已完成 ✓ · 练习 ${progress.attemptCount} 次$recent';
-  }
-  return '未练习';
 }
 
 String _roleplayFilterLabel(_RoleplayFilter filter) {

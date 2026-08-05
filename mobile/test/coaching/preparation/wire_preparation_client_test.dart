@@ -257,6 +257,8 @@ void main() {
     final bank = await client.getIeltsQuestionBank();
 
     expect(bank.part1Sets, hasLength(38));
+    expect(bank.part1Topics, hasLength(38));
+    expect(bank.part1Topics.first.titleZh, '主题 1');
     expect(bank.part1Sets.first.questionCount, 8);
     expect(bank.part1Sets.first.topics, hasLength(3));
     expect(bank.topicGroups, hasLength(56));
@@ -333,7 +335,7 @@ IdentityHttpResponse _response(Object body) =>
     IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(body));
 
 Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
-  'schema_version': 1,
+  'schema_version': 2,
   'bank_id': 'ielts-speaking-2026-season',
   'season': '2026-05-08',
   'source_cutoff': '2026-06-18T10:00:00Z',
@@ -371,6 +373,22 @@ Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
       'published': true,
     },
   ),
+  'part1_topics': List<Object?>.generate(
+    38,
+    (index) => <String, Object?>{
+      'id': 'p1-topic-${index + 1}',
+      'title_zh': '主题 ${index + 1}',
+      'title_en': 'Topic ${index + 1}',
+      'release': index < 16
+          ? 'new'
+          : index < 33
+          ? 'carry_over'
+          : 'evergreen',
+      'category': index.isEven ? 'thing' : 'event',
+      'questions': ['Topic ${index + 1}-1', 'Topic ${index + 1}-2'],
+      'published': true,
+    },
+  ),
   'topic_groups': List<Object?>.generate(
     56,
     (index) => <String, Object?>{
@@ -378,6 +396,7 @@ Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
       'title_zh': '主题 ${index + 1}',
       'release': index.isEven ? 'new' : 'carry_over',
       'region': 'mainland',
+      'category': index.isEven ? 'person' : 'place',
       'part2': <String, Object?>{
         'prompt': 'Describe topic ${index + 1}',
         'points': ['What', 'Where', 'Who', 'Why'],
