@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/design/voice_composer_dock.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
 import 'package:speakup/features/agent/composer/pending_image_strip.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_composer.dart';
@@ -429,21 +430,9 @@ class _AgentComposerState extends State<AgentComposer> {
           onConvertToText: _convertVoiceToText,
           onCancel: _cancelVoice,
           upwardCancelOnly: true,
-          builder: (context, capture) => AnimatedContainer(
+          builder: (context, capture) => ConversationComposerCapsule(
             key: const Key('agent-composer-surface'),
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            constraints: BoxConstraints(
-              minHeight: widget.keyboardVisible ? 52 : 54,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              color: SpeakUpDesign.primaryMuted.withValues(alpha: 0.9),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: SpeakUpDesign.surface.withValues(alpha: 0.72),
-              ),
-            ),
+            minHeight: widget.keyboardVisible ? 52 : 54,
             child: voiceProgress || voiceFailure
                 ? AgentComposerVoiceStatusDock(
                     state: voiceState,
@@ -524,83 +513,36 @@ class _AgentTextDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canSend =
-        controller.text.trim().isNotEmpty &&
-        !submitting &&
-        (confirmingConvertedText ? canSubmitConvertedText : canSubmitText);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (confirmingConvertedText)
-          IconButton(
-            key: const Key('agent-voice-cancel'),
-            tooltip: '取消转文字',
-            onPressed: enabled ? () => onReturnToVoice() : null,
-            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-            padding: EdgeInsets.zero,
-            icon: const Icon(Icons.close_rounded, size: 21),
-          )
-        else
-          IconButton(
-            key: const Key('agent-show-voice-composer'),
-            tooltip: '切换到语音输入',
-            onPressed: enabled ? () => onReturnToVoice() : null,
-            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-            padding: EdgeInsets.zero,
-            icon: const Icon(Icons.mic_none_rounded, size: 21),
-          ),
-        Expanded(
-          child: TextField(
-            key: const Key('agent-composer-field'),
-            controller: controller,
-            focusNode: focusNode,
-            enabled: enabled,
-            minLines: 1,
-            maxLines: keyboardVisible ? 3 : 2,
-            inputFormatters: <TextInputFormatter>[_agentContentFormatter],
-            textInputAction: TextInputAction.send,
-            onSubmitted: (_) {
-              if (canSend) {
-                onSubmit();
-              }
-            },
-            style: const TextStyle(
-              color: SpeakUpDesign.ink,
-              fontSize: 15,
-              height: 1.4,
-            ),
-            decoration: InputDecoration(
-              hintText: enabled
-                  ? confirmingConvertedText
-                        ? '编辑识别文字后发送'
-                        : '问问 SpeakUp'
-                  : '暂时无法开始对话',
-              hintStyle: const TextStyle(
-                color: SpeakUpDesign.tertiary,
-                fontSize: 15,
-              ),
-              border: InputBorder.none,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 7,
-                vertical: 10,
-              ),
-            ),
-          ),
-        ),
-        IconButton.filled(
-          key: Key(
-            confirmingConvertedText
-                ? 'agent-voice-confirm'
-                : 'agent-send-button',
-          ),
-          tooltip: '发送',
-          onPressed: canSend ? () => onSubmit() : null,
-          constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-          padding: EdgeInsets.zero,
-          icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-        ),
-      ],
+    return ConversationTextComposerDock(
+      controller: controller,
+      focusNode: focusNode,
+      enabled: enabled,
+      canSubmit: confirmingConvertedText
+          ? canSubmitConvertedText
+          : canSubmitText,
+      submitting: submitting,
+      onReturn: onReturnToVoice,
+      onSubmit: onSubmit,
+      returnKey: Key(
+        confirmingConvertedText
+            ? 'agent-voice-cancel'
+            : 'agent-show-voice-composer',
+      ),
+      fieldKey: const Key('agent-composer-field'),
+      submitKey: Key(
+        confirmingConvertedText ? 'agent-voice-confirm' : 'agent-send-button',
+      ),
+      returnTooltip: confirmingConvertedText ? '取消转文字' : '切换到语音输入',
+      returnIcon: confirmingConvertedText
+          ? Icons.close_rounded
+          : Icons.mic_none_rounded,
+      hintText: enabled
+          ? confirmingConvertedText
+                ? '编辑识别文字后发送'
+                : '问问 SpeakUp'
+          : '暂时无法开始对话',
+      maxLines: keyboardVisible ? 3 : 2,
+      inputFormatters: <TextInputFormatter>[_agentContentFormatter],
     );
   }
 }

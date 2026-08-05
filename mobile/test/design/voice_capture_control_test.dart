@@ -284,25 +284,6 @@ void main() {
     expect(harness.currentState?.sends, 0);
     expect(harness.currentState?.cancels, 1);
   });
-
-  testWidgets('shared intent targets keep accessible touch sizes', (
-    tester,
-  ) async {
-    final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(
-      _VoiceCaptureHarness(key: harness, showIntentTargets: true),
-    );
-
-    await tester.tap(find.byKey(const Key('voice-capture-target')));
-    await tester.pump();
-
-    final cancel = find.byKey(const Key('test-voice-target-cancel'));
-    final convert = find.byKey(const Key('test-voice-target-convert'));
-    expect(cancel.hitTestable(), findsOneWidget);
-    expect(convert.hitTestable(), findsOneWidget);
-    expect(tester.getSize(cancel).height, greaterThanOrEqualTo(48));
-    expect(tester.getSize(convert).height, greaterThanOrEqualTo(48));
-  });
 }
 
 class _VoiceCaptureHarness extends StatefulWidget {
@@ -312,14 +293,12 @@ class _VoiceCaptureHarness extends StatefulWidget {
     this.beforeStartCompleter,
     this.sendCompleter,
     this.showTapActions = false,
-    this.showIntentTargets = false,
   });
 
   final Completer<void>? startCompleter;
   final Completer<void>? beforeStartCompleter;
   final Completer<void>? sendCompleter;
   final bool showTapActions;
-  final bool showIntentTargets;
 
   @override
   State<_VoiceCaptureHarness> createState() => _VoiceCaptureHarnessState();
@@ -404,19 +383,6 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
                   ),
                 ),
               );
-              if (widget.showIntentTargets) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    VoiceCaptureIntentTargets(
-                      capture: capture,
-                      elapsed: Duration.zero,
-                      keyPrefix: 'test',
-                    ),
-                    target,
-                  ],
-                );
-              }
               if (!widget.showTapActions) {
                 return target;
               }

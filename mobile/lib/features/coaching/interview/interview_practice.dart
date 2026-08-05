@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -11,6 +12,7 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -630,22 +632,16 @@ class _SceneConversationMessageList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final message in messages) ...[
-            if (message.role == PracticeMessageRole.assistant)
-              _SceneAIMessageBubble(
-                key: ValueKey('practice-ai-${message.id}'),
-                message: message,
-                roleName: 'AI 教练',
-                actions:
-                    message.id == controller.questionId &&
-                        controller.canPlayQuestionAudio
-                    ? _QuestionAudioAction(controller: controller)
-                    : null,
-              )
-            else
-              _SceneUserMessageBubble(
-                key: ValueKey('practice-user-${message.id}'),
-                message: message,
-              ),
+            PracticeMessageBubble(
+              key: ValueKey('practice-${message.role.name}-${message.id}'),
+              message: message,
+              actions:
+                  message.role == PracticeMessageRole.assistant &&
+                      message.id == controller.questionId &&
+                      controller.canPlayQuestionAudio
+                  ? _QuestionAudioAction(controller: controller)
+                  : null,
+            ),
             if (_feedbackProjection(message) case final projection?) ...[
               const SizedBox(height: SpeakUpDesign.space8),
               Align(
@@ -717,105 +713,6 @@ class _SceneConversationMessageList extends StatelessWidget {
   }
 }
 
-class _SceneAIMessageBubble extends StatelessWidget {
-  const _SceneAIMessageBubble({
-    required this.message,
-    required this.roleName,
-    this.actions,
-    super.key,
-  });
-
-  final PracticeMessage message;
-  final String roleName;
-  final Widget? actions;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const CircleAvatar(
-            radius: 17,
-            backgroundColor: SpeakUpDesign.primaryMuted,
-            foregroundColor: SpeakUpDesign.primary,
-            child: Icon(Icons.person_outline_rounded, size: 20),
-          ),
-          const SizedBox(width: 10),
-          Container(
-            key: Key('practice-ai-message-${message.id}'),
-            constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.76),
-            padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
-            decoration: BoxDecoration(
-              color: SpeakUpDesign.surface,
-              borderRadius: const BorderRadius.only(
-                topRight: Radius.circular(SpeakUpDesign.radiusControl),
-                bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
-                bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
-              ),
-              border: Border.all(color: SpeakUpDesign.border),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  roleName,
-                  style: SpeakUpDesign.meta.copyWith(
-                    color: SpeakUpDesign.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  message.text,
-                  style: SpeakUpDesign.body.copyWith(height: 1.45),
-                ),
-                if (actions != null) ...[const SizedBox(height: 8), actions!],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SceneUserMessageBubble extends StatelessWidget {
-  const _SceneUserMessageBubble({required this.message, super.key});
-
-  final PracticeMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          key: Key('practice-user-message-${message.id}'),
-          constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.78),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: const BoxDecoration(
-            color: SpeakUpDesign.primary,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(SpeakUpDesign.radiusControl),
-              bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
-              bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
-            ),
-          ),
-          child: Text(
-            message.text,
-            style: SpeakUpDesign.body.copyWith(
-              color: Colors.white,
-              height: 1.45,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _SceneAIThinkingBubble extends StatelessWidget {
   const _SceneAIThinkingBubble({required this.label});
 
@@ -823,46 +720,18 @@ class _SceneAIThinkingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
+    return ConversationBubbleSurface(
+      isUser: false,
+      bubbleKey: const Key('practice-ai-thinking'),
       child: Row(
-        key: const Key('practice-ai-thinking'),
         mainAxisSize: MainAxisSize.min,
         children: [
-          const CircleAvatar(
-            radius: 17,
-            backgroundColor: SpeakUpDesign.primaryMuted,
-            foregroundColor: SpeakUpDesign.primary,
-            child: Icon(Icons.person_outline_rounded, size: 20),
+          const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 10),
-          Flexible(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: SpeakUpDesign.surfaceMuted,
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 10),
-                    Flexible(child: Text(label, style: SpeakUpDesign.meta)),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          Flexible(child: Text(label, style: SpeakUpDesign.meta)),
         ],
       ),
     );
@@ -987,7 +856,11 @@ class _RecordingPanelState extends State<_RecordingPanel> {
         final panel = switch (state) {
           PracticeRecordingState.idle =>
             widget.controller.hasPendingPracticeAudio
-                ? _PendingPracticeAudioPanel(controller: widget.controller)
+                ? PracticePendingAudioComposer(
+                    keyPrefix: 'practice',
+                    onDelete: widget.controller.discardPendingPracticeAudio,
+                    onRetry: widget.controller.retryPracticeTranscription,
+                  )
                 : _IdleAnswerPanel(
                     controller: widget.controller,
                     textController: widget.textController,
@@ -1005,49 +878,34 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             keyPrefix: 'practice',
             elapsed: Duration(seconds: widget.recordingSeconds),
           ),
-          PracticeRecordingState.transcribing => const _WorkingState(
+          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
             label: '正在识别英文回答…',
           ),
           PracticeRecordingState.awaitingConfirmation =>
-            _TranscriptConfirmation(controller: widget.controller),
-          PracticeRecordingState.submitting => _WorkingState(
+            PracticeTranscriptComposer(
+              transcript: widget.controller.transcript ?? '',
+              keyPrefix: 'practice',
+              onRerecord: widget.controller.rerecord,
+              onConfirm: widget.controller.confirmTranscript,
+              confirmLabel: '发送回答',
+            ),
+          PracticeRecordingState.submitting => PracticeLoadingComposer(
             label: widget.controller.isSpeechFeedbackRetryActive
                 ? '正在提交同题复练…'
                 : widget.controller.isFinalSubmission
                 ? '正在提交最后一轮回答，完成后将生成报告…'
                 : '回答已发送，Agent 正在回复…',
           ),
-          PracticeRecordingState.completed => _CompletedPracticePanel(
-            onOpenReport: widget.onOpenReport,
+          PracticeRecordingState.completed => PracticeComposerAction(
+            label: '本次练习已完成，可以查看完整报告。',
+            actionLabel: '查看报告',
+            onPressed: widget.onOpenReport,
+            containerKey: const Key('practice-completed-actions'),
+            actionKey: const Key('practice-open-report'),
           ),
         };
         return PracticeComposerSurface(child: panel);
       },
-    );
-  }
-}
-
-class _CompletedPracticePanel extends StatelessWidget {
-  const _CompletedPracticePanel({required this.onOpenReport});
-
-  final VoidCallback onOpenReport;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('practice-completed-actions'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('本次练习已完成', style: SpeakUpDesign.cardTitle),
-        const SizedBox(height: 4),
-        const Text('可以先查看上方最后一轮回答与评分，再进入完整报告。', style: SpeakUpDesign.body),
-        const SizedBox(height: 12),
-        FilledButton(
-          key: const Key('practice-open-report'),
-          onPressed: onOpenReport,
-          child: const Text('查看完整报告'),
-        ),
-      ],
     );
   }
 }
@@ -1114,104 +972,5 @@ class _IdleAnswerPanel extends StatelessWidget {
         ),
       ],
     );
-  }
-}
-
-class _PendingPracticeAudioPanel extends StatelessWidget {
-  const _PendingPracticeAudioPanel({required this.controller});
-
-  final PracticeController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('practice-pending-audio'),
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('这段录音已保留', style: SpeakUpDesign.cardTitle),
-        const SizedBox(height: 4),
-        const Text('刚才没有识别成功，可以重试转文字，或删除后重新录音。', style: SpeakUpDesign.body),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('practice-delete-pending-audio'),
-                onPressed: controller.discardPendingPracticeAudio,
-                child: const Text('删除录音'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('practice-retry-transcription'),
-                onPressed: controller.retryPracticeTranscription,
-                child: const Text('重试转文字'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _TranscriptConfirmation extends StatelessWidget {
-  const _TranscriptConfirmation({required this.controller});
-
-  final PracticeController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('识别结果', style: SpeakUpDesign.label),
-        const SizedBox(height: 8),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 96),
-          child: SingleChildScrollView(
-            child: Text(
-              controller.transcript ?? '',
-              key: const Key('practice-transcript'),
-              style: const TextStyle(height: 1.45),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('practice-rerecord'),
-                onPressed: controller.rerecord,
-                child: const Text('取消'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('practice-confirm-turn'),
-                onPressed: controller.confirmTranscript,
-                child: const Text('发送回答'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _WorkingState extends StatelessWidget {
-  const _WorkingState({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return PracticeLoadingComposer(label: label);
   }
 }

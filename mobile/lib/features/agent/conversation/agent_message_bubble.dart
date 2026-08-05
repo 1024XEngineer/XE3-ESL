@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/agent/handoff/practice_plan_handoff_card.dart';
@@ -130,40 +131,29 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                 ),
             ],
           );
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        key: Key('agent-message-${message.id}'),
-        constraints: const BoxConstraints(maxWidth: 340),
-        margin: const EdgeInsets.only(bottom: 7),
-        padding: isUser
-            ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
-            : const EdgeInsets.fromLTRB(2, 7, 12, 9),
-        decoration: BoxDecoration(
-          color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-          border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
-        ),
-        child: message.handoffs.isEmpty
-            ? content
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  content,
-                  const SizedBox(height: 10),
-                  for (final handoff in message.handoffs)
-                    switch (handoff) {
-                      ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
-                        handoff: handoff,
-                        onConfirm: widget.onHandoff == null
-                            ? null
-                            : () => widget.onHandoff!(handoff),
-                      ),
-                    },
-                ],
-              ),
-      ),
+    return ConversationBubbleSurface(
+      bubbleKey: Key('agent-message-${message.id}'),
+      isUser: isUser,
+      margin: const EdgeInsets.only(bottom: 7),
+      child: message.handoffs.isEmpty
+          ? content
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                content,
+                const SizedBox(height: 10),
+                for (final handoff in message.handoffs)
+                  switch (handoff) {
+                    ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
+                      handoff: handoff,
+                      onConfirm: widget.onHandoff == null
+                          ? null
+                          : () => widget.onHandoff!(handoff),
+                    ),
+                  },
+              ],
+            ),
     );
   }
 

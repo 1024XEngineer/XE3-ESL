@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/design/voice_composer_dock.dart';
 
 class PracticeIdleComposer extends StatelessWidget {
   const PracticeIdleComposer({
@@ -30,84 +31,33 @@ class PracticeIdleComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (textMode) {
-      return Row(
-        children: [
-          IconButton(
-            key: Key('$keyPrefix-return-to-voice'),
-            tooltip: '切换到语音',
-            onPressed: enabled ? onToggleTextMode : null,
-            color: SpeakUpDesign.secondary,
-            icon: const Icon(Icons.mic_none_rounded),
-          ),
-          Expanded(
-            child: TextField(
-              key: Key('$keyPrefix-text-answer'),
-              controller: textController!,
-              focusNode: textFocusNode!,
-              enabled: enabled,
-              minLines: 1,
-              maxLines: 2,
-              maxLength: 8000,
-              textCapitalization: TextCapitalization.sentences,
-              textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(
-                hintText: '输入你的回答',
-                counterText: '',
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 10,
-                ),
-              ),
-              onSubmitted: (_) => onSubmitText(),
-            ),
-          ),
-          IconButton(
-            key: Key('$keyPrefix-submit-text'),
-            tooltip: '发送',
-            onPressed: enabled ? () => onSubmitText() : null,
-            color: SpeakUpDesign.primary,
-            icon: const Icon(Icons.arrow_upward_rounded),
-          ),
-        ],
+      return ConversationTextComposerDock(
+        controller: textController!,
+        focusNode: textFocusNode!,
+        enabled: enabled,
+        canSubmit: enabled,
+        onReturn: onToggleTextMode,
+        onSubmit: onSubmitText,
+        returnKey: Key('$keyPrefix-return-to-voice'),
+        fieldKey: Key('$keyPrefix-text-answer'),
+        submitKey: Key('$keyPrefix-submit-text'),
+        maxLength: 8000,
+        textCapitalization: TextCapitalization.sentences,
       );
     }
 
-    return Row(
-      children: [
-        const SizedBox(width: 42),
-        Expanded(
-          child: capture.wrapTarget(
-            key: Key('$keyPrefix-record'),
-            semanticsLabel: '点击或长按说话',
-            child: const SizedBox(
-              height: 48,
-              child: Center(
-                child: Text(
-                  '点击或长按说话',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: SpeakUpDesign.secondary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        IconButton(
-          key: Key('$keyPrefix-open-keyboard'),
-          tooltip: '切换到键盘输入',
-          onPressed: enabled ? onToggleTextMode : null,
-          color: SpeakUpDesign.secondary,
-          icon: const Icon(Icons.keyboard_alt_outlined, size: 24),
-        ),
-      ],
+    return VoiceComposerDock(
+      capture: capture,
+      phase: VoiceCapturePhase.idle,
+      elapsed: Duration.zero,
+      enabled: enabled,
+      textEnabled: enabled,
+      recordKey: Key('$keyPrefix-record'),
+      stopRecordingKey: Key('$keyPrefix-stop-recording'),
+      stateLabelKey: Key('$keyPrefix-voice-state-label'),
+      durationKey: Key('$keyPrefix-voice-recording-duration'),
+      showTextKey: Key('$keyPrefix-open-keyboard'),
+      onShowText: onToggleTextMode,
     );
   }
 }
@@ -121,22 +71,9 @@ class PracticeComposerSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      child: Material(
-        color: SpeakUpDesign.primaryMuted.withValues(alpha: 0.92),
-        elevation: 4,
-        shadowColor: const Color(0x16000000),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
-          side: BorderSide(
-            color: SpeakUpDesign.surface.withValues(alpha: 0.72),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: SafeArea(
-          top: false,
-          minimum: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-          child: child,
-        ),
+      child: SafeArea(
+        top: false,
+        child: ConversationComposerCapsule(child: child),
       ),
     );
   }
@@ -160,62 +97,16 @@ class PracticeRecordingComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final preparing = phase == VoiceCapturePhase.starting;
-    final canceling = capture.releaseIntent == VoiceCaptureReleaseIntent.cancel;
-    final label = canceling
-        ? '松开取消'
-        : preparing
-        ? '正在打开麦克风…'
-        : capture.tapMode
-        ? '点击发送语音'
-        : upwardCancelOnly
-        ? '松开发送 · 上滑取消'
-        : '松开发送 · 左滑取消 · 右滑转文字';
-    final color = canceling ? SpeakUpDesign.error : SpeakUpDesign.primary;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        VoiceCaptureIntentTargets(
-          capture: capture,
-          elapsed: elapsed ?? Duration.zero,
-          keyPrefix: keyPrefix,
-        ),
-        const SizedBox(height: 10),
-        capture.wrapTarget(
-          key: Key('$keyPrefix-record'),
-          semanticsLabel: label,
-          child: KeyedSubtree(
-            key: Key('$keyPrefix-stop-recording'),
-            child: SizedBox(
-              height: 48,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    canceling ? Icons.close_rounded : Icons.graphic_eq_rounded,
-                    size: 21,
-                    color: color,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
+    return VoiceComposerDock(
+      capture: capture,
+      phase: phase,
+      elapsed: elapsed ?? Duration.zero,
+      enabled: true,
+      recordKey: Key('$keyPrefix-record'),
+      stopRecordingKey: Key('$keyPrefix-stop-recording'),
+      stateLabelKey: Key('$keyPrefix-voice-state-label'),
+      durationKey: Key('$keyPrefix-voice-target-duration'),
+      upwardCancelOnly: upwardCancelOnly,
     );
   }
 }
@@ -252,6 +143,150 @@ class PracticeLoadingComposer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class PracticePendingAudioComposer extends StatelessWidget {
+  const PracticePendingAudioComposer({
+    required this.keyPrefix,
+    required this.onDelete,
+    required this.onRetry,
+    super.key,
+  });
+
+  final String keyPrefix;
+  final VoidCallback onDelete;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: Key('$keyPrefix-pending-audio'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('这段录音已保留', style: SpeakUpDesign.cardTitle),
+        const SizedBox(height: 4),
+        const Text('刚才没有识别成功，可以重试转文字，或删除后重新录音。', style: SpeakUpDesign.body),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: Key('$keyPrefix-delete-pending-audio'),
+                onPressed: onDelete,
+                child: const Text('删除录音'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                key: Key('$keyPrefix-retry-transcription'),
+                onPressed: onRetry,
+                child: const Text('重试转文字'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class PracticeTranscriptComposer extends StatelessWidget {
+  const PracticeTranscriptComposer({
+    required this.transcript,
+    required this.keyPrefix,
+    required this.onRerecord,
+    required this.onConfirm,
+    this.confirmLabel = '发送',
+    super.key,
+  });
+
+  final String transcript;
+  final String keyPrefix;
+  final VoidCallback onRerecord;
+  final VoidCallback onConfirm;
+  final String confirmLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          transcript,
+          key: Key('$keyPrefix-transcript'),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: SpeakUpDesign.body,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: Key('$keyPrefix-rerecord'),
+                onPressed: onRerecord,
+                child: const Text('重录'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                key: Key('$keyPrefix-confirm-turn'),
+                onPressed: onConfirm,
+                child: Text(confirmLabel),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class PracticeComposerAction extends StatelessWidget {
+  const PracticeComposerAction({
+    required this.label,
+    required this.actionLabel,
+    required this.onPressed,
+    this.containerKey,
+    this.actionKey,
+    super.key,
+  });
+
+  final String label;
+  final String actionLabel;
+  final VoidCallback onPressed;
+  final Key? containerKey;
+  final Key? actionKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      key: containerKey,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: SpeakUpDesign.body,
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(
+          key: actionKey,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, SpeakUpDesign.minTapTarget),
+          ),
+          onPressed: onPressed,
+          child: Text(actionLabel),
+        ),
+      ],
     );
   }
 }

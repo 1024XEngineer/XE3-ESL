@@ -837,6 +837,11 @@ void main() {
       tester.getCenter(find.byKey(const Key('ielts-mock-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
+    expect(
+      tester.getSize(find.byKey(const Key('ielts-mock-stop-recording'))).height,
+      48,
+    );
+    expect(find.byKey(const Key('ielts-mock-voice-targets')), findsNothing);
     await gesture.moveBy(const Offset(0, -90));
     await tester.pump();
     expect(find.text('松开取消'), findsOneWidget);
