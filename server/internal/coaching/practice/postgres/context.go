@@ -1083,12 +1083,12 @@ func validCreatedIELTSAssignment(
 		return assignment.Part1SetID == "" &&
 			validContextResourceID(assignment.TopicGroupID) &&
 			assignment.Part1Questions == 0 && assignment.Part2Questions == 1 &&
-			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
+			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 6
 	case practice.IELTSPracticeModePart3:
 		return assignment.Part1SetID == "" &&
 			validContextResourceID(assignment.TopicGroupID) &&
 			assignment.Part1Questions == 0 && assignment.Part2Questions == 0 &&
-			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
+			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 6
 	default:
 		return false
 	}

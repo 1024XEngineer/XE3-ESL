@@ -75,15 +75,35 @@ func TestEmbeddedIELTSQuestionBankPublishesOnlyCompleteMainlandGroups(
 		)
 	}
 	groupCategories := map[string]int{}
+	groupIDs := map[string]struct{}{}
+	groupTitles := map[string]struct{}{}
+	groupPrompts := map[string]struct{}{}
+	part3QuestionCount := 0
 	for _, group := range published.TopicGroups {
 		if !group.Published ||
 			group.Region != "mainland" ||
 			len(group.Part3Questions) < 1 ||
-			len(group.Part3Questions) > 5 ||
+			len(group.Part3Questions) > 6 ||
 			group.SupplementedQuestionCount != 0 {
 			t.Fatalf("published incomplete group: %#v", group)
 		}
+		if _, duplicate := groupIDs[group.ID]; duplicate {
+			t.Fatalf("duplicate group ID: %s", group.ID)
+		}
+		if _, duplicate := groupTitles[group.TitleZH]; duplicate {
+			t.Fatalf("duplicate group title: %s", group.TitleZH)
+		}
+		if _, duplicate := groupPrompts[group.Part2.Prompt]; duplicate {
+			t.Fatalf("duplicate Part 2 prompt: %s", group.Part2.Prompt)
+		}
+		groupIDs[group.ID] = struct{}{}
+		groupTitles[group.TitleZH] = struct{}{}
+		groupPrompts[group.Part2.Prompt] = struct{}{}
+		part3QuestionCount += len(group.Part3Questions)
 		groupCategories[group.Category]++
+	}
+	if part3QuestionCount != 317 {
+		t.Fatalf("published Part 3 question count = %d, want 317", part3QuestionCount)
 	}
 	if !reflect.DeepEqual(
 		groupCategories,
@@ -95,6 +115,45 @@ func TestEmbeddedIELTSQuestionBankPublishesOnlyCompleteMainlandGroups(
 		if group.Region == "international" && group.Published {
 			t.Fatalf("international group was published: %#v", group)
 		}
+	}
+}
+
+func TestEmbeddedIELTSPart1TopicsPreserveSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	bank, err := loadEmbeddedIELTSQuestionBank()
+	if err != nil {
+		t.Fatalf("loadEmbeddedIELTSQuestionBank: %v", err)
+	}
+	wants := map[string][]string{
+		"Teachers": {
+			"Do you have a favorite teacher?",
+			"Do you want to be a teacher in the future?",
+			"Do you have a teacher from your past that you still remember?",
+			"Are you still in touch with your primary school teachers?",
+			"In what way has your favourite teacher helped you?",
+			"Do you like your primary school teachers more than your high school teachers?",
+		},
+		"Public gardens and parks": {
+			"Did you like going to parks as a child?",
+			"Do you still like going to parks now?",
+			"Would you like to see more parks in your city?",
+			"Are there any parks you want to go to in the future?",
+			"Would you prefer to play in a personal garden or public garden?",
+			"How are the parks today different from those you visited as a kid?",
+			"What do you like to do when visiting a park?",
+			"Would you like to play in a public garden or park?",
+		},
+	}
+	for _, topic := range bank.Part1Topics {
+		want, found := wants[topic.TitleEN]
+		if found && !reflect.DeepEqual(topic.Questions, want) {
+			t.Fatalf("%s questions = %#v, want %#v", topic.TitleEN, topic.Questions, want)
+		}
+		delete(wants, topic.TitleEN)
+	}
+	if len(wants) != 0 {
+		t.Fatalf("missing canonical topics: %#v", wants)
 	}
 }
 
@@ -182,6 +241,10 @@ func TestResolveIELTSQuestionSetKeepsPart2AndPart3Bound(t *testing.T) {
 	if part2.TopicGroupID != part3.TopicGroupID ||
 		part2.TopicTitle != part3.TopicTitle ||
 		part2.Part2CueCard != part3.Part2CueCard ||
+		part2.Part3Questions != 6 ||
+		part3.Part3Questions != 6 ||
+		len(part2.TurnBlueprints) != 7 ||
+		len(part3.TurnBlueprints) != 6 ||
 		!reflect.DeepEqual(
 			part2.TurnBlueprints[1:],
 			part3.TurnBlueprints,

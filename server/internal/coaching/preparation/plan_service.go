@@ -580,14 +580,14 @@ func validResolvedIELTSQuestionSet(
 			resolved.Part1Questions == 0 &&
 			resolved.Part2Questions == 1 &&
 			resolved.Part3Questions >= 1 &&
-			resolved.Part3Questions <= 5 &&
+			resolved.Part3Questions <= 6 &&
 			len(resolved.TurnBlueprints) == 1+resolved.Part3Questions
 	case scene.IELTSPracticeModePart3:
 		return validPlanText(resolved.TopicTitle) &&
 			resolved.Part1Questions == 0 &&
 			resolved.Part2Questions == 0 &&
 			resolved.Part3Questions >= 1 &&
-			resolved.Part3Questions <= 5 &&
+			resolved.Part3Questions <= 6 &&
 			len(resolved.TurnBlueprints) == resolved.Part3Questions
 	default:
 		return false
@@ -641,7 +641,7 @@ func validPlanIELTSAssignment(
 			assignment.Part1Questions == 0 &&
 			assignment.Part2Questions == 1 &&
 			assignment.Part3Questions >= 1 &&
-			assignment.Part3Questions <= 5 &&
+			assignment.Part3Questions <= 6 &&
 			len(assignment.TurnBlueprints) == 1+assignment.Part3Questions
 	case scene.IELTSPracticeModePart3:
 		return assignment.Part1SetID == "" &&
@@ -651,7 +651,7 @@ func validPlanIELTSAssignment(
 			assignment.Part1Questions == 0 &&
 			assignment.Part2Questions == 0 &&
 			assignment.Part3Questions >= 1 &&
-			assignment.Part3Questions <= 5 &&
+			assignment.Part3Questions <= 6 &&
 			len(assignment.TurnBlueprints) == assignment.Part3Questions
 	default:
 		return false

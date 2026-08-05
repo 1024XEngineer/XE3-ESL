@@ -2,6 +2,10 @@ import '../../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -72,14 +76,10 @@ void main() {
 
       expect(find.text('IELTS 口语'), findsOneWidget);
       expect(find.text('一次完成三个 Part'), findsOneWidget);
-      expect(find.text('专项练习'), findsOneWidget);
-      expect(find.text('共 3 道专项题'), findsOneWidget);
-      expect(find.byKey(const Key('ielts-part-all')), findsOneWidget);
-      expect(find.byKey(const Key('ielts-category-all')), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-browser-card-part1-p1-topic-001')),
-        findsOneWidget,
-      );
+      expect(find.text('按 Part 专项突破'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mode-full')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mode-special')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-browser-search')), findsNothing);
       expect(find.text('自定义口语考试'), findsNothing);
       expect(find.text('英文自我介绍'), findsNothing);
     },
@@ -92,6 +92,7 @@ void main() {
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
+    await _openIeltsBrowser(tester);
 
     await tester.tap(find.byKey(const Key('ielts-part-part2')));
     await tester.pumpAndSettle();
@@ -107,6 +108,68 @@ void main() {
     );
   });
 
+  testWidgets('starts full mock and the exact selected specialty card', (
+    tester,
+  ) async {
+    final catalog = PreparationController(client: _HubFixtureClient());
+    final launchClient = _HubLaunchClient();
+    final launch = _hubLaunchController(launchClient);
+    var starts = 0;
+    addTearDown(catalog.dispose);
+    addTearDown(launch.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: catalog,
+          launchController: launch,
+          onPracticeStarted: () => starts++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openModule(tester, const Key('practice-hub-exam'));
+    await _openIeltsBrowser(tester);
+    final part1Card = find.byKey(
+      const Key('ielts-browser-card-part1-p1-topic-001'),
+    );
+    await tester.scrollUntilVisible(
+      part1Card,
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(
+      find.descendant(of: part1Card, matching: find.byType(InkWell)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(catalog.errorMessage, isNull);
+    expect(launch.errorMessage, isNull);
+    expect(launchClient.lastPlanInput, isNotNull);
+    expect(starts, 1);
+    expect(
+      launchClient.lastPlanInput?.ieltsSelection,
+      const IeltsPracticeSelection(
+        mode: IeltsPracticeMode.part1,
+        part1SetId: 'p1-topic-001',
+      ),
+    );
+
+    await _openModule(tester, const Key('practice-hub-exam'));
+    await tester.tap(find.byKey(const Key('ielts-mode-full')));
+    await tester.pumpAndSettle();
+
+    expect(starts, 2);
+    expect(
+      launchClient.lastPlanInput?.ieltsSelection,
+      const IeltsPracticeSelection(
+        mode: IeltsPracticeMode.fullMock,
+        part1SetId: 'p1-001',
+        topicGroupId: 'p23-001',
+      ),
+    );
+  });
+
   testWidgets('filters and searches IELTS topic cards by intersection', (
     tester,
   ) async {
@@ -114,6 +177,7 @@ void main() {
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
+    await _openIeltsBrowser(tester);
 
     expect(find.text('共 3 道专项题'), findsOneWidget);
     await tester.enterText(
@@ -150,6 +214,7 @@ void main() {
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
+    await _openIeltsBrowser(tester);
 
     await tester.tap(find.byKey(const Key('ielts-part-part3')));
     await tester.tap(find.byKey(const Key('ielts-category-event')));
@@ -162,7 +227,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
     await tester.pumpAndSettle();
-    await _openModule(tester, const Key('practice-hub-exam'));
+    expect(find.byKey(const Key('ielts-mode-special')), findsOneWidget);
+    await _openIeltsBrowser(tester);
 
     expect(find.text('共 1 道专项题'), findsOneWidget);
     expect(
@@ -322,7 +388,7 @@ void main() {
       (
         entry: Key('practice-hub-exam'),
         title: Key('practice-hub-title-ielts'),
-        scene: Key('ielts-browser-card-part1-p1-topic-001'),
+        scene: Key('ielts-mode-special'),
       ),
       (
         entry: Key('practice-hub-roleplay'),
@@ -426,22 +492,225 @@ Future<void> _openModule(WidgetTester tester, Key key) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _openIeltsBrowser(WidgetTester tester) async {
+  final entry = find.byKey(const Key('ielts-mode-special'));
+  await tester.ensureVisible(entry);
+  await tester.tap(entry);
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('ielts-browser-search')), findsOneWidget);
+}
+
 final class _HubFixtureClient implements SceneClient, SceneQuestionBankClient {
   @override
-  Future<SceneDefinition> getScene(String sceneId) {
-    throw UnimplementedError('The hub test does not open scene details.');
+  Future<SceneDefinition> getScene(String sceneId) async {
+    final scene = _hubScenes.firstWhere((item) => item.id == sceneId);
+    return testScene(
+      id: scene.id,
+      family: scene.family,
+      model: scene.model,
+      name: scene.name,
+      version: scene.version,
+      status: scene.status,
+      turnPolicyRef: scene.turnPolicyRef,
+      sessionPolicyRef: scene.sessionPolicyRef,
+      prompt: scene.prompt,
+      roles: scene.roles,
+      practiceOptions: [
+        PracticeOption(
+          id: 'option-${scene.id}-full',
+          sceneId: scene.id,
+          type: PracticeOptionType.fullSimulation,
+          displayName: '完整练习',
+        ),
+        for (final role in scene.roles)
+          PracticeOption(
+            id: 'option-${scene.id}-${role.id}',
+            sceneId: scene.id,
+            type: PracticeOptionType.focus,
+            displayName: role.displayName,
+            roleId: role.id,
+          ),
+      ],
+    );
   }
 
   @override
   Future<List<SceneDefinition>> listScenes() async => _hubScenes;
 
   @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) {
-    throw UnimplementedError('The hub test does not open scene details.');
-  }
+  Future<List<RoleDefinition>> listRoles(String sceneId) async =>
+      _hubScenes.firstWhere((scene) => scene.id == sceneId).roles;
 
   @override
   Future<IeltsQuestionBank> getIeltsQuestionBank() async => _ieltsBank;
+}
+
+PreparationLaunchController _hubLaunchController(_HubLaunchClient client) =>
+    PreparationLaunchController(
+      client: client,
+      contextProvider: () => const AgentPracticeContext(
+        threadId: 'thread-ielts-hub',
+        goalId: 'goal-ielts-hub',
+      ),
+      threadIdProvider: () => 'thread-ielts-hub',
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => const AgentPracticeContext(
+            threadId: 'thread-ielts-hub',
+            goalId: 'goal-ielts-hub',
+          ),
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-ielts-hub',
+    );
+
+final class _HubLaunchClient implements PreparationLaunchClient {
+  CreatePreparationPlanInput? lastPlanInput;
+  PreparationSnapshot? _snapshot;
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationProfile> createProfile({
+    required CreatePreparationProfileInput input,
+    required String idempotencyKey,
+  }) async => PreparationProfile(
+    id: 'profile-ielts-hub',
+    userId: 'user-ielts-hub',
+    backgroundSummary: input.backgroundSummary,
+    version: 1,
+    updatedAt: DateTime.utc(2026, 8, 5),
+  );
+
+  @override
+  Future<PreparationSnapshot> createSnapshot({
+    required String profileId,
+    required int sourceVersion,
+    required String idempotencyKey,
+  }) async {
+    final snapshot = PreparationSnapshot(
+      id: 'snapshot-ielts-hub',
+      sourceProfileId: profileId,
+      sourceVersion: sourceVersion,
+      backgroundSnapshot: 'IELTS speaking practice',
+      createdAt: DateTime.utc(2026, 8, 5),
+    );
+    _snapshot = snapshot;
+    return snapshot;
+  }
+
+  @override
+  Future<PracticePlan> createPlan({
+    required CreatePreparationPlanInput input,
+    required String idempotencyKey,
+  }) async {
+    lastPlanInput = input;
+    final snapshot = _snapshot!;
+    final scene = _hubScenes.firstWhere((item) => item.id == input.sceneId);
+    final selection = input.ieltsSelection!;
+    final assignment = switch (selection.mode) {
+      IeltsPracticeMode.fullMock => const IeltsPracticeAssignment(
+        bankId: 'ielts-bank-1',
+        season: '2026-05-08',
+        mode: IeltsPracticeMode.fullMock,
+        part1SetId: 'p1-001',
+        topicGroupId: 'p23-001',
+        topicTitle: '学习技能',
+        part2CueCard: 'Describe a skill you would like to learn',
+        part1QuestionCount: 8,
+        part2QuestionCount: 1,
+        part3QuestionCount: 5,
+        turnBlueprints: <String>[
+          'P1-1',
+          'P1-2',
+          'P1-3',
+          'P1-4',
+          'P1-5',
+          'P1-6',
+          'P1-7',
+          'P1-8',
+          'P2',
+          'P3-1',
+          'P3-2',
+          'P3-3',
+          'P3-4',
+          'P3-5',
+        ],
+      ),
+      IeltsPracticeMode.part1 => const IeltsPracticeAssignment(
+        bankId: 'ielts-bank-1',
+        season: '2026-05-08',
+        mode: IeltsPracticeMode.part1,
+        part1SetId: 'p1-topic-001',
+        part1QuestionCount: 4,
+        part2QuestionCount: 0,
+        part3QuestionCount: 0,
+        turnBlueprints: <String>['P1-1', 'P1-2', 'P1-3', 'P1-4'],
+      ),
+      _ => throw StateError('Unexpected IELTS mode in hub launch test.'),
+    };
+    return PracticePlan(
+      id: 'plan-ielts-hub',
+      userId: 'user-ielts-hub',
+      sourceThreadId: input.sourceThreadId,
+      goalSnapshot: PreparationGoalSnapshot(
+        id: input.goalId!,
+        title: scene.name,
+        version: 1,
+      ),
+      preparationSnapshot: snapshot,
+      sceneSelection: SceneSelectionSnapshot(
+        scene: scene,
+        selectedRoleIds: input.selectedRoleIds,
+        practiceOptionId: input.practiceOptionId,
+      ),
+      sessionPolicy: PreparationSessionPolicy(
+        suggestedDurationSeconds: 600,
+        minEffectiveTurns: assignment.turnBlueprints.length,
+        maxEffectiveTurns: assignment.turnBlueprints.length,
+        coverageCheckpointTurn: assignment.turnBlueprints.length,
+        maxFollowUpsPerQuestion: 0,
+        earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+      ),
+      practiceObjectives: const <PracticeObjective>[
+        PracticeObjective(id: 'ielts', description: 'Complete IELTS practice.'),
+      ],
+      ieltsAssignment: assignment,
+      revision: 1,
+      status: PracticePlanStatus.ready,
+      createdAt: DateTime.utc(2026, 8, 5),
+      updatedAt: DateTime.utc(2026, 8, 5),
+    );
+  }
+
+  @override
+  Future<PreparationPracticeBootstrap> createSession({
+    required PracticePlan plan,
+    required CreatePreparationSessionInput input,
+    required String idempotencyKey,
+  }) async => PreparationPracticeBootstrap(
+    session: PreparationPracticeSession(
+      id: 'session-ielts-${plan.ieltsAssignment!.mode.name}',
+      planId: plan.id,
+      sceneFamily: plan.sceneSelection.scene.family,
+      sceneModel: plan.sceneSelection.scene.model,
+      snapshotId: 'session-snapshot-ielts-hub',
+      status: 'starting',
+      version: 1,
+      createdAt: DateTime.utc(2026, 8, 5),
+    ),
+    preparationSnapshotId: plan.preparationSnapshot.id,
+    maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
+  );
 }
 
 final _ieltsBank = IeltsQuestionBank(

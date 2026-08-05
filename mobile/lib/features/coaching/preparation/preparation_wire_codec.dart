@@ -272,11 +272,11 @@ IeltsPracticeAssignment decodeIeltsPracticeAssignment(Object? value) {
       : null;
   final part1QuestionCount = _count(object['part_1_questions'], maximum: 24);
   final part2QuestionCount = _count(object['part_2_questions'], maximum: 1);
-  final part3QuestionCount = _count(object['part_3_questions'], maximum: 5);
+  final part3QuestionCount = _count(object['part_3_questions'], maximum: 6);
   final turnBlueprints = _textList(
     object['turn_blueprints'],
     minimumLength: 1,
-    maximumLength: 14,
+    maximumLength: 24,
   );
   final validShape = switch (mode) {
     IeltsPracticeMode.fullMock =>

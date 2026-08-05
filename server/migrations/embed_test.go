@@ -151,6 +151,30 @@ func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSDedicatedAssignmentLimitsMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000072_ielts_dedicated_assignment_limits.up.sql")
+	for _, required := range []string{
+		"PART_1_QUESTIONS NOT BETWEEN 1 AND 24",
+		"PART_3_QUESTIONS NOT BETWEEN 1 AND 6",
+		"EXPECTED_MODE = 'FULL_MOCK'",
+		"PREPARATION_PLAN_IELTS_ASSIGNMENT_IS_VALID_V1",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("IELTS dedicated limits migration is missing %q", required)
+		}
+	}
+
+	down := readMigration(t, "000072_ielts_dedicated_assignment_limits.down.sql")
+	if !strings.Contains(
+		down,
+		"PREPARATION_PLAN_IELTS_ASSIGNMENT_IS_VALID_V1",
+	) {
+		t.Error("IELTS dedicated limits rollback must restore v1 validation")
+	}
+}
+
 func TestDatabaseBaselineContainsNoBusinessDDL(t *testing.T) {
 	t.Parallel()
 

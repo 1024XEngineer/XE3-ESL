@@ -61,6 +61,7 @@ class PreparationPage extends StatefulWidget {
 class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
   _PracticeHub? _selectedHub;
+  bool _ieltsBrowserOpen = false;
   _IeltsBrowserState _ieltsBrowserState = const _IeltsBrowserState();
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _handlingIeltsNavigation = false;
@@ -138,6 +139,7 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     setState(() {
       _selectedHub = _PracticeHub.ielts;
+      _ieltsBrowserOpen = true;
       _ieltsBrowserState = _ieltsBrowserState.copyWith(part: request.mode);
     });
     final selection = request.selection;
@@ -549,7 +551,10 @@ class _PreparationPageState extends State<PreparationPage> {
             tintColor: PreparationDesign.ieltsTint,
             assetPath: 'assets/images/scenes/ielts-hero.jpg',
             onPressed: () {
-              setState(() => _selectedHub = _PracticeHub.ielts);
+              setState(() {
+                _selectedHub = _PracticeHub.ielts;
+                _ieltsBrowserOpen = false;
+              });
               unawaited(controller.loadIeltsQuestionBankIfNeeded());
             },
           ),
@@ -586,7 +591,13 @@ class _PreparationPageState extends State<PreparationPage> {
           child: IconButton(
             key: const Key('preparation-back-to-families'),
             tooltip: '返回场景练习',
-            onPressed: () => setState(() => _selectedHub = null),
+            onPressed: () => setState(() {
+              if (hub == _PracticeHub.ielts && _ieltsBrowserOpen) {
+                _ieltsBrowserOpen = false;
+              } else {
+                _selectedHub = null;
+              }
+            }),
             icon: const Icon(Icons.arrow_back_rounded),
             color: PreparationDesign.ink,
             style: IconButton.styleFrom(
@@ -607,6 +618,8 @@ class _PreparationPageState extends State<PreparationPage> {
           _IeltsHub(
             controller: controller,
             scenes: scenes,
+            browserOpen: _ieltsBrowserOpen,
+            onOpenBrowser: () => setState(() => _ieltsBrowserOpen = true),
             initialBrowserState: _ieltsBrowserState,
             onBrowserStateChanged: (value) => _ieltsBrowserState = value,
             onRetry: controller.loadIeltsQuestionBankIfNeeded,
@@ -1238,6 +1251,8 @@ class _IeltsHub extends StatefulWidget {
   const _IeltsHub({
     required this.controller,
     required this.scenes,
+    required this.browserOpen,
+    required this.onOpenBrowser,
     required this.onFullMockPressed,
     required this.onSelectionPressed,
     required this.onRetry,
@@ -1247,6 +1262,8 @@ class _IeltsHub extends StatefulWidget {
 
   final PreparationController controller;
   final List<SceneDefinition> scenes;
+  final bool browserOpen;
+  final VoidCallback onOpenBrowser;
   final ValueChanged<SceneDefinition> onFullMockPressed;
   final void Function(SceneDefinition scene, IeltsPracticeSelection selection)
   onSelectionPressed;
@@ -1333,6 +1350,32 @@ class _IeltsHubState extends State<_IeltsHub> {
         partScenes.values.every((scene) => scene == null)) {
       return const _HubEmpty(message: '当前没有可用的 IELTS 口语练习。');
     }
+    if (widget.browserOpen) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _HubHeader(
+            title: '专项练习',
+            description: '按题季、Part 和主题分类选择题目。',
+            titleKey: Key('ielts-special-browser-title'),
+          ),
+          const SizedBox(height: 20),
+          _IeltsQuestionBrowser(
+            controller: widget.controller,
+            searchController: _searchController,
+            source: _source,
+            part: _part,
+            category: _category,
+            partScenes: partScenes,
+            onRetry: widget.onRetry,
+            onSourceChanged: _setSource,
+            onPartChanged: _setPart,
+            onCategoryChanged: _setCategory,
+            onSelectionPressed: widget.onSelectionPressed,
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1355,22 +1398,19 @@ class _IeltsHubState extends State<_IeltsHub> {
             assetPath: 'assets/images/scenes/ielts-hero.jpg',
             onPressed: () => widget.onFullMockPressed(fullScene),
           ),
-          const SizedBox(height: 26),
+          const SizedBox(height: 16),
         ],
-        const Text('专项练习', style: PreparationDesign.sectionTitle),
-        const SizedBox(height: 12),
-        _IeltsQuestionBrowser(
-          controller: widget.controller,
-          searchController: _searchController,
-          source: _source,
-          part: _part,
-          category: _category,
-          partScenes: partScenes,
-          onRetry: widget.onRetry,
-          onSourceChanged: _setSource,
-          onPartChanged: _setPart,
-          onCategoryChanged: _setCategory,
-          onSelectionPressed: widget.onSelectionPressed,
+        _FeaturedScene(
+          key: const Key('ielts-mode-special'),
+          eyebrow: '分类题库',
+          title: '按 Part 专项突破',
+          description: '按新题、保留题、万年老题和主题标签精准选题。',
+          actionLabel: '选择专项题目',
+          icon: Icons.grid_view_rounded,
+          color: const Color(0xFF0EA5E9),
+          foregroundColor: Colors.white,
+          assetPath: 'assets/images/scenes/ielts-hero.jpg',
+          onPressed: widget.onOpenBrowser,
         ),
       ],
     );

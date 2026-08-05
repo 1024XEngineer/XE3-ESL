@@ -1215,7 +1215,7 @@ final class _StoredPracticeWorkspace {
           (completedTurns != null &&
               (completedTurns is! int ||
                   completedTurns < 0 ||
-                  completedTurns > 14)) ||
+                  completedTurns > 24)) ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||

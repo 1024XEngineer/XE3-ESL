@@ -501,7 +501,7 @@ IeltsTopicGroup _ieltsTopicGroup(Object? value) {
     object['part3_questions'],
     maximumItemBytes: 1024,
   );
-  if (points.length < 3 || questions.isEmpty || questions.length > 5) {
+  if (points.length < 3 || questions.isEmpty || questions.length > 6) {
     throw _invalidResponse();
   }
   return IeltsTopicGroup(

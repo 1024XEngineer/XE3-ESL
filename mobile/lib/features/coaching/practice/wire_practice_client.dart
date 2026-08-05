@@ -848,7 +848,7 @@ PracticeSessionSnapshot _decodeSessionState(
       completed != terminal ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
-      turnLimit > 14 ||
+      turnLimit > 24 ||
       effectiveTurns > turnLimit ||
       (!completed && question == null) ||
       (completed &&

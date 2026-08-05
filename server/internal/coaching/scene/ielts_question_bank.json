@@ -1317,7 +1317,8 @@
         "What are the differences between those tall buildings in your country?",
         "Why are different places laid out and designed differently?",
         "What are the advantages of living in tall buildings?",
-        "Why do some people like to remodel and decorate their homes themselves?"
+        "Why do some people like to remodel and decorate their homes themselves?",
+        "What kind of interior design style do most people like?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1342,7 +1343,8 @@
         "Which is more helpful, watching videos or reading books?",
         "What skills can people learn from watching videos?",
         "Are there any differences between the videos that young people and old people like to watch?",
-        "Are there any differences between the videos that young men and young women like to watch?"
+        "Are there any differences between the videos that young men and young women like to watch?",
+        "What makes a video go viral online?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1367,7 +1369,8 @@
         "Why aren't young people willing to listen to the experiences of older people?",
         "What can people do when they feel bored?",
         "Why are some teachers' classes boring? Are there any solutions?",
-        "Why do some young people feel bored when talking with old people?"
+        "Why do some young people feel bored when talking with old people?",
+        "Do most people think news about celebrities is boring?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1392,7 +1395,8 @@
         "Why do people get up early?",
         "What kinds of occasions need people to arrive early?",
         "Why do some people like to stay up late?",
-        "Is it good to arrive early in any situation?"
+        "Is it good to arrive early in any situation?",
+        "What kind of people like getting up early?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1417,7 +1421,8 @@
         "Do many people grow vegetables or flowers at home in your country?",
         "Is it easy to grow plants at home?",
         "Why do some people like to grow plants?",
-        "Why do some people prefer to grow their own fruits and vegetables instead of buying them from the market?"
+        "Why do some people prefer to grow their own fruits and vegetables instead of buying them from the market?",
+        "Do you think students should learn to grow plant?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1443,7 +1448,8 @@
         "Do people in your country usually obey the law?",
         "What kinds of behavior are considered as good behavior?",
         "Do you think children can learn about the law outside of school?",
-        "What are the benefits for people to obey rules?"
+        "What are the benefits for people to obey rules?",
+        "How can parents teach children to obey rules?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1468,7 +1474,8 @@
         "How important is childhood friendship to children?",
         "What do you think of communicating via social media?",
         "Do you think online communication through social media will replace face-to-face communication?",
-        "What's the difference between having younger friends and older friends?"
+        "What's the difference between having younger friends and older friends?",
+        "Has technology changed people's friendships? How?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1493,7 +1500,8 @@
         "Do you think learning biology is interesting for children?",
         "Why do some children want to become doctors?",
         "Do you think governments should put a large amount of money into medical research?",
-        "Why is some doctors' pay high and others' low?"
+        "Why is some doctors' pay high and others' low?",
+        "Do you think doctors should be paid more?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1519,7 +1527,8 @@
         "Should governments provide financial support to start-ups?",
         "Do most people prefer shopping at big stores or small stores?",
         "What makes a business successful?",
-        "What makes a business fail?"
+        "What makes a business fail?",
+        "Is it easy to set up a new business in your country?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1544,7 +1553,8 @@
         "Would you tell others if you change your plan?",
         "Why do you think parents still make plans for their children nowadays?",
         "How does technology help people make plans?",
-        "What kind of plans do people often make?"
+        "What kind of plans do people often make?",
+        "Do you think people like the process of making plans more, or the moment of carrying them out?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1569,7 +1579,8 @@
         "What should a leader do to make team members want to follow him or her?",
         "Should students learn to do group work?",
         "What group tasks are there in schools?",
-        "What advantages are there for students experiencing teamwork at school?"
+        "What advantages are there for students experiencing teamwork at school?",
+        "How can you tell if a person is a good leader?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1594,7 +1605,8 @@
         "What important decisions do teenagers need to make after graduation?",
         "Who can children turn to for help when making a decision?",
         "Do you think advertisements can influence our decisions when shopping?",
-        "Do you think the influence of advertising is good?"
+        "Do you think the influence of advertising is good?",
+        "How do people usually make important decisions?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1619,7 +1631,8 @@
         "Where do people normally watch sports events?",
         "What are the advantages of watching sports events online?",
         "What sports matches are suitable for children to attend?",
-        "Why do some people spend a lot going to other countries to watch sports events?"
+        "Why do some people spend a lot going to other countries to watch sports events?",
+        "What sports games are popular in your country?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1668,7 +1681,8 @@
         "Does speaking other languages help at work?",
         "Do people learn any languages other than English?",
         "Why is it easier for children to learn new things than for adults?",
-        "How do people learn new things?"
+        "How do people learn new things?",
+        "What is the most important thing for learning a language well?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1693,7 +1707,8 @@
         "Do you think people today should learn about AI technology?",
         "Should children learn to use AI?",
         "How can AI help in our lives?",
-        "Do you think students are overly reliant on AI?"
+        "Do you think students are overly reliant on AI?",
+        "What can teachers do to stop students from relying too much on AI?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1718,7 +1733,8 @@
         "Why are many advertisements endorsed by celebrities? How useful are they?",
         "What is the most important factor in an advertisement?",
         "Why are some advertisements boring?",
-        "Is advertising important for a company? Why?"
+        "Is advertising important for a company? Why?",
+        "Which is more effective, online advertising or offline advertising?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1743,7 +1759,8 @@
         "What is the ideal length for a holiday?",
         "How do people usually plan holidays?",
         "Is it important to plan a holiday ahead?",
-        "Why do many countries try to attract people to visit?"
+        "Why do many countries try to attract people to visit?",
+        "How do people decide when to travel?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1768,7 +1785,8 @@
         "What do Chinese people do when they visit others?",
         "What kind of place do people in your country like to live in?",
         "What's the difference between homes in cities and those in the countryside?",
-        "What kind of gifts do people usually bring when they visit others?"
+        "What kind of gifts do people usually bring when they visit others?",
+        "How often do you visit your relatives or friends?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1793,7 +1811,8 @@
         "Some people think pets should not be kept in cities. What do you think?",
         "Many people regard pets as members of their family. What do you think?",
         "Do many people keep pets in your country?",
-        "What are the advantages of keeping a pet?"
+        "What are the advantages of keeping a pet?",
+        "Why do people always tell children stories with animals?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1839,7 +1858,8 @@
         "Do you think school rules are important?",
         "Are children unhappy with the school rules?",
         "How can parents and teachers help children understand and follow rules?",
-        "What are the rules people should obey at work?"
+        "What are the rules people should obey at work?",
+        "What is the purpose of punishment?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1864,7 +1884,8 @@
         "In what situations do people not respond to messages at all?",
         "What would you do if you did not receive a reply after sending out a message?",
         "Why do some people prefer sending a message instead of making a call?",
-        "How do you show your respect in your messages?"
+        "How do you show your respect in your messages?",
+        "Why do some people feel angry when others don't reply to their message?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -1889,7 +1910,8 @@
         "What do you think of people going after high positions?",
         "Why are some young people keen on being fans of superstars?",
         "Is it good for a person to be ambitious?",
-        "Do you think it is necessary to be ambitious when working in a team in a company?"
+        "Do you think it is necessary to be ambitious when working in a team in a company?",
+        "Should parents support their children in pursuing their ambitions?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2032,7 +2054,8 @@
         "What jobs do children want to do when they grow up?",
         "Do people's ideal jobs change as they grow up?",
         "What should people consider when choosing jobs?",
-        "Is salary the main reason why people choose a certain job?"
+        "Is salary the main reason why people choose a certain job?",
+        "What kind of jobs are the most popular in your country?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2057,7 +2080,8 @@
         "What can today's children do to become famous?",
         "What can children do with their fame?",
         "Do people become famous because of their talent?",
-        "Is it easy to become famous in your country?"
+        "Is it easy to become famous in your country?",
+        "Do you want to be a famous person?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2082,7 +2106,8 @@
         "What positive and negative impact do mobile phones have on friendship?",
         "Is it a waste of time to take pictures with mobile phones?",
         "Do you think it is necessary to have laws on the use of mobile phones?",
-        "What are examples of good and poor phone manners?"
+        "What are examples of good and poor phone manners?",
+        "How does the internet benefit people?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2107,7 +2132,8 @@
         "Is it good to ask advice from strangers online?",
         "What are the personalities of people whose job is to give advice to others?",
         "What are the problems if you ask too many people for advice?",
-        "Why do some people think it is better to ask for advice from friends than from parents?"
+        "Why do some people think it is better to ask for advice from friends than from parents?",
+        "When would old people ask young people for advice?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2132,7 +2158,8 @@
         "What technology do young people like to use?",
         "What are the differences between online and face-to-face communication?",
         "Do you think technology has changed the way people communicate?",
-        "What negative effects does technology have on people's relationships?"
+        "What negative effects does technology have on people's relationships?",
+        "What are the differences between making friends in real life and online?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2157,7 +2184,8 @@
         "What activities do we need to plan ahead?",
         "Do you think children should plan their future careers?",
         "Should children ask their teachers or parents for advice when making plans?",
-        "Is making study plans popular among young people?"
+        "Is making study plans popular among young people?",
+        "Do you think choosing a college major is closely related to a person's future career?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2182,7 +2210,8 @@
         "Why do most children draw more often than adults do?",
         "Why do some people visit galleries or museums instead of viewing artworks online?",
         "Do you think galleries and museums should be free of charge?",
-        "How do artworks inspire people?"
+        "How do artworks inspire people?",
+        "What are the differences between reading a book and visiting a museum?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2208,7 +2237,8 @@
         "Why do some people not like using apps?",
         "What apps are popular in your country? Why?",
         "Should parents limit their children's use of computer programs and computer games? Why and how?",
-        "Do you think young people are more and more reliant on these programs?"
+        "Do you think young people are more and more reliant on these programs?",
+        "What do you think about some countries banning children from using social media?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2233,7 +2263,8 @@
         "Why do most people smile in photographs?",
         "Do women smile more than men? Why?",
         "Do people smile more when they are younger or older?",
-        "Is smiling important in your culture?"
+        "Is smiling important in your culture?",
+        "Are there any occasions when people need to pretend to smile?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2258,7 +2289,8 @@
         "Should parents reward children? Why and how?",
         "Is it good to reward children too often? Why?",
         "On what occasions would adults be proud of themselves?",
-        "Do rewards help a child become better?"
+        "Do rewards help a child become better?",
+        "What do you think about children working hard just for grades?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2283,7 +2315,8 @@
         "What's the difference between things valued by people in the past and today?",
         "What kinds of things are kept in museums?",
         "What's the influence of technology on museums?",
-        "What are the benefits of technology for learning history?"
+        "What are the benefits of technology for learning history?",
+        "Why do people visit museums?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2308,7 +2341,8 @@
         "Do you think air pollution comes mostly from mobile vehicles?",
         "Do you think people need to change the way of transportation drastically to protect the environment?",
         "How are the transportation systems in urban areas and rural areas different?",
-        "Why do more people own and drive private vehicles now?"
+        "Why do more people own and drive private vehicles now?",
+        "What do you think of the future of electric cars?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2333,7 +2367,8 @@
         "How do children become smart at school?",
         "Why are some people well-rounded and others only good at one thing?",
         "Why does modern society need talents of all kinds?",
-        "Do you think smart children are happier than other children?"
+        "Do you think smart children are happier than other children?",
+        "Is it important for schools to identify and develop each student's talents?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2358,7 +2393,8 @@
         "Should teachers make learning in their classes fun?",
         "Do you think there are too many subjects for students to learn?",
         "Is it better to focus on a few subjects or to learn many subjects?",
-        "Do you think enterprises should provide training for their employees?"
+        "Do you think enterprises should provide training for their employees?",
+        "Do you think it is good for older adults to continue learning?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2383,7 +2419,8 @@
         "Do you think children should receive some musical education?",
         "What are the differences between old and young people's music preferences?",
         "What kind of music events are there in your country?",
-        "Why do many people like listening to music while doing sports?"
+        "Why do many people like listening to music while doing sports?",
+        "What are the differences between listening to music at home and at a live concert?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2408,7 +2445,8 @@
         "What are the factors that make a successful movie?",
         "Do Chinese people prefer to watch domestic movies or foreign movies?",
         "Do you think only well-known directors can create the best movies?",
-        "Do you think successful movies should have well-known actors or actresses in leading roles?"
+        "Do you think successful movies should have well-known actors or actresses in leading roles?",
+        "Why do people prefer to watch movies in the cinema?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2433,7 +2471,8 @@
         "Is it worth spending a lot of money on the exterior appearance of a building?",
         "Is it more important for a building to look good on the outside or on the inside?",
         "Why do people like to visit historical sites?",
-        "Do you think it's reasonable to charge an entry fee for visiting interesting buildings?"
+        "Do you think it's reasonable to charge an entry fee for visiting interesting buildings?",
+        "Is it better to live in a new building or an old one?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2458,7 +2497,8 @@
         "Do you think imagination is essential for scientists?",
         "What kinds of jobs need imagination?",
         "What subjects are helpful for children's imagination?",
-        "What games help develop children's imagination?"
+        "What games help develop children's imagination?",
+        "How important is imagination to children?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2483,7 +2523,8 @@
         "Should children help their parents with household chores?",
         "What kind of help do people need when looking for a new job?",
         "Who should people ask for help, colleagues or family members?",
-        "Do you think schools should teach children to do household chores?"
+        "Do you think schools should teach children to do household chores?",
+        "Why are employees reluctant to ask their managers for help?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2508,7 +2549,8 @@
         "What do you think young people spend most of their money on?",
         "Do you think it is important to save money? Why?",
         "Do people buy things they don't need?",
-        "Do you think it is the rich people's responsibility to donate money to people in need?"
+        "Do you think it is the rich people's responsibility to donate money to people in need?",
+        "What kind of things are people happy to pay a high price for?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2533,7 +2575,8 @@
         "When should parents encourage their children?",
         "What kind of encouragement should parents give?",
         "Do you think some people are better than others at persuading?",
-        "Should children do everything their parents ask them to do?"
+        "Should children do everything their parents ask them to do?",
+        "How can employers encourage their staff?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2558,7 +2601,8 @@
         "What challenges do young people face when working abroad?",
         "What are the benefits of working for an international company?",
         "What personal skills are required to work in an international company?",
-        "What kind of work can young people do in foreign countries?"
+        "What kind of work can young people do in foreign countries?",
+        "Why are some people unwilling to work in other countries?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2584,7 +2628,8 @@
         "What laws about the environment are effective in your country?",
         "Which do you think people prefer, rewards or punishment, when it comes to government intervention in environmental protection?",
         "Is it easy for children in cities to get close to the natural world?",
-        "What can people do to protect the natural world?"
+        "What can people do to protect the natural world?",
+        "Is it important to teach students environmental protection at school?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2609,7 +2654,8 @@
         "How have people's shopping habits changed in recent decades?",
         "Do you think shops and shopping malls will disappear in the future?",
         "What are the differences between shopping in street markets and big shopping malls?",
-        "What are the differences in the shopping habits of different age groups?"
+        "What are the differences in the shopping habits of different age groups?",
+        "What are the differences between shopping online and in-store?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2635,7 +2681,8 @@
         "Do you think modern cities are suitable for young people or old people?",
         "Before you travel to a city, what factors would you consider?",
         "What are the disadvantages of living in a very famous city?",
-        "Do you prefer to visit well-developed cities or cities with a long history?"
+        "Do you prefer to visit well-developed cities or cities with a long history?",
+        "For those who live in cities, is it because they want to or have to?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2661,7 +2708,8 @@
         "How do people spend their leisure time in your country?",
         "How does technology affect the way people spend their leisure time?",
         "Do you think only old people have time for leisure?",
-        "Why do old people prefer to live in quiet places?"
+        "Why do old people prefer to live in quiet places?",
+        "Why are there more noises made at home now than in the past?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2686,7 +2734,8 @@
         "Do people in your country like to watch foreign TV programs?",
         "What's the benefit of letting kids watch animal videos than visiting zoos?",
         "Do teachers play videos in class in your country?",
-        "Do you think watching talk shows is a waste of time?"
+        "Do you think watching talk shows is a waste of time?",
+        "Do you think we can acquire knowledge from watching TV programs?"
       ],
       "published": true,
       "supplemented_question_count": 0,
@@ -2919,9 +2968,9 @@
         "Do you have a favorite teacher?",
         "Do you want to be a teacher in the future?",
         "Do you have a teacher from your past that you still remember?",
-        "Do you like your primary school teachers more than your high school teachers?",
         "Are you still in touch with your primary school teachers?",
-        "In what way has your favourite teacher helped you?"
+        "In what way has your favourite teacher helped you?",
+        "Do you like your primary school teachers more than your high school teachers?"
       ],
       "published": true
     },
@@ -3025,11 +3074,11 @@
         "Did you like going to parks as a child?",
         "Do you still like going to parks now?",
         "Would you like to see more parks in your city?",
-        "Would you like to play in a public garden or park?",
         "Are there any parks you want to go to in the future?",
         "Would you prefer to play in a personal garden or public garden?",
         "How are the parks today different from those you visited as a kid?",
-        "What do you like to do when visiting a park?"
+        "What do you like to do when visiting a park?",
+        "Would you like to play in a public garden or park?"
       ],
       "published": true
     },
@@ -3338,9 +3387,9 @@
         "What did you often do with your friends in your childhood?",
         "What do you think is the most important at the moment?",
         "Do you have any plans for the next five years?",
-        "At what age do you think people are the happiest?",
         "How do people remember each stage of their lives?",
-        "Do you enjoy being the age you are now?"
+        "Do you enjoy being the age you are now?",
+        "At what age do you think people are the happiest?"
       ],
       "published": true
     },

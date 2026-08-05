@@ -199,13 +199,22 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 		}
 		practiceTopicIDs[topic.ID] = struct{}{}
 		practiceTopicTitles[topic.TitleEN] = struct{}{}
-		if _, exists := part1QuestionsByTopic[topic.TitleEN]; !exists {
+		canonicalQuestions, exists := part1QuestionsByTopic[topic.TitleEN]
+		if !exists || len(canonicalQuestions) != len(topic.Questions) {
 			return ErrIELTSQuestionBankUnavailable
 		}
+		questions := make(map[string]struct{}, len(topic.Questions))
 		for _, question := range topic.Questions {
 			if !nonBlank(question) {
 				return ErrIELTSQuestionBankUnavailable
 			}
+			if _, duplicate := questions[question]; duplicate {
+				return ErrIELTSQuestionBankUnavailable
+			}
+			if _, canonical := canonicalQuestions[question]; !canonical {
+				return ErrIELTSQuestionBankUnavailable
+			}
+			questions[question] = struct{}{}
 			practiceQuestionCount++
 		}
 	}
@@ -214,7 +223,10 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 	}
 	published := 0
 	hidden := 0
+	publishedPart3Questions := 0
 	groupIDs := make(map[string]struct{}, len(bank.TopicGroups))
+	publishedTitles := make(map[string]struct{}, 56)
+	publishedPrompts := make(map[string]struct{}, 56)
 	for _, group := range bank.TopicGroups {
 		if !validResourceID(group.ID) ||
 			!nonBlank(group.TitleZH) ||
@@ -234,23 +246,37 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 				return ErrIELTSQuestionBankUnavailable
 			}
 		}
+		part3Questions := make(map[string]struct{}, len(group.Part3Questions))
 		for _, question := range group.Part3Questions {
 			if !nonBlank(question) {
 				return ErrIELTSQuestionBankUnavailable
 			}
+			if _, duplicate := part3Questions[question]; duplicate {
+				return ErrIELTSQuestionBankUnavailable
+			}
+			part3Questions[question] = struct{}{}
 		}
 		if group.Published {
 			published++
 			if group.Region != "mainland" ||
 				len(group.Part3Questions) < 1 ||
-				len(group.Part3Questions) > 5 {
+				len(group.Part3Questions) > 6 {
 				return ErrIELTSQuestionBankUnavailable
 			}
+			if _, duplicate := publishedTitles[group.TitleZH]; duplicate {
+				return ErrIELTSQuestionBankUnavailable
+			}
+			if _, duplicate := publishedPrompts[group.Part2.Prompt]; duplicate {
+				return ErrIELTSQuestionBankUnavailable
+			}
+			publishedTitles[group.TitleZH] = struct{}{}
+			publishedPrompts[group.Part2.Prompt] = struct{}{}
+			publishedPart3Questions += len(group.Part3Questions)
 		} else {
 			hidden++
 		}
 	}
-	if published != 56 || hidden != 8 {
+	if published != 56 || hidden != 8 || publishedPart3Questions != 317 {
 		return ErrIELTSQuestionBankUnavailable
 	}
 	return nil
@@ -412,7 +438,11 @@ func resolveIELTSQuestionSet(
 			)
 			result.Part2Questions = 1
 		}
-		for _, question := range topicGroup.Part3Questions {
+		part3Questions := topicGroup.Part3Questions
+		if selection.Mode == IELTSPracticeModeFullMock && len(part3Questions) > 5 {
+			part3Questions = part3Questions[:5]
+		}
+		for _, question := range part3Questions {
 			result.TurnBlueprints = append(
 				result.TurnBlueprints,
 				"Part 3 question: "+question,

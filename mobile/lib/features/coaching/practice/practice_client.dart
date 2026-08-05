@@ -98,7 +98,7 @@ final class FakePracticeClient
   }) : _snapshot = initialSnapshot {
     if (!validPracticeSceneIdentity(sceneFamily, sceneModel) ||
         turnLimit < 1 ||
-        turnLimit > 14) {
+        turnLimit > 24) {
       throw ArgumentError('Invalid Fake Practice Session configuration.');
     }
   }
