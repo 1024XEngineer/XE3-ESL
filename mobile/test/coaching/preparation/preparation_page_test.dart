@@ -360,7 +360,7 @@ void main() {
   });
 
   testWidgets(
-    'direct start unlocks return after failure and retries on reentry',
+    'direct start return preserves a committed retry for reconnection',
     (tester) async {
       final session = Completer<PreparationPracticeBootstrap>();
       final preparationController = PreparationController(
@@ -479,6 +479,69 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'inline return discards a replaceable failure before a new launch',
+    (tester) async {
+      final preparationController = PreparationController(
+        client: _MultiSceneClient(),
+      );
+      final launchClient = _PageLaunchClient(failFirstProfile: true);
+      var navigations = 0;
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () => _pageContext,
+        threadIdProvider: () => _pageContext.threadId,
+        goalActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _pageContext,
+        voiceActivator:
+            ({
+              required context,
+              required scene,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
+        idFactory: (scope) => '$scope-replaceable-widget-key',
+      );
+      addTearDown(preparationController.dispose);
+      addTearDown(launchController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            preparationController: preparationController,
+            launchController: launchController,
+            onPracticeStarted: () => navigations++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openFamily(tester, 'INTERVIEW');
+      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
+      await tester.pumpAndSettle();
+
+      expect(launchController.canRetry, isTrue);
+      await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
+      await tester.pumpAndSettle();
+
+      expect(launchController.canRetry, isFalse);
+      expect(launchController.isSelectionLocked, isFalse);
+      expect(preparationController.selectedScene, isNull);
+
+      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
+      await tester.pumpAndSettle();
+
+      expect(navigations, 1);
+      expect(
+        launchClient.calls.where((call) => call == 'profile'),
+        hasLength(2),
+      );
+    },
+  );
 }
 
 class _FixtureClient implements SceneClient {
@@ -568,9 +631,10 @@ final class _ControlledListClient implements SceneClient {
 }
 
 final class _PageLaunchClient implements PreparationLaunchClient {
-  _PageLaunchClient({this.sessionCompleter});
+  _PageLaunchClient({this.sessionCompleter, this.failFirstProfile = false});
 
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
+  final bool failFirstProfile;
   final calls = <String>[];
   PreparationLaunchSelection? selection;
   PreparationSnapshot? _snapshot;
@@ -584,6 +648,14 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     calls.add('profile');
+    if (failFirstProfile &&
+        calls.where((call) => call == 'profile').length == 1) {
+      throw const PreparationLaunchException(
+        kind: PreparationLaunchFailureKind.network,
+        stage: PreparationLaunchStage.profile,
+        retryable: true,
+      );
+    }
     return PreparationProfile(
       id: 'profile-1',
       userId: 'user-1',

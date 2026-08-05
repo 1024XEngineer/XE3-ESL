@@ -467,7 +467,7 @@ class _PreparationPageState extends State<PreparationPage> {
         scene: selectedScene,
         launchController: widget.launchController,
         hasPrimaryNavigation: !widget.showBackButton,
-        onBack: () => controller.showSceneList(),
+        onBack: () => _handleBack(controller),
         onRetry: _retryLaunch,
       );
     }
