@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
@@ -119,6 +121,35 @@ void main() {
 
     controller.cancel('session_ielts_report_001');
   });
+
+  testWidgets('session panel owns report loading and cancellation', (
+    tester,
+  ) async {
+    final client = _PendingClient();
+    final controller = IeltsSpeakingReportController(client: client);
+    addTearDown(controller.dispose);
+
+    Widget app(String sessionId) => MaterialApp(
+      home: IeltsSpeakingSessionReportPanel(
+        practiceSessionId: sessionId,
+        controller: controller,
+      ),
+    );
+
+    await tester.pumpWidget(app('session-one'));
+    await tester.pump();
+    expect(client.sessionIds, <String>['session-one']);
+    expect(controller.practiceSessionId, 'session-one');
+
+    await tester.pumpWidget(app('session-two'));
+    await tester.pump();
+    expect(client.sessionIds, <String>['session-one', 'session-two']);
+    expect(controller.practiceSessionId, 'session-two');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(controller.practiceSessionId, isNull);
+  });
 }
 
 Future<IeltsSpeakingReportController> _controllerFor(String fixtureKey) async {
@@ -158,6 +189,19 @@ final class _Client implements IeltsSpeakingReportClient {
   Future<IeltsSpeakingReportEnvelope> getReport(
     String practiceSessionId,
   ) async => envelope;
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _PendingClient implements IeltsSpeakingReportClient {
+  final sessionIds = <String>[];
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
+    sessionIds.add(practiceSessionId);
+    return Completer<IeltsSpeakingReportEnvelope>().future;
+  }
 
   @override
   Future<void> clearAccountState() async {}

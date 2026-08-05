@@ -1,9 +1,61 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+
+class IeltsSpeakingSessionReportPanel extends StatefulWidget {
+  const IeltsSpeakingSessionReportPanel({
+    required this.practiceSessionId,
+    required this.controller,
+    super.key,
+  });
+
+  final String practiceSessionId;
+  final IeltsSpeakingReportController controller;
+
+  @override
+  State<IeltsSpeakingSessionReportPanel> createState() =>
+      _IeltsSpeakingSessionReportPanelState();
+}
+
+class _IeltsSpeakingSessionReportPanelState
+    extends State<IeltsSpeakingSessionReportPanel> {
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentSession();
+  }
+
+  @override
+  void didUpdateWidget(covariant IeltsSpeakingSessionReportPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller &&
+        oldWidget.practiceSessionId == widget.practiceSessionId) {
+      return;
+    }
+    oldWidget.controller.cancel(oldWidget.practiceSessionId);
+    _loadCurrentSession();
+  }
+
+  void _loadCurrentSession() {
+    if (widget.controller.practiceSessionId != widget.practiceSessionId) {
+      unawaited(widget.controller.load(widget.practiceSessionId));
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.cancel(widget.practiceSessionId);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      IeltsSpeakingReportPanel(controller: widget.controller);
+}
 
 class IeltsSpeakingReportPanel extends StatefulWidget {
   const IeltsSpeakingReportPanel({

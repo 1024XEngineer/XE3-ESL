@@ -11,12 +11,10 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
@@ -56,6 +54,9 @@ IeltsPracticeMode? _ieltsPracticeModeForScene(SceneDefinition? scene) {
 
 enum IeltsPracticeCompletionAction { next, retry, list }
 
+typedef IeltsCompletedReportBuilder =
+    Widget Function(BuildContext context, String practiceSessionId);
+
 final class IeltsPracticeRouteResult {
   const IeltsPracticeRouteResult({
     required this.mode,
@@ -74,7 +75,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     this.onExitRequested,
     this.progressStore,
     this.preparationController,
-    this.reportController,
+    this.completedReportBuilder,
     this.speechFeedbackController,
     this.examinerSpeaker,
     this.now = DateTime.now,
@@ -85,7 +86,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
   final Future<bool> Function()? onExitRequested;
   final IeltsMockProgressStore? progressStore;
   final PreparationController? preparationController;
-  final IeltsSpeakingReportController? reportController;
+  final IeltsCompletedReportBuilder? completedReportBuilder;
   final SpeechFeedbackController? speechFeedbackController;
   final IeltsExaminerSpeaker? examinerSpeaker;
   final DateTime Function() now;
@@ -140,7 +141,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   String? _questionNarrationErrorId;
   int _questionNarrationGeneration = 0;
   final Set<IeltsPracticeMode> _recordedCompletions = <IeltsPracticeMode>{};
-  String? _reportSessionId;
 
   IeltsPracticeSelection? get _selection {
     final sessionId = widget.controller.practiceSessionId;
@@ -379,11 +379,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   void didUpdateWidget(covariant IeltsSpeakingMockPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final controllerChanged = oldWidget.controller != widget.controller;
-    final reportControllerChanged =
-        oldWidget.reportController != widget.reportController;
-    if (controllerChanged || reportControllerChanged) {
-      _cancelReport(oldWidget.reportController);
-    }
     if (controllerChanged) {
       oldWidget.controller.removeListener(_handleControllerState);
       widget.controller.addListener(_handleControllerState);
@@ -395,9 +390,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _revealedQuestionIds.clear();
       unawaited(_stopExaminerSpeakerSafely());
       unawaited(_restoreProgress());
-    }
-    if (reportControllerChanged && !controllerChanged) {
-      _syncReport();
     }
   }
 
@@ -418,7 +410,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (_ownsExaminerSpeaker) {
       unawaited(_examinerSpeaker.dispose());
     }
-    _cancelReport(widget.reportController);
     super.dispose();
   }
 
@@ -477,7 +468,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       setState(() => _part2RetryNeeded = true);
     }
     _recordCompletedParts();
-    _syncReport();
     unawaited(_resumePart2Narration(restored.phase));
     _scheduleQuestionNarration();
   }
@@ -656,7 +646,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (_part2TurnConfirmed && _part2ConfirmedTurns == null) {
       _part2ConfirmedTurns = widget.controller.completedTurns;
     }
-    _syncReport();
     _scheduleQuestionNarration();
     _flushBufferedPart3Audio();
   }
@@ -755,26 +744,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     });
   }
 
-  void _syncReport() {
-    final reportController = widget.reportController;
-    final sessionId = widget.controller.practiceSessionId;
-    if (_mode != IeltsPracticeMode.fullMock ||
-        _progress?.phase != IeltsMockPhase.complete ||
-        reportController == null ||
-        sessionId == null) {
-      _cancelReport(reportController);
-      return;
-    }
-    if (_reportSessionId != null && _reportSessionId != sessionId) {
-      _cancelReport(reportController);
-    }
-    _reportSessionId = sessionId;
-    if (reportController.practiceSessionId == sessionId) {
-      return;
-    }
-    unawaited(reportController.load(sessionId));
-  }
-
   void _recordCompletedParts() {
     final sessionId = widget.controller.practiceSessionId;
     final history = widget.preparationController;
@@ -814,14 +783,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         if (completed >= widget.controller.turnLimit) {
           complete(IeltsPracticeMode.part3);
         }
-    }
-  }
-
-  void _cancelReport(IeltsSpeakingReportController? reportController) {
-    final sessionId = _reportSessionId;
-    _reportSessionId = null;
-    if (sessionId != null) {
-      reportController?.cancel(sessionId);
     }
   }
 
@@ -1632,7 +1593,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             ? _MockComplete(
                 progress: progress,
                 part3AnswerCount: _part3Total,
-                reportController: widget.reportController,
+                report: _completedReport(),
                 onPressed: () => _requestExit(fromCompletion: true),
               )
             : _SectionPracticeComplete(
@@ -1645,6 +1606,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                     _finishSection(IeltsPracticeCompletionAction.list),
               ),
     };
+  }
+
+  Widget? _completedReport() {
+    final builder = widget.completedReportBuilder;
+    final sessionId = widget.controller.practiceSessionId;
+    if (builder == null || sessionId == null) {
+      return null;
+    }
+    return builder(context, sessionId);
   }
 
   int get _part3Start => switch (_mode) {
@@ -2962,13 +2932,13 @@ class _MockComplete extends StatelessWidget {
     required this.progress,
     required this.part3AnswerCount,
     required this.onPressed,
-    this.reportController,
+    this.report,
   });
 
   final IeltsMockProgress progress;
   final int part3AnswerCount;
   final VoidCallback onPressed;
-  final IeltsSpeakingReportController? reportController;
+  final Widget? report;
 
   @override
   Widget build(BuildContext context) {
@@ -2996,9 +2966,9 @@ class _MockComplete extends StatelessWidget {
             textAlign: TextAlign.center,
             style: SpeakUpDesign.body,
           ),
-          if (reportController case final controller?) ...[
+          if (report case final reportPanel?) ...[
             const SizedBox(height: 24),
-            IeltsSpeakingReportPanel(controller: controller),
+            reportPanel,
           ],
           const SizedBox(height: 28),
           Align(
