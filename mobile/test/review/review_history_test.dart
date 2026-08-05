@@ -542,15 +542,13 @@ void main() {
       find.byKey(const Key('review-history-initial-loading')),
       findsNothing,
     );
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('review-history-initial-loading')),
-      findsOneWidget,
-    );
-    await tester.pumpAndSettle();
+    await _expandHistory(tester);
     expect(find.byKey(const Key('review-history-error')), findsOneWidget);
 
+    await _ensureHistoryVisible(
+      tester,
+      find.byKey(const Key('review-history-retry')),
+    );
     await tester.tap(find.byKey(const Key('review-history-retry')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-content')), findsOneWidget);
@@ -1122,6 +1120,8 @@ Future<void> _expandHistory(WidgetTester tester) async {
       )
       .first;
   await tester.scrollUntilVisible(toggle, 200, scrollable: scrollable);
+  await tester.drag(scrollable, const Offset(0, -120));
+  await tester.pumpAndSettle();
   await tester.tap(toggle);
   await tester.pumpAndSettle();
 }

@@ -390,38 +390,16 @@ class _AbilityOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (report case final value?) {
-      return IeltsSpeakingScoreOverview(
+      return IeltsSpeakingAbilityProfile(
         key: const Key('review-ability-card'),
         criteria: value.criteria,
-        title: '个人能力',
-        radarSemanticsKey: const Key('review-ability-radar'),
+        loading: false,
       );
     }
-    return Card(
+    return IeltsSpeakingAbilityProfile(
       key: const Key('review-ability-card'),
-      child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('个人能力', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: SpeakUpDesign.space8),
-            Text('0–9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
-            const SizedBox(height: SpeakUpDesign.space16),
-            SizedBox(
-              key: const Key('review-ability-empty'),
-              height: 180,
-              child: Center(
-                child: Text(
-                  loading ? '正在读取能力数据…' : '完成一次 IELTS 口语完整模考后显示四维能力',
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.body,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      criteria: null,
+      loading: loading,
     );
   }
 }

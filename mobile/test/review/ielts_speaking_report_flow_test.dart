@@ -63,8 +63,13 @@ void main() {
       ),
       findsNothing,
     );
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
-    await tester.pumpAndSettle();
+    await _toggleHistory(tester);
+    await _scrollReviewTo(
+      tester,
+      find.byKey(
+        const Key('ielts-report-history-select-session_ielts_report_001'),
+      ),
+    );
 
     expect(find.text('IELTS 模考报告'), findsOneWidget);
     expect(find.textContaining('评分报告已生成'), findsOneWidget);
@@ -139,7 +144,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('个人能力'), findsOneWidget);
-    expect(find.text('0–9 分练习估分 · 图形越靠外代表该维度表现越强'), findsOneWidget);
+    expect(find.text('IELTS Speaking Profile'), findsOneWidget);
+    expect(find.text('基于最近一次完整模考的四项练习估分'), findsOneWidget);
     expect(find.byKey(const Key('review-ability-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-ability-empty')), findsNothing);
     expect(find.text('流利与连贯'), findsOneWidget);
@@ -219,8 +225,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('review-history-toggle')));
-      await tester.pumpAndSettle();
+      await _toggleHistory(tester);
+      await _scrollReviewTo(
+        tester,
+        find.byKey(
+          const Key('ielts-report-history-select-session_interview_001'),
+        ),
+      );
 
       // The interview section shows the practice title on its card; the
       // IELTS mock card falls back to the report-type label.
@@ -281,8 +292,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
-    await tester.pumpAndSettle();
+    await _toggleHistory(tester);
+    await _scrollReviewTo(
+      tester,
+      find.byKey(
+        const Key('ielts-report-history-select-session_ielts_recovering'),
+      ),
+    );
 
     expect(find.textContaining('报告自动恢复中'), findsOneWidget);
     expect(find.textContaining('报告生成失败'), findsNothing);
@@ -310,7 +326,15 @@ final class _IndexClient implements IeltsSpeakingReportIndexClient {
 
 Future<void> _toggleHistory(WidgetTester tester) async {
   final toggle = find.byKey(const Key('review-history-toggle'));
-  await _scrollReviewTo(tester, toggle);
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('review-history-list')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  await tester.scrollUntilVisible(toggle, 200, scrollable: scrollable);
+  await tester.drag(scrollable, const Offset(0, -120));
+  await tester.pumpAndSettle();
   await tester.tap(toggle);
   await tester.pumpAndSettle();
 }
