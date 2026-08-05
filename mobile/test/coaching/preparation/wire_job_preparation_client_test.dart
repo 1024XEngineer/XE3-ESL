@@ -661,6 +661,7 @@ Map<String, Object?> _sceneJson() {
     'status': 'active',
     'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
     'session_policy_ref': 'interview.project_deep_dive.session.v1',
+    'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
     'prompt': <String, Object?>{
       'public_scene_brief': 'Discuss one backend project.',
       'practice_goal': 'Explain decisions with evidence.',
@@ -711,6 +712,8 @@ Map<String, Object?> _policyJson() {
     'coverage_checkpoint_turn': 3,
     'max_follow_ups_per_question': 2,
     'early_completion_rule': 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+    'retry_allowed': false,
+    'question_translation_allowed': true,
   };
 }
 
@@ -754,6 +757,7 @@ Map<String, Object?> _bootstrapJson() {
       'plan_revision': 1,
       'scene_family': 'INTERVIEW',
       'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+      'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
       'snapshot_id': _sessionSnapshotId,
       'practice_session_status': 'starting',
       'session_version': 1,

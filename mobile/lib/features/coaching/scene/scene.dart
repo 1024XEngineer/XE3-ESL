@@ -132,6 +132,7 @@ final class SceneDefinition {
     required this.status,
     required this.turnPolicyRef,
     required this.sessionPolicyRef,
+    required this.evaluationPolicyRef,
     required this.prompt,
     required this.roles,
     required this.practiceOptions,
@@ -145,6 +146,7 @@ final class SceneDefinition {
   final SceneStatus status;
   final String turnPolicyRef;
   final String sessionPolicyRef;
+  final String evaluationPolicyRef;
   final ScenePrompt prompt;
   final List<RoleDefinition> roles;
   final List<PracticeOption> practiceOptions;

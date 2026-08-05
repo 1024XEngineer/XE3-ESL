@@ -469,6 +469,7 @@ PreparationPracticeBootstrap _bootstrap(
       'plan_revision',
       'scene_family',
       'scene_model',
+      'evaluation_policy_ref',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -480,6 +481,7 @@ PreparationPracticeBootstrap _bootstrap(
   final snapshotId = _resourceId(sessionObject['snapshot_id']);
   final status = _enumText(sessionObject['practice_session_status'], const {
     'starting',
+    'in_progress',
   });
   final sceneFamily =
       SceneFamily.fromWireValue(
@@ -496,10 +498,16 @@ PreparationPracticeBootstrap _bootstrap(
       _version(sessionObject['plan_revision']) != expectedPlan.revision ||
       sceneFamily != expectedScene.family ||
       sceneModel != expectedScene.model ||
-      sessionObject['started_at'] != null ||
+      _resourceId(sessionObject['evaluation_policy_ref']) !=
+          expectedScene.evaluationPolicyRef ||
+      (status == 'starting' && sessionObject['started_at'] != null) ||
+      (status == 'in_progress' && sessionObject['started_at'] == null) ||
       sessionObject['ended_at'] != null ||
       sessionObject['end_reason'] != null) {
     throw _invalidResponse();
+  }
+  if (status == 'in_progress') {
+    _dateTime(sessionObject['started_at']);
   }
   final snapshotObject = _object(
     root['snapshot'],
@@ -530,7 +538,10 @@ PreparationPracticeBootstrap _bootstrap(
   final sceneSelection = _decodeSceneSelection(
     snapshotObject['scene_selection'],
   );
-  if (!sameSceneSelection(sceneSelection, expectedPlan.sceneSelection)) {
+  if (!samePracticeSceneSelection(
+    sceneSelection,
+    expectedPlan.sceneSelection,
+  )) {
     throw _invalidResponse();
   }
   final preparation = decodePreparationSnapshot(
@@ -706,7 +717,9 @@ bool _sameSessionPolicy(
     left.maxEffectiveTurns == right.maxEffectiveTurns &&
     left.coverageCheckpointTurn == right.coverageCheckpointTurn &&
     left.maxFollowUpsPerQuestion == right.maxFollowUpsPerQuestion &&
-    left.earlyCompletionRule == right.earlyCompletionRule;
+    left.earlyCompletionRule == right.earlyCompletionRule &&
+    left.retryAllowed == right.retryAllowed &&
+    left.questionTranslationAllowed == right.questionTranslationAllowed;
 
 bool _sameObjectives(
   List<PracticeObjective> left,

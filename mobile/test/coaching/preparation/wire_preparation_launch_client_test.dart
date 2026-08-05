@@ -13,6 +13,27 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
 void main() {
+  test('accepts an idempotent Session replay already in progress', () async {
+    final response = _bootstrapJson();
+    final session = response['practice_session']! as Map<String, Object?>;
+    session['practice_session_status'] = 'in_progress';
+    session['session_version'] = 2;
+    session['started_at'] = _time;
+    final client = _client(_QueueTransport([_response(response)]));
+
+    final bootstrap = await client.createSession(
+      plan: decodePracticePlan(_planJson()),
+      input: const CreatePreparationSessionInput(
+        expectedPlanRevision: 1,
+        userConfirmed: true,
+      ),
+      idempotencyKey: 'session-replay-key',
+    );
+
+    expect(bootstrap.session.status, 'in_progress');
+    expect(bootstrap.session.version, 2);
+  });
+
   test(
     'sends the exact authenticated Profile to Session production chain',
     () async {
@@ -629,6 +650,7 @@ Map<String, Object?> _bootstrapJson({
       'plan_revision': 1,
       'scene_family': selection.scene.family.wireValue,
       'scene_model': selection.scene.model.wireValue,
+      'evaluation_policy_ref': selection.scene.evaluationPolicyRef,
       'snapshot_id': _sessionSnapshotId,
       'practice_session_status': 'starting',
       'session_version': 1,
@@ -675,7 +697,17 @@ Map<String, Object?> _bootstrapJson({
 Map<String, Object?> _sceneSelectionJson(
   PreparationLaunchSelection selection,
 ) => <String, Object?>{
-  'scene': _sceneJson(selection.scene),
+  'scene': <String, Object?>{
+    ..._sceneJson(selection.scene),
+    'roles': selection.scene.roles
+        .where((role) => selection.selectedRoleIds.contains(role.id))
+        .map(_roleJson)
+        .toList(),
+    'practice_options': selection.scene.practiceOptions
+        .where((option) => option.id == selection.practiceOptionId)
+        .map(_practiceOptionJson)
+        .toList(),
+  },
   'selected_role_ids': selection.selectedRoleIds,
   'practice_option_id': selection.practiceOptionId,
 };
@@ -689,6 +721,7 @@ Map<String, Object?> _sceneJson(SceneDefinition scene) => <String, Object?>{
   'status': scene.status.name,
   'turn_policy_ref': scene.turnPolicyRef,
   'session_policy_ref': scene.sessionPolicyRef,
+  'evaluation_policy_ref': scene.evaluationPolicyRef,
   'prompt': <String, Object?>{
     'public_scene_brief': scene.prompt.publicSceneBrief,
     'practice_goal': scene.prompt.practiceGoal,
@@ -741,6 +774,8 @@ Map<String, Object?> _sessionPolicyJson() => <String, Object?>{
   'coverage_checkpoint_turn': 1,
   'max_follow_ups_per_question': 1,
   'early_completion_rule': 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+  'retry_allowed': false,
+  'question_translation_allowed': true,
 };
 
 CreatePreparationPlanInput _planInput({
@@ -878,6 +913,7 @@ const _scene = SceneDefinition(
   status: SceneStatus.active,
   turnPolicyRef: 'interview.project_deep_dive.turn.v1',
   sessionPolicyRef: 'interview.project_deep_dive.session.v1',
+  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: 'Discuss one backend project.',
     practiceGoal: 'Explain decisions with evidence.',
@@ -943,6 +979,7 @@ const _ieltsScene = SceneDefinition(
   status: SceneStatus.active,
   turnPolicyRef: 'ielts.speaking.full.turn.v2',
   sessionPolicyRef: 'ielts.speaking.full.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: '按 Part 1、Part 2、Part 3 连续完成。',
     practiceGoal: 'Complete a full speaking mock.',

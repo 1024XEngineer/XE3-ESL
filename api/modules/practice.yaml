@@ -62,6 +62,7 @@ paths:
                 plan_revision: 1
                 scene_family: INTERVIEW
                 scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
                 session_version: 2
@@ -103,6 +104,7 @@ paths:
                 plan_revision: 1
                 scene_family: INTERVIEW
                 scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: paused
                 session_version: 3
@@ -148,6 +150,7 @@ paths:
                 plan_revision: 1
                 scene_family: INTERVIEW
                 scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
                 session_version: 4
@@ -193,6 +196,7 @@ paths:
                 plan_revision: 1
                 scene_family: INTERVIEW
                 scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: ended_early
                 session_version: 5
@@ -276,6 +280,7 @@ components:
         - plan_revision
         - scene_family
         - scene_model
+        - evaluation_policy_ref
         - snapshot_id
         - practice_session_status
         - session_version
@@ -292,6 +297,8 @@ components:
           $ref: '#/components/schemas/SceneFamily'
         scene_model:
           $ref: '#/components/schemas/SceneModel'
+        evaluation_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
         snapshot_id:
           $ref: '#/components/schemas/ResourceId'
         practice_session_status:

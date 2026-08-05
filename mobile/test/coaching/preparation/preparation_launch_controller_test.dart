@@ -1003,6 +1003,8 @@ PracticePlan _planForInput(CreatePreparationPlanInput input) => PracticePlan(
     coverageCheckpointTurn: 1,
     maxFollowUpsPerQuestion: 1,
     earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+    retryAllowed: false,
+    questionTranslationAllowed: true,
   ),
   practiceObjectives: const <PracticeObjective>[
     PracticeObjective(

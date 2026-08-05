@@ -364,6 +364,8 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
       'coverage_checkpoint_turn',
       'max_follow_ups_per_question',
       'early_completion_rule',
+      'retry_allowed',
+      'question_translation_allowed',
     },
   );
   final minimum = _version(object['min_effective_turns']);
@@ -371,11 +373,15 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
   final checkpoint = _version(object['coverage_checkpoint_turn']);
   final followUps = object['max_follow_ups_per_question'];
   final rule = _text(object['early_completion_rule'], maximumBytes: 128);
+  final retryAllowed = object['retry_allowed'];
+  final questionTranslationAllowed = object['question_translation_allowed'];
   if (minimum > checkpoint ||
       checkpoint > maximum ||
       followUps is! int ||
       followUps < 0 ||
       followUps > 3 ||
+      retryAllowed is! bool ||
+      questionTranslationAllowed is! bool ||
       !RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(rule)) {
     throw const PreparationWireFormatException();
   }
@@ -386,6 +392,8 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
     coverageCheckpointTurn: checkpoint,
     maxFollowUpsPerQuestion: followUps,
     earlyCompletionRule: rule,
+    retryAllowed: retryAllowed,
+    questionTranslationAllowed: questionTranslationAllowed,
   );
 }
 
@@ -494,7 +502,33 @@ bool sameSceneSelection(
     _sameStrings(left.selectedRoleIds, right.selectedRoleIds) &&
     left.practiceOptionId == right.practiceOptionId;
 
+bool samePracticeSceneSelection(
+  SceneSelectionSnapshot projected,
+  SceneSelectionSnapshot source,
+) {
+  if (!_sameSceneCore(projected.scene, source.scene) ||
+      !_sameStrings(projected.selectedRoleIds, source.selectedRoleIds) ||
+      projected.practiceOptionId != source.practiceOptionId) {
+    return false;
+  }
+  final selectedRoles = source.scene.roles
+      .where((role) => source.selectedRoleIds.contains(role.id))
+      .toList(growable: false);
+  final selectedOptions = source.scene.practiceOptions
+      .where((option) => option.id == source.practiceOptionId)
+      .toList(growable: false);
+  return selectedRoles.length == source.selectedRoleIds.length &&
+      selectedOptions.length == 1 &&
+      _sameRoles(projected.scene.roles, selectedRoles) &&
+      _sameOptions(projected.scene.practiceOptions, selectedOptions);
+}
+
 bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
+    _sameSceneCore(left, right) &&
+    _sameRoles(left.roles, right.roles) &&
+    _sameOptions(left.practiceOptions, right.practiceOptions);
+
+bool _sameSceneCore(SceneDefinition left, SceneDefinition right) =>
     left.id == right.id &&
     left.family == right.family &&
     left.model == right.model &&
@@ -503,6 +537,7 @@ bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
     left.status == right.status &&
     left.turnPolicyRef == right.turnPolicyRef &&
     left.sessionPolicyRef == right.sessionPolicyRef &&
+    left.evaluationPolicyRef == right.evaluationPolicyRef &&
     left.prompt.publicSceneBrief == right.prompt.publicSceneBrief &&
     left.prompt.practiceGoal == right.prompt.practiceGoal &&
     left.prompt.userRole == right.prompt.userRole &&
@@ -511,9 +546,7 @@ bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
     left.prompt.suggestedDurationSeconds ==
         right.prompt.suggestedDurationSeconds &&
     _sameStrings(left.prompt.focusAreas, right.prompt.focusAreas) &&
-    _sameStrings(left.prompt.turnBlueprints, right.prompt.turnBlueprints) &&
-    _sameRoles(left.roles, right.roles) &&
-    _sameOptions(left.practiceOptions, right.practiceOptions);
+    _sameStrings(left.prompt.turnBlueprints, right.prompt.turnBlueprints);
 
 bool _sameRoles(List<RoleDefinition> left, List<RoleDefinition> right) =>
     left.length == right.length &&

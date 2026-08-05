@@ -19,6 +19,7 @@ Map<String, Object?> encodeSceneDefinition(SceneDefinition scene) =>
       },
       'turn_policy_ref': scene.turnPolicyRef,
       'session_policy_ref': scene.sessionPolicyRef,
+      'evaluation_policy_ref': scene.evaluationPolicyRef,
       'prompt': <String, Object?>{
         'public_scene_brief': scene.prompt.publicSceneBrief,
         'practice_goal': scene.prompt.practiceGoal,
@@ -75,6 +76,7 @@ SceneDefinition decodeSceneDefinition(Object? value) {
       'status',
       'turn_policy_ref',
       'session_policy_ref',
+      'evaluation_policy_ref',
       'prompt',
       'roles',
       'practice_options',
@@ -132,6 +134,7 @@ SceneDefinition decodeSceneDefinition(Object? value) {
     status: status,
     turnPolicyRef: _resourceId(object['turn_policy_ref']),
     sessionPolicyRef: _resourceId(object['session_policy_ref']),
+    evaluationPolicyRef: _resourceId(object['evaluation_policy_ref']),
     prompt: _scenePrompt(object['prompt']),
     roles: List<RoleDefinition>.unmodifiable(roles),
     practiceOptions: List<PracticeOption>.unmodifiable(options),

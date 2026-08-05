@@ -890,6 +890,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       'plan_revision',
       'scene_family',
       'scene_model',
+      'evaluation_policy_ref',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -911,18 +912,24 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
         }),
       ) ??
       (throw _invalidResponse());
+  final status = _enumText(
+    sessionObject['practice_session_status'],
+    const <String>{'starting', 'in_progress'},
+  );
   if (_resourceId(sessionObject['practice_plan_id']) != expectedPlan.id ||
       _version(sessionObject['plan_revision']) != expectedPlan.revision ||
       sceneFamily != expectedPlan.sceneSelection.scene.family ||
       sceneModel != expectedPlan.sceneSelection.scene.model ||
-      _enumText(sessionObject['practice_session_status'], const <String>{
-            'starting',
-          }) !=
-          'starting' ||
-      sessionObject.containsKey('started_at') ||
+      _resourceId(sessionObject['evaluation_policy_ref']) !=
+          expectedPlan.sceneSelection.scene.evaluationPolicyRef ||
+      (status == 'starting' && sessionObject.containsKey('started_at')) ||
+      (status == 'in_progress' && !sessionObject.containsKey('started_at')) ||
       sessionObject.containsKey('ended_at') ||
       sessionObject.containsKey('end_reason')) {
     throw _invalidResponse();
+  }
+  if (status == 'in_progress') {
+    _dateTime(sessionObject['started_at']);
   }
 
   final snapshotObject = _object(
@@ -964,7 +971,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
             'PROJECT_EXPERIENCE_DEEP_DIVE',
           }) !=
           sceneModel.wireValue ||
-      !sameSceneSelection(selection, expectedPlan.sceneSelection) ||
+      !samePracticeSceneSelection(selection, expectedPlan.sceneSelection) ||
       !_samePreparationSnapshot(
         preparation,
         expectedPlan.preparationSnapshot,
@@ -985,7 +992,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       sceneFamily: sceneFamily,
       sceneModel: sceneModel,
       snapshotId: snapshotId,
-      status: 'starting',
+      status: status,
       version: _version(sessionObject['session_version']),
       createdAt: _dateTime(sessionObject['created_at']),
     ),
@@ -1134,7 +1141,9 @@ bool _samePolicy(
       left.maxEffectiveTurns == right.maxEffectiveTurns &&
       left.coverageCheckpointTurn == right.coverageCheckpointTurn &&
       left.maxFollowUpsPerQuestion == right.maxFollowUpsPerQuestion &&
-      left.earlyCompletionRule == right.earlyCompletionRule;
+      left.earlyCompletionRule == right.earlyCompletionRule &&
+      left.retryAllowed == right.retryAllowed &&
+      left.questionTranslationAllowed == right.questionTranslationAllowed;
 }
 
 bool _sameObjectives(

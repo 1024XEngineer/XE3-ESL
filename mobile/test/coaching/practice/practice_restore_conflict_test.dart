@@ -28,7 +28,7 @@ void main() {
           method: 'POST',
           path: '/v1/practice-sessions/$_newSessionId/voice-activation',
           response: _jsonResponse(
-            HttpStatus.created,
+            HttpStatus.ok,
             _activeSessionJson(_newSessionId),
           ),
         ),
@@ -204,6 +204,8 @@ Map<String, Object?> _activeSessionJson(String sessionId) {
   return {
     'practice_session_id': sessionId,
     'practice_plan_id': 'plan-new',
+    'scene_id': 'scene-project-deep-dive',
+    'scene_version': 1,
     'scene_family': 'INTERVIEW',
     'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'session_version': 2,

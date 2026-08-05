@@ -1211,6 +1211,8 @@ const _policy = PreparationSessionPolicy(
   coverageCheckpointTurn: 3,
   maxFollowUpsPerQuestion: 2,
   earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+  retryAllowed: false,
+  questionTranslationAllowed: true,
 );
 
 final PracticePlan _plan = _planWithRevision(1);
