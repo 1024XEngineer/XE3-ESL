@@ -397,8 +397,6 @@ func newPracticeContextIntegrationComposition(
 	catalog scene.CatalogReader,
 ) *IdentityAgentPracticeComposition {
 	t.Helper()
-	t.Setenv("AGENT_TOOL_MODE", "real")
-	t.Setenv("AGENT_TOOL_FIXTURES", "")
 	t.Setenv("APP_ENV", "development")
 	generator := practiceContextTextGenerator{}
 	composition, err := NewIdentityAgentAndPracticeComposition(

@@ -1,7 +1,8 @@
 # Agent Routing Benchmark
 
-该工具通过真实 HTTP 入口启动并测试本地 Agent 后端。它使用
-`AGENT_TOOL_FIXTURES=1` 注册固定工具数据，但保留真实模型的工具选择过程。
+该工具通过真实 HTTP 入口启动并测试 Agent。专用测试 Server 从
+`server/test/agent` 显式注册固定工具数据，同时保留真实模型的工具选择过程；
+生产 Server 不加载这些 Fixture。
 
 ## 双击运行
 
@@ -53,8 +54,8 @@ Thread 和工具数据。
   "name": "historical_review_search",
   "messages": ["看看我上次面试评价"],
   "expected_decision": "tool_call",
-  "expected_tools": ["review.search.v1"],
-  "forbidden_tools": ["scenario.create.v1"]
+  "expected_tools": ["review.search.v2"],
+  "forbidden_tools": ["goal.create.v1"]
 }
 ```
 

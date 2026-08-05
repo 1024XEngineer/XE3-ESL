@@ -5,9 +5,9 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
 func newEvaluationRegistry() (*capability.Registry, error) {

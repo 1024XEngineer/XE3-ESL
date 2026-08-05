@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
 func TestModelToolRoutingExposesEveryRegisteredTool(t *testing.T) {

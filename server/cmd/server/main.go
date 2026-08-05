@@ -40,15 +40,6 @@ func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 	slog.SetDefault(logger)
-	toolConfig, err := config.LoadAgentTool()
-	if err != nil {
-		logger.Error("agent tool configuration failed")
-		return 1
-	}
-	if toolConfig.Mode == config.AgentToolModeMock {
-		logger.Error("agent tool mock mode is not supported by production server")
-		return 1
-	}
 	textConfig, err := config.LoadTextGeneration()
 	if err != nil {
 		logger.Error("text generation configuration failed")

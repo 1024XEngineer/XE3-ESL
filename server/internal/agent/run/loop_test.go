@@ -15,11 +15,11 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
 func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
