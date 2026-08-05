@@ -52,8 +52,14 @@ func reasonSummary(reasonCode string, decision string) string {
 			return "模型根据全量工具描述自主选择了工具。"
 		}
 		return "模型查看全量工具描述后选择直接回答。"
-	case "budget_exhausted":
-		return "本轮达到 Agent Loop 工具调用或迭代预算，返回稳定降级回复。"
+	case FailureToolIterationBudgetExhausted:
+		return "本轮已达到 Agent Loop 工具迭代预算。"
+	case FailureToolCallBudgetExhausted:
+		return "本轮已达到 Agent Loop 工具调用预算。"
+	case FailureWriteToolCallBudgetExhausted:
+		return "本轮已达到 Agent Loop 写工具调用预算。"
+	case FailureDuplicateToolCall:
+		return "模型重复提交了同一 ToolCall ID，本轮已停止执行。"
 	default:
 		return "模型根据工具描述决定直接回答、追问或调用工具。"
 	}

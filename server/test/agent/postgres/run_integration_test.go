@@ -619,6 +619,245 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	}
 }
 
+func TestPostgresAgentRunLoopTerminationPersistsExplicitFailure(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	goalService, dataService := newAgentDataServices(t, database.pool)
+	repositories := newRunCapableStore(
+		t,
+		database.pool,
+		identity.NewUUIDv4Generator(nil),
+	)
+	actor := testActorA()
+	scenarios := []struct {
+		name              string
+		results           []agentrun.TextResult
+		limits            agentrun.LoopLimits
+		wantFailure       string
+		wantProviderCalls int
+		wantToolCalls     int
+	}{
+		{
+			name: "tool iteration budget",
+			results: []agentrun.TextResult{
+				integrationToolResult(
+					"call-iteration-1",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"one","limit":1}`,
+				),
+				integrationToolResult(
+					"call-iteration-2",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"two","limit":1}`,
+				),
+			},
+			limits:            agentrun.LoopLimits{MaxIterations: 1},
+			wantFailure:       agentrun.FailureToolIterationBudgetExhausted,
+			wantProviderCalls: 2,
+			wantToolCalls:     1,
+		},
+		{
+			name: "tool call budget",
+			results: []agentrun.TextResult{
+				integrationToolResult(
+					"call-budget-1",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"one","limit":1}`,
+				),
+				integrationToolResult(
+					"call-budget-2",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"two","limit":1}`,
+				),
+			},
+			limits:            agentrun.LoopLimits{MaxToolCalls: 1},
+			wantFailure:       agentrun.FailureToolCallBudgetExhausted,
+			wantProviderCalls: 2,
+			wantToolCalls:     1,
+		},
+		{
+			name: "duplicate tool call",
+			results: []agentrun.TextResult{
+				integrationToolResult(
+					"call-duplicate-1",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"one","limit":1}`,
+				),
+				integrationToolResult(
+					"call-duplicate-1",
+					reviewcapability.ReviewSearchToolName,
+					`{"query":"two","limit":1}`,
+				),
+			},
+			wantFailure:       agentrun.FailureDuplicateToolCall,
+			wantProviderCalls: 2,
+			wantToolCalls:     1,
+		},
+		{
+			name: "write tool budget",
+			results: []agentrun.TextResult{{
+				ID:           "fake-write-budget-completion",
+				Provider:     "fake",
+				Model:        "configured-model",
+				FinishReason: "tool_calls",
+				ToolCalls: []agentrun.ModelToolCall{
+					{
+						ID:        "call-write-budget-1",
+						Name:      goalcapability.GoalCreateCapabilityName,
+						Arguments: json.RawMessage(`{"title":"First goal"}`),
+					},
+					{
+						ID:        "call-write-budget-2",
+						Name:      goalcapability.GoalCreateCapabilityName,
+						Arguments: json.RawMessage(`{"title":"Second goal"}`),
+					},
+				},
+				Usage: agentrun.TokenUsage{
+					InputTokens:  20,
+					OutputTokens: 4,
+					TotalTokens:  24,
+				},
+			}},
+			wantFailure:       agentrun.FailureWriteToolCallBudgetExhausted,
+			wantProviderCalls: 1,
+			wantToolCalls:     0,
+		},
+	}
+	modes := []struct {
+		name      string
+		streaming bool
+	}{
+		{name: "non streaming"},
+		{name: "streaming", streaming: true},
+	}
+
+	for scenarioIndex, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			for modeIndex, mode := range modes {
+				t.Run(mode.name, func(t *testing.T) {
+					thread, err := dataService.CreateThread(
+						context.Background(),
+						actor,
+						"",
+					)
+					if err != nil {
+						t.Fatalf("create Thread: %v", err)
+					}
+					store := capabilityfixture.NewStore()
+					registry, err := capabilityfixture.NewRegistry(store)
+					if err != nil {
+						t.Fatalf("new capability Registry: %v", err)
+					}
+					sequence := newSequenceTextGenerator(scenario.results...)
+					var generator agentrun.TextGenerator = sequence
+					if mode.streaming {
+						generator = &streamingSequenceTextGenerator{
+							sequenceTextGenerator: sequence,
+						}
+					}
+					assembler, err := agentcontext.NewAssembler(
+						repositories.context,
+						agentContextGoals(t, goalService),
+						emptyLearningProfileReader{},
+						emptyStableProfileReader{},
+						&recordingMemorySearcher{},
+						readyMemoryExtractionBarrier{},
+					)
+					if err != nil {
+						t.Fatalf("new Context Assembler: %v", err)
+					}
+					runService, err := agentrun.NewService(
+						repositories.run,
+						repositories.conversation,
+						repositories.context,
+						assembler,
+						generator,
+						testRunConfiguration,
+						agentrun.WithToolRegistry(registry),
+						agentrun.WithLoopLimits(scenario.limits),
+					)
+					if err != nil {
+						t.Fatalf("new Run service: %v", err)
+					}
+
+					clientMessageID := fmt.Sprintf(
+						"loop-terminal-%d-%d",
+						scenarioIndex,
+						modeIndex,
+					)
+					var submission agentrun.Submission
+					if mode.streaming {
+						observer := &terminalRunStreamObserver{}
+						submission, err = runService.SubmitTextStream(
+							context.Background(),
+							actor,
+							thread.ID,
+							clientMessageID,
+							"Continue with the requested tools.",
+							observer,
+						)
+						if observer.committed != 1 || observer.started != 1 ||
+							len(observer.deltas) != 0 {
+							t.Fatalf("stream events = %#v", observer)
+						}
+					} else {
+						submission, err = runService.SubmitText(
+							context.Background(),
+							actor,
+							thread.ID,
+							clientMessageID,
+							"Continue with the requested tools.",
+						)
+					}
+					if err != nil {
+						t.Fatalf("submit Run: %v", err)
+					}
+					if submission.Run.Status != agentrun.StatusFailed ||
+						submission.Run.FailureKind != scenario.wantFailure ||
+						submission.Run.FailureRetryable ||
+						submission.Run.AssistantMessageID != "" ||
+						submission.Run.ProviderCompletionID != "" ||
+						submission.Run.ProviderModel != "" ||
+						submission.Run.FinishReason != "" ||
+						submission.Run.Usage != (agentrun.TokenUsage{}) {
+						t.Fatalf("failed Run = %#v", submission.Run)
+					}
+					if got := sequence.CallCount(); got != scenario.wantProviderCalls {
+						t.Fatalf(
+							"Provider calls = %d, want %d",
+							got,
+							scenario.wantProviderCalls,
+						)
+					}
+					messages, err := dataService.ListMessages(
+						context.Background(),
+						actor,
+						thread.ID,
+					)
+					if err != nil || len(messages) != 1 ||
+						messages[0].Role != conversation.MessageRoleUser {
+						t.Fatalf("failed Run messages = %#v, %v", messages, err)
+					}
+					toolCalls, err := runService.GetToolCalls(
+						context.Background(),
+						actor,
+						submission.Run.ID,
+					)
+					if err != nil || len(toolCalls) != scenario.wantToolCalls {
+						t.Fatalf("ToolCall audit = %#v, %v", toolCalls, err)
+					}
+					for _, call := range toolCalls {
+						if call.Status != agentrun.ToolCallSucceeded {
+							t.Fatalf("executed ToolCall = %#v", call)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
 	t *testing.T,
 ) {
@@ -3599,6 +3838,16 @@ type sequenceTextGenerator struct {
 	requests []agentrun.TextRequest
 }
 
+type streamingSequenceTextGenerator struct {
+	*sequenceTextGenerator
+}
+
+type terminalRunStreamObserver struct {
+	committed int
+	started   int
+	deltas    []string
+}
+
 func newSequenceTextGenerator(results ...agentrun.TextResult) *sequenceTextGenerator {
 	return &sequenceTextGenerator{results: results}
 }
@@ -3712,6 +3961,38 @@ func (generator *sequenceTextGenerator) Generate(
 	result := generator.results[0]
 	generator.results = generator.results[1:]
 	return result, nil
+}
+
+func (generator *streamingSequenceTextGenerator) GenerateStream(
+	ctx context.Context,
+	request agentrun.TextRequest,
+	_ agentrun.TextDeltaObserver,
+) (agentrun.TextResult, error) {
+	return generator.Generate(ctx, request)
+}
+
+func (observer *terminalRunStreamObserver) OnInputCommitted(
+	context.Context,
+	agentrun.Submission,
+) error {
+	observer.committed++
+	return nil
+}
+
+func (observer *terminalRunStreamObserver) OnAssistantStarted(
+	context.Context,
+	agentrun.Run,
+) error {
+	observer.started++
+	return nil
+}
+
+func (observer *terminalRunStreamObserver) OnAssistantDelta(
+	_ context.Context,
+	delta string,
+) error {
+	observer.deltas = append(observer.deltas, delta)
+	return nil
 }
 
 func (generator *recordingTextGenerator) CallCount() int {
