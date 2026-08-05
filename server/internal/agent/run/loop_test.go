@@ -530,7 +530,7 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 	}
 }
 
-func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
+func TestRunLoopFailsWhenToolBudgetExhausted(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-1", reviewcapability.ReviewSearchToolName, `{"query":"one"}`),
 		toolLoopResult("call-2", reviewcapability.ReviewSearchToolName, `{"query":"two"}`),
@@ -545,12 +545,7 @@ func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("看看我面试评价"),
 	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "工具太多") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
+	assertLoopFailure(t, result, err, FailureToolCallBudgetExhausted)
 	if got, want := generator.CallCount(), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
@@ -583,7 +578,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 	}
 }
 
-func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
+func TestRunLoopFailsAfterToolIterationBudget(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-1", reviewcapability.ReviewSearchToolName, `{"query":"one"}`),
 		toolLoopResult("call-2", capabilityfixture.MaterialSearchToolName, `{"query":"two"}`),
@@ -598,18 +593,13 @@ func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("先找评价，再找材料"),
 	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "更多步骤") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
+	assertLoopFailure(t, result, err, FailureToolIterationBudgetExhausted)
 	if got, want := generator.CallCount(), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 }
 
-func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
+func TestRunLoopFailsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-create-1",
@@ -632,12 +622,7 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("创建两个练习场景"),
 	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "重复提交") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
+	assertLoopFailure(t, result, err, FailureDuplicateToolCall)
 	if got, want := generator.CallCount(), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
@@ -678,7 +663,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 	}
 }
 
-func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
+func TestRunLoopFailsBeforeExecutingBatchOverWriteBudget(t *testing.T) {
 	store := capabilityfixture.NewStore()
 	firstTitle := "write-budget-first-unique"
 	secondTitle := "write-budget-second-unique"
@@ -710,12 +695,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("帮我创建一个英文 PM 面试练习场景"),
 	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "写操作上限") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
+	assertLoopFailure(t, result, err, FailureWriteToolCallBudgetExhausted)
 	assertGoalNotCreated(t, store, firstTitle)
 	assertGoalNotCreated(t, store, secondTitle)
 }
@@ -809,12 +789,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 				agentcontext.Manifest{},
 				loopRequest("attempt a guarded write"),
 			)
-			if err != nil {
-				t.Fatalf("generate() error = %v", err)
-			}
-			if !strings.Contains(result.Content, "写操作上限") {
-				t.Fatalf("fallback content = %q", result.Content)
-			}
+			assertLoopFailure(t, result, err, FailureWriteToolCallBudgetExhausted)
 			if got, want := generator.CallCount(), 2; got != want {
 				t.Fatalf("Generate calls = %d, want %d", got, want)
 			}
@@ -1116,6 +1091,32 @@ func assertGoalNotCreated(
 	}
 	if len(items) != 0 {
 		t.Fatalf("goal %q was created before batch rejection: %#v", title, items)
+	}
+}
+
+func assertLoopFailure(
+	t *testing.T,
+	result TextResult,
+	err error,
+	wantKind string,
+) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("generate() error = nil, want explicit loop failure")
+	}
+	kind, retryable := classifyRunFailure(err)
+	if kind != wantKind || retryable {
+		t.Fatalf(
+			"classifyRunFailure() = (%q, %t), want (%q, false)",
+			kind,
+			retryable,
+			wantKind,
+		)
+	}
+	if result.ID != "" || result.Provider != "" || result.Model != "" ||
+		result.Content != "" || len(result.ToolCalls) != 0 ||
+		result.FinishReason != "" || result.Usage != (TokenUsage{}) {
+		t.Fatalf("loop failure returned model result = %#v", result)
 	}
 }
 

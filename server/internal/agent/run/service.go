@@ -26,7 +26,6 @@ const (
 	defaultLoopTimeout       = 25 * time.Second
 	defaultMaxToolResult     = 16 * 1024
 	streamReplayPollInterval = 100 * time.Millisecond
-	loopFallbackID           = "agent-loop-fallback"
 	toolSchemaVersionV1      = "tool-schema-v1"
 	maxImagesPerMessage      = 4
 )
@@ -620,7 +619,7 @@ func (service *Service) process(
 		)
 	}
 	if err != nil {
-		kind, retryable := generationFailure(err)
+		kind, retryable := classifyRunFailure(err)
 		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
@@ -768,73 +767,43 @@ func (service *Service) generateObserved(
 		)
 		// MaxIterations 表示最多执行多少轮工具；达到上限后仍允许模型生成一次最终回复。
 		if toolIterations >= service.loopLimits.MaxIterations {
-			return service.loopBudgetFallback(
+			return TextResult{}, service.stopLoop(
 				run,
-				"这次对话需要更多步骤才能完成，我先停在这里。请把最重要的一步单独发给我。",
+				FailureToolIterationBudgetExhausted,
+				selected,
 				modelIterations,
-				toolCalls,
-				startedAt,
-			), nil
+			)
 		}
 		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
-			service.logRoutingDecision(
+			return TextResult{}, service.stopLoop(
 				run,
-				"budget_exhausted",
+				FailureToolCallBudgetExhausted,
 				selected,
-				"budget_exhausted",
-				reasonSummary("budget_exhausted", "budget_exhausted"),
 				modelIterations,
 			)
-			result := fallbackResult(
-				service.configuration,
-				"这次需要调用的工具太多了，我先暂停一下。请把需求拆成一个更具体的问题。",
-			)
-			service.logRunCompleted(
-				run,
-				"budget_exhausted",
-				modelIterations,
-				toolCalls,
-				startedAt,
-				result.Content,
-			)
-			return result, nil
 		}
-		if duplicateID := repeatedToolCallID(
+		if hasRepeatedToolCallID(
 			result.ToolCalls,
 			seenToolCallIDs,
-		); duplicateID != "" {
-			result := fallbackResult(
-				service.configuration,
-				"模型重复提交了同一个工具调用，我已停止执行以避免重复操作。",
-			)
-			service.logRunCompleted(
+		) {
+			return TextResult{}, service.stopLoop(
 				run,
-				"duplicate_tool_call",
+				FailureDuplicateToolCall,
+				selected,
 				modelIterations,
-				toolCalls,
-				startedAt,
-				result.Content,
 			)
-			return result, nil
 		}
 		// 先分类并预留整批调用的写预算，防止部分执行以及未知、
 		// 非法调用在后续循环中重新获得写额度。
 		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
 		if writeCalls+pendingWriteCalls >
 			service.loopLimits.MaxWriteToolCalls {
-			result := fallbackResult(
-				service.configuration,
-				"这次已经达到写操作上限，我先不继续执行新的写操作。",
-			)
-			service.logRunCompleted(
+			return TextResult{}, service.stopLoop(
 				run,
-				"budget_exhausted",
+				FailureWriteToolCallBudgetExhausted,
+				selected,
 				modelIterations,
-				toolCalls,
-				startedAt,
-				result.Content,
 			)
-			return result, nil
 		}
 		writeCalls += pendingWriteCalls
 		request.Messages = append(request.Messages, TextMessage{
@@ -1301,7 +1270,11 @@ func runPersistenceContext(ctx context.Context) (context.Context, context.Cancel
 	)
 }
 
-func generationFailure(err error) (string, bool) {
+func classifyRunFailure(err error) (string, bool) {
+	var terminal *loopFailure
+	if errors.As(err, &terminal) {
+		return terminal.kind, false
+	}
 	var generationError *GenerationError
 	if errors.As(err, &generationError) {
 		return string(generationError.Kind), generationError.Retryable()
@@ -1431,49 +1404,39 @@ func (service *Service) writeToolCallCount(
 	return count
 }
 
-func (service *Service) loopBudgetFallback(
+func (service *Service) stopLoop(
 	run Run,
-	content string,
+	kind string,
+	selectedTools []string,
 	modelIterations int,
-	toolCalls int,
-	startedAt time.Time,
-) TextResult {
+) error {
 	service.logRoutingDecision(
 		run,
-		"budget_exhausted",
-		nil,
-		"budget_exhausted",
-		reasonSummary("budget_exhausted", "budget_exhausted"),
+		"failed",
+		selectedTools,
+		kind,
+		reasonSummary(kind, "failed"),
 		modelIterations,
 	)
-	result := fallbackResult(service.configuration, content)
-	service.logRunCompleted(
-		run,
-		"budget_exhausted",
-		modelIterations,
-		toolCalls,
-		startedAt,
-		result.Content,
-	)
-	return result
+	return &loopFailure{kind: kind}
 }
 
-// repeatedToolCallID 同时检查本批和前序批次，防止模型复用 ID 导致重复执行。
-func repeatedToolCallID(
+// hasRepeatedToolCallID 同时检查本批和前序批次，防止模型复用 ID 导致重复执行。
+func hasRepeatedToolCallID(
 	calls []ModelToolCall,
 	seen map[string]struct{},
-) string {
+) bool {
 	current := make(map[string]struct{}, len(calls))
 	for _, call := range calls {
 		if _, ok := seen[call.ID]; ok {
-			return call.ID
+			return true
 		}
 		if _, ok := current[call.ID]; ok {
-			return call.ID
+			return true
 		}
 		current[call.ID] = struct{}{}
 	}
-	return ""
+	return false
 }
 
 // toolFailureMessage 只向模型暴露稳定错误语义，不泄漏数据库或业务内部错误文本。
@@ -1540,18 +1503,4 @@ func exposedToolNames(definitions []ToolDefinition) map[string]struct{} {
 func toolExposed(exposed map[string]struct{}, name string) bool {
 	_, ok := exposed[name]
 	return ok
-}
-
-func fallbackResult(
-	configuration Configuration,
-	content string,
-) TextResult {
-	return TextResult{
-		ID:           loopFallbackID,
-		Provider:     configuration.Provider,
-		Model:        configuration.Model,
-		Content:      content,
-		FinishReason: "stop",
-		Usage:        TokenUsage{},
-	}
 }
