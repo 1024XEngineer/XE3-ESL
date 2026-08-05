@@ -31,16 +31,17 @@ type TurnFeedbackStatusReader interface {
 // RuntimeConfiguration supplies the infrastructure and cross-module ports
 // needed by the complete Practice Voice flow.
 type RuntimeConfiguration struct {
-	Repository        RuntimeRepository
-	TemporaryAudio    TemporaryAudioVault
-	Recognizer        SpeechRecognizer
-	Synthesizer       SpeechSynthesizer
-	QuestionGenerator QuestionGenerator
-	Recordings        VoiceRecordingLifecycle
-	AudioAssets       *AudioAssetService
-	ASRLease          time.Duration
-	Feedback          TurnFeedbackPort
-	FeedbackReader    TurnFeedbackStatusReader
+	Repository         RuntimeRepository
+	TemporaryAudio     TemporaryAudioVault
+	Recognizer         SpeechRecognizer
+	Synthesizer        SpeechSynthesizer
+	QuestionGenerator  QuestionGenerator
+	QuestionTranslator QuestionTranslator
+	Recordings         VoiceRecordingLifecycle
+	AudioAssets        *AudioAssetService
+	ASRLease           time.Duration
+	Feedback           TurnFeedbackPort
+	FeedbackReader     TurnFeedbackStatusReader
 }
 
 // NewRuntimeApplications assembles the authoritative Practice Voice runtime.
@@ -112,6 +113,13 @@ func NewRuntimeApplications(
 	if err != nil {
 		return nil, nil, err
 	}
+	translationPorts := make([]QuestionTranslator, 0, 1)
+	if configuration.QuestionTranslator != nil {
+		translationPorts = append(
+			translationPorts,
+			configuration.QuestionTranslator,
+		)
+	}
 	application, err := NewSessionApplication(
 		&sessionAdapter{repository: configuration.Repository},
 		&questionAdapter{
@@ -124,6 +132,7 @@ func NewRuntimeApplications(
 			feedback:    configuration.FeedbackReader,
 		},
 		orchestrator,
+		translationPorts...,
 	)
 	if err != nil {
 		return nil, nil, err

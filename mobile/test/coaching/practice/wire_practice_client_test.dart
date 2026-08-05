@@ -84,9 +84,36 @@ void main() {
       '/v1/transcription-candidates/$encoded/confirmations',
     );
     expect(
+      endpoints.questionTranslationPath(opaque),
+      '/v1/voice-questions/$encoded/translation',
+    );
+    expect(
       endpoints.endEarlyPath(opaque),
       '/v1/practice-sessions/$encoded/end-early',
     );
+  });
+
+  test('decodes one bounded Simplified Chinese question translation', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/voice-questions/$_questionId/translation',
+        response: _json(HttpStatus.ok, {
+          'question_id': _questionId,
+          'target_language': 'zh-CN',
+          'translation': '请介绍一次你解决团队分歧的经历。',
+        }),
+      ),
+    ]);
+
+    final translation = await _client(
+      transport,
+    ).translateQuestion(questionId: _questionId);
+
+    expect(translation.questionId, _questionId);
+    expect(translation.targetLanguage, 'zh-CN');
+    expect(translation.content, '请介绍一次你解决团队分歧的经历。');
+    transport.expectDone();
   });
 
   test('uses the frozen #87 empty-body and raw WAV routes', () async {

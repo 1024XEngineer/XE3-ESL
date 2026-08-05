@@ -43,6 +43,12 @@ abstract interface class PracticeLifecycleClient {
   });
 }
 
+abstract interface class PracticeQuestionTranslationClient {
+  Future<PracticeQuestionTranslation> translateQuestion({
+    required String questionId,
+  });
+}
+
 /// Optional Daily/Workplace same-question retry capability.
 ///
 /// Keeping this separate from [PracticeClient] lets existing test doubles and

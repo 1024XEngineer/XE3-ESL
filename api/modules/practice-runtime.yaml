@@ -284,6 +284,33 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-questions/{question_id}/translation:
+    get:
+      tags:
+        - Practice
+      summary: Translate an interview Question into Simplified Chinese on demand
+      description: |
+        Returns an ephemeral read aid for an Actor-owned INTERVIEW Question.
+        Translation never creates a Message, Candidate, or Turn and is excluded
+        from progression, Review, Evaluation, memory, and history.
+      operationId: getVoiceQuestionTranslation
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Simplified Chinese translation of the Question.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceQuestionTranslation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}/bootstrap:
     get:
       tags:
@@ -922,6 +949,23 @@ components:
           then:
             not:
               required: [parent_question_id]
+    VoiceQuestionTranslation:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - target_language
+        - translation
+      properties:
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        target_language:
+          type: string
+          const: zh-CN
+        translation:
+          type: string
+          minLength: 1
+          maxLength: 2000
     VoiceTurnHistoryEntry:
       type: object
       additionalProperties: false

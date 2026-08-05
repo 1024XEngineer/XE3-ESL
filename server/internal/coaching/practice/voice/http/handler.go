@@ -78,6 +78,10 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		handler.confirmCandidate,
 	)
 	routes.GET("/v1/voice-questions/:question_id/speech", handler.questionSpeech)
+	routes.GET(
+		"/v1/voice-questions/:question_id/translation",
+		handler.questionTranslation,
+	)
 	if handler.retry != nil {
 		routes.POST(
 			"/v1/retry-turns/:retry_turn_id/transcription-candidates",
@@ -309,6 +313,26 @@ func (handler *Handler) questionSpeech(c *gin.Context) {
 	c.DataFromReader(
 		http.StatusOK, speech.Audio.Size(), speech.Audio.MediaType(), reader, nil,
 	)
+}
+
+func (handler *Handler) questionTranslation(c *gin.Context) {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	translation, err := handler.application.QuestionTranslation(
+		c.Request.Context(), actor, c.Param("question_id"),
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"question_id":     translation.QuestionID,
+		"target_language": translation.TargetLanguage,
+		"translation":     translation.Content,
+	})
 }
 
 func SessionStateResponse(state practicevoice.SessionState) gin.H {

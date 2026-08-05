@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
@@ -71,6 +72,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _textMode = false;
   bool _exitInFlight = false;
   bool _exitApproved = false;
+  final Map<String, String> _questionTranslations = <String, String>{};
   bool _feedbackRebuildScheduled = false;
   bool _conversationTextVisible = true;
   String? _scheduledInterviewReportSessionId;
@@ -351,6 +353,24 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     });
   }
 
+  Future<String> _translateQuestion(PracticeMessage message) async {
+    final cached = _questionTranslations[message.id];
+    if (cached != null) {
+      return cached;
+    }
+    final client = widget.practiceController.client;
+    if (client is! PracticeQuestionTranslationClient) {
+      throw StateError('Question translation is unavailable.');
+    }
+    final translation = await (client as PracticeQuestionTranslationClient)
+        .translateQuestion(questionId: message.id);
+    if (translation.questionId != message.id) {
+      throw StateError('Question translation does not match the message.');
+    }
+    _questionTranslations[message.id] = translation.content;
+    return translation.content;
+  }
+
   Future<void> _requestExit() async {
     if (!mounted || _exitInFlight || _exitApproved) {
       return;
@@ -442,6 +462,13 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       onToggleTextMode: _toggleTextMode,
                       onSubmitText: _submitText,
                       onToggleConversationText: _toggleConversationText,
+                      onTranslateQuestion:
+                          widget.practiceController.practiceSceneFamily ==
+                                  SceneFamily.interview &&
+                              widget.practiceController.client
+                                  is PracticeQuestionTranslationClient
+                          ? _translateQuestion
+                          : null,
                       onOpenReport: _openInterviewReport,
                     );
                     if (landscape) {
@@ -668,6 +695,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.onToggleTextMode,
     required this.onSubmitText,
     required this.onToggleConversationText,
+    required this.onTranslateQuestion,
     required this.onOpenReport,
   });
 
@@ -687,6 +715,7 @@ class _ConversationPanel extends StatelessWidget {
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
   final VoidCallback onToggleConversationText;
+  final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
   final VoidCallback onOpenReport;
 
   @override
@@ -729,6 +758,10 @@ class _ConversationPanel extends StatelessWidget {
                               polishedText: _polishedText(projection),
                               polishLoading: projection?.isPolling ?? false,
                               messageTextVisible: conversationTextVisible,
+                              onTranslate:
+                                  message.role == PracticeMessageRole.assistant
+                                  ? onTranslateQuestion
+                                  : null,
                             ),
                             if (projection != null) ...[
                               const SizedBox(height: SpeakUpDesign.space8),

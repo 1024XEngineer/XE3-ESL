@@ -114,6 +114,13 @@ func run() int {
 		logger.Error("Practice question generation startup failed")
 		return 1
 	}
+	practiceQuestionTranslator, err := bootstrap.NewPracticeQuestionTranslator(
+		textConfig,
+	)
+	if err != nil {
+		logger.Error("Practice question translation startup failed")
+		return 1
+	}
 	temporaryAudioConfig, err := config.LoadTemporaryAudio()
 	if err != nil {
 		logger.Error("temporary audio configuration failed")
@@ -347,6 +354,7 @@ func run() int {
 				PracticeRecognizer:     practiceRecognizer,
 				PracticeSynthesizer:    practiceSynthesizer,
 				QuestionGenerator:      practiceQuestions,
+				QuestionTranslator:     practiceQuestionTranslator,
 				TemporaryAudio:         audioVault,
 				ObjectStore:            recordingStore,
 				AgentVoiceInputEnabled: storageConfig.Enabled,
