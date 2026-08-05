@@ -155,8 +155,9 @@ final class SceneDefinition {
 extension ScenePresentation on SceneDefinition {
   ScenePresentationMode get presentationMode => switch (family) {
     SceneFamily.workplace ||
-    SceneFamily.daily => ScenePresentationMode.immersiveRoleplay,
-    SceneFamily.interview || SceneFamily.exam => ScenePresentationMode.standard,
+    SceneFamily.daily ||
+    SceneFamily.interview => ScenePresentationMode.immersiveRoleplay,
+    SceneFamily.exam => ScenePresentationMode.standard,
   };
 }
 

@@ -114,7 +114,7 @@ void main() {
       expect(restoredWorkspace.currentSceneId, 'interview-screening');
       expect(
         restoredWorkspace.currentPresentationMode,
-        ScenePresentationMode.standard,
+        ScenePresentationMode.immersiveRoleplay,
       );
       expect(restoredWorkspace.hasResumable, isTrue);
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
