@@ -23,6 +23,7 @@ import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 
 void main() {
   testWidgets('Part 1 prefers the shared practice question voice', (
@@ -938,7 +939,11 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
-          reportController: reportController,
+          completedReportBuilder: (_, practiceSessionId) =>
+              IeltsSpeakingSessionReportPanel(
+                practiceSessionId: practiceSessionId,
+                controller: reportController,
+              ),
         ),
       ),
     );
@@ -987,7 +992,11 @@ void main() {
           controller: controller,
           progressStore: _MemoryProgressStore(),
           preparationController: preparation,
-          reportController: reportController,
+          completedReportBuilder: (_, practiceSessionId) =>
+              IeltsSpeakingSessionReportPanel(
+                practiceSessionId: practiceSessionId,
+                controller: reportController,
+              ),
         ),
       ),
     );

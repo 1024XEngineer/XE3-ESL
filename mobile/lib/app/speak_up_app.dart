@@ -32,6 +32,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/resume/resume_controller.dart';
@@ -455,7 +456,12 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       onOpenInterviewReport: widget.interviewReportController == null
           ? null
           : _openInterviewReport,
-      ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
+      ieltsCompletedReportBuilder: widget.ieltsSpeakingReportController == null
+          ? null
+          : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
+              practiceSessionId: practiceSessionId,
+              controller: widget.ieltsSpeakingReportController!,
+            ),
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
       onContinueWithAgent: launchController?.completeAndContinueWithAgent,

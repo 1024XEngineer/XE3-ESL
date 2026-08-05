@@ -16,7 +16,6 @@ import 'package:speakup/features/coaching/preparation/preparation_controller.dar
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
@@ -30,7 +29,7 @@ class PracticePage extends StatefulWidget {
     this.ieltsMockProgressStore,
     this.preparationController,
     this.onOpenInterviewReport,
-    this.ieltsSpeakingReportController,
+    this.ieltsCompletedReportBuilder,
     this.speechFeedbackController,
     this.ieltsExaminerSpeaker,
     super.key,
@@ -43,7 +42,7 @@ class PracticePage extends StatefulWidget {
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
   final OpenInterviewPracticeReport? onOpenInterviewReport;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final IeltsCompletedReportBuilder? ieltsCompletedReportBuilder;
   final SpeechFeedbackController? speechFeedbackController;
   final IeltsExaminerSpeaker? ieltsExaminerSpeaker;
 
@@ -480,7 +479,7 @@ class _PracticePageState extends State<PracticePage>
         onExitRequested: widget.onExitRequested,
         progressStore: widget.ieltsMockProgressStore,
         preparationController: widget.preparationController,
-        reportController: widget.ieltsSpeakingReportController,
+        completedReportBuilder: widget.ieltsCompletedReportBuilder,
         speechFeedbackController: widget.speechFeedbackController,
         examinerSpeaker: widget.ieltsExaminerSpeaker,
       );
