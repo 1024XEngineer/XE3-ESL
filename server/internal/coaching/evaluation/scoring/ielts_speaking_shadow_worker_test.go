@@ -85,15 +85,16 @@ func TestIELTSSpeakingShadowWorkerRetriesTechnicalFailure(
 	}
 }
 
-func TestIELTSSpeakingShadowWorkerCompletesFallbackAfterInvalidProviderPayload(
+func TestIELTSSpeakingShadowWorkerFailsAfterInvalidProviderPayloadExhaustion(
 	t *testing.T,
 ) {
 	t.Parallel()
 	claim := validIELTSSpeakingShadowClaim(t)
 	claim.AttemptCount = 3
 	repository := &ieltsShadowRuntimeRepositoryStub{
-		claim:    claim,
-		acquired: true,
+		claim:      claim,
+		acquired:   true,
+		failStatus: IELTSSpeakingShadowRuntimeFailed,
 	}
 	worker, err := NewIELTSSpeakingShadowWorker(
 		repository,
@@ -111,13 +112,13 @@ func TestIELTSSpeakingShadowWorkerCompletesFallbackAfterInvalidProviderPayload(
 	if err != nil {
 		t.Fatalf("ProcessPending: %v", err)
 	}
-	if sweep.Completed != 1 ||
-		repository.failCalls != 0 ||
-		repository.completeCalls != 1 ||
-		ValidateIELTSSpeakingShadowResult(
-			claim.Snapshot,
-			repository.result,
-		) != nil {
+	if sweep.Failed != 1 ||
+		repository.failCalls != 1 ||
+		repository.failure.Code != "provider_invalid_response" ||
+		!repository.failure.Retryable ||
+		repository.completeCalls != 0 ||
+		repository.result.Provider != nil ||
+		len(repository.result.Criteria) != 0 {
 		t.Fatalf(
 			"sweep = %#v, failure = %#v",
 			sweep,
