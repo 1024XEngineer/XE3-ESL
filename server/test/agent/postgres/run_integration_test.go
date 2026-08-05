@@ -125,7 +125,7 @@ func TestPostgresAgentRunMemoryConsistencyFailureSkipsProvider(t *testing.T) {
 			}
 			assembler, err := agentcontext.NewAssembler(
 				repository.context,
-				goalService,
+				agentContextGoals(t, goalService),
 				emptyLearningProfileReader{},
 				emptyStableProfileReader{},
 				&recordingMemorySearcher{},
@@ -514,7 +514,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	)
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		goalService,
+		agentContextGoals(t, goalService),
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
@@ -642,7 +642,7 @@ func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
 	)
 	assembler, err := agentcontext.NewAssembler(
 		repositories.context,
-		goalService,
+		agentContextGoals(t, goalService),
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
@@ -834,7 +834,7 @@ WHERE table_schema = current_schema()
 	)
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		goalService,
+		agentContextGoals(t, goalService),
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
@@ -2561,7 +2561,7 @@ func TestPostgresContextAssemblerNormalizesOnlyMemorySearchQuery(
 	repository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		goalService,
+		agentConversationGoals(t, goalService),
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2632,7 +2632,7 @@ func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 	repository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		goalService,
+		agentConversationGoals(t, goalService),
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2740,7 +2740,10 @@ func TestPostgresContextAssemblerInjectsAndAuditsStableProfile(
 		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, goalService)
+	dataService, err := conversation.NewService(
+		repository.conversation,
+		agentConversationGoals(t, goalService),
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -2895,7 +2898,7 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	agentRepository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		agentRepository.conversation,
-		goalService,
+		agentConversationGoals(t, goalService),
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2965,7 +2968,7 @@ func TestPostgresStableProfileAndRelevantMemoryRecallAcrossThreads(
 	agentRepository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		agentRepository.conversation,
-		goalService,
+		agentConversationGoals(t, goalService),
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -3265,7 +3268,10 @@ func TestPostgresContextAssemblerFailsClosedWhenMemorySearchFails(
 		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, goalService)
+	dataService, err := conversation.NewService(
+		repository.conversation,
+		agentConversationGoals(t, goalService),
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -3330,7 +3336,10 @@ func TestPostgresContextAssemblerPrioritizesMemoryOverOlderMessages(
 		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, goalService)
+	dataService, err := conversation.NewService(
+		repository.conversation,
+		agentConversationGoals(t, goalService),
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -3850,7 +3859,7 @@ func newAgentRunServices(
 	repository := newRunCapableStore(t, pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		goalService,
+		agentConversationGoals(t, goalService),
 	)
 	if err != nil {
 		t.Fatalf("new Agent data service: %v", err)
@@ -3915,7 +3924,7 @@ func newRunServiceWithContexts(
 	t.Helper()
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		goalService,
+		agentContextGoals(t, goalService),
 		emptyLearningProfileReader{},
 		stableProfiles,
 		memories,

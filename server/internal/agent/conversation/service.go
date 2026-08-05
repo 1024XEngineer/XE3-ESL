@@ -4,18 +4,17 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 type Service struct {
 	repository Repository
-	goals      goal.Reader
+	goals      GoalReader
 }
 
 func NewService(
 	repository Repository,
-	goals goal.Reader,
+	goals GoalReader,
 ) (*Service, error) {
 	if repository == nil || goals == nil {
 		return nil, errors.New("agent: service dependency is required")
@@ -273,14 +272,14 @@ func (s *Service) requireActiveGoal(
 	if !ValidUUID(goalID) {
 		return ErrNotFound
 	}
-	item, err := s.goals.ReadOwned(ctx, actor, goalID)
-	if errors.Is(err, goal.ErrNotFound) {
-		return ErrNotFound
-	}
+	item, found, err := s.goals.ReadGoalState(ctx, actor, goalID)
 	if err != nil {
 		return ErrRepository
 	}
-	if item.Status != goal.StatusActive {
+	if !found || item.ID != goalID {
+		return ErrNotFound
+	}
+	if !item.Active {
 		return ErrConflict
 	}
 	return nil

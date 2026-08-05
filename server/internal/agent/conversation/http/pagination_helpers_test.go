@@ -14,6 +14,7 @@ import (
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentconversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -160,7 +161,11 @@ func newAgentDataServices(
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := agentconversation.NewService(repository, goalService)
+	goalReader, err := goalagentconversation.New(goalService)
+	if err != nil {
+		t.Fatalf("new Agent Goal reader: %v", err)
+	}
+	service, err := agentconversation.NewService(repository, goalReader)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}

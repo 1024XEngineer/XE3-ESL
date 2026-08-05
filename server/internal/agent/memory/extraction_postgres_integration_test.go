@@ -13,6 +13,8 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
+	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -35,6 +37,14 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("new Goal service: %v", err)
 	}
+	conversationGoals, err := goalagentconversation.New(goalService)
+	if err != nil {
+		t.Fatalf("new Agent Conversation Goal reader: %v", err)
+	}
+	contextGoals, err := goalagentcontext.New(goalService)
+	if err != nil {
+		t.Fatalf("new Agent Context Goal reader: %v", err)
+	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		t.Fatalf("new Agent Conversation repository: %v", err)
@@ -49,7 +59,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	}
 	agentService, err := conversation.NewService(
 		conversationRepository,
-		goalService,
+		conversationGoals,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -64,7 +74,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	}
 	assembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		goalService,
+		contextGoals,
 		emptyAgentLearningProfileReader{},
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},

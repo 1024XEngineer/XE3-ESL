@@ -15,7 +15,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -34,7 +33,7 @@ const (
 
 type Assembler struct {
 	repository       Repository
-	goals            goal.Reader
+	goals            GoalReader
 	learningProfiles LearningProfileReader
 	stableProfiles   StableProfileReader
 	memories         MemorySearcher
@@ -58,7 +57,7 @@ func WithImageReader(
 
 func NewAssembler(
 	repository Repository,
-	goals goal.Reader,
+	goals GoalReader,
 	learningProfiles LearningProfileReader,
 	stableProfiles StableProfileReader,
 	memories MemorySearcher,
@@ -190,18 +189,16 @@ func (assembler *Assembler) Assemble(
 		MaxOutputTokens:                           command.MaxOutputTokens,
 	}
 	if thread.ActiveGoalID != "" {
-		activeGoal, readErr := assembler.goals.ReadOwned(
+		activeGoal, found, readErr := assembler.goals.ReadGoalContext(
 			ctx,
 			actor,
 			thread.ActiveGoalID,
 		)
 		if readErr != nil {
-			if errors.Is(readErr, goal.ErrNotFound) {
-				return Manifest{}, ModelInput{}, ErrInvalidContext
-			}
 			return Manifest{}, ModelInput{}, ErrRepository
 		}
-		if activeGoal.Status != goal.StatusActive {
+		if !found || activeGoal.ID != thread.ActiveGoalID ||
+			!activeGoal.Active || activeGoal.Version < 1 {
 			return Manifest{}, ModelInput{}, ErrInvalidContext
 		}
 		manifest.ActiveGoalID = activeGoal.ID

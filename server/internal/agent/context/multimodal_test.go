@@ -8,7 +8,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -219,12 +218,12 @@ func (repository multimodalRepository) FindMessage(
 
 type multimodalContextGoals struct{}
 
-func (multimodalContextGoals) ReadOwned(
+func (multimodalContextGoals) ReadGoalContext(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (goal.Goal, error) {
-	return goal.Goal{}, goal.ErrNotFound
+) (GoalContext, bool, error) {
+	return GoalContext{}, false, nil
 }
 
 type multimodalContextStableProfile struct{}

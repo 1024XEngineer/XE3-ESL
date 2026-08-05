@@ -1,10 +1,10 @@
-package evaluationprofile
+package agentcontext
 
 import (
 	"context"
 	"errors"
 
-	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agentctx "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/learningprofile"
 )
 
@@ -16,26 +16,26 @@ type Source interface {
 	) ([]learningprofile.Dimension, error)
 }
 
-type Reader struct {
+type LearningProfileReader struct {
 	source Source
 }
 
-func New(source Source) (*Reader, error) {
+func NewLearningProfileReader(source Source) (*LearningProfileReader, error) {
 	if source == nil {
 		return nil, errors.New(
-			"agent context: Learning Profile source is required",
+			"evaluation: Agent Context Learning Profile source is required",
 		)
 	}
-	return &Reader{source: source}, nil
+	return &LearningProfileReader{source: source}, nil
 }
 
-func (reader *Reader) ReadLearningProfile(
+func (reader *LearningProfileReader) ReadLearningProfile(
 	ctx context.Context,
-	request agentcontext.LearningProfileReadRequest,
-) ([]agentcontext.LearningProfileDimension, error) {
+	request agentctx.LearningProfileReadRequest,
+) ([]agentctx.LearningProfileDimension, error) {
 	if reader == nil || reader.source == nil || ctx == nil ||
 		!request.Valid() {
-		return nil, agentcontext.ErrInvalidContext
+		return nil, agentctx.ErrInvalidContext
 	}
 	dimensions, err := reader.source.ReadLearningProfile(
 		ctx,
@@ -49,16 +49,16 @@ func (reader *Reader) ReadLearningProfile(
 		return nil, err
 	}
 	result := make(
-		[]agentcontext.LearningProfileDimension,
+		[]agentctx.LearningProfileDimension,
 		len(dimensions),
 	)
 	for index, dimension := range dimensions {
 		issues := make(
-			[]agentcontext.LearningProfileIssue,
+			[]agentctx.LearningProfileIssue,
 			len(dimension.RecurringIssues),
 		)
 		for issueIndex, issue := range dimension.RecurringIssues {
-			issues[issueIndex] = agentcontext.LearningProfileIssue{
+			issues[issueIndex] = agentctx.LearningProfileIssue{
 				Key:      issue.Key,
 				Label:    issue.Label,
 				Count:    issue.Count,
@@ -66,18 +66,18 @@ func (reader *Reader) ReadLearningProfile(
 			}
 		}
 		sources := make(
-			[]agentcontext.LearningProfileEvaluationSource,
+			[]agentctx.LearningProfileEvaluationSource,
 			len(dimension.SourceEvaluations),
 		)
 		for sourceIndex, source := range dimension.SourceEvaluations {
 			sources[sourceIndex] =
-				agentcontext.LearningProfileEvaluationSource{
+				agentctx.LearningProfileEvaluationSource{
 					EvaluationID:         source.EvaluationID,
 					EvaluationRevisionID: source.EvaluationRevisionID,
 					CreatedAt:            source.CreatedAt,
 				}
 		}
-		result[index] = agentcontext.LearningProfileDimension{
+		result[index] = agentctx.LearningProfileDimension{
 			Key:               dimension.Key,
 			Scale:             string(dimension.Scale),
 			EstimatedValue:    dimension.EstimatedValue,
@@ -92,4 +92,4 @@ func (reader *Reader) ReadLearningProfile(
 	return result, nil
 }
 
-var _ agentcontext.LearningProfileReader = (*Reader)(nil)
+var _ agentctx.LearningProfileReader = (*LearningProfileReader)(nil)
