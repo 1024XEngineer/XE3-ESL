@@ -167,19 +167,38 @@ func mapPracticeSession(
 	session := bootstrap.Session
 	snapshot := bootstrap.Snapshot
 	selection := snapshot.SceneSelection
+	option, err := selection.PracticeOption()
+	if err != nil {
+		return Session{}, ErrInvalidContext
+	}
+	turnPolicy, err := practice.ResolveTurnPolicy(option.TurnPolicyRef)
+	if err != nil ||
+		(turnPolicy.Kind == practice.TurnPolicyFrozenIELTS &&
+			!practice.ValidIELTSAssignment(
+				snapshot.IELTSAssignment,
+				turnPolicy.Mode,
+				selection.Scene.Prompt.TurnBlueprints,
+			)) ||
+		(turnPolicy.Kind != practice.TurnPolicyFrozenIELTS &&
+			snapshot.IELTSAssignment != nil) {
+		return Session{}, ErrInvalidContext
+	}
 	if session.ID == "" ||
 		session.PlanID == "" ||
 		session.PlanRevision < 1 ||
 		snapshot.ID != session.SnapshotID ||
 		snapshot.SessionID != session.ID ||
 		snapshot.PlanRevision != session.PlanRevision ||
-		snapshot.SceneFamily != session.SceneFamily ||
-		snapshot.SceneModel != session.SceneModel ||
+		snapshot.Experience != session.Experience ||
+		snapshot.Category != session.Category ||
+		snapshot.PracticeMode != session.PracticeMode ||
 		selection.Scene.ID == "" ||
 		selection.Scene.Version < 1 ||
-		selection.Scene.Family != session.SceneFamily ||
-		selection.Scene.Model != session.SceneModel ||
-		!validVoiceTurnPolicy(selection.Scene.TurnPolicyRef) ||
+		selection.Scene.Experience != session.Experience ||
+		selection.Scene.Category != session.Category ||
+		option.Mode != session.PracticeMode ||
+		option.EvaluationPolicyRef != session.EvaluationPolicyRef ||
+		!validVoiceTurnPolicy(option.TurnPolicyRef) ||
 		len(selection.SelectedRoleIDs) == 0 {
 		return Session{}, ErrInvalidContext
 	}
@@ -188,15 +207,21 @@ func mapPracticeSession(
 		PlanID:                     session.PlanID,
 		SceneID:                    selection.Scene.ID,
 		SceneVersion:               selection.Scene.Version,
-		SceneFamily:                string(snapshot.SceneFamily),
-		SceneModel:                 string(snapshot.SceneModel),
-		TurnPolicyRef:              selection.Scene.TurnPolicyRef,
+		PracticeExperience:         string(snapshot.Experience),
+		SceneCategory:              string(snapshot.Category),
+		PracticeMode:               string(snapshot.PracticeMode),
+		TurnPolicyRef:              option.TurnPolicyRef,
 		Prompt:                     cloneScenePrompt(selection.Scene.Prompt),
+		IELTSAssignment:            cloneIELTSAssignment(snapshot.IELTSAssignment),
 		SessionVersion:             session.Version,
 		EffectiveTurns:             session.EffectiveTurns,
 		TurnLimit:                  snapshot.SessionPolicy.MaxEffectiveTurns,
 		MaxFollowUpsPerQuestion:    snapshot.SessionPolicy.MaxFollowUpsPerQuestion,
 		QuestionTranslationAllowed: snapshot.SessionPolicy.QuestionTranslationAllowed,
+		QuestionTipsAllowed:        snapshot.SessionPolicy.QuestionTipsAllowed,
+		AvatarAllowed:              snapshot.SessionPolicy.AvatarAllowed,
+		RetryAllowed:               snapshot.SessionPolicy.RetryAllowed,
+		SpeechFeedbackAllowed:      snapshot.SessionPolicy.SpeechFeedbackAllowed,
 		Completed: session.Status ==
 			practice.SessionCompleted,
 		Status: string(session.Status),
@@ -269,7 +294,7 @@ func mapPracticeSession(
 		result.LearnerParticipantID == "" ||
 		len(facilitatorRoles) != len(selectedRoles) ||
 		result.TurnLimit < 1 ||
-		result.TurnLimit > 24 ||
+		result.TurnLimit > practice.MaxPracticeTurns ||
 		result.EffectiveTurns < 0 ||
 		result.EffectiveTurns > result.TurnLimit ||
 		(result.Status == string(
@@ -288,11 +313,29 @@ func cloneScenePrompt(source practice.ScenePrompt) practice.ScenePrompt {
 	return result
 }
 
+func cloneIELTSAssignment(
+	source *practice.IELTSAssignment,
+) *practice.IELTSAssignment {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.Parts = make([]practice.IELTSPart, len(source.Parts))
+	for index, part := range source.Parts {
+		result.Parts[index] = part
+		result.Parts[index].TurnBlueprints = append(
+			[]string(nil),
+			part.TurnBlueprints...,
+		)
+	}
+	return &result
+}
+
 func validPersistedSessionLifecycle(
 	session practice.Session,
 	turnLimit int,
 ) bool {
-	if turnLimit < 1 || turnLimit > 24 ||
+	if turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > turnLimit {
 		return false

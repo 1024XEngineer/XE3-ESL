@@ -26,13 +26,15 @@ type ReportDimension struct {
 }
 
 type LatestPracticeReport struct {
-	Scene           string            `json:"scene"`
-	SceneModel      string            `json:"scene_model"`
-	CompletedAt     string            `json:"completed_at,omitempty"`
-	AssessmentMode  string            `json:"assessment_mode"`
-	Summary         string            `json:"summary"`
-	Dimensions      []ReportDimension `json:"dimensions"`
-	PriorityActions []ReportFinding   `json:"priority_actions"`
+	Scene              string            `json:"scene"`
+	PracticeExperience string            `json:"practice_experience"`
+	SceneCategory      string            `json:"scene_category"`
+	PracticeMode       string            `json:"practice_mode"`
+	CompletedAt        string            `json:"completed_at,omitempty"`
+	AssessmentMode     string            `json:"assessment_mode"`
+	Summary            string            `json:"summary"`
+	Dimensions         []ReportDimension `json:"dimensions"`
+	PriorityActions    []ReportFinding   `json:"priority_actions"`
 }
 
 type LatestPracticeReportPort interface {

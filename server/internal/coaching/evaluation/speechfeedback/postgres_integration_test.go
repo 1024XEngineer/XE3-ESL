@@ -688,17 +688,37 @@ func insertConversationSpeechFeedbackFixture(
 		INSERT INTO practice_sessions (
 			owner_user_id,
 			session_id,
-			scene_family,
-			scene_model
+			snapshot_id,
+			practice_experience,
+			scene_category,
+			practice_mode
 		)
 		VALUES (
 			$1,
 			$2,
-			'DAILY',
-			'DAILY_BASIC_DIALOGUE'
+			'snapshot-1',
+			'ROLEPLAY',
+			'ROLEPLAY_DAILY',
+			'FULL_SIMULATION'
 		)
 	`, ownerID, sessionID); err != nil {
 		t.Fatalf("insert Practice Session fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO practice_session_snapshots (
+			owner_user_id,
+			session_id,
+			snapshot_id,
+			snapshot_document
+		)
+		VALUES (
+			$1,
+			$2,
+			'snapshot-1',
+			'{"session_policy":{"speech_feedback_allowed":true}}'::jsonb
+		)
+	`, ownerID, sessionID); err != nil {
+		t.Fatalf("insert Practice Session Snapshot fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO practice_questions (
@@ -911,9 +931,19 @@ const speechFeedbackModulePrerequisiteSQL = `
 	CREATE TABLE practice_sessions (
 		owner_user_id uuid NOT NULL,
 		session_id text NOT NULL,
-		scene_family text,
-		scene_model text,
+		snapshot_id text NOT NULL,
+		practice_experience text NOT NULL,
+		scene_category text NOT NULL,
+		practice_mode text NOT NULL,
 		PRIMARY KEY (owner_user_id, session_id)
+	);
+	CREATE TABLE practice_session_snapshots (
+		owner_user_id uuid NOT NULL,
+		session_id text NOT NULL,
+		snapshot_id text NOT NULL,
+		snapshot_document jsonb NOT NULL,
+		PRIMARY KEY (owner_user_id, session_id),
+		UNIQUE (owner_user_id, snapshot_id)
 	);
 	CREATE TABLE conversation_questions (
 		owner_user_id uuid NOT NULL,

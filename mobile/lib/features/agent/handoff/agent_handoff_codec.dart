@@ -7,8 +7,9 @@ const _confirmPracticePlanFields = <String>{
   'plan_revision',
   'target',
   'scene_name',
-  'scene_family',
-  'scene_model',
+  'practice_experience',
+  'scene_category',
+  'practice_mode',
   'roles',
   'practice_scope',
   'suggested_duration_seconds',
@@ -18,20 +19,32 @@ const _confirmPracticePlanFields = <String>{
   'confirmation_prompt',
 };
 
-const _sceneFamilies = <String>{'INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY'};
+const _practiceExperiences = <String>{
+  'INTERVIEW',
+  'IELTS_SPEAKING',
+  'ROLEPLAY',
+};
 
-const _sceneModels = <String>{
-  'PROJECT_EXPERIENCE_DEEP_DIVE',
-  'INTERVIEW_BASIC_DIALOGUE',
-  'IELTS_SPEAKING_PART_1',
-  'IELTS_SPEAKING_PART_2',
-  'IELTS_SPEAKING_PART_3',
-  'IELTS_SPEAKING_FULL_MOCK',
-  'EXAM_BASIC_DIALOGUE',
-  'PROGRESS_AND_RISK_UPDATE',
-  'WORKPLACE_BASIC_DIALOGUE',
-  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
-  'DAILY_BASIC_DIALOGUE',
+const _sceneCategories = <String>{
+  'INTERVIEW_RECRUITER',
+  'INTERVIEW_BEHAVIORAL',
+  'INTERVIEW_PROFESSIONAL',
+  'INTERVIEW_HIRING_MANAGER',
+  'INTERVIEW_CUSTOM',
+  'IELTS_SPEAKING',
+  'ROLEPLAY_WORKPLACE',
+  'ROLEPLAY_TRAVEL',
+  'ROLEPLAY_DAILY',
+  'ROLEPLAY_CUSTOM',
+};
+
+const _practiceModes = <String>{
+  'FULL_SIMULATION',
+  'FOCUS',
+  'FULL_MOCK',
+  'PART_1',
+  'PART_2',
+  'PART_3',
 };
 
 final _uuidPattern = RegExp(
@@ -65,8 +78,9 @@ ConfirmPracticePlanHandoff _decodeConfirmPracticePlanHandoff(Object? value) {
     _rejectHandoffPayload();
   }
 
-  final sceneFamily = _string(object['scene_family'], 1, 100);
-  final sceneModel = _string(object['scene_model'], 1, 200);
+  final practiceExperience = _string(object['practice_experience'], 1, 100);
+  final sceneCategory = _string(object['scene_category'], 1, 200);
+  final practiceMode = _string(object['practice_mode'], 1, 64);
   final rolesValue = object['roles'];
   if (rolesValue is! List || rolesValue.isEmpty || rolesValue.length > 8) {
     _rejectHandoffPayload();
@@ -77,8 +91,9 @@ ConfirmPracticePlanHandoff _decodeConfirmPracticePlanHandoff(Object? value) {
   final minTurns = _integer(object['min_effective_turns'], 1, 100);
   final maxTurns = _integer(object['max_effective_turns'], 1, 100);
   if (_string(object['type'], 1, 64) != 'confirm_practice_plan' ||
-      !_sceneFamilies.contains(sceneFamily) ||
-      !_sceneModels.contains(sceneModel) ||
+      !_practiceExperiences.contains(practiceExperience) ||
+      !_sceneCategories.contains(sceneCategory) ||
+      !_practiceModes.contains(practiceMode) ||
       roles.toSet().length != roles.length ||
       maxTurns < minTurns ||
       object['executable_status'] != 'ready') {
@@ -91,8 +106,9 @@ ConfirmPracticePlanHandoff _decodeConfirmPracticePlanHandoff(Object? value) {
     planRevision: _integer(object['plan_revision'], 1),
     target: _string(object['target'], 1, 500),
     sceneName: _string(object['scene_name'], 1, 200),
-    sceneFamily: sceneFamily,
-    sceneModel: sceneModel,
+    practiceExperience: practiceExperience,
+    sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
     roles: List<String>.unmodifiable(roles),
     practiceScope: _string(object['practice_scope'], 1, 200),
     suggestedDuration: Duration(

@@ -24,20 +24,21 @@ const (
 )
 
 type Session struct {
-	ID                  string        `json:"practice_session_id"`
-	PlanID              string        `json:"practice_plan_id"`
-	PlanRevision        int           `json:"plan_revision"`
-	SceneFamily         SceneFamily   `json:"scene_family"`
-	SceneModel          SceneModel    `json:"scene_model"`
-	EvaluationPolicyRef string        `json:"evaluation_policy_ref"`
-	SnapshotID          string        `json:"snapshot_id"`
-	Status              SessionStatus `json:"practice_session_status"`
-	Version             int           `json:"session_version"`
-	EffectiveTurns      int           `json:"-"`
-	StartedAt           *time.Time    `json:"started_at,omitempty"`
-	EndedAt             *time.Time    `json:"ended_at,omitempty"`
-	EndReason           string        `json:"end_reason,omitempty"`
-	CreatedAt           time.Time     `json:"created_at"`
+	ID                  string             `json:"practice_session_id"`
+	PlanID              string             `json:"practice_plan_id"`
+	PlanRevision        int                `json:"plan_revision"`
+	Experience          PracticeExperience `json:"practice_experience"`
+	Category            SceneCategory      `json:"scene_category"`
+	PracticeMode        PracticeMode       `json:"practice_mode"`
+	EvaluationPolicyRef string             `json:"evaluation_policy_ref"`
+	SnapshotID          string             `json:"snapshot_id"`
+	Status              SessionStatus      `json:"practice_session_status"`
+	Version             int                `json:"session_version"`
+	EffectiveTurns      int                `json:"-"`
+	StartedAt           *time.Time         `json:"started_at,omitempty"`
+	EndedAt             *time.Time         `json:"ended_at,omitempty"`
+	EndReason           string             `json:"end_reason,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
 }
 
 type Participant struct {
@@ -54,8 +55,9 @@ type SessionSnapshot struct {
 	ID                 string              `json:"snapshot_id"`
 	SessionID          string              `json:"practice_session_id"`
 	PlanRevision       int                 `json:"plan_revision"`
-	SceneFamily        SceneFamily         `json:"scene_family"`
-	SceneModel         SceneModel          `json:"scene_model"`
+	Experience         PracticeExperience  `json:"practice_experience"`
+	Category           SceneCategory       `json:"scene_category"`
+	PracticeMode       PracticeMode        `json:"practice_mode"`
 	SceneSelection     SceneSelection      `json:"scene_selection"`
 	Preparation        PreparationSnapshot `json:"preparation_snapshot"`
 	Participants       []Participant       `json:"participants"`

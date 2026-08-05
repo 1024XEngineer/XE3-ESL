@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';

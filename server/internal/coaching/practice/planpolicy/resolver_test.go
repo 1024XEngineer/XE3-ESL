@@ -11,15 +11,17 @@ func TestResolverFreezesCompleteRegisteredPolicy(t *testing.T) {
 	t.Parallel()
 
 	definition := scene.SceneDefinition{
-		SessionPolicyRef: practice.DailyPracticeSessionPolicy,
 		Prompt: scene.ScenePrompt{
-			TurnBlueprints:           []string{"one", "two", "three", "four"},
-			SuggestedDurationSeconds: 600,
+			TurnBlueprints: []string{"one", "two", "three", "four"},
 		},
 	}
 	policy, err := NewResolver().ResolveSessionPolicy(
 		definition,
-		scene.PracticeOption{Type: scene.PracticeOptionFullSimulation},
+		scene.PracticeOption{
+			Mode:                     scene.PracticeModeFullSimulation,
+			SuggestedDurationSeconds: 600,
+			SessionPolicyRef:         practice.DailyPracticeSessionPolicy,
+		},
 		0,
 	)
 	if err != nil {

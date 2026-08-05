@@ -14,9 +14,9 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 ) {
 	t.Parallel()
 	plan := confirmedPlanFixture()
-	plan.SceneSelection.Scene.Family = scene.SceneFamilyExam
-	plan.SceneSelection.Scene.Model = scene.SceneModelIELTSSpeakingFullMock
-	plan.SceneSelection.Scene.SessionPolicyRef =
+	plan.SceneSelection.Scene.Experience = scene.PracticeExperienceIELTSSpeaking
+	plan.SceneSelection.Scene.Category = scene.SceneCategoryIELTSSpeaking
+	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.DailyPracticeSessionPolicy
 
 	projection, err := ProjectConfirmedPlan(plan)
@@ -27,12 +27,15 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 		t.Fatalf("daily policy ref projection = %#v", projection.SessionPolicy)
 	}
 
-	plan.SceneSelection.Scene.Family = scene.SceneFamilyDaily
-	plan.SceneSelection.Scene.Model = scene.SceneModelDailyBasicDialogue
-	plan.SceneSelection.Scene.SessionPolicyRef =
+	plan.SceneSelection.Scene.Experience = scene.PracticeExperienceRoleplay
+	plan.SceneSelection.Scene.Category = scene.SceneCategoryRoleplayDaily
+	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.InterviewPracticeSessionPolicy
 	plan.SessionPolicy.RetryAllowed = false
 	plan.SessionPolicy.QuestionTranslationAllowed = true
+	plan.SessionPolicy.QuestionTipsAllowed = true
+	plan.SessionPolicy.AvatarAllowed = true
+	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	projection, err = ProjectConfirmedPlan(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +69,37 @@ func TestProjectConfirmedPlanCarriesOnlySelectedSceneValues(t *testing.T) {
 	}
 }
 
+func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
+	t.Parallel()
+	plan := confirmedPlanFixture()
+	option := &plan.SceneSelection.Scene.PracticeOptions[0]
+	option.Mode = scene.PracticeModeFocus
+	option.RoleDefinitionID = "role-selected"
+	option.SessionPolicyRef = practice.InterviewProjectDeepDiveSessionPolicy
+	plan.SessionPolicy = preparation.SessionPolicy{
+		SuggestedDurationSeconds:   600,
+		MinEffectiveTurns:          1,
+		MaxEffectiveTurns:          3,
+		CoverageCheckpointTurn:     1,
+		MaxFollowUpsPerQuestion:    3,
+		EarlyCompletionRule:        preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+		QuestionTranslationAllowed: true,
+		QuestionTipsAllowed:        true,
+		AvatarAllowed:              true,
+		SpeechFeedbackAllowed:      true,
+	}
+
+	projection, err := ProjectConfirmedPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected := projection.SceneSelection.Scene.PracticeOptions[0]
+	if projected.RoleDefinitionID != "role-selected" ||
+		projection.SessionPolicy.MaxEffectiveTurns != 3 {
+		t.Fatalf("focus projection = %#v", projection)
+	}
+}
+
 func TestProjectConfirmedPlanRejectsPolicyThatContradictsRegistry(
 	t *testing.T,
 ) {
@@ -79,14 +113,13 @@ func TestProjectConfirmedPlanRejectsPolicyThatContradictsRegistry(
 
 func confirmedPlanFixture() preparation.PracticePlan {
 	prompt := scene.ScenePrompt{
-		PublicSceneBrief:         "Brief",
-		PracticeGoal:             "Goal",
-		UserRole:                 "Learner",
-		AIRole:                   "Counterpart",
-		PersonaSummary:           "Direct counterpart",
-		FocusAreas:               []string{"clarity"},
-		TurnBlueprints:           []string{"one", "two", "three", "four"},
-		SuggestedDurationSeconds: 600,
+		PublicSceneBrief: "Brief",
+		PracticeGoal:     "Goal",
+		UserRole:         "Learner",
+		AIRole:           "Counterpart",
+		PersonaSummary:   "Direct counterpart",
+		FocusAreas:       []string{"clarity"},
+		TurnBlueprints:   []string{"one", "two", "three", "four"},
 	}
 	return preparation.PracticePlan{
 		ID:     "plan-1",
@@ -100,22 +133,36 @@ func confirmedPlanFixture() preparation.PracticePlan {
 		},
 		SceneSelection: scene.SelectionSnapshot{
 			Scene: scene.SceneDefinition{
-				ID:               "scene-1",
-				Family:           scene.SceneFamilyDaily,
-				Model:            scene.SceneModelDailyBasicDialogue,
-				Name:             "Scene",
-				Version:          1,
-				Status:           scene.SceneStatusActive,
-				TurnPolicyRef:    practice.GenericPracticeTurnPolicy,
-				SessionPolicyRef: practice.DailyPracticeSessionPolicy,
-				Prompt:           prompt,
+				ID:         "scene-1",
+				Experience: scene.PracticeExperienceRoleplay,
+				Category:   scene.SceneCategoryRoleplayDaily,
+				Name:       "Scene",
+				Version:    1,
+				Status:     scene.SceneStatusActive,
+				Prompt:     prompt,
 				Roles: []scene.RoleDefinition{
 					{ID: "role-selected", SceneID: "scene-1", DisplayName: "selected"},
 					{ID: "role-unselected", SceneID: "scene-1", DisplayName: "unselected"},
 				},
 				PracticeOptions: []scene.PracticeOption{
-					{ID: "option-selected", SceneID: "scene-1", Type: scene.PracticeOptionFullSimulation},
-					{ID: "option-unselected", SceneID: "scene-1", Type: scene.PracticeOptionFullSimulation},
+					{
+						ID:                       "option-selected",
+						SceneID:                  "scene-1",
+						Mode:                     scene.PracticeModeFullSimulation,
+						SuggestedDurationSeconds: 600,
+						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
+						SessionPolicyRef:         practice.DailyPracticeSessionPolicy,
+						EvaluationPolicyRef:      "daily.shadow.evaluation.v1",
+					},
+					{
+						ID:                       "option-unselected",
+						SceneID:                  "scene-1",
+						Mode:                     scene.PracticeModeFullSimulation,
+						SuggestedDurationSeconds: 600,
+						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
+						SessionPolicyRef:         practice.DailyPracticeSessionPolicy,
+						EvaluationPolicyRef:      "daily.shadow.evaluation.v1",
+					},
 				},
 			},
 			SelectedRoleIDs:  []string{"role-selected"},
@@ -129,7 +176,9 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			MaxFollowUpsPerQuestion:  1,
 			EarlyCompletionRule: preparation.
 				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
-			RetryAllowed: true,
+			RetryAllowed:          true,
+			AvatarAllowed:         true,
+			SpeechFeedbackAllowed: true,
 		},
 		PracticeObjectives: []preparation.PracticeObjective{{
 			ID: "clarity", Description: "Speak clearly.",

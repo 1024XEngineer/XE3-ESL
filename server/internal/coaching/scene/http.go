@@ -28,12 +28,6 @@ func (h *CatalogHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/scenes/:scene_id/roles",
 		h.listRoles,
 	)
-	if _, ok := h.catalog.(IELTSQuestionBankReader); ok {
-		routes.GET(
-			"/v1/scenes/ielts-speaking/question-bank",
-			h.getIELTSQuestionBank,
-		)
-	}
 }
 
 func (h *CatalogHTTPHandler) listScenes(c *gin.Context) {
@@ -67,20 +61,6 @@ func (h *CatalogHTTPHandler) listRoles(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"roles": roles})
-}
-
-func (h *CatalogHTTPHandler) getIELTSQuestionBank(c *gin.Context) {
-	reader, ok := h.catalog.(IELTSQuestionBankReader)
-	if !ok {
-		writeCatalogError(c, ErrIELTSQuestionBankUnavailable)
-		return
-	}
-	bank, err := reader.IELTSQuestionBank()
-	if err != nil {
-		writeCatalogError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, bank)
 }
 
 func writeCatalogError(c *gin.Context, err error) {

@@ -13,10 +13,11 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
@@ -37,6 +38,7 @@ class SpeakUpShell extends StatefulWidget {
     this.user,
     this.authController,
     this.preparationController,
+    this.ieltsPreparationController,
     this.preparationLaunchController,
     this.practicePlanHandoffController,
     this.jobPreparationController,
@@ -61,6 +63,7 @@ class SpeakUpShell extends StatefulWidget {
   final AgentMessageAudioController? messageAudioController;
   final PracticeController practiceController;
   final PreparationController? preparationController;
+  final IeltsPreparationController? ieltsPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final PracticePlanHandoffController? practicePlanHandoffController;
   final JobPreparationController? jobPreparationController;
@@ -283,7 +286,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ).pushNamed<Object?>(AppRoutes.practice);
       if (mounted && result is IeltsPracticeRouteResult) {
         setState(() => _selectedIndex = 1);
-        widget.preparationController?.requestIeltsNavigation(
+        widget.ieltsPreparationController?.requestNavigation(
           IeltsPracticeNavigationRequest(
             mode: result.mode,
             selection: result.selection,
@@ -396,6 +399,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceController: widget.practiceController,
         preparationController: widget.preparationController,
+        ieltsController: widget.ieltsPreparationController,
         launchController: widget.preparationLaunchController,
         onOpenJobPreparation: widget.jobPreparationController == null
             ? null
@@ -409,6 +413,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
+        ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
         autoload: false,
       ),
       _ProfilePage(

@@ -1,4 +1,4 @@
-/// Practice module boundary.
+/// Interview practice UI boundary.
 library;
 
 import 'dart:async';
@@ -8,30 +8,40 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
-import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
-import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
-class PracticePage extends StatefulWidget {
-  const PracticePage({
+final class InterviewPracticeCompletion {
+  const InterviewPracticeCompletion({
+    required this.practiceSessionId,
+    required this.title,
+    required this.speechFeedbackSourceKeys,
+  });
+
+  final String practiceSessionId;
+  final String title;
+  final List<String> speechFeedbackSourceKeys;
+}
+
+typedef OpenInterviewPracticeReport =
+    Future<CompletedPracticeRouteResult?> Function(
+      InterviewPracticeCompletion completion,
+    );
+
+class InterviewPracticePage extends StatefulWidget {
+  const InterviewPracticePage({
     this.previewMode = false,
     this.practiceController,
     this.onExitRequested,
     this.onContinueWithAgent,
-    this.ieltsMockProgressStore,
-    this.preparationController,
     this.onOpenInterviewReport,
-    this.ieltsCompletedReportBuilder,
     this.speechFeedbackController,
-    this.ieltsExaminerSpeaker,
+    this.practicePromptSpeaker,
     super.key,
   });
 
@@ -39,18 +49,15 @@ class PracticePage extends StatefulWidget {
   final PracticeController? practiceController;
   final Future<bool> Function()? onExitRequested;
   final Future<bool> Function()? onContinueWithAgent;
-  final IeltsMockProgressStore? ieltsMockProgressStore;
-  final PreparationController? preparationController;
   final OpenInterviewPracticeReport? onOpenInterviewReport;
-  final IeltsCompletedReportBuilder? ieltsCompletedReportBuilder;
   final SpeechFeedbackController? speechFeedbackController;
-  final IeltsExaminerSpeaker? ieltsExaminerSpeaker;
+  final PracticePromptSpeaker? practicePromptSpeaker;
 
   @override
-  State<PracticePage> createState() => _PracticePageState();
+  State<InterviewPracticePage> createState() => _InterviewPracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage>
+class _InterviewPracticePageState extends State<InterviewPracticePage>
     with WidgetsBindingObserver {
   final TextEditingController _textAnswerController = TextEditingController();
   final FocusNode _textAnswerFocusNode = FocusNode();
@@ -60,7 +67,6 @@ class _PracticePageState extends State<PracticePage>
   bool _exitApproved = false;
   bool _textAnswerMode = false;
   bool _stickToLatestMessage = true;
-  bool _ieltsRouteActive = false;
   int _messageCount = 0;
   String? _lastMessageId;
   PracticeRecordingState? _lastRecordingState;
@@ -70,7 +76,7 @@ class _PracticePageState extends State<PracticePage>
   int _recordingSeconds = 0;
   bool _speechFeedbackRebuildScheduled = false;
   bool _interviewReportRouteActive = false;
-  IeltsExaminerSpeaker? _ownedTipSpeaker;
+  PracticePromptSpeaker? _ownedTipSpeaker;
 
   @override
   void initState() {
@@ -78,7 +84,6 @@ class _PracticePageState extends State<PracticePage>
     WidgetsBinding.instance.addObserver(this);
     _messageScrollController.addListener(_handleMessageScroll);
     widget.practiceController?.addListener(_handleState);
-    _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _syncSpeechFeedbackSources();
     widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     _captureConversationState();
@@ -87,7 +92,7 @@ class _PracticePageState extends State<PracticePage>
   }
 
   @override
-  void didUpdateWidget(covariant PracticePage oldWidget) {
+  void didUpdateWidget(covariant InterviewPracticePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.speechFeedbackController != widget.speechFeedbackController) {
       oldWidget.speechFeedbackController?.removeListener(
@@ -102,7 +107,6 @@ class _PracticePageState extends State<PracticePage>
     }
     oldWidget.practiceController?.removeListener(_handleState);
     widget.practiceController?.addListener(_handleState);
-    _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
     _syncSpeechFeedbackSources();
     _scheduleScrollToLatest(animated: false);
@@ -146,14 +150,14 @@ class _PracticePageState extends State<PracticePage>
         content: tip.content,
         onSpeak: () async {
           final speaker =
-              widget.ieltsExaminerSpeaker ??
-              (_ownedTipSpeaker ??= SystemIeltsExaminerSpeaker());
+              widget.practicePromptSpeaker ??
+              (_ownedTipSpeaker ??= SystemPracticePromptSpeaker());
           await speaker.speak(tip.content);
         },
       ),
     );
     try {
-      await (widget.ieltsExaminerSpeaker ?? _ownedTipSpeaker)?.stop();
+      await (widget.practicePromptSpeaker ?? _ownedTipSpeaker)?.stop();
     } on Object {
       // Closing the reference sheet must not be blocked by a platform TTS error.
     }
@@ -169,7 +173,6 @@ class _PracticePageState extends State<PracticePage>
     final messages = controller?.practiceMessages ?? const <PracticeMessage>[];
     final lastMessageId = messages.lastOrNull?.id;
     final recordingState = controller?.recordingState;
-    _ieltsRouteActive = _ieltsRouteActive || _controllerIsIeltsSpeaking;
     final conversationChanged =
         messages.length != _messageCount ||
         lastMessageId != _lastMessageId ||
@@ -208,11 +211,7 @@ class _PracticePageState extends State<PracticePage>
         practiceController == null ||
         sessionId == null ||
         practiceController.recordingState != PracticeRecordingState.completed ||
-        _interviewReportRouteActive ||
-        !isInterviewPracticeScene(
-          practiceController.practiceSceneFamily,
-          practiceController.practiceSceneModel,
-        )) {
+        _interviewReportRouteActive) {
       return;
     }
     _interviewReportRouteActive = true;
@@ -473,17 +472,6 @@ class _PracticePageState extends State<PracticePage>
   @override
   Widget build(BuildContext context) {
     final controller = widget.practiceController;
-    if (controller != null && _isIeltsSpeaking) {
-      return IeltsSpeakingMockPage(
-        controller: controller,
-        onExitRequested: widget.onExitRequested,
-        progressStore: widget.ieltsMockProgressStore,
-        preparationController: widget.preparationController,
-        completedReportBuilder: widget.ieltsCompletedReportBuilder,
-        speechFeedbackController: widget.speechFeedbackController,
-        examinerSpeaker: widget.ieltsExaminerSpeaker,
-      );
-    }
     final scene = controller?.scene;
     return PopScope<void>(
       canPop: widget.onExitRequested == null || _exitApproved,
@@ -517,8 +505,7 @@ class _PracticePageState extends State<PracticePage>
               ? const _NoScene()
               : Column(
                   children: [
-                    if (_isInterview(controller))
-                      _InterviewProgress(controller: controller),
+                    _InterviewProgress(controller: controller),
                     Expanded(
                       child: _SceneConversationMessageList(
                         controller: controller,
@@ -546,15 +533,6 @@ class _PracticePageState extends State<PracticePage>
       ),
     );
   }
-
-  bool get _controllerIsIeltsSpeaking =>
-      widget.practiceController != null &&
-      isIeltsSpeakingSession(widget.practiceController!);
-
-  bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
-
-  bool _isInterview(PracticeController controller) =>
-      controller.practiceSceneFamily == SceneFamily.interview;
 }
 
 String _practiceFeedbackSourceKey(
@@ -595,7 +573,7 @@ class _InterviewProgress extends StatelessWidget {
       PracticeRecordingState.transcribing ||
       PracticeRecordingState.awaitingConfirmation => '正在识别',
       PracticeRecordingState.submitting =>
-        controller.isFinalInterviewSubmission ? '正在提交最后一题' : '正在生成下一题',
+        controller.isFinalSubmission ? '正在提交最后一题' : '正在生成下一题',
       PracticeRecordingState.completed => '面试已完成',
       PracticeRecordingState.idle => '等待作答',
     };
@@ -1035,7 +1013,7 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           PracticeRecordingState.submitting => _WorkingState(
             label: widget.controller.isSpeechFeedbackRetryActive
                 ? '正在提交同题复练…'
-                : widget.controller.isFinalInterviewSubmission
+                : widget.controller.isFinalSubmission
                 ? '正在提交最后一轮回答，完成后将生成报告…'
                 : '回答已发送，Agent 正在回复…',
           ),
@@ -1101,35 +1079,30 @@ class _IdleAnswerPanel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (controller.isInterviewPractice) ...[
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: const Key('practice-question-tip'),
-              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
-              icon: controller.isQuestionTipLoading
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.lightbulb_outline_rounded, size: 19),
-              label: Text(controller.isQuestionTipLoading ? '正在生成' : 'Tips'),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            key: const Key('practice-question-tip'),
+            onPressed: controller.canRequestQuestionTip ? onShowTip : null,
+            icon: controller.isQuestionTipLoading
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.lightbulb_outline_rounded, size: 19),
+            label: Text(controller.isQuestionTipLoading ? '正在生成' : 'Tips'),
+          ),
+        ),
+        if (controller.questionTipErrorMessage case final message?)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              message,
+              key: const Key('practice-question-tip-error'),
+              textAlign: TextAlign.right,
+              style: const TextStyle(color: SpeakUpDesign.error, fontSize: 12),
             ),
           ),
-          if (controller.questionTipErrorMessage case final message?)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                message,
-                key: const Key('practice-question-tip-error'),
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: SpeakUpDesign.error,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-        ],
         PracticeIdleComposer(
           capture: capture,
           textController: textController,

@@ -259,8 +259,8 @@ Future<_Harness> _createHarness({AgentClient? client}) async {
   final composer = ComposerController(conversationController: conversation);
   final practice = PracticeController(
     client: FakePracticeClient(
-      sceneFamily: SceneFamily.interview,
-      sceneModel: SceneModel.projectExperienceDeepDive,
+      practiceExperience: PracticeExperience.interview,
+      sceneCategory: SceneCategory.interviewProfessional,
       turnLimit: 3,
     ),
   );
@@ -282,8 +282,8 @@ Future<_Harness> _createHarness({AgentClient? client}) async {
 PracticePlan _plan({required String sourceThreadId}) {
   final scene = testScene(
     id: 'project-deep-dive',
-    family: SceneFamily.interview,
-    model: SceneModel.projectExperienceDeepDive,
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewProfessional,
     name: '项目经历深挖',
   );
   return PracticePlan(
@@ -316,6 +316,9 @@ PracticePlan _plan({required String sourceThreadId}) {
       earlyCompletionRule: 'all_objectives_covered',
       retryAllowed: false,
       questionTranslationAllowed: true,
+      questionTipsAllowed: true,
+      avatarAllowed: true,
+      speechFeedbackAllowed: true,
     ),
     practiceObjectives: const <PracticeObjective>[
       PracticeObjective(id: 'clarity', description: 'Communicate clearly.'),
@@ -334,8 +337,9 @@ ConfirmPracticePlanHandoff _handoff(PracticePlan plan, {int? revision}) {
     planRevision: revision ?? plan.revision,
     target: plan.goalSnapshot!.title,
     sceneName: plan.sceneSelection.scene.name,
-    sceneFamily: plan.sceneSelection.scene.family.wireValue,
-    sceneModel: plan.sceneSelection.scene.model.wireValue,
+    practiceExperience: plan.sceneSelection.scene.experience.wireValue,
+    sceneCategory: plan.sceneSelection.scene.category.wireValue,
+    practiceMode: plan.practiceOption.mode.wireValue,
     roles: plan.selectedRoles.map((role) => role.displayName).toList(),
     practiceScope: plan.practiceOption.displayName,
     suggestedDuration: Duration(
@@ -353,8 +357,9 @@ PreparationPracticeBootstrap _bootstrap(PracticePlan plan) {
     session: PreparationPracticeSession(
       id: _sessionId,
       planId: plan.id,
-      sceneFamily: plan.sceneSelection.scene.family,
-      sceneModel: plan.sceneSelection.scene.model,
+      practiceExperience: plan.sceneSelection.scene.experience,
+      sceneCategory: plan.sceneSelection.scene.category,
+      practiceMode: plan.practiceOption.mode,
       snapshotId: 'session-snapshot-1',
       status: 'starting',
       version: 1,

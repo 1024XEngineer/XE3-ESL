@@ -24,14 +24,16 @@ type ReviewGetInput struct {
 }
 
 type ReviewSummary struct {
-	ID                string      `json:"report_id"`
-	PracticeSessionID string      `json:"practice_session_id"`
-	SceneType         string      `json:"scene_type"`
-	SceneModel        string      `json:"scene_model"`
-	Scoreability      string      `json:"scoreability_status"`
-	Summary           string      `json:"summary"`
-	CompletedAt       string      `json:"completed_at"`
-	SourceRefs        []SourceRef `json:"-"`
+	ID                 string      `json:"report_id"`
+	PracticeSessionID  string      `json:"practice_session_id"`
+	SceneType          string      `json:"scene_type"`
+	PracticeExperience string      `json:"practice_experience"`
+	SceneCategory      string      `json:"scene_category"`
+	PracticeMode       string      `json:"practice_mode"`
+	Scoreability       string      `json:"scoreability_status"`
+	Summary            string      `json:"summary"`
+	CompletedAt        string      `json:"completed_at"`
+	SourceRefs         []SourceRef `json:"-"`
 }
 
 type ReviewFinding struct {
@@ -58,16 +60,18 @@ type ReviewPriorityAction struct {
 }
 
 type ReviewDetail struct {
-	ID                string                 `json:"report_id"`
-	PracticeSessionID string                 `json:"practice_session_id"`
-	SceneType         string                 `json:"scene_type"`
-	SceneModel        string                 `json:"scene_model"`
-	Scoreability      string                 `json:"scoreability_status"`
-	Summary           string                 `json:"summary"`
-	Dimensions        []ReviewDimension      `json:"dimensions"`
-	PriorityActions   []ReviewPriorityAction `json:"priority_actions"`
-	CompletedAt       string                 `json:"completed_at"`
-	SourceRefs        []SourceRef            `json:"-"`
+	ID                 string                 `json:"report_id"`
+	PracticeSessionID  string                 `json:"practice_session_id"`
+	SceneType          string                 `json:"scene_type"`
+	PracticeExperience string                 `json:"practice_experience"`
+	SceneCategory      string                 `json:"scene_category"`
+	PracticeMode       string                 `json:"practice_mode"`
+	Scoreability       string                 `json:"scoreability_status"`
+	Summary            string                 `json:"summary"`
+	Dimensions         []ReviewDimension      `json:"dimensions"`
+	PriorityActions    []ReviewPriorityAction `json:"priority_actions"`
+	CompletedAt        string                 `json:"completed_at"`
+	SourceRefs         []SourceRef            `json:"-"`
 }
 
 type ReviewPort interface {

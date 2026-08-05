@@ -1,6 +1,8 @@
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
-import 'package:speakup/features/coaching/practice/practice_recording.dart';
+const int practiceTurnSafetyLimit = 64;
 
 enum PracticeMessageRole { user, assistant }
 
@@ -28,54 +30,39 @@ enum PracticeRecordingState {
   completed,
 }
 
-bool validPracticeSceneIdentity(
-  SceneFamily? sceneFamily,
-  SceneModel? sceneModel, {
-  bool allowMissing = false,
-}) {
-  if (sceneFamily == null || sceneModel == null) {
-    return allowMissing && sceneFamily == null && sceneModel == null;
-  }
-  return switch (sceneModel) {
-    SceneModel.projectExperienceDeepDive ||
-    SceneModel.interviewBasicDialogue => sceneFamily == SceneFamily.interview,
-    SceneModel.ieltsSpeakingPart1 ||
-    SceneModel.ieltsSpeakingPart2 ||
-    SceneModel.ieltsSpeakingPart3 ||
-    SceneModel.ieltsSpeakingFullMock ||
-    SceneModel.examBasicDialogue => sceneFamily == SceneFamily.exam,
-    SceneModel.progressAndRiskUpdate ||
-    SceneModel.workplaceBasicDialogue => sceneFamily == SceneFamily.workplace,
-    SceneModel.hotelCheckinAndIssueHandling ||
-    SceneModel.dailyBasicDialogue => sceneFamily == SceneFamily.daily,
-  };
+final class PracticeCapabilities {
+  const PracticeCapabilities({
+    required this.retryAllowed,
+    required this.questionTranslationAllowed,
+    required this.questionTipsAllowed,
+    required this.avatarAllowed,
+    required this.speechFeedbackAllowed,
+  });
+
+  final bool retryAllowed;
+  final bool questionTranslationAllowed;
+  final bool questionTipsAllowed;
+  final bool avatarAllowed;
+  final bool speechFeedbackAllowed;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PracticeCapabilities &&
+      other.retryAllowed == retryAllowed &&
+      other.questionTranslationAllowed == questionTranslationAllowed &&
+      other.questionTipsAllowed == questionTipsAllowed &&
+      other.avatarAllowed == avatarAllowed &&
+      other.speechFeedbackAllowed == speechFeedbackAllowed;
+
+  @override
+  int get hashCode => Object.hash(
+    retryAllowed,
+    questionTranslationAllowed,
+    questionTipsAllowed,
+    avatarAllowed,
+    speechFeedbackAllowed,
+  );
 }
-
-bool isIeltsSpeakingFullMockScene(
-  SceneFamily? sceneFamily,
-  SceneModel? sceneModel,
-) =>
-    sceneFamily == SceneFamily.exam &&
-    sceneModel == SceneModel.ieltsSpeakingFullMock;
-
-bool isInterviewPracticeScene(
-  SceneFamily? sceneFamily,
-  SceneModel? sceneModel,
-) =>
-    sceneFamily == SceneFamily.interview &&
-    (sceneModel == SceneModel.projectExperienceDeepDive ||
-        sceneModel == SceneModel.interviewBasicDialogue);
-
-bool isTurnFeedbackEligiblePracticeScene(
-  SceneFamily? sceneFamily,
-  SceneModel? sceneModel,
-) =>
-    (sceneFamily == SceneFamily.workplace &&
-        (sceneModel == SceneModel.progressAndRiskUpdate ||
-            sceneModel == SceneModel.workplaceBasicDialogue)) ||
-    (sceneFamily == SceneFamily.daily &&
-        (sceneModel == SceneModel.hotelCheckinAndIssueHandling ||
-            sceneModel == SceneModel.dailyBasicDialogue));
 
 final class PracticeQuestion {
   const PracticeQuestion({
@@ -139,12 +126,15 @@ final class PracticeSessionSnapshot {
   const PracticeSessionSnapshot({
     required this.sessionId,
     required this.planId,
-    required this.sceneFamily,
-    required this.sceneModel,
+    required this.practiceExperience,
+    required this.sceneCategory,
+    required this.practiceMode,
+    required this.capabilities,
     required this.sessionVersion,
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
+    this.ieltsAssignment,
     this.currentQuestion,
     this.currentTurn,
     this.turnHistory = const <PracticeTurnExchange>[],
@@ -152,12 +142,15 @@ final class PracticeSessionSnapshot {
 
   final String sessionId;
   final String planId;
-  final SceneFamily sceneFamily;
-  final SceneModel sceneModel;
+  final PracticeExperience practiceExperience;
+  final SceneCategory sceneCategory;
+  final PracticeMode practiceMode;
+  final PracticeCapabilities capabilities;
   final int sessionVersion;
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
+  final IeltsPracticeAssignment? ieltsAssignment;
   final PracticeQuestion? currentQuestion;
   final PracticeTurnSnapshot? currentTurn;
   final List<PracticeTurnExchange> turnHistory;
@@ -248,9 +241,11 @@ final class PracticeTurnConfirmation {
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
-    this.sceneFamily,
-    this.sceneModel,
-    this.sessionVersion,
+    required this.practiceExperience,
+    required this.sceneCategory,
+    required this.practiceMode,
+    required this.capabilities,
+    required this.sessionVersion,
     this.nextQuestion,
     this.audioAssetId,
     this.speechFeedbackStatusUrl,
@@ -264,9 +259,11 @@ final class PracticeTurnConfirmation {
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
-  final SceneFamily? sceneFamily;
-  final SceneModel? sceneModel;
-  final int? sessionVersion;
+  final PracticeExperience practiceExperience;
+  final SceneCategory sceneCategory;
+  final PracticeMode practiceMode;
+  final PracticeCapabilities capabilities;
+  final int sessionVersion;
   final PracticeQuestion? nextQuestion;
   final String? audioAssetId;
   final String? speechFeedbackStatusUrl;
@@ -388,23 +385,6 @@ enum PracticeSessionLifecycleStatus {
 }
 
 enum CompletedPracticeRouteResult { continueWithAgent }
-
-final class InterviewPracticeCompletion {
-  const InterviewPracticeCompletion({
-    required this.practiceSessionId,
-    required this.title,
-    required this.speechFeedbackSourceKeys,
-  });
-
-  final String practiceSessionId;
-  final String title;
-  final List<String> speechFeedbackSourceKeys;
-}
-
-typedef OpenInterviewPracticeReport =
-    Future<CompletedPracticeRouteResult?> Function(
-      InterviewPracticeCompletion completion,
-    );
 
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({

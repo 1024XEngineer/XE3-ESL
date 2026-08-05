@@ -15,8 +15,6 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 const (
@@ -120,7 +118,9 @@ type GeneralSceneProviderInput struct {
 	SchemaVersion        string                    `json:"schema_version"`
 	PromptVersion        string                    `json:"prompt_version"`
 	SceneType            evaluation.SceneType      `json:"scene_type"`
-	SceneModel           string                    `json:"scene_model"`
+	PracticeExperience   string                    `json:"practice_experience"`
+	SceneCategory        string                    `json:"scene_category"`
+	PracticeMode         string                    `json:"practice_mode"`
 	PracticeGoal         string                    `json:"practice_goal"`
 	PublicSceneBrief     string                    `json:"public_scene_brief"`
 	FocusAreas           []string                  `json:"focus_areas"`
@@ -152,7 +152,9 @@ type GeneralSceneResult struct {
 	SchemaVersion      string                        `json:"schema_version"`
 	SnapshotID         string                        `json:"snapshot_id"`
 	SceneType          evaluation.SceneType          `json:"scene_type"`
-	SceneModel         string                        `json:"scene_model"`
+	PracticeExperience string                        `json:"practice_experience"`
+	SceneCategory      string                        `json:"scene_category"`
+	PracticeMode       string                        `json:"practice_mode"`
 	Scope              evaluation.Scope              `json:"scope"`
 	Channel            evaluation.Channel            `json:"channel"`
 	ScoreabilityStatus GeneralSceneScoreability      `json:"scoreability_status"`
@@ -226,12 +228,7 @@ func prepareGeneralScene(
 	var payload evidence.SnapshotPayload
 	decoder := json.NewDecoder(bytes.NewReader(snapshot.Payload))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil ||
-		!generalSceneModelSupported(
-			snapshot.SceneType,
-			payload.PracticeContext.SceneFamily,
-			payload.PracticeContext.SceneModel,
-		) {
+	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil {
 		return preparedGeneralScene{}, evaluation.ErrInvalidRequest
 	}
 	turnsByID := make(map[string]evidence.ConfirmedTurn, len(payload.ConfirmedTurns))
@@ -283,7 +280,7 @@ func prepareGeneralScene(
 	confidence := generalSceneConfidence(coverage)
 	result := generalSceneResultSkeleton(
 		snapshot,
-		payload.PracticeContext.SceneModel,
+		payload.PracticeContext,
 	)
 	if answered == 0 || wordCount < generalSceneMinimumWords {
 		result.ScoreabilityStatus = GeneralSceneScoreabilityInsufficient
@@ -306,7 +303,9 @@ func prepareGeneralScene(
 			SchemaVersion:        GeneralSceneProviderSchemaVersion,
 			PromptVersion:        GeneralScenePromptVersion,
 			SceneType:            snapshot.SceneType,
-			SceneModel:           payload.PracticeContext.SceneModel,
+			PracticeExperience:   payload.PracticeContext.PracticeExperience,
+			SceneCategory:        payload.PracticeContext.SceneCategory,
+			PracticeMode:         payload.PracticeContext.PracticeMode,
 			PracticeGoal:         payload.PracticeContext.PracticeGoal,
 			PublicSceneBrief:     payload.PracticeContext.TaskContext.PublicSceneBrief,
 			FocusAreas:           slices.Clone(payload.PracticeContext.TaskContext.FocusAreas),
@@ -329,42 +328,17 @@ func generalSceneTypeSupported(sceneType evaluation.SceneType) bool {
 		sceneType == evaluation.SceneOverseasWorkplace
 }
 
-func generalSceneModelSupported(
-	sceneType evaluation.SceneType,
-	family string,
-	model string,
-) bool {
-	switch sceneType {
-	case evaluation.SceneIELTSSpeaking:
-		if family != string(scene.SceneFamilyExam) {
-			return false
-		}
-		return model == string(scene.SceneModelIELTSSpeakingPart1) ||
-			model == string(scene.SceneModelIELTSSpeakingPart2) ||
-			model == string(scene.SceneModelIELTSSpeakingPart3) ||
-			model == string(scene.SceneModelExamBasicDialogue)
-	case evaluation.SceneOverseasDaily:
-		return family == string(scene.SceneFamilyDaily) &&
-			(model == string(scene.SceneModelHotelCheckinAndIssueHandling) ||
-				model == string(scene.SceneModelDailyBasicDialogue))
-	case evaluation.SceneOverseasWorkplace:
-		return family == string(scene.SceneFamilyWorkplace) &&
-			(model == string(scene.SceneModelProgressAndRiskUpdate) ||
-				model == string(scene.SceneModelWorkplaceBasicDialogue))
-	default:
-		return false
-	}
-}
-
 func generalSceneResultSkeleton(
 	snapshot evidence.EvidenceSnapshot,
-	sceneModel string,
+	context evidence.PracticeContext,
 ) GeneralSceneResult {
 	return GeneralSceneResult{
 		SchemaVersion:      GeneralSceneSchemaVersion,
 		SnapshotID:         snapshot.ID,
 		SceneType:          snapshot.SceneType,
-		SceneModel:         sceneModel,
+		PracticeExperience: context.PracticeExperience,
+		SceneCategory:      context.SceneCategory,
+		PracticeMode:       context.PracticeMode,
 		Scope:              evaluation.ScopeSession,
 		Channel:            evaluation.ChannelScene,
 		ScoreabilityStatus: GeneralSceneScoreabilityProvisional,
@@ -730,7 +704,9 @@ func ValidateGeneralSceneResult(
 	if err != nil || result.SchemaVersion != GeneralSceneSchemaVersion ||
 		result.SnapshotID != snapshot.ID ||
 		result.SceneType != snapshot.SceneType ||
-		result.SceneModel != prepared.result.SceneModel ||
+		result.PracticeExperience != prepared.result.PracticeExperience ||
+		result.SceneCategory != prepared.result.SceneCategory ||
+		result.PracticeMode != prepared.result.PracticeMode ||
 		result.Scope != evaluation.ScopeSession || result.Channel != evaluation.ChannelScene ||
 		result.Dimensions == nil ||
 		len(result.Dimensions) != len(generalSceneDimensionOrder) ||

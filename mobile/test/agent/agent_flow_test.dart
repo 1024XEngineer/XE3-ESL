@@ -10,7 +10,10 @@ import 'package:speakup/features/agent/conversation/conversation_controller.dart
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/interview/interview_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
@@ -28,13 +31,30 @@ void main() {
     tester,
   ) async {
     final scene = testScene(
-      family: SceneFamily.exam,
-      model: SceneModel.examBasicDialogue,
+      experience: PracticeExperience.ieltsSpeaking,
+      category: SceneCategory.ieltsSpeaking,
+      practiceOptions: const [
+        PracticeOption(
+          id: 'option-scene-test-part1',
+          sceneId: 'scene-test',
+          mode: PracticeMode.part1,
+          displayName: 'Part 1',
+          suggestedDurationSeconds: 300,
+          turnPolicyRef: 'turn-ielts-part1',
+          sessionPolicyRef: 'session-ielts-part1',
+          evaluationPolicyRef: 'evaluation-ielts-part1',
+        ),
+      ],
     );
     final harness = _agentHarness(
       practiceClient: FakePracticeClient(
-        sceneFamily: scene.family,
-        sceneModel: scene.model,
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
+        practiceMode: PracticeMode.part1,
+        ieltsAssignment: testIeltsAssignment(
+          mode: PracticeMode.part1,
+          part1QuestionCount: 3,
+        ),
       ),
     );
     await harness.conversation.initialize();
@@ -82,75 +102,18 @@ void main() {
     );
 
     await activateTestPractice(controller: harness.practice, scene: scene);
-    final shellContext = tester.element(find.byType(SpeakUpShell));
-    Navigator.of(shellContext).pushNamed(AppRoutes.practice);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('practice-page')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('practice-record')));
-    await tester.pumpAndSettle();
-    expect(harness.practice.recordingState, PracticeRecordingState.recording);
-    expect(find.text('点击发送语音'), findsOneWidget);
-    expect(
-      find.byKey(const Key('practice-voice-target-cancel')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('practice-voice-target-cancel')));
-    await tester.pumpAndSettle();
-    expect(harness.practice.recordingState, PracticeRecordingState.idle);
-    expect(find.byKey(const Key('practice-transcript')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('practice-record')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('practice-voice-target-convert')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('practice-text-answer')), findsOneWidget);
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('practice-text-answer')))
-          .controller
-          ?.text,
-      isNotEmpty,
-    );
-    expect(harness.practice.recordingState, PracticeRecordingState.idle);
-    await tester.tap(find.byKey(const Key('practice-return-to-voice')));
-    await tester.pumpAndSettle();
-    expect(harness.practice.recordingState, PracticeRecordingState.idle);
-
-    final cancelledGesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('practice-record'))),
-    );
-    await tester.pump(const Duration(milliseconds: 220));
-    await cancelledGesture.moveBy(const Offset(-90, 0));
-    await tester.pump();
-    expect(find.text('松开取消'), findsOneWidget);
-    await cancelledGesture.up();
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('practice-transcript')), findsNothing);
-    expect(harness.practice.recordingState, PracticeRecordingState.idle);
-
     for (var turn = 1; turn <= 3; turn++) {
-      expect(
-        find
-            .byKey(Key('practice-ai-message-${harness.practice.questionId}'))
-            .hitTestable(),
-        findsOneWidget,
-      );
-      await _holdAndReleaseAnswer(tester);
+      await harness.practice.startRecording();
+      await harness.practice.stopRecording();
+      await harness.practice.confirmTranscript();
       if (turn < 3) {
         expect(harness.practice.practiceMessages, hasLength(turn * 2 + 1));
         expect(harness.practice.recordingState, PracticeRecordingState.idle);
       }
     }
 
-    expect(find.byKey(const Key('practice-page')), findsOneWidget);
-    expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
-    expect(find.byKey(const Key('review-content')), findsNothing);
     expect(harness.practice.recordingState, PracticeRecordingState.completed);
-
-    Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
-    await tester.pumpAndSettle();
+    expect(harness.conversation.threadId, isNotNull);
     await tester.tap(find.byKey(const Key('primary-tab-profile')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('profile-page')), findsOneWidget);
@@ -164,7 +127,11 @@ void main() {
       final preparationController = PreparationController(
         client: _EmptySceneClient(),
       );
+      final ieltsPreparationController = IeltsPreparationController(
+        client: _UnusedIeltsQuestionBankClient(),
+      );
       addTearDown(preparationController.dispose);
+      addTearDown(ieltsPreparationController.dispose);
       final authController = AuthController(
         identityClient: _AuthenticatedIdentityClient(),
         sessionStore: _MemorySessionStore('sess_stored-token'),
@@ -175,6 +142,7 @@ void main() {
             harness.messageAudio.clearPrivateState(),
             harness.practice.clearPrivateState(),
             preparationController.clearPrivateState(),
+            ieltsPreparationController.clearPrivateState(),
           ]);
         },
       );
@@ -187,6 +155,7 @@ void main() {
           messageAudioController: harness.messageAudio,
           practiceController: harness.practice,
           preparationController: preparationController,
+          ieltsPreparationController: ieltsPreparationController,
         ),
       );
       await tester.pumpAndSettle();
@@ -223,7 +192,11 @@ void main() {
     final preparationController = PreparationController(
       client: _EmptySceneClient(),
     );
+    final ieltsPreparationController = IeltsPreparationController(
+      client: _UnusedIeltsQuestionBankClient(),
+    );
     addTearDown(preparationController.dispose);
+    addTearDown(ieltsPreparationController.dispose);
     final authController = AuthController(
       identityClient: _AuthenticatedIdentityClient(),
       sessionStore: _MemorySessionStore('sess_stored-token'),
@@ -234,6 +207,7 @@ void main() {
           harness.messageAudio.clearPrivateState(),
           harness.practice.clearPrivateState(),
           preparationController.clearPrivateState(),
+          ieltsPreparationController.clearPrivateState(),
         ]);
       },
     );
@@ -245,6 +219,7 @@ void main() {
         messageAudioController: harness.messageAudio,
         practiceController: harness.practice,
         preparationController: preparationController,
+        ieltsPreparationController: ieltsPreparationController,
       ),
     );
     await tester.pumpAndSettle();
@@ -276,7 +251,9 @@ void main() {
     expect(harness.practice.recordingState, PracticeRecordingState.completed);
 
     await tester.pumpWidget(
-      MaterialApp(home: PracticePage(practiceController: harness.practice)),
+      MaterialApp(
+        home: InterviewPracticePage(practiceController: harness.practice),
+      ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -306,7 +283,8 @@ void main() {
     final navigator = Navigator.of(tester.element(find.byType(SpeakUpShell)));
     navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => PracticePage(practiceController: harness.practice),
+        builder: (_) =>
+            InterviewPracticePage(practiceController: harness.practice),
       ),
     );
     await tester.pumpAndSettle();
@@ -347,8 +325,8 @@ Future<_AgentHarness> _startedHarness() async {
   final scene = testScenes.first;
   final harness = _agentHarness(
     practiceClient: FakePracticeClient(
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
+      practiceExperience: scene.experience,
+      sceneCategory: scene.category,
     ),
   );
   await harness.conversation.initialize();
@@ -398,15 +376,6 @@ final class _AgentHarness {
     conversation.dispose();
     practice.dispose();
   }
-}
-
-Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
-  final holdTarget = find.byKey(const Key('practice-record'));
-  final gesture = await tester.startGesture(tester.getCenter(holdTarget));
-  await tester.pump(const Duration(milliseconds: 220));
-  expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
-  await gesture.up();
-  await tester.pumpAndSettle();
 }
 
 final class _AuthenticatedIdentityClient implements IdentityClient {
@@ -459,6 +428,13 @@ final class _EmptySceneClient implements SceneClient {
 
   @override
   Future<List<RoleDefinition>> listRoles(String sceneId) {
+    throw UnimplementedError();
+  }
+}
+
+final class _UnusedIeltsQuestionBankClient implements IeltsQuestionBankClient {
+  @override
+  Future<IeltsQuestionBank> getQuestionBank() {
     throw UnimplementedError();
   }
 }

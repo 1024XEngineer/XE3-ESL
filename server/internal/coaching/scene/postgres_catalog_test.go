@@ -219,7 +219,8 @@ func TestPostgresCatalogRejectsInvalidStoredJSON(t *testing.T) {
 func TestPostgresCatalogRejectsUnavailableEvaluationPolicy(t *testing.T) {
 	pool := sceneCatalogTestDatabase(t)
 	definition := testSceneDefinition()
-	definition.EvaluationPolicyRef = "unknown.fixture.evaluation.v1"
+	definition.PracticeOptions[0].EvaluationPolicyRef =
+		"unknown.fixture.evaluation.v1"
 	insertSceneVersion(t, pool, definition, "", nil)
 
 	catalog, err := NewPostgresCatalog(pool, testPolicyValidator())
@@ -335,16 +336,13 @@ func sceneCatalogTestDatabase(t *testing.T) *pgxpool.Pool {
             created_at timestamptz NOT NULL DEFAULT transaction_timestamp()
         )`,
 		`CREATE TABLE coaching_scene_versions (
-            scene_id text NOT NULL REFERENCES coaching_scenes (scene_id),
-            scene_version bigint NOT NULL,
-            scene_family text NOT NULL,
-            scene_model text NOT NULL,
-            name text NOT NULL,
-            status text NOT NULL,
-            turn_policy_ref text NOT NULL,
-            session_policy_ref text NOT NULL,
-			evaluation_policy_ref text NOT NULL,
-            prompt jsonb NOT NULL,
+	            scene_id text NOT NULL REFERENCES coaching_scenes (scene_id),
+	            scene_version bigint NOT NULL,
+	            practice_experience text NOT NULL,
+	            scene_category text NOT NULL,
+	            name text NOT NULL,
+	            status text NOT NULL,
+	            prompt jsonb NOT NULL,
             roles jsonb NOT NULL,
             practice_options jsonb NOT NULL,
             display_order integer NOT NULL,
@@ -396,12 +394,16 @@ func insertSceneVersion(
 	databaseOptions := make([]databasePracticeOption, len(definition.PracticeOptions))
 	for index, option := range definition.PracticeOptions {
 		databaseOptions[index] = databasePracticeOption{
-			ID:               option.ID,
-			SceneID:          option.SceneID,
-			RoleDefinitionID: option.RoleDefinitionID,
-			Type:             option.Type,
-			DisplayName:      option.DisplayName,
-			DisplayOrder:     option.DisplayOrder,
+			ID:                       option.ID,
+			SceneID:                  option.SceneID,
+			RoleDefinitionID:         option.RoleDefinitionID,
+			Mode:                     option.Mode,
+			DisplayName:              option.DisplayName,
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+			TurnPolicyRef:            option.TurnPolicyRef,
+			SessionPolicyRef:         option.SessionPolicyRef,
+			EvaluationPolicyRef:      option.EvaluationPolicyRef,
+			DisplayOrder:             option.DisplayOrder,
 		}
 	}
 	options, err := json.Marshal(databaseOptions)
@@ -429,30 +431,24 @@ func insertSceneVersion(
 		`INSERT INTO coaching_scene_versions (
             scene_id,
             scene_version,
-            scene_family,
-            scene_model,
-            name,
-            status,
-            turn_policy_ref,
-            session_policy_ref,
-			evaluation_policy_ref,
-            prompt,
+	            practice_experience,
+	            scene_category,
+	            name,
+	            status,
+	            prompt,
             roles,
             practice_options,
             display_order
          ) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			$10::jsonb, $11::jsonb, $12::jsonb, $13
+			$1, $2, $3, $4, $5, $6,
+			$7::jsonb, $8::jsonb, $9::jsonb, $10
          )`,
 		definition.ID,
 		definition.Version,
-		definition.Family,
-		definition.Model,
+		definition.Experience,
+		definition.Category,
 		definition.Name,
 		definition.Status,
-		definition.TurnPolicyRef,
-		definition.SessionPolicyRef,
-		definition.EvaluationPolicyRef,
 		string(prompt),
 		string(roles),
 		string(options),

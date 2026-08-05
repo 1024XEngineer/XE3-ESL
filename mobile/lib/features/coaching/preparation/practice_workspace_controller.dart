@@ -81,7 +81,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   String? get currentGoalId => _current?.goalId;
   String? get currentSessionId => _current?.sessionId;
   String? get currentSceneId => _current?.scene?.id;
-  String? get currentSceneFamily => _current?.scene?.family.wireValue;
+  String? get currentPracticeExperience =>
+      _current?.scene?.experience.wireValue;
   ScenePresentationMode get currentPresentationMode =>
       _current?.scene?.presentationMode ?? ScenePresentationMode.standard;
 
@@ -1215,7 +1216,7 @@ final class _StoredPracticeWorkspace {
           (completedTurns != null &&
               (completedTurns is! int ||
                   completedTurns < 0 ||
-                  completedTurns > 24)) ||
+                  completedTurns > practiceTurnSafetyLimit)) ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||

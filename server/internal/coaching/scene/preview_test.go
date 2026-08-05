@@ -16,7 +16,7 @@ func TestCatalogPreviewResolverReturnsExactScene(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Scene.ID != testSceneID ||
 		len(items[0].DefaultRoleIDs) != 1 ||
-		items[0].DefaultOption.Type != PracticeOptionFullSimulation {
+		items[0].DefaultOption.Mode != PracticeModeFullSimulation {
 		t.Fatalf("exact candidate = %#v", items)
 	}
 }

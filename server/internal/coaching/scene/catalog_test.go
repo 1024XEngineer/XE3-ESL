@@ -13,8 +13,8 @@ func TestCatalogOwnsOneCanonicalSceneDefinition(t *testing.T) {
 		t.Fatalf("GetScene() error = %v", err)
 	}
 	if definition.ID != testSceneID ||
-		definition.Family != SceneFamilyInterview ||
-		definition.Model != SceneModelProjectExperienceDeepDive ||
+		definition.Experience != PracticeExperienceInterview ||
+		definition.Category != SceneCategoryInterviewProfessional ||
 		definition.Version != 1 || definition.Status != SceneStatusActive ||
 		len(definition.Roles) != 1 || len(definition.PracticeOptions) != 2 {
 		t.Fatalf("Scene = %#v", definition)
@@ -115,7 +115,9 @@ func TestCatalogRejectsInvalidCanonicalDefinitions(t *testing.T) {
 		mutate func(*SceneDefinition)
 	}{
 		{"missing id", func(value *SceneDefinition) { value.ID = "" }},
-		{"invalid family model", func(value *SceneDefinition) { value.Family = SceneFamilyDaily }},
+		{"invalid experience category", func(value *SceneDefinition) {
+			value.Experience = PracticeExperienceRoleplay
+		}},
 		{"missing prompt", func(value *SceneDefinition) { value.Prompt.PublicSceneBrief = "" }},
 		{"role parent", func(value *SceneDefinition) { value.Roles[0].SceneID = "other" }},
 		{"invalid objective id", func(value *SceneDefinition) {
@@ -162,12 +164,16 @@ func TestCatalogRejectsConflictingObjectiveDescriptionsAcrossRoles(t *testing.T)
 	definition.PracticeOptions = append(
 		definition.PracticeOptions,
 		PracticeOption{
-			ID:               "option_test_hr_focus",
-			SceneID:          testSceneID,
-			RoleDefinitionID: testSecondRoleID,
-			Type:             PracticeOptionFocus,
-			DisplayName:      "HR focus",
-			DisplayOrder:     30,
+			ID:                       "option_test_hr_focus",
+			SceneID:                  testSceneID,
+			RoleDefinitionID:         testSecondRoleID,
+			Mode:                     PracticeModeFocus,
+			DisplayName:              "HR focus",
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            "interview.test.turn.v1",
+			SessionPolicyRef:         "interview.test.session.v1",
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+			DisplayOrder:             30,
 		},
 	)
 
@@ -186,7 +192,7 @@ func TestCatalogRejectsUnregisteredOrDisabledEvaluationPolicy(t *testing.T) {
 	} {
 		t.Run(reference, func(t *testing.T) {
 			definition := testSceneDefinition()
-			definition.EvaluationPolicyRef = reference
+			definition.PracticeOptions[0].EvaluationPolicyRef = reference
 			if _, err := NewCatalog(
 				[]SceneDefinition{definition},
 				testPolicyValidator(),

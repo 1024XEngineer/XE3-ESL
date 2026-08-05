@@ -1158,26 +1158,11 @@ assert.throws(
 
 const ieltsCriterionOrder = ['IELTS_FC', 'IELTS_LR', 'IELTS_GRA', 'IELTS_PR'];
 const ieltsPartOrder = ['PART_1', 'PART_2', 'PART_3'];
-const ieltsPartQuestionIndexes = [
-  [1, 2, 3, 4, 5, 6, 7, 8],
-  [9],
-  [10, 11, 12, 13, 14],
-];
 const ieltsFindingKinds = [
   ['strengths', 'strength_finding_ids'],
   ['improvements', 'improvement_finding_ids'],
   ['upgrade_examples', 'upgrade_example_finding_ids'],
 ];
-
-const expectedIeltsPart = (index) => {
-  if (index <= 8) {
-    return 'PART_1';
-  }
-  if (index === 9) {
-    return 'PART_2';
-  }
-  return 'PART_3';
-};
 
 const assertIeltsSpeakingReportSemantics = (envelope) => {
   assert.equal(
@@ -1212,19 +1197,25 @@ const assertIeltsSpeakingReportSemantics = (envelope) => {
   const questionByTurnId = new Map();
   const questionByEvidenceRefId = new Map();
   const questionIds = new Set();
+  const questionIndexesByPart = new Map(
+    ieltsPartOrder.map((part) => [part, []]),
+  );
+  let currentPartOffset = 0;
   for (let offset = 0; offset < report.questions.length; offset += 1) {
     const question = report.questions[offset];
     const expectedIndex = offset + 1;
     assert.equal(
       question.index,
       expectedIndex,
-      'IELTS questions must use the frozen sequence 1..14',
+      'IELTS questions must use one contiguous frozen sequence',
     );
-    assert.equal(
-      question.part_id,
-      expectedIeltsPart(expectedIndex),
-      `Question ${expectedIndex} has the wrong IELTS Part`,
+    const partOffset = ieltsPartOrder.indexOf(question.part_id);
+    assert.ok(
+      partOffset >= currentPartOffset && partOffset <= currentPartOffset + 1,
+      `Question ${expectedIndex} breaks the frozen IELTS Part order`,
     );
+    currentPartOffset = partOffset;
+    questionIndexesByPart.get(question.part_id).push(question.index);
     assert.ok(
       !questionIds.has(question.question_id),
       `Duplicate question ${question.question_id}`,
@@ -1264,6 +1255,23 @@ const assertIeltsSpeakingReportSemantics = (envelope) => {
       }
     }
   }
+  assert.deepEqual(
+    ieltsPartOrder.map((part) => questionIndexesByPart.get(part).length > 0),
+    [true, true, true],
+    'IELTS Full Mock must contain all three Parts',
+  );
+  assert.equal(
+    report.test_summary.question_count,
+    report.questions.length,
+    'IELTS question_count must match the frozen Part composition',
+  );
+  assert.equal(
+    report.test_summary.answered_count,
+    report.questions.filter(
+      (question) => question.opportunity_status === 'PROVIDED',
+    ).length,
+    'IELTS answered_count must match the provided response count',
+  );
 
   const findingById = new Map();
   for (const criterion of report.criteria) {
@@ -1382,7 +1390,7 @@ const assertIeltsSpeakingReportSemantics = (envelope) => {
 
   for (let offset = 0; offset < report.part_reviews.length; offset += 1) {
     const part = report.part_reviews[offset];
-    const expectedIndexes = ieltsPartQuestionIndexes[offset];
+    const expectedIndexes = questionIndexesByPart.get(part.part_id);
     assert.deepEqual(
       part.question_indexes,
       expectedIndexes,
@@ -1477,6 +1485,7 @@ missingQuestion.assessment_status = 'NOT_ASSESSED';
 delete missingQuestion.confirmed_transcript;
 delete missingQuestion.response_turn_id;
 missingQuestion.evidence_ref_ids = [];
+ieltsReportWithMissingOpportunity.report.test_summary.answered_count -= 1;
 ieltsReportWithMissingOpportunity.report.part_reviews[2]
   .evidence_ref_ids.pop();
 assertValid(

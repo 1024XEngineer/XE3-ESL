@@ -48,6 +48,9 @@ type SessionPolicy struct {
 	EarlyCompletionRule        EarlyCompletionRule `json:"early_completion_rule"`
 	RetryAllowed               bool                `json:"retry_allowed"`
 	QuestionTranslationAllowed bool                `json:"question_translation_allowed"`
+	QuestionTipsAllowed        bool                `json:"question_tips_allowed"`
+	AvatarAllowed              bool                `json:"avatar_allowed"`
+	SpeechFeedbackAllowed      bool                `json:"speech_feedback_allowed"`
 }
 
 type PracticeObjective struct {
@@ -59,26 +62,26 @@ type PracticeObjective struct {
 // creating an IELTS Plan. Preparation resolves it once and persists only the
 // resulting immutable assignment.
 type IELTSQuestionSelection struct {
-	Mode         scene.IELTSPracticeMode `json:"mode"`
-	Part1SetID   string                  `json:"part_1_set_id,omitempty"`
-	TopicGroupID string                  `json:"topic_group_id,omitempty"`
+	Part1SetID   string `json:"part_1_set_id,omitempty"`
+	TopicGroupID string `json:"topic_group_id,omitempty"`
 }
 
 // IELTSAssignmentSnapshot is the complete IELTS question assignment frozen
 // into a Plan revision. Practice copies this value without consulting the
 // live Scene catalog.
 type IELTSAssignmentSnapshot struct {
-	BankID         string                  `json:"bank_id"`
-	Season         string                  `json:"season"`
-	Mode           scene.IELTSPracticeMode `json:"mode"`
-	Part1SetID     string                  `json:"part_1_set_id,omitempty"`
-	TopicGroupID   string                  `json:"topic_group_id,omitempty"`
-	TopicTitle     string                  `json:"topic_title,omitempty"`
-	Part2CueCard   string                  `json:"part_2_cue_card,omitempty"`
-	Part1Questions int                     `json:"part_1_questions"`
-	Part2Questions int                     `json:"part_2_questions"`
-	Part3Questions int                     `json:"part_3_questions"`
-	TurnBlueprints []string                `json:"turn_blueprints"`
+	BankID string                        `json:"bank_id"`
+	Season string                        `json:"season"`
+	Mode   scene.PracticeMode            `json:"mode"`
+	Parts  []IELTSAssignmentPartSnapshot `json:"parts"`
+}
+
+type IELTSAssignmentPartSnapshot struct {
+	Part           scene.PracticeMode `json:"part"`
+	SourceID       string             `json:"source_id"`
+	TopicTitle     string             `json:"topic_title,omitempty"`
+	CueCard        string             `json:"cue_card,omitempty"`
+	TurnBlueprints []string           `json:"turn_blueprints"`
 }
 
 // PracticePlan is Preparation's single executable-plan authority. Every
@@ -113,10 +116,11 @@ type CreatePlanRequest struct {
 }
 
 type RevisePlanRequest struct {
-	ExpectedPlanRevision int      `json:"expected_plan_revision"`
-	SelectedRoleIDs      []string `json:"selected_role_ids"`
-	PracticeOptionID     string   `json:"practice_option_id"`
-	MaxEffectiveTurns    int      `json:"max_effective_turns"`
+	ExpectedPlanRevision int                     `json:"expected_plan_revision"`
+	SelectedRoleIDs      []string                `json:"selected_role_ids"`
+	PracticeOptionID     string                  `json:"practice_option_id"`
+	MaxEffectiveTurns    int                     `json:"max_effective_turns"`
+	IELTSSelection       *IELTSQuestionSelection `json:"ielts_selection,omitempty"`
 }
 
 // SourceThread is the only Thread value Preparation freezes. Thread content

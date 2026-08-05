@@ -73,24 +73,14 @@ type AccessibleSelectionReader interface {
 // Catalog is an immutable in-process collection for deterministic tests and
 // local smoke composition. Production uses PostgresCatalog.
 type Catalog struct {
-	scenes            []SceneDefinition
-	ieltsQuestionBank *IELTSQuestionBank
+	scenes []SceneDefinition
 }
 
 func NewCatalog(
 	definitions []SceneDefinition,
 	policyValidator EvaluationPolicyReferenceValidator,
 ) (*Catalog, error) {
-	catalog, err := newValidatedCatalog(definitions, policyValidator)
-	if err != nil {
-		return nil, err
-	}
-	bank, err := loadEmbeddedIELTSQuestionBank()
-	if err != nil {
-		return nil, err
-	}
-	catalog.ieltsQuestionBank = &bank
-	return catalog, nil
+	return newValidatedCatalog(definitions, policyValidator)
 }
 
 func newValidatedCatalog(
@@ -115,12 +105,15 @@ func newValidatedCatalog(
 		if err := validateScene(definition, sceneIDs, roleIDs, optionIDs); err != nil {
 			return nil, err
 		}
-		if err := policyValidator.ValidateEvaluationPolicyReference(
-			definition.EvaluationPolicyRef,
-		); err != nil {
-			return nil, invalidDefinition(
-				"evaluation policy reference is not registered and enabled",
-			)
+		for _, option := range definition.PracticeOptions {
+			if err := policyValidator.ValidateEvaluationPolicyReference(
+				option.EvaluationPolicyRef,
+			); err != nil {
+				return nil, invalidDefinition(
+					"practice option %q evaluation policy reference is not registered and enabled",
+					option.ID,
+				)
+			}
 		}
 		sceneIDs[definition.ID] = struct{}{}
 		for _, role := range definition.Roles {
@@ -141,22 +134,6 @@ func newValidatedCatalog(
 		return scenes[i].DisplayOrder < scenes[j].DisplayOrder
 	})
 	return &Catalog{scenes: scenes}, nil
-}
-
-func (c *Catalog) IELTSQuestionBank() (IELTSQuestionBank, error) {
-	if c == nil || c.ieltsQuestionBank == nil {
-		return IELTSQuestionBank{}, ErrIELTSQuestionBankUnavailable
-	}
-	return publishedIELTSQuestionBank(*c.ieltsQuestionBank), nil
-}
-
-func (c *Catalog) ResolveIELTSQuestionSet(
-	selection IELTSQuestionSetSelection,
-) (IELTSResolvedQuestionSet, error) {
-	if c == nil || c.ieltsQuestionBank == nil {
-		return IELTSResolvedQuestionSet{}, ErrIELTSQuestionBankUnavailable
-	}
-	return resolveIELTSQuestionSet(*c.ieltsQuestionBank, selection)
 }
 
 func (c *Catalog) ListActiveScenes(ctx context.Context) ([]SceneDefinition, error) {
@@ -231,7 +208,7 @@ func (c *Catalog) ResolveSelection(
 	if !found {
 		return SelectionSnapshot{}, ErrPracticeOptionNotFound
 	}
-	if option.Type == PracticeOptionFocus &&
+	if option.Mode == PracticeModeFocus &&
 		(len(selectedRoleIDs) != 1 || selectedRoleIDs[0] != option.RoleDefinitionID) {
 		return SelectionSnapshot{}, ErrCatalogSelectionInvalid
 	}
@@ -303,12 +280,12 @@ func validateScene(
 	if _, duplicate := sceneIDs[definition.ID]; duplicate {
 		return invalidDefinition("scene_id %q is duplicated", definition.ID)
 	}
-	if !validSceneFamilyModel(definition.Family, definition.Model) {
+	if !validExperienceCategory(definition.Experience, definition.Category) {
 		return invalidDefinition(
-			"scene %q has invalid family/model %q/%q",
+			"scene %q has invalid experience/category %q/%q",
 			definition.ID,
-			definition.Family,
-			definition.Model,
+			definition.Experience,
+			definition.Category,
 		)
 	}
 	if definition.Status != SceneStatusActive && definition.Status != SceneStatusInactive {
@@ -316,14 +293,6 @@ func validateScene(
 	}
 	if definition.Version < 1 || !nonBlank(definition.Name) || definition.DisplayOrder < 0 {
 		return invalidDefinition("scene %q has invalid public fields", definition.ID)
-	}
-	if !validPolicyRef(definition.TurnPolicyRef, ".turn.v1") ||
-		!validPolicyRef(definition.SessionPolicyRef, ".session.v1") ||
-		!validPolicyRef(
-			definition.EvaluationPolicyRef,
-			".evaluation.v1",
-		) {
-		return invalidDefinition("scene %q has invalid policy refs", definition.ID)
 	}
 	if !validScenePrompt(definition.Prompt) {
 		return invalidDefinition("scene %q has invalid prompt", definition.ID)
@@ -362,11 +331,15 @@ func validateScene(
 	}
 
 	focusCount := make(map[string]int, len(definition.Roles))
-	fullSimulationCount := 0
+	modeCount := make(map[PracticeMode]int, len(definition.PracticeOptions))
 	localOptions := make(map[string]struct{}, len(definition.PracticeOptions))
 	for _, option := range definition.PracticeOptions {
 		if !validResourceID(option.ID) || option.SceneID != definition.ID ||
-			!nonBlank(option.DisplayName) || option.DisplayOrder < 0 {
+			!nonBlank(option.DisplayName) || option.DisplayOrder < 0 ||
+			option.SuggestedDurationSeconds < 1 ||
+			!validPolicyRef(option.TurnPolicyRef, ".turn.v1") ||
+			!validPolicyRef(option.SessionPolicyRef, ".session.v1") ||
+			!validPolicyRef(option.EvaluationPolicyRef, ".evaluation.v1") {
 			return invalidDefinition("scene %q has invalid practice option %q", definition.ID, option.ID)
 		}
 		if _, duplicate := localOptions[option.ID]; duplicate {
@@ -376,27 +349,50 @@ func validateScene(
 			return invalidDefinition("practice_option_id %q is not globally unique", option.ID)
 		}
 		localOptions[option.ID] = struct{}{}
-		switch option.Type {
-		case PracticeOptionFullSimulation:
+		modeCount[option.Mode]++
+		switch option.Mode {
+		case PracticeModeFullSimulation:
 			if option.RoleDefinitionID != "" {
 				return invalidDefinition("FULL_SIMULATION option %q must not reference a role", option.ID)
 			}
-			fullSimulationCount++
-		case PracticeOptionFocus:
+		case PracticeModeFocus:
 			if _, exists := localRoles[option.RoleDefinitionID]; !exists {
 				return invalidDefinition("FOCUS option %q must reference a role in its scene", option.ID)
 			}
 			focusCount[option.RoleDefinitionID]++
+		case PracticeModeFullMock, PracticeModePart1, PracticeModePart2, PracticeModePart3:
+			if option.RoleDefinitionID != "" {
+				return invalidDefinition("IELTS option %q must not reference a role", option.ID)
+			}
 		default:
-			return invalidDefinition("practice option %q has unsupported type %q", option.ID, option.Type)
+			return invalidDefinition("practice option %q has unsupported mode %q", option.ID, option.Mode)
 		}
 	}
-	if fullSimulationCount != 1 {
-		return invalidDefinition("scene %q must contain one FULL_SIMULATION option", definition.ID)
-	}
-	for roleID := range localRoles {
-		if focusCount[roleID] != 1 {
-			return invalidDefinition("role %q must have exactly one FOCUS option", roleID)
+	if definition.Experience == PracticeExperienceIELTSSpeaking {
+		for _, mode := range []PracticeMode{
+			PracticeModeFullMock,
+			PracticeModePart1,
+			PracticeModePart2,
+			PracticeModePart3,
+		} {
+			if modeCount[mode] != 1 {
+				return invalidDefinition("IELTS Scene %q must contain exactly one %s option", definition.ID, mode)
+			}
+		}
+		if len(definition.PracticeOptions) != 4 {
+			return invalidDefinition("IELTS Scene %q must contain exactly four options", definition.ID)
+		}
+	} else {
+		if modeCount[PracticeModeFullSimulation] != 1 {
+			return invalidDefinition("scene %q must contain one FULL_SIMULATION option", definition.ID)
+		}
+		if len(definition.PracticeOptions) != len(definition.Roles)+1 {
+			return invalidDefinition("scene %q has unsupported practice modes", definition.ID)
+		}
+		for roleID := range localRoles {
+			if focusCount[roleID] != 1 {
+				return invalidDefinition("role %q must have exactly one FOCUS option", roleID)
+			}
 		}
 	}
 	return nil
@@ -451,28 +447,41 @@ func validPracticeObjectiveDefinitions(
 	return true
 }
 
-func validSceneFamilyModel(family SceneFamily, model SceneModel) bool {
-	switch family {
-	case SceneFamilyInterview:
-		return model == SceneModelProjectExperienceDeepDive || model == SceneModelInterviewBasicDialogue
-	case SceneFamilyExam:
-		return model == SceneModelIELTSSpeakingPart1 || model == SceneModelIELTSSpeakingPart2 ||
-			model == SceneModelIELTSSpeakingPart3 || model == SceneModelIELTSSpeakingFullMock ||
-			model == SceneModelExamBasicDialogue
-	case SceneFamilyWorkplace:
-		return model == SceneModelProgressAndRiskUpdate || model == SceneModelWorkplaceBasicDialogue
-	case SceneFamilyDaily:
-		return model == SceneModelHotelCheckinAndIssueHandling || model == SceneModelDailyBasicDialogue
+func validExperienceCategory(
+	experience PracticeExperience,
+	category SceneCategory,
+) bool {
+	switch experience {
+	case PracticeExperienceInterview:
+		switch category {
+		case SceneCategoryInterviewRecruiter,
+			SceneCategoryInterviewBehavioral,
+			SceneCategoryInterviewProfessional,
+			SceneCategoryInterviewHiringManager,
+			SceneCategoryInterviewCustom:
+			return true
+		}
+	case PracticeExperienceIELTSSpeaking:
+		return category == SceneCategoryIELTSSpeaking
+	case PracticeExperienceRoleplay:
+		switch category {
+		case SceneCategoryRoleplayWorkplace,
+			SceneCategoryRoleplayTravel,
+			SceneCategoryRoleplayDaily,
+			SceneCategoryRoleplayCustom:
+			return true
+		}
 	default:
 		return false
 	}
+	return false
 }
 
 func validScenePrompt(prompt ScenePrompt) bool {
 	return nonBlank(prompt.PublicSceneBrief) && nonBlank(prompt.PracticeGoal) &&
 		nonBlank(prompt.UserRole) && nonBlank(prompt.AIRole) &&
 		nonBlank(prompt.PersonaSummary) && validStringSet(prompt.FocusAreas) &&
-		validStringSet(prompt.TurnBlueprints) && prompt.SuggestedDurationSeconds > 0
+		validStringSet(prompt.TurnBlueprints)
 }
 
 func invalidDefinition(format string, args ...any) error {

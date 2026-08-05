@@ -8,6 +8,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -265,9 +266,9 @@ func TestPlanServiceIELTSCreateResolvesAndFreezesQuestionAssignment(
 			return planIELTSSelectionFixture(), nil
 		},
 		resolveIELTS: func(
-			selection scene.IELTSQuestionSetSelection,
-		) (scene.IELTSResolvedQuestionSet, error) {
-			if selection.Mode != scene.IELTSPracticeModePart2 ||
+			selection ielts.QuestionSetSelection,
+		) (ielts.ResolvedQuestionSet, error) {
+			if selection.Mode != ielts.PracticeModePart2 ||
 				selection.Part1SetID != "" ||
 				selection.TopicGroupID != "topic-1" {
 				t.Fatalf("IELTS selection = %#v", selection)
@@ -277,7 +278,6 @@ func TestPlanServiceIELTSCreateResolvesAndFreezesQuestionAssignment(
 	})
 	request := validPlanCreateRequest()
 	request.IELTSSelection = &IELTSQuestionSelection{
-		Mode:         scene.IELTSPracticeModePart2,
 		TopicGroupID: "topic-1",
 	}
 	plan, _, err := service.CreatePlan(
@@ -290,19 +290,23 @@ func TestPlanServiceIELTSCreateResolvesAndFreezesQuestionAssignment(
 		t.Fatalf("CreatePlan IELTS: %v", err)
 	}
 	if created.IELTSAssignment == nil || plan.IELTSAssignment == nil ||
-		created.IELTSAssignment.Mode != scene.IELTSPracticeModePart2 ||
-		created.IELTSAssignment.TopicGroupID != "topic-1" ||
+		created.IELTSAssignment.Mode != scene.PracticeModePart2 ||
+		len(created.IELTSAssignment.Parts) != 2 ||
+		created.IELTSAssignment.Parts[0].Part != scene.PracticeModePart2 ||
+		created.IELTSAssignment.Parts[0].SourceID != "topic-1" ||
+		created.IELTSAssignment.Parts[1].Part != scene.PracticeModePart3 ||
+		created.IELTSAssignment.Parts[1].SourceID != "topic-1" ||
 		created.SceneSelection.Scene.Prompt.PublicSceneBrief !=
 			"完成“科技与学习”题卡，并可继续同主题 Part 3。" ||
 		!equalPlanStrings(
 			created.SceneSelection.Scene.Prompt.TurnBlueprints,
-			created.IELTSAssignment.TurnBlueprints,
+			ieltsAssignmentTurnBlueprints(*created.IELTSAssignment),
 		) {
 		t.Fatalf("frozen IELTS Plan = %#v", created)
 	}
 }
 
-func TestPlanServiceIELTSRevisePreservesFrozenAssignment(t *testing.T) {
+func TestPlanServiceIELTSReviseRefreezesExplicitAssignment(t *testing.T) {
 	t.Parallel()
 
 	current := completeIELTSPlanFixture()
@@ -327,10 +331,14 @@ func TestPlanServiceIELTSRevisePreservesFrozenAssignment(t *testing.T) {
 	catalogReads := 0
 	service := newPlanTestService(t, repository, planServiceDependencies{
 		resolveIELTS: func(
-			scene.IELTSQuestionSetSelection,
-		) (scene.IELTSResolvedQuestionSet, error) {
+			selection ielts.QuestionSetSelection,
+		) (ielts.ResolvedQuestionSet, error) {
 			catalogReads++
-			return scene.IELTSResolvedQuestionSet{}, errors.New("unexpected IELTS read")
+			if selection.Mode != ielts.PracticeModePart2 ||
+				selection.TopicGroupID != "topic-1" {
+				t.Fatalf("IELTS revision selection = %#v", selection)
+			}
+			return planIELTSResolvedFixture(), nil
 		},
 	})
 	_, _, err := service.RevisePlan(
@@ -343,15 +351,18 @@ func TestPlanServiceIELTSRevisePreservesFrozenAssignment(t *testing.T) {
 			SelectedRoleIDs:      []string{"role-1"},
 			PracticeOptionID:     "option-full",
 			MaxEffectiveTurns:    5,
+			IELTSSelection: &IELTSQuestionSelection{
+				TopicGroupID: "topic-1",
+			},
 		},
 	)
 	if err != nil {
 		t.Fatalf("RevisePlan IELTS: %v", err)
 	}
-	if catalogReads != 0 || revised.IELTSAssignment == nil ||
+	if catalogReads != 1 || revised.IELTSAssignment == nil ||
 		!equalPlanStrings(
-			revised.IELTSAssignment.TurnBlueprints,
-			current.IELTSAssignment.TurnBlueprints,
+			ieltsAssignmentTurnBlueprints(*revised.IELTSAssignment),
+			ieltsAssignmentTurnBlueprints(*current.IELTSAssignment),
 		) {
 		t.Fatalf("revised IELTS assignment = %#v, reads=%d", revised, catalogReads)
 	}
@@ -666,7 +677,6 @@ func (s planThreadReaderStub) ReadOwnedThread(
 type planCatalogStub struct {
 	resolve           func(string, int, []string, string) (scene.SelectionSnapshot, error)
 	resolveAccessible func(string, string, int, []string, string) (scene.SelectionSnapshot, error)
-	resolveIELTS      func(scene.IELTSQuestionSetSelection) (scene.IELTSResolvedQuestionSet, error)
 }
 
 func (planCatalogStub) ListActiveScenes(
@@ -719,19 +729,19 @@ func (s planCatalogStub) ResolveAccessibleSelection(
 	return s.resolve(sceneID, sceneVersion, roleIDs, optionID)
 }
 
-func (planCatalogStub) IELTSQuestionBank() (scene.IELTSQuestionBank, error) {
-	return scene.IELTSQuestionBank{}, errors.New("unexpected IELTS bank read")
+type planIELTSResolverStub struct {
+	resolve func(ielts.QuestionSetSelection) (ielts.ResolvedQuestionSet, error)
 }
 
-func (s planCatalogStub) ResolveIELTSQuestionSet(
-	selection scene.IELTSQuestionSetSelection,
-) (scene.IELTSResolvedQuestionSet, error) {
-	if s.resolveIELTS == nil {
-		return scene.IELTSResolvedQuestionSet{}, errors.New(
+func (s planIELTSResolverStub) ResolveQuestionSet(
+	selection ielts.QuestionSetSelection,
+) (ielts.ResolvedQuestionSet, error) {
+	if s.resolve == nil {
+		return ielts.ResolvedQuestionSet{}, errors.New(
 			"unexpected IELTS question-set read",
 		)
 	}
-	return s.resolveIELTS(selection)
+	return s.resolve(selection)
 }
 
 type planServiceDependencies struct {
@@ -748,7 +758,7 @@ type planServiceDependencies struct {
 		[]string,
 		string,
 	) (scene.SelectionSnapshot, error)
-	resolveIELTS func(scene.IELTSQuestionSetSelection) (scene.IELTSResolvedQuestionSet, error)
+	resolveIELTS func(ielts.QuestionSetSelection) (ielts.ResolvedQuestionSet, error)
 }
 
 func newPlanTestService(
@@ -791,8 +801,8 @@ func newPlanTestService(
 		planCatalogStub{
 			resolve:           dependencies.resolveSelection,
 			resolveAccessible: dependencies.resolveAccessibleSelection,
-			resolveIELTS:      dependencies.resolveIELTS,
 		},
+		planIELTSResolverStub{resolve: dependencies.resolveIELTS},
 		planPolicyResolverStub{},
 	)
 	if err != nil {
@@ -838,24 +848,20 @@ func planSnapshotFixture() Snapshot {
 
 func planSelectionFixture() scene.SelectionSnapshot {
 	definition := scene.SceneDefinition{
-		ID:                  "scene-1",
-		Family:              scene.SceneFamilyInterview,
-		Model:               scene.SceneModelInterviewBasicDialogue,
-		Name:                "Interview",
-		Version:             2,
-		Status:              scene.SceneStatusActive,
-		TurnPolicyRef:       "interview.turn.v1",
-		SessionPolicyRef:    "generic.practice.session.v1",
-		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+		ID:         "scene-1",
+		Experience: scene.PracticeExperienceInterview,
+		Category:   scene.SceneCategoryInterviewProfessional,
+		Name:       "Interview",
+		Version:    2,
+		Status:     scene.SceneStatusActive,
 		Prompt: scene.ScenePrompt{
-			PublicSceneBrief:         "Interview practice",
-			PracticeGoal:             "Give clear answers",
-			UserRole:                 "Candidate",
-			AIRole:                   "Interviewer",
-			PersonaSummary:           "A structured interviewer.",
-			FocusAreas:               []string{"clarity", "evidence"},
-			TurnBlueprints:           []string{"one", "two", "three", "four"},
-			SuggestedDurationSeconds: 600,
+			PublicSceneBrief: "Interview practice",
+			PracticeGoal:     "Give clear answers",
+			UserRole:         "Candidate",
+			AIRole:           "Interviewer",
+			PersonaSummary:   "A structured interviewer.",
+			FocusAreas:       []string{"clarity", "evidence"},
+			TurnBlueprints:   []string{"one", "two", "three", "four"},
 		},
 		Roles: []scene.RoleDefinition{
 			{
@@ -871,15 +877,23 @@ func planSelectionFixture() scene.SelectionSnapshot {
 		},
 		PracticeOptions: []scene.PracticeOption{
 			{
-				ID:      "option-full",
-				SceneID: "scene-1",
-				Type:    scene.PracticeOptionFullSimulation,
+				ID:                       "option-full",
+				SceneID:                  "scene-1",
+				Mode:                     scene.PracticeModeFullSimulation,
+				SuggestedDurationSeconds: 600,
+				TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+				SessionPolicyRef:         "generic.practice.session.v1",
+				EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 			},
 			{
-				ID:               "option-focus",
-				SceneID:          "scene-1",
-				RoleDefinitionID: "role-1",
-				Type:             scene.PracticeOptionFocus,
+				ID:                       "option-focus",
+				SceneID:                  "scene-1",
+				RoleDefinitionID:         "role-1",
+				Mode:                     scene.PracticeModeFocus,
+				SuggestedDurationSeconds: 300,
+				TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+				SessionPolicyRef:         "generic.practice.session.v1",
+				EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 			},
 		},
 	}
@@ -898,14 +912,14 @@ func (planPolicyResolverStub) ResolveSessionPolicy(
 	requestedMaxEffectiveTurns int,
 ) (SessionPolicy, error) {
 	policy := SessionPolicy{
-		SuggestedDurationSeconds: definition.Prompt.SuggestedDurationSeconds,
+		SuggestedDurationSeconds: option.SuggestedDurationSeconds,
 		MinEffectiveTurns:        4,
 		MaxEffectiveTurns:        6,
 		CoverageCheckpointTurn:   4,
 		MaxFollowUpsPerQuestion:  1,
 		EarlyCompletionRule:      EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 	}
-	if option.Type == scene.PracticeOptionFocus {
+	if option.Mode == scene.PracticeModeFocus {
 		policy.MinEffectiveTurns = 1
 		policy.MaxEffectiveTurns = 3
 		policy.CoverageCheckpointTurn = 1
@@ -948,24 +962,36 @@ func completePlanFixture() PracticePlan {
 
 func planIELTSSelectionFixture() scene.SelectionSnapshot {
 	selection := planSelectionFixture()
-	selection.Scene.Family = scene.SceneFamilyExam
-	selection.Scene.Model = scene.SceneModelIELTSSpeakingPart2
+	selection.Scene.Experience = scene.PracticeExperienceIELTSSpeaking
+	selection.Scene.Category = scene.SceneCategoryIELTSSpeaking
 	selection.Scene.Name = "IELTS Speaking Part 2"
+	selection.Scene.PracticeOptions[0].Mode = scene.PracticeModePart2
+	selection.Scene.PracticeOptions[0].TurnPolicyRef = "ielts.speaking_part2.turn.v1"
+	selection.Scene.PracticeOptions[0].SessionPolicyRef = "ielts.speaking_part2.session.v1"
+	selection.Scene.PracticeOptions[0].EvaluationPolicyRef = "ielts.speaking_practice.evaluation.v1"
 	return selection
 }
 
-func planIELTSResolvedFixture() scene.IELTSResolvedQuestionSet {
-	return scene.IELTSResolvedQuestionSet{
-		BankID:         "ielts-bank-1",
-		Season:         "2026-05",
-		Mode:           scene.IELTSPracticeModePart2,
-		TopicGroupID:   "topic-1",
-		TopicTitle:     "科技与学习",
-		Part2CueCard:   "Describe a useful technology.",
-		TurnBlueprints: []string{"Part 2 cue card", "Part 3 question"},
-		Part1Questions: 0,
-		Part2Questions: 1,
-		Part3Questions: 1,
+func planIELTSResolvedFixture() ielts.ResolvedQuestionSet {
+	return ielts.ResolvedQuestionSet{
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   ielts.PracticeModePart2,
+		Parts: []ielts.ResolvedPart{
+			{
+				Part:           ielts.PracticeModePart2,
+				SourceID:       "topic-1",
+				TopicTitle:     "科技与学习",
+				CueCard:        "Describe a useful technology.",
+				TurnBlueprints: []string{"Part 2 cue card"},
+			},
+			{
+				Part:           ielts.PracticeModePart3,
+				SourceID:       "topic-1",
+				TopicTitle:     "科技与学习",
+				TurnBlueprints: []string{"Part 3 question"},
+			},
+		},
 	}
 }
 
@@ -974,19 +1000,27 @@ func completeIELTSPlanFixture() PracticePlan {
 	plan.SceneSelection = planIELTSSelectionFixture()
 	resolved := planIELTSResolvedFixture()
 	plan.IELTSAssignment = &IELTSAssignmentSnapshot{
-		BankID:         resolved.BankID,
-		Season:         resolved.Season,
-		Mode:           resolved.Mode,
-		TopicGroupID:   resolved.TopicGroupID,
-		TopicTitle:     resolved.TopicTitle,
-		Part2CueCard:   resolved.Part2CueCard,
-		Part1Questions: resolved.Part1Questions,
-		Part2Questions: resolved.Part2Questions,
-		Part3Questions: resolved.Part3Questions,
-		TurnBlueprints: clonePlanStrings(resolved.TurnBlueprints),
+		BankID: resolved.BankID,
+		Season: resolved.Season,
+		Mode:   scene.PracticeMode(resolved.Mode),
+		Parts: []IELTSAssignmentPartSnapshot{
+			{
+				Part:           scene.PracticeMode(resolved.Parts[0].Part),
+				SourceID:       resolved.Parts[0].SourceID,
+				TopicTitle:     resolved.Parts[0].TopicTitle,
+				CueCard:        resolved.Parts[0].CueCard,
+				TurnBlueprints: clonePlanStrings(resolved.Parts[0].TurnBlueprints),
+			},
+			{
+				Part:           scene.PracticeMode(resolved.Parts[1].Part),
+				SourceID:       resolved.Parts[1].SourceID,
+				TopicTitle:     resolved.Parts[1].TopicTitle,
+				TurnBlueprints: clonePlanStrings(resolved.Parts[1].TurnBlueprints),
+			},
+		},
 	}
 	plan.SceneSelection.Scene.Prompt.TurnBlueprints = clonePlanStrings(
-		resolved.TurnBlueprints,
+		ieltsAssignmentTurnBlueprints(*plan.IELTSAssignment),
 	)
 	plan.SceneSelection.Scene.Prompt.PublicSceneBrief =
 		ieltsAssignmentSceneBrief(*plan.IELTSAssignment)

@@ -18,14 +18,11 @@ WITH latest_builtin AS (
     SELECT DISTINCT ON (versions.scene_id)
         versions.scene_id,
         versions.scene_version,
-        versions.scene_family,
-        versions.scene_model,
+        versions.practice_experience,
+        versions.scene_category,
         versions.name,
         versions.status,
-	        versions.turn_policy_ref,
-	        versions.session_policy_ref,
-	        versions.evaluation_policy_ref,
-	        versions.prompt,
+        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -38,14 +35,11 @@ WITH latest_builtin AS (
 SELECT
     scene_id,
     scene_version,
-    scene_family,
-    scene_model,
+    practice_experience,
+    scene_category,
     name,
     status,
-	    turn_policy_ref,
-	    session_policy_ref,
-	    evaluation_policy_ref,
-	    prompt,
+    prompt,
     roles,
     practice_options,
     display_order
@@ -58,14 +52,11 @@ WITH latest_builtin AS (
     SELECT
         versions.scene_id,
         versions.scene_version,
-        versions.scene_family,
-        versions.scene_model,
+        versions.practice_experience,
+        versions.scene_category,
         versions.name,
         versions.status,
-	        versions.turn_policy_ref,
-	        versions.session_policy_ref,
-	        versions.evaluation_policy_ref,
-	        versions.prompt,
+        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -80,14 +71,11 @@ WITH latest_builtin AS (
 SELECT
     scene_id,
     scene_version,
-    scene_family,
-    scene_model,
+    practice_experience,
+    scene_category,
     name,
     status,
-	    turn_policy_ref,
-	    session_policy_ref,
-	    evaluation_policy_ref,
-	    prompt,
+    prompt,
     roles,
     practice_options,
     display_order
@@ -99,14 +87,11 @@ WITH latest_builtin AS (
     SELECT
         versions.scene_id,
         versions.scene_version,
-        versions.scene_family,
-        versions.scene_model,
+        versions.practice_experience,
+        versions.scene_category,
         versions.name,
         versions.status,
-	        versions.turn_policy_ref,
-	        versions.session_policy_ref,
-	        versions.evaluation_policy_ref,
-	        versions.prompt,
+        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -121,14 +106,11 @@ WITH latest_builtin AS (
 SELECT
     scene_id,
     scene_version,
-    scene_family,
-    scene_model,
+    practice_experience,
+    scene_category,
     name,
     status,
-	    turn_policy_ref,
-	    session_policy_ref,
-	    evaluation_policy_ref,
-	    prompt,
+    prompt,
     roles,
     practice_options,
     display_order
@@ -141,14 +123,11 @@ WITH latest_accessible AS (
     SELECT
         versions.scene_id,
         versions.scene_version,
-        versions.scene_family,
-        versions.scene_model,
+        versions.practice_experience,
+        versions.scene_category,
         versions.name,
         versions.status,
-	        versions.turn_policy_ref,
-	        versions.session_policy_ref,
-	        versions.evaluation_policy_ref,
-	        versions.prompt,
+        versions.prompt,
         versions.roles,
         versions.practice_options,
         versions.display_order
@@ -166,14 +145,11 @@ WITH latest_accessible AS (
 SELECT
     scene_id,
     scene_version,
-    scene_family,
-    scene_model,
+    practice_experience,
+    scene_category,
     name,
     status,
-	    turn_policy_ref,
-	    session_policy_ref,
-	    evaluation_policy_ref,
-	    prompt,
+    prompt,
     roles,
     practice_options,
     display_order
@@ -219,9 +195,8 @@ func (database pgxCatalogDatabase) QueryRow(
 
 // PostgresCatalog is the production read adapter for immutable Scene versions.
 type PostgresCatalog struct {
-	database          catalogDatabase
-	policyValidator   EvaluationPolicyReferenceValidator
-	ieltsQuestionBank *IELTSQuestionBank
+	database        catalogDatabase
+	policyValidator EvaluationPolicyReferenceValidator
 }
 
 func NewPostgresCatalog(
@@ -249,14 +224,9 @@ func newPostgresCatalog(
 			"scene: Evaluation policy validator is required",
 		)
 	}
-	bank, err := loadEmbeddedIELTSQuestionBank()
-	if err != nil {
-		return nil, err
-	}
 	return &PostgresCatalog{
-		database:          database,
-		policyValidator:   policyValidator,
-		ieltsQuestionBank: &bank,
+		database:        database,
+		policyValidator: policyValidator,
 	}, nil
 }
 
@@ -418,22 +388,6 @@ func (catalog *PostgresCatalog) ResolveAccessibleSelection(
 	)
 }
 
-func (catalog *PostgresCatalog) IELTSQuestionBank() (IELTSQuestionBank, error) {
-	if catalog == nil || catalog.ieltsQuestionBank == nil {
-		return IELTSQuestionBank{}, ErrIELTSQuestionBankUnavailable
-	}
-	return publishedIELTSQuestionBank(*catalog.ieltsQuestionBank), nil
-}
-
-func (catalog *PostgresCatalog) ResolveIELTSQuestionSet(
-	selection IELTSQuestionSetSelection,
-) (IELTSResolvedQuestionSet, error) {
-	if catalog == nil || catalog.ieltsQuestionBank == nil {
-		return IELTSResolvedQuestionSet{}, ErrIELTSQuestionBankUnavailable
-	}
-	return resolveIELTSQuestionSet(*catalog.ieltsQuestionBank, selection)
-}
-
 type databaseRoleDefinition struct {
 	ID                 string                        `json:"role_definition_id"`
 	SceneID            string                        `json:"scene_id"`
@@ -447,12 +401,16 @@ type databaseRoleDefinition struct {
 }
 
 type databasePracticeOption struct {
-	ID               string             `json:"practice_option_id"`
-	SceneID          string             `json:"scene_id"`
-	RoleDefinitionID string             `json:"role_definition_id,omitempty"`
-	Type             PracticeOptionType `json:"practice_option_type"`
-	DisplayName      string             `json:"display_name"`
-	DisplayOrder     int                `json:"display_order"`
+	ID                       string       `json:"practice_option_id"`
+	SceneID                  string       `json:"scene_id"`
+	RoleDefinitionID         string       `json:"role_definition_id,omitempty"`
+	Mode                     PracticeMode `json:"practice_mode"`
+	DisplayName              string       `json:"display_name"`
+	SuggestedDurationSeconds int          `json:"suggested_duration_seconds"`
+	TurnPolicyRef            string       `json:"turn_policy_ref"`
+	SessionPolicyRef         string       `json:"session_policy_ref"`
+	EvaluationPolicyRef      string       `json:"evaluation_policy_ref"`
+	DisplayOrder             int          `json:"display_order"`
 }
 
 func scanSceneDefinition(scanner catalogRow) (SceneDefinition, error) {
@@ -466,13 +424,10 @@ func scanSceneDefinition(scanner catalogRow) (SceneDefinition, error) {
 	if err := scanner.Scan(
 		&definition.ID,
 		&version,
-		&definition.Family,
-		&definition.Model,
+		&definition.Experience,
+		&definition.Category,
 		&definition.Name,
 		&definition.Status,
-		&definition.TurnPolicyRef,
-		&definition.SessionPolicyRef,
-		&definition.EvaluationPolicyRef,
 		&promptPayload,
 		&rolesPayload,
 		&optionsPayload,
@@ -534,12 +489,16 @@ func scanSceneDefinition(scanner catalogRow) (SceneDefinition, error) {
 	definition.PracticeOptions = make([]PracticeOption, len(databaseOptions))
 	for index, option := range databaseOptions {
 		definition.PracticeOptions[index] = PracticeOption{
-			ID:               option.ID,
-			SceneID:          option.SceneID,
-			RoleDefinitionID: option.RoleDefinitionID,
-			Type:             option.Type,
-			DisplayName:      option.DisplayName,
-			DisplayOrder:     option.DisplayOrder,
+			ID:                       option.ID,
+			SceneID:                  option.SceneID,
+			RoleDefinitionID:         option.RoleDefinitionID,
+			Mode:                     option.Mode,
+			DisplayName:              option.DisplayName,
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+			TurnPolicyRef:            option.TurnPolicyRef,
+			SessionPolicyRef:         option.SessionPolicyRef,
+			EvaluationPolicyRef:      option.EvaluationPolicyRef,
+			DisplayOrder:             option.DisplayOrder,
 		}
 	}
 	return definition, nil

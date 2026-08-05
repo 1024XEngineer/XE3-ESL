@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -320,10 +321,13 @@ func TestEvidenceSourceComposeRejectsUntrustedOrUnsupportedRequest(
 			scene: evaluation.SceneOverseasDaily,
 		},
 		{
-			name:   "scene mismatch",
-			mutate: func(*evidenceSourceFixture) {},
-			scope:  evaluation.ScopeSession,
-			scene:  evaluation.SceneInterview,
+			name: "evaluation policy mismatch",
+			mutate: func(f *evidenceSourceFixture) {
+				f.practice.session.EvaluationPolicyRef =
+					"interview.shadow.evaluation.v1"
+			},
+			scope: evaluation.ScopeSession,
+			scene: evaluation.SceneOverseasDaily,
 		},
 	}
 	for _, test := range tests {
@@ -472,19 +476,160 @@ func TestEvidenceSourceComposeMapsCrossOwnerAndDeletionToNotFound(
 	}
 }
 
-func TestEvidenceSceneMatchesAllSupportedIELTSPracticeModels(t *testing.T) {
-	for _, model := range []practice.SceneModel{
-		practice.SceneModelExamBasicDialogue,
-		practice.SceneModelIELTSSpeakingPart2,
-		practice.SceneModelIELTSSpeakingFullMock,
-	} {
-		if !evidenceSceneMatches(
-			practice.SceneFamilyExam,
-			model,
-			evaluation.SceneIELTSSpeaking,
-		) {
-			t.Fatalf("IELTS model %q was rejected", model)
+func TestEvidenceIELTSAssignmentModeMatchesPracticeMode(t *testing.T) {
+	practiceContext := PracticeContext{
+		PracticeMode: "PART_2",
+		TaskBlueprints: []string{
+			"Part 2 cue card: describe a skill",
+			"Part 3 question: why do people learn new skills?",
+		},
+		IELTSAssignment: &IELTSAssignment{
+			BankID: "ielts-bank-v1",
+			Season: "2026 Q3",
+			Mode:   "PART_2",
+			Parts: []IELTSAssignmentPart{
+				{
+					Part:       "PART_2",
+					SourceID:   "learning-skill",
+					TopicTitle: "Learning a skill",
+					CueCard:    "Describe a skill",
+					TurnBlueprints: []string{
+						"Part 2 cue card: describe a skill",
+					},
+				},
+				{
+					Part:       "PART_3",
+					SourceID:   "learning-skill",
+					TopicTitle: "Learning a skill",
+					TurnBlueprints: []string{
+						"Part 3 question: why do people learn new skills?",
+					},
+				},
+			},
+		},
+	}
+	if !validEvidenceIELTSAssignment(practiceContext) {
+		t.Fatal("matching IELTS assignment mode was rejected")
+	}
+	practiceContext.IELTSAssignment.Mode = "PART_3"
+	if validEvidenceIELTSAssignment(practiceContext) {
+		t.Fatal("mismatched IELTS assignment mode was accepted")
+	}
+	practiceContext.PracticeMode = "FULL_SIMULATION"
+	practiceContext.IELTSAssignment.Mode = "FULL_SIMULATION"
+	if validEvidenceIELTSAssignment(practiceContext) {
+		t.Fatal("IELTS assignment was accepted for a general practice mode")
+	}
+}
+
+func TestEvidenceIELTSAssignmentRejectsBrokenPartComposition(t *testing.T) {
+	validContext := func() PracticeContext {
+		return PracticeContext{
+			PracticeMode: "FULL_MOCK",
+			TaskBlueprints: []string{
+				"Part 1 question",
+				"Part 2 cue card",
+				"Part 3 question",
+			},
+			IELTSAssignment: &IELTSAssignment{
+				BankID: "ielts-bank-v1",
+				Season: "2026 Q3",
+				Mode:   "FULL_MOCK",
+				Parts: []IELTSAssignmentPart{
+					{Part: "PART_1", SourceID: "part-1-set", TurnBlueprints: []string{"Part 1 question"}},
+					{Part: "PART_2", SourceID: "topic-group", TopicTitle: "Learning", CueCard: "Describe a skill", TurnBlueprints: []string{"Part 2 cue card"}},
+					{Part: "PART_3", SourceID: "topic-group", TopicTitle: "Learning", TurnBlueprints: []string{"Part 3 question"}},
+				},
+			},
 		}
+	}
+	if !validEvidenceIELTSAssignment(validContext()) {
+		t.Fatal("valid IELTS Part composition was rejected")
+	}
+	tests := []struct {
+		name   string
+		mutate func(*PracticeContext)
+	}{
+		{
+			name: "part order",
+			mutate: func(context *PracticeContext) {
+				context.IELTSAssignment.Parts[0].Part = "PART_2"
+			},
+		},
+		{
+			name: "paired source",
+			mutate: func(context *PracticeContext) {
+				context.IELTSAssignment.Parts[2].SourceID = "other-topic"
+			},
+		},
+		{
+			name: "blueprint projection",
+			mutate: func(context *PracticeContext) {
+				context.IELTSAssignment.Parts[1].TurnBlueprints[0] = "other cue card"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context := validContext()
+			test.mutate(&context)
+			if validEvidenceIELTSAssignment(context) {
+				t.Fatal("broken IELTS Part composition was accepted")
+			}
+		})
+	}
+}
+
+func TestEvidencePracticeContextProjectsFrozenIELTSParts(t *testing.T) {
+	fixture := newEvidenceSourceFixture(t)
+	session := fixture.practice.session
+	snapshot := fixture.practice.snapshot
+	session.Experience = practice.PracticeExperienceIELTSSpeaking
+	session.Category = practice.SceneCategory("IELTS_SPEAKING")
+	session.PracticeMode = practice.PracticeModeFullMock
+	session.EvaluationPolicyRef = "ielts.speaking.full_mock.evaluation.v1"
+	snapshot.Experience = session.Experience
+	snapshot.Category = session.Category
+	snapshot.PracticeMode = session.PracticeMode
+	snapshot.SceneSelection.Scene.Experience = session.Experience
+	snapshot.SceneSelection.Scene.Category = session.Category
+	snapshot.SceneSelection.Scene.Prompt.TurnBlueprints = []string{
+		"Part 1 question",
+		"Part 2 cue card",
+		"Part 3 question",
+	}
+	option := &snapshot.SceneSelection.Scene.PracticeOptions[0]
+	option.Mode = practice.PracticeModeFullMock
+	option.EvaluationPolicyRef = session.EvaluationPolicyRef
+	snapshot.IELTSAssignment = &practice.IELTSAssignment{
+		BankID: "ielts-bank-v1",
+		Season: "2026 Q3",
+		Mode:   practice.PracticeModeFullMock,
+		Parts: []practice.IELTSPart{
+			{Part: practice.PracticeModePart1, SourceID: "part-1-set", TurnBlueprints: []string{"Part 1 question"}},
+			{Part: practice.PracticeModePart2, SourceID: "topic-group", TopicTitle: "Learning", CueCard: "Describe a skill", TurnBlueprints: []string{"Part 2 cue card"}},
+			{Part: practice.PracticeModePart3, SourceID: "topic-group", TopicTitle: "Learning", TurnBlueprints: []string{"Part 3 question"}},
+		},
+	}
+
+	context, _, _, ok := evidencePracticeContextFromSnapshot(
+		fixture.actor.UserID,
+		session,
+		snapshot,
+	)
+	if !ok || context.IELTSAssignment == nil ||
+		len(context.IELTSAssignment.Parts) != 3 ||
+		context.IELTSAssignment.Parts[1].TopicTitle != "Learning" ||
+		context.IELTSAssignment.Parts[1].CueCard != "Describe a skill" ||
+		!slices.Equal(
+			context.IELTSAssignment.Parts[2].TurnBlueprints,
+			[]string{"Part 3 question"},
+		) {
+		t.Fatalf("projected IELTS assignment = %#v", context.IELTSAssignment)
+	}
+	snapshot.IELTSAssignment.Parts[2].TurnBlueprints[0] = "mutated"
+	if context.IELTSAssignment.Parts[2].TurnBlueprints[0] != "Part 3 question" {
+		t.Fatal("projected IELTS Part blueprints alias the Session Snapshot")
 	}
 }
 
@@ -518,8 +663,9 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 		session: practice.Session{
 			ID:                  "session-1",
 			PlanID:              "plan-1",
-			SceneFamily:         practice.SceneFamilyDaily,
-			SceneModel:          practice.SceneModelHotelCheckinAndIssueHandling,
+			Experience:          practice.PracticeExperienceRoleplay,
+			Category:            practice.SceneCategory("ROLEPLAY_DAILY"),
+			PracticeMode:        practice.PracticeModeFullSimulation,
 			EvaluationPolicyRef: "daily.general.evaluation.v1",
 			SnapshotID:          "snapshot-1",
 			Status:              practice.SessionCompleted,
@@ -534,19 +680,17 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			ID:           "snapshot-1",
 			SessionID:    "session-1",
 			PlanRevision: 2,
-			SceneFamily:  practice.SceneFamilyDaily,
-			SceneModel:   practice.SceneModelHotelCheckinAndIssueHandling,
+			Experience:   practice.PracticeExperienceRoleplay,
+			Category:     practice.SceneCategory("ROLEPLAY_DAILY"),
+			PracticeMode: practice.PracticeModeFullSimulation,
 			SceneSelection: practice.SceneSelection{
 				Scene: practice.SceneDefinition{
-					ID:                  "scene-daily-1",
-					Family:              practice.SceneFamilyDaily,
-					Model:               practice.SceneModelHotelCheckinAndIssueHandling,
-					Name:                "Hotel check-in",
-					Version:             4,
-					Status:              practice.SceneStatusActive,
-					TurnPolicyRef:       "daily.hotel_checkin_issue.turn.v1",
-					SessionPolicyRef:    "daily.hotel_checkin_issue.session.v1",
-					EvaluationPolicyRef: "daily.general.evaluation.v1",
+					ID:         "scene-daily-1",
+					Experience: practice.PracticeExperienceRoleplay,
+					Category:   practice.SceneCategory("ROLEPLAY_DAILY"),
+					Name:       "Hotel check-in",
+					Version:    4,
+					Status:     practice.SceneStatusActive,
 					Prompt: practice.ScenePrompt{
 						PublicSceneBrief: "You are checking in at a hotel.",
 						PracticeGoal:     "check in and resolve a room issue",
@@ -562,7 +706,6 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 							"open the conversation",
 							"handle the issue",
 						},
-						SuggestedDurationSeconds: 300,
 					},
 					Roles: []practice.RoleDefinition{
 						{
@@ -580,10 +723,14 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 					},
 					PracticeOptions: []practice.PracticeOption{
 						{
-							ID:          "option-full",
-							SceneID:     "scene-daily-1",
-							Type:        practice.PracticeOptionFullSimulation,
-							DisplayName: "Full simulation",
+							ID:                       "option-full",
+							SceneID:                  "scene-daily-1",
+							Mode:                     practice.PracticeModeFullSimulation,
+							DisplayName:              "Full simulation",
+							SuggestedDurationSeconds: 300,
+							TurnPolicyRef:            "daily.hotel_checkin_issue.turn.v1",
+							SessionPolicyRef:         "daily.hotel_checkin_issue.session.v1",
+							EvaluationPolicyRef:      "daily.general.evaluation.v1",
 						},
 					},
 				},

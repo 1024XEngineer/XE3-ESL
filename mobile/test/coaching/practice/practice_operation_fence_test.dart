@@ -10,6 +10,7 @@ import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 
+import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 
 void main() {
@@ -241,6 +242,11 @@ final class _AccountPracticeClient implements PracticeClient {
         role: PracticeMessageRole.user,
         text: 'answer-${account.value}',
       ),
+      practiceExperience: testScenes.first.experience,
+      sceneCategory: testScenes.first.category,
+      practiceMode: testScenes.first.practiceOptions.first.mode,
+      capabilities: testPracticeCapabilities,
+      sessionVersion: 2,
       completedTurns: 2,
       turnLimit: 2,
       sessionCompleted: true,
@@ -357,8 +363,10 @@ PracticeSessionSnapshot _practiceSnapshot(String account) {
   return PracticeSessionSnapshot(
     sessionId: sessionId,
     planId: 'plan-$account',
-    sceneFamily: testScenes.first.family,
-    sceneModel: testScenes.first.model,
+    practiceExperience: testScenes.first.experience,
+    sceneCategory: testScenes.first.category,
+    practiceMode: testScenes.first.practiceOptions.first.mode,
+    capabilities: testPracticeCapabilities,
     sessionVersion: 1,
     completedTurns: 1,
     turnLimit: 2,

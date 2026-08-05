@@ -4,8 +4,9 @@
     "practice_session_id": "session_demo_001",
     "practice_plan_id": "plan_demo_backend",
     "plan_revision": 1,
-    "scene_family": "INTERVIEW",
-    "scene_model": "PROJECT_EXPERIENCE_DEEP_DIVE",
+    "practice_experience": "INTERVIEW",
+    "scene_category": "INTERVIEW_PROFESSIONAL",
+    "practice_mode": "FULL_SIMULATION",
     "evaluation_policy_ref": "interview.shadow.evaluation.v1",
     "snapshot_id": "snapshot_session_demo_001",
     "practice_session_status": "completed",
@@ -23,6 +24,9 @@
     "max_follow_ups_per_question": 1,
     "retry_allowed": false,
     "question_translation_allowed": true,
+    "question_tips_allowed": true,
+    "avatar_allowed": true,
+    "speech_feedback_allowed": true,
     "early_completion_rule": "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
   },
   "participants": [

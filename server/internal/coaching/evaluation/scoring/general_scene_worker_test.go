@@ -15,8 +15,9 @@ func TestGeneralSceneWorkerClaimsAcrossSceneTypesAndCompletes(t *testing.T) {
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneOverseasWorkplace,
-		scene.SceneFamilyWorkplace,
-		scene.SceneModelProgressAndRiskUpdate,
+		scene.PracticeExperienceRoleplay,
+		scene.SceneCategoryRoleplayWorkplace,
+		scene.PracticeModeFullSimulation,
 		"The release is delayed because one integration test is failing.",
 	)
 	configuration := generalSceneRuntimeConfigurationFixture()

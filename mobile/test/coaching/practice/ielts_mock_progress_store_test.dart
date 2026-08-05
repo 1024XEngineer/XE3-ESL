@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 
 void main() {
   late Directory directory;

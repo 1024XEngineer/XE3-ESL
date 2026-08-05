@@ -58,17 +58,20 @@ func persistFormalReportAndLearningProfile(
 			practice_session_id,
 			revision,
 			scene_type,
-			scene_model,
+			practice_experience,
+			scene_category,
+			practice_mode,
 			scoreability_status,
 			schema_version,
 			report_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
 		ON CONFLICT (evaluation_revision_id) DO NOTHING
 		RETURNING report_id::text
 	`, claim.EvaluationID, claim.EvaluationRevisionID,
 		claim.OwnerUserID, claim.Snapshot.PracticeSessionID,
-		claim.Revision, formal.SceneType, formal.SceneModel,
+		claim.Revision, formal.SceneType, formal.PracticeExperience,
+		formal.SceneCategory, formal.PracticeMode,
 		formal.ScoreabilityStatus, formal.SchemaVersion, encoded).Scan(
 		&reportID,
 	)

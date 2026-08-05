@@ -1,37 +1,37 @@
-enum SceneFamily {
+enum PracticeExperience {
   interview('INTERVIEW'),
-  exam('EXAM'),
-  workplace('WORKPLACE'),
-  daily('DAILY');
+  ieltsSpeaking('IELTS_SPEAKING'),
+  roleplay('ROLEPLAY');
 
-  const SceneFamily(this.wireValue);
+  const PracticeExperience(this.wireValue);
 
   final String wireValue;
 
-  static SceneFamily? fromWireValue(String value) => SceneFamily.values
-      .where((family) => family.wireValue == value)
+  static PracticeExperience? fromWireValue(String value) => PracticeExperience
+      .values
+      .where((experience) => experience.wireValue == value)
       .firstOrNull;
 }
 
-enum SceneModel {
-  projectExperienceDeepDive('PROJECT_EXPERIENCE_DEEP_DIVE'),
-  interviewBasicDialogue('INTERVIEW_BASIC_DIALOGUE'),
-  ieltsSpeakingPart1('IELTS_SPEAKING_PART_1'),
-  ieltsSpeakingPart2('IELTS_SPEAKING_PART_2'),
-  ieltsSpeakingPart3('IELTS_SPEAKING_PART_3'),
-  ieltsSpeakingFullMock('IELTS_SPEAKING_FULL_MOCK'),
-  examBasicDialogue('EXAM_BASIC_DIALOGUE'),
-  progressAndRiskUpdate('PROGRESS_AND_RISK_UPDATE'),
-  workplaceBasicDialogue('WORKPLACE_BASIC_DIALOGUE'),
-  hotelCheckinAndIssueHandling('HOTEL_CHECKIN_AND_ISSUE_HANDLING'),
-  dailyBasicDialogue('DAILY_BASIC_DIALOGUE');
+enum SceneCategory {
+  interviewRecruiter('INTERVIEW_RECRUITER'),
+  interviewBehavioral('INTERVIEW_BEHAVIORAL'),
+  interviewProfessional('INTERVIEW_PROFESSIONAL'),
+  interviewHiringManager('INTERVIEW_HIRING_MANAGER'),
+  interviewCustom('INTERVIEW_CUSTOM'),
+  ieltsSpeaking('IELTS_SPEAKING'),
+  roleplayWorkplace('ROLEPLAY_WORKPLACE'),
+  roleplayTravel('ROLEPLAY_TRAVEL'),
+  roleplayDaily('ROLEPLAY_DAILY'),
+  roleplayCustom('ROLEPLAY_CUSTOM');
 
-  const SceneModel(this.wireValue);
+  const SceneCategory(this.wireValue);
 
   final String wireValue;
 
-  static SceneModel? fromWireValue(String value) =>
-      SceneModel.values.where((model) => model.wireValue == value).firstOrNull;
+  static SceneCategory? fromWireValue(String value) => SceneCategory.values
+      .where((category) => category.wireValue == value)
+      .firstOrNull;
 }
 
 enum ScenePresentationMode { standard, immersiveRoleplay }
@@ -47,7 +47,6 @@ final class ScenePrompt {
     required this.personaSummary,
     required this.focusAreas,
     required this.turnBlueprints,
-    required this.suggestedDurationSeconds,
   });
 
   final String publicSceneBrief;
@@ -57,7 +56,6 @@ final class ScenePrompt {
   final String personaSummary;
   final List<String> focusAreas;
   final List<String> turnBlueprints;
-  final int suggestedDurationSeconds;
 }
 
 final class RoleDefinition {
@@ -92,72 +90,75 @@ final class RolePracticeObjective {
   final String description;
 }
 
-enum PracticeOptionType {
+enum PracticeMode {
   fullSimulation('FULL_SIMULATION'),
-  focus('FOCUS');
+  focus('FOCUS'),
+  fullMock('FULL_MOCK'),
+  part1('PART_1'),
+  part2('PART_2'),
+  part3('PART_3');
 
-  const PracticeOptionType(this.wireValue);
+  const PracticeMode(this.wireValue);
 
   final String wireValue;
 
-  static PracticeOptionType? fromWireValue(String value) => PracticeOptionType
-      .values
-      .where((type) => type.wireValue == value)
-      .firstOrNull;
+  static PracticeMode? fromWireValue(String value) =>
+      PracticeMode.values.where((mode) => mode.wireValue == value).firstOrNull;
 }
 
 final class PracticeOption {
   const PracticeOption({
     required this.id,
     required this.sceneId,
-    required this.type,
+    required this.mode,
     required this.displayName,
+    required this.suggestedDurationSeconds,
+    required this.turnPolicyRef,
+    required this.sessionPolicyRef,
+    required this.evaluationPolicyRef,
     this.roleId,
   });
 
   final String id;
   final String sceneId;
-  final PracticeOptionType type;
+  final PracticeMode mode;
   final String displayName;
+  final int suggestedDurationSeconds;
+  final String turnPolicyRef;
+  final String sessionPolicyRef;
+  final String evaluationPolicyRef;
   final String? roleId;
 }
 
 final class SceneDefinition {
   const SceneDefinition({
     required this.id,
-    required this.family,
-    required this.model,
+    required this.experience,
+    required this.category,
     required this.name,
     required this.version,
     required this.status,
-    required this.turnPolicyRef,
-    required this.sessionPolicyRef,
-    required this.evaluationPolicyRef,
     required this.prompt,
     required this.roles,
     required this.practiceOptions,
   });
 
   final String id;
-  final SceneFamily family;
-  final SceneModel model;
+  final PracticeExperience experience;
+  final SceneCategory category;
   final String name;
   final int version;
   final SceneStatus status;
-  final String turnPolicyRef;
-  final String sessionPolicyRef;
-  final String evaluationPolicyRef;
   final ScenePrompt prompt;
   final List<RoleDefinition> roles;
   final List<PracticeOption> practiceOptions;
 }
 
 extension ScenePresentation on SceneDefinition {
-  ScenePresentationMode get presentationMode => switch (family) {
-    SceneFamily.workplace ||
-    SceneFamily.daily ||
-    SceneFamily.interview => ScenePresentationMode.immersiveRoleplay,
-    SceneFamily.exam => ScenePresentationMode.standard,
+  ScenePresentationMode get presentationMode => switch (experience) {
+    PracticeExperience.interview ||
+    PracticeExperience.roleplay => ScenePresentationMode.immersiveRoleplay,
+    PracticeExperience.ieltsSpeaking => ScenePresentationMode.standard,
   };
 }
 

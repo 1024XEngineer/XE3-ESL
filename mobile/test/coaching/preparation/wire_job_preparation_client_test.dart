@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
-import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
@@ -318,7 +318,8 @@ void main() {
         objectives.add(_clone(objectives.single));
       },
       'missing turn policy reference': (plan) {
-        _planScene(plan).remove('turn_policy_ref');
+        final options = _planScene(plan)['practice_options']! as List<Object?>;
+        (options.single as Map<String, Object?>).remove('turn_policy_ref');
       },
     };
 
@@ -370,7 +371,9 @@ void main() {
         session['effective_turns'] = 0;
       },
       'invalid session policy reference': (root) {
-        _sessionScene(root)['session_policy_ref'] = '';
+        final options =
+            _sessionScene(root)['practice_options']! as List<Object?>;
+        (options.single as Map<String, Object?>)['session_policy_ref'] = '';
       },
     };
 
@@ -654,14 +657,11 @@ Map<String, Object?> _preparationSnapshotJson() {
 Map<String, Object?> _sceneJson() {
   return <String, Object?>{
     'scene_id': _sceneId,
-    'scene_family': 'INTERVIEW',
-    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'practice_experience': 'INTERVIEW',
+    'scene_category': 'INTERVIEW_PROFESSIONAL',
     'name': 'Technical interview',
     'scene_version': 1,
     'status': 'active',
-    'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
-    'session_policy_ref': 'interview.project_deep_dive.session.v1',
-    'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
     'prompt': <String, Object?>{
       'public_scene_brief': 'Discuss one backend project.',
       'practice_goal': 'Explain decisions with evidence.',
@@ -670,7 +670,6 @@ Map<String, Object?> _sceneJson() {
       'persona_summary': 'Precise and evidence seeking.',
       'focus_areas': <String>['system_design'],
       'turn_blueprints': <String>['Ask for a project overview.'],
-      'suggested_duration_seconds': 900,
     },
     'roles': <Object?>[_roleJson()],
     'practice_options': <Object?>[_optionJson()],
@@ -699,8 +698,12 @@ Map<String, Object?> _optionJson() {
     'practice_option_id': _optionId,
     'scene_id': _sceneId,
     'role_definition_id': _roleId,
-    'practice_option_type': 'FOCUS',
+    'practice_mode': 'FOCUS',
     'display_name': 'System design focus',
+    'suggested_duration_seconds': 900,
+    'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+    'session_policy_ref': 'interview.project_deep_dive.session.v1',
+    'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
   };
 }
 
@@ -714,6 +717,9 @@ Map<String, Object?> _policyJson() {
     'early_completion_rule': 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
     'retry_allowed': false,
     'question_translation_allowed': true,
+    'question_tips_allowed': true,
+    'avatar_allowed': true,
+    'speech_feedback_allowed': true,
   };
 }
 
@@ -755,8 +761,9 @@ Map<String, Object?> _bootstrapJson() {
       'practice_session_id': _sessionId,
       'practice_plan_id': _planId,
       'plan_revision': 1,
-      'scene_family': 'INTERVIEW',
-      'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+      'practice_experience': 'INTERVIEW',
+      'scene_category': 'INTERVIEW_PROFESSIONAL',
+      'practice_mode': 'FOCUS',
       'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
       'snapshot_id': _sessionSnapshotId,
       'practice_session_status': 'starting',
@@ -767,8 +774,9 @@ Map<String, Object?> _bootstrapJson() {
       'snapshot_id': _sessionSnapshotId,
       'practice_session_id': _sessionId,
       'plan_revision': 1,
-      'scene_family': 'INTERVIEW',
-      'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+      'practice_experience': 'INTERVIEW',
+      'scene_category': 'INTERVIEW_PROFESSIONAL',
+      'practice_mode': 'FOCUS',
       'scene_selection': <String, Object?>{
         'scene': _sceneJson(),
         'selected_role_ids': <String>[_roleId],

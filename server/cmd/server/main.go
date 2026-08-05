@@ -20,6 +20,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
@@ -215,6 +216,11 @@ func run() int {
 		logger.Error("Scene catalog startup failed", slog.Any("error", err))
 		return 1
 	}
+	ieltsQuestionBank, err := ielts.NewBank()
+	if err != nil {
+		logger.Error("IELTS question bank startup failed", slog.Any("error", err))
+		return 1
+	}
 
 	resumeComposition, err := buildResumeComposition(
 		ctx,
@@ -366,6 +372,7 @@ func run() int {
 			},
 			memoryIndexComposition.Searcher(),
 			sceneCatalog,
+			ieltsQuestionBank,
 			preparationJobTargets,
 			bootstrap.AgentWorkerWakeups{
 				MemoryExtraction: memoryExtractionWakeup,
@@ -625,6 +632,7 @@ func run() int {
 		review.New(),
 	)
 	bootstrap.RegisterSceneCatalog(router, sceneCatalog)
+	bootstrap.RegisterIELTSQuestionBank(router, ieltsQuestionBank)
 
 	server := &http.Server{
 		Addr:              cfg.Address(),

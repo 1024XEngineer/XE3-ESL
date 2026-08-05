@@ -26,7 +26,7 @@ const publicOperations = new Set([
   'GET /v1/scenes',
   'GET /v1/scenes/{scene_id}',
   'GET /v1/scenes/{scene_id}/roles',
-  'GET /v1/scenes/ielts-speaking/question-bank',
+  'GET /v1/ielts-speaking/question-bank',
 ]);
 const normalizeFieldName = (fieldName) =>
   String(fieldName ?? '')
@@ -649,6 +649,11 @@ assert.equal(
   createPracticePlanRequestSchema?.properties?.ielts_selection?.$ref,
   '#/components/schemas/IELTSPracticeSelection',
 );
+assert.equal(
+  createPracticePlanRequestSchema?.properties?.max_effective_turns?.maximum,
+  64,
+  'Practice Plan requests must share the runtime turn safety limit.',
+);
 for (const contextField of ['source_thread_id', 'goal_id']) {
   assert.equal(
     createPracticePlanRequestSchema?.properties?.[contextField]?.$ref,
@@ -677,6 +682,102 @@ assert.equal(
   practicePlanSchema?.properties?.ielts_assignment?.$ref,
   '#/components/schemas/IELTSPracticeAssignment',
 );
+assert.equal(
+  practicePlanSchema?.allOf?.[0]?.if?.properties?.scene_selection?.properties
+    ?.scene?.properties?.practice_experience?.const,
+  'IELTS_SPEAKING',
+  'PracticePlan must identify IELTS through its frozen Scene.',
+);
+assert.deepEqual(
+  practicePlanSchema?.allOf?.[0]?.then?.required,
+  ['ielts_assignment'],
+  'IELTS PracticePlan must freeze its Part composition.',
+);
+assert.deepEqual(
+  practicePlanSchema?.allOf?.[0]?.else?.not?.required,
+  ['ielts_assignment'],
+  'Non-IELTS PracticePlan must not carry an IELTS assignment.',
+);
+const ieltsAssignmentSchema = schemas.IELTSPracticeAssignment;
+assert.deepEqual(
+  sorted(ieltsAssignmentSchema?.required ?? []),
+  ['bank_id', 'mode', 'parts', 'season'],
+);
+assert.equal(ieltsAssignmentSchema?.additionalProperties, false);
+assert.equal(
+  ieltsAssignmentSchema?.properties?.parts?.items?.$ref,
+  '#/components/schemas/IELTSPracticePartAssignment',
+);
+const ieltsPartAssignmentSchema = schemas.IELTSPracticePartAssignment;
+assert.deepEqual(
+  sorted(ieltsPartAssignmentSchema?.required ?? []),
+  ['part', 'source_id', 'turn_blueprints'],
+);
+assert.deepEqual(ieltsPartAssignmentSchema?.properties?.part?.enum, [
+  'PART_1',
+  'PART_2',
+  'PART_3',
+]);
+assert.equal(ieltsPartAssignmentSchema?.additionalProperties, false);
+const ieltsPartRules = new Map(
+  (ieltsPartAssignmentSchema?.allOf ?? []).map((rule) => [
+    rule?.if?.properties?.part?.const,
+    rule?.then,
+  ]),
+);
+assert.deepEqual(
+  [...ieltsPartRules.keys()],
+  ['PART_1', 'PART_2', 'PART_3'],
+  'Every IELTS Part must have one explicit metadata rule.',
+);
+assert.deepEqual(
+  ieltsPartRules.get('PART_1')?.not?.anyOf?.map(
+    (rule) => rule.required?.[0],
+  ),
+  ['topic_title', 'cue_card'],
+  'Part 1 must forbid topic and Cue Card metadata.',
+);
+assert.deepEqual(
+  ieltsPartRules.get('PART_2')?.required,
+  ['topic_title', 'cue_card'],
+  'Part 2 must require topic and Cue Card metadata.',
+);
+assert.equal(
+  ieltsPartRules.get('PART_2')?.properties?.turn_blueprints?.maxItems,
+  1,
+  'Part 2 must freeze exactly one primary Question blueprint.',
+);
+assert.deepEqual(
+  ieltsPartRules.get('PART_3')?.required,
+  ['topic_title'],
+  'Part 3 must require linked topic metadata.',
+);
+assert.deepEqual(
+  ieltsPartRules.get('PART_3')?.not?.required,
+  ['cue_card'],
+  'Part 3 must forbid Cue Card metadata.',
+);
+const ieltsPartsByMode = new Map(
+  (ieltsAssignmentSchema?.allOf ?? []).map((rule) => [
+    rule?.if?.properties?.mode?.const,
+    rule?.then?.properties?.parts,
+  ]),
+);
+for (const [mode, expectedParts] of new Map([
+  ['FULL_MOCK', ['PART_1', 'PART_2', 'PART_3']],
+  ['PART_1', ['PART_1']],
+  ['PART_2', ['PART_2', 'PART_3']],
+  ['PART_3', ['PART_3']],
+])) {
+  const partsRule = ieltsPartsByMode.get(mode);
+  assert.equal(partsRule?.minItems, expectedParts.length);
+  assert.equal(partsRule?.maxItems, expectedParts.length);
+  assert.deepEqual(
+    partsRule?.prefixItems?.map((item) => item.properties?.part?.const),
+    expectedParts,
+    `${mode} must freeze its exact ordered Part composition.`,
+  );
+}
 
 const userSchema = schemas.User;
 assert.deepEqual(sorted(userSchema?.required ?? []), ['email', 'user_id']);
@@ -1492,6 +1593,33 @@ for (const [schemaName, propertyName] of [
   );
 }
 const voiceSessionState = resolveLocalReference(schemas.VoiceSessionState);
+assert.equal(
+  voiceSessionState?.properties?.ielts_assignment?.$ref,
+  '#/components/schemas/IELTSPracticeAssignment',
+  'VoiceSessionState must expose the frozen IELTS Part composition.',
+);
+assert.ok(
+  !(voiceSessionState?.required ?? []).includes('ielts_assignment'),
+  'Non-IELTS Voice Sessions must not require an IELTS assignment.',
+);
+const voiceAssignmentModes = new Map(
+  (voiceSessionState?.allOf ?? [])
+    .filter((rule) => rule?.if?.properties?.practice_mode?.const)
+    .map((rule) => [
+      rule.if.properties.practice_mode.const,
+      rule?.then?.properties?.ielts_assignment?.properties?.mode?.const,
+    ]),
+);
+assert.deepEqual(
+  voiceAssignmentModes,
+  new Map([
+    ['FULL_MOCK', 'FULL_MOCK'],
+    ['PART_1', 'PART_1'],
+    ['PART_2', 'PART_2'],
+    ['PART_3', 'PART_3'],
+  ]),
+  'Voice restore must keep practice_mode and the frozen IELTS mode equal.',
+);
 const voiceQuestion = resolveLocalReference(schemas.VoiceQuestion);
 assert.ok(
   voiceQuestion?.required?.includes('question_type'),
@@ -1514,8 +1642,13 @@ assert.ok(
 );
 assert.equal(
   voiceSessionState.properties.turn_history.maxItems,
-  56,
-  'Turn history must allow 14 primary Questions with three follow-ups each.',
+  256,
+  'Turn history must allow 64 primary Questions with three follow-ups each.',
+);
+assert.equal(
+  voiceSessionState.properties.turn_limit.maximum,
+  64,
+  'Voice restore must enforce the primary Question safety limit.',
 );
 assert.ok(
   !(voiceSessionState.required ?? []).includes('turn_history'),

@@ -4,11 +4,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_client.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_wizard.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -595,8 +595,8 @@ final _snapshot = PreparationSnapshot(
 
 final _scene = testScene(
   id: _sceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'Technical interview',
   version: 1,
   prompt: _prompt,
@@ -612,7 +612,6 @@ const _prompt = ScenePrompt(
   personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['system_design'],
   turnBlueprints: ['Ask for a project overview.'],
-  suggestedDurationSeconds: 900,
 );
 
 final _role = testRole(
@@ -628,7 +627,7 @@ final _role = testRole(
 final _option = testPracticeOption(
   id: _optionId,
   sceneId: _sceneId,
-  type: PracticeOptionType.focus,
+  mode: PracticeMode.focus,
   displayName: 'System design focus',
   roleId: _roleId,
 );
@@ -649,6 +648,9 @@ const _policy = PreparationSessionPolicy(
   earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
   retryAllowed: false,
   questionTranslationAllowed: true,
+  questionTipsAllowed: true,
+  avatarAllowed: true,
+  speechFeedbackAllowed: true,
 );
 
 final _plan = _planWithRevision(1);
@@ -657,8 +659,9 @@ final _bootstrap = PreparationPracticeBootstrap(
   session: PreparationPracticeSession(
     id: _sessionId,
     planId: _planId,
-    sceneFamily: SceneFamily.interview,
-    sceneModel: SceneModel.projectExperienceDeepDive,
+    practiceExperience: PracticeExperience.interview,
+    sceneCategory: SceneCategory.interviewProfessional,
+    practiceMode: PracticeMode.focus,
     snapshotId: _snapshotId,
     status: 'starting',
     version: 1,

@@ -60,8 +60,9 @@ paths:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
                 plan_revision: 1
-                scene_family: INTERVIEW
-                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
                 evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
@@ -102,8 +103,9 @@ paths:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
                 plan_revision: 1
-                scene_family: INTERVIEW
-                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
                 evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: paused
@@ -148,8 +150,9 @@ paths:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
                 plan_revision: 1
-                scene_family: INTERVIEW
-                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
                 evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
@@ -194,8 +197,9 @@ paths:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
                 plan_revision: 1
-                scene_family: INTERVIEW
-                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
                 evaluation_policy_ref: interview.shadow.evaluation.v1
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: ended_early
@@ -253,10 +257,12 @@ components:
     Version:
       type: integer
       minimum: 1
-    SceneFamily:
-      $ref: ./scene.yaml#/components/schemas/SceneFamily
-    SceneModel:
-      $ref: ./scene.yaml#/components/schemas/SceneModel
+    PracticeExperience:
+      $ref: ./scene.yaml#/components/schemas/PracticeExperience
+    SceneCategory:
+      $ref: ./scene.yaml#/components/schemas/SceneCategory
+    PracticeMode:
+      $ref: ./scene.yaml#/components/schemas/PracticeMode
     CreatePracticeSessionRequest:
       type: object
       additionalProperties: false
@@ -278,8 +284,9 @@ components:
         - practice_session_id
         - practice_plan_id
         - plan_revision
-        - scene_family
-        - scene_model
+        - practice_experience
+        - scene_category
+        - practice_mode
         - evaluation_policy_ref
         - snapshot_id
         - practice_session_status
@@ -293,10 +300,12 @@ components:
         plan_revision:
           type: integer
           minimum: 1
-        scene_family:
-          $ref: '#/components/schemas/SceneFamily'
-        scene_model:
-          $ref: '#/components/schemas/SceneModel'
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
         evaluation_policy_ref:
           $ref: '#/components/schemas/ResourceId'
         snapshot_id:
@@ -429,6 +438,9 @@ components:
         - early_completion_rule
         - retry_allowed
         - question_translation_allowed
+        - question_tips_allowed
+        - avatar_allowed
+        - speech_feedback_allowed
       properties:
         suggested_duration_seconds:
           type: integer
@@ -439,11 +451,11 @@ components:
         max_effective_turns:
           type: integer
           minimum: 1
-          maximum: 14
+          maximum: 64
         coverage_checkpoint_turn:
           type: integer
           minimum: 1
-          maximum: 14
+          maximum: 64
         max_follow_ups_per_question:
           type: integer
           minimum: 0
@@ -455,6 +467,12 @@ components:
           type: boolean
         question_translation_allowed:
           type: boolean
+        question_tips_allowed:
+          type: boolean
+        avatar_allowed:
+          type: boolean
+        speech_feedback_allowed:
+          type: boolean
     PracticeSessionSnapshot:
       type: object
       additionalProperties: false
@@ -462,8 +480,9 @@ components:
         - snapshot_id
         - practice_session_id
         - plan_revision
-        - scene_family
-        - scene_model
+        - practice_experience
+        - scene_category
+        - practice_mode
         - scene_selection
         - preparation_snapshot
         - participants
@@ -478,10 +497,12 @@ components:
         plan_revision:
           type: integer
           minimum: 1
-        scene_family:
-          $ref: '#/components/schemas/SceneFamily'
-        scene_model:
-          $ref: '#/components/schemas/SceneModel'
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
         scene_selection:
           $ref: ./preparation.yaml#/components/schemas/SceneSelectionSnapshot
         preparation_snapshot:
@@ -507,6 +528,68 @@ components:
         created_at:
           type: string
           format: date-time
+      allOf:
+        - if:
+            properties:
+              practice_experience:
+                const: IELTS_SPEAKING
+            required:
+              - practice_experience
+          then:
+            required:
+              - ielts_assignment
+          else:
+            not:
+              required:
+                - ielts_assignment
+        - if:
+            properties:
+              practice_mode:
+                const: FULL_MOCK
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: FULL_MOCK
+        - if:
+            properties:
+              practice_mode:
+                const: PART_1
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_1
+        - if:
+            properties:
+              practice_mode:
+                const: PART_2
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_2
+        - if:
+            properties:
+              practice_mode:
+                const: PART_3
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_3
     PracticeSessionBootstrap:
       type: object
       additionalProperties: false

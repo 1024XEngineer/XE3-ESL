@@ -99,13 +99,15 @@ func (port *ServicePort) GetReview(
 
 func mapReviewSummary(item domainreview.Report) ReviewSummary {
 	return ReviewSummary{
-		ID:                item.ID,
-		PracticeSessionID: item.PracticeSessionID,
-		SceneType:         item.SceneType,
-		SceneModel:        item.SceneModel,
-		Scoreability:      item.ScoreabilityStatus,
-		Summary:           item.Summary,
-		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                 item.ID,
+		PracticeSessionID:  item.PracticeSessionID,
+		SceneType:          item.SceneType,
+		PracticeExperience: item.PracticeExperience,
+		SceneCategory:      item.SceneCategory,
+		PracticeMode:       item.PracticeMode,
+		Scoreability:       item.ScoreabilityStatus,
+		Summary:            item.Summary,
+		CompletedAt:        item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   item.ID,
@@ -135,15 +137,17 @@ func mapReviewDetail(item domainreview.Report) ReviewDetail {
 		}
 	}
 	return ReviewDetail{
-		ID:                item.ID,
-		PracticeSessionID: item.PracticeSessionID,
-		SceneType:         item.SceneType,
-		SceneModel:        item.SceneModel,
-		Scoreability:      item.ScoreabilityStatus,
-		Summary:           item.Summary,
-		Dimensions:        dimensions,
-		PriorityActions:   actions,
-		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                 item.ID,
+		PracticeSessionID:  item.PracticeSessionID,
+		SceneType:          item.SceneType,
+		PracticeExperience: item.PracticeExperience,
+		SceneCategory:      item.SceneCategory,
+		PracticeMode:       item.PracticeMode,
+		Scoreability:       item.ScoreabilityStatus,
+		Summary:            item.Summary,
+		Dimensions:         dimensions,
+		PriorityActions:    actions,
+		CompletedAt:        item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   item.ID,

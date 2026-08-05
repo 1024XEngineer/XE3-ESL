@@ -37,24 +37,20 @@ const (
 
 func testSceneDefinition() SceneDefinition {
 	return SceneDefinition{
-		ID:                  testSceneID,
-		Family:              SceneFamilyInterview,
-		Model:               SceneModelProjectExperienceDeepDive,
-		Name:                "Test interview",
-		Version:             1,
-		Status:              SceneStatusActive,
-		TurnPolicyRef:       "interview.test.turn.v1",
-		SessionPolicyRef:    "interview.test.session.v1",
-		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+		ID:         testSceneID,
+		Experience: PracticeExperienceInterview,
+		Category:   SceneCategoryInterviewProfessional,
+		Name:       "Test interview",
+		Version:    1,
+		Status:     SceneStatusActive,
 		Prompt: ScenePrompt{
-			PublicSceneBrief:         "Explain one project and its outcome.",
-			PracticeGoal:             "Present evidence and trade-offs clearly.",
-			UserRole:                 "Candidate",
-			AIRole:                   "Interviewer",
-			PersonaSummary:           "An evidence-seeking technical interviewer.",
-			FocusAreas:               []string{"evidence", "tradeoff"},
-			TurnBlueprints:           []string{"Ask for evidence", "Probe one trade-off"},
-			SuggestedDurationSeconds: 600,
+			PublicSceneBrief: "Explain one project and its outcome.",
+			PracticeGoal:     "Present evidence and trade-offs clearly.",
+			UserRole:         "Candidate",
+			AIRole:           "Interviewer",
+			PersonaSummary:   "An evidence-seeking technical interviewer.",
+			FocusAreas:       []string{"evidence", "tradeoff"},
+			TurnBlueprints:   []string{"Ask for evidence", "Probe one trade-off"},
 		},
 		Roles: []RoleDefinition{
 			{
@@ -72,19 +68,27 @@ func testSceneDefinition() SceneDefinition {
 		},
 		PracticeOptions: []PracticeOption{
 			{
-				ID:           testFullOptionID,
-				SceneID:      testSceneID,
-				Type:         PracticeOptionFullSimulation,
-				DisplayName:  "Full simulation",
-				DisplayOrder: 10,
+				ID:                       testFullOptionID,
+				SceneID:                  testSceneID,
+				Mode:                     PracticeModeFullSimulation,
+				DisplayName:              "Full simulation",
+				SuggestedDurationSeconds: 600,
+				TurnPolicyRef:            "interview.test.turn.v1",
+				SessionPolicyRef:         "interview.test.session.v1",
+				EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+				DisplayOrder:             10,
 			},
 			{
-				ID:               testFocusOptionID,
-				SceneID:          testSceneID,
-				RoleDefinitionID: testRoleID,
-				Type:             PracticeOptionFocus,
-				DisplayName:      "Technical focus",
-				DisplayOrder:     20,
+				ID:                       testFocusOptionID,
+				SceneID:                  testSceneID,
+				RoleDefinitionID:         testRoleID,
+				Mode:                     PracticeModeFocus,
+				DisplayName:              "Technical focus",
+				SuggestedDurationSeconds: 600,
+				TurnPolicyRef:            "interview.test.turn.v1",
+				SessionPolicyRef:         "interview.test.session.v1",
+				EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+				DisplayOrder:             20,
 			},
 		},
 		DisplayOrder: 10,
@@ -111,7 +115,7 @@ func reparentTestScene(definition *SceneDefinition) {
 	for index := range definition.PracticeOptions {
 		definition.PracticeOptions[index].ID = definition.ID + "-option-" + string(rune('a'+index))
 		definition.PracticeOptions[index].SceneID = definition.ID
-		if definition.PracticeOptions[index].Type == PracticeOptionFocus {
+		if definition.PracticeOptions[index].Mode == PracticeModeFocus {
 			definition.PracticeOptions[index].RoleDefinitionID = definition.Roles[index-1].ID
 		}
 	}

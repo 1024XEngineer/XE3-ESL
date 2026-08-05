@@ -60,7 +60,7 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 		if score == 0 {
 			continue
 		}
-		defaultOption, found := fullSimulationOption(definition.PracticeOptions)
+		defaultOption, found := defaultPracticeOption(definition.PracticeOptions)
 		if !found || len(definition.Roles) == 0 {
 			continue
 		}
@@ -106,8 +106,8 @@ func previewCatalogScore(
 	}
 	fields := []string{
 		definition.Name,
-		string(definition.Family),
-		string(definition.Model),
+		string(definition.Experience),
+		string(definition.Category),
 		definition.Prompt.PublicSceneBrief,
 		definition.Prompt.PracticeGoal,
 		definition.Prompt.UserRole,
@@ -128,11 +128,12 @@ func previewCatalogScore(
 	return score
 }
 
-func fullSimulationOption(
+func defaultPracticeOption(
 	options []PracticeOption,
 ) (PracticeOption, bool) {
 	for _, option := range options {
-		if option.Type == PracticeOptionFullSimulation {
+		if option.Mode == PracticeModeFullSimulation ||
+			option.Mode == PracticeModeFullMock {
 			return option, true
 		}
 	}

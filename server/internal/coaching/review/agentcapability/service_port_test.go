@@ -72,7 +72,9 @@ func validAgentToolReport() domainreview.Report {
 		Revision:             1,
 		SchemaVersion:        "evaluation-report/v1",
 		SceneType:            "OVERSEAS_DAILY_LIFE",
-		SceneModel:           "DAILY_BASIC_DIALOGUE",
+		PracticeExperience:   "ROLEPLAY",
+		SceneCategory:        "ROLEPLAY_DAILY",
+		PracticeMode:         "FULL_SIMULATION",
 		ScoreabilityStatus:   "PROVISIONAL",
 		Summary:              "本次练习已形成场景沟通评估。",
 		Dimensions: []domainreview.ReportDimension{{

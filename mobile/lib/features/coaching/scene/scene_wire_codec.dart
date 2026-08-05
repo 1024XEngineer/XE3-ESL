@@ -9,17 +9,14 @@ final class SceneWireFormatException implements Exception {
 Map<String, Object?> encodeSceneDefinition(SceneDefinition scene) =>
     <String, Object?>{
       'scene_id': scene.id,
-      'scene_family': scene.family.wireValue,
-      'scene_model': scene.model.wireValue,
+      'practice_experience': scene.experience.wireValue,
+      'scene_category': scene.category.wireValue,
       'name': scene.name,
       'scene_version': scene.version,
       'status': switch (scene.status) {
         SceneStatus.active => 'active',
         SceneStatus.inactive => 'inactive',
       },
-      'turn_policy_ref': scene.turnPolicyRef,
-      'session_policy_ref': scene.sessionPolicyRef,
-      'evaluation_policy_ref': scene.evaluationPolicyRef,
       'prompt': <String, Object?>{
         'public_scene_brief': scene.prompt.publicSceneBrief,
         'practice_goal': scene.prompt.practiceGoal,
@@ -28,7 +25,6 @@ Map<String, Object?> encodeSceneDefinition(SceneDefinition scene) =>
         'persona_summary': scene.prompt.personaSummary,
         'focus_areas': scene.prompt.focusAreas,
         'turn_blueprints': scene.prompt.turnBlueprints,
-        'suggested_duration_seconds': scene.prompt.suggestedDurationSeconds,
       },
       'roles': scene.roles
           .map(
@@ -56,8 +52,12 @@ Map<String, Object?> encodeSceneDefinition(SceneDefinition scene) =>
             (option) => <String, Object?>{
               'practice_option_id': option.id,
               'scene_id': option.sceneId,
-              'practice_option_type': option.type.wireValue,
+              'practice_mode': option.mode.wireValue,
               'display_name': option.displayName,
+              'suggested_duration_seconds': option.suggestedDurationSeconds,
+              'turn_policy_ref': option.turnPolicyRef,
+              'session_policy_ref': option.sessionPolicyRef,
+              'evaluation_policy_ref': option.evaluationPolicyRef,
               'role_definition_id': ?option.roleId,
             },
           )
@@ -69,28 +69,31 @@ SceneDefinition decodeSceneDefinition(Object? value) {
     value,
     required: const <String>{
       'scene_id',
-      'scene_family',
-      'scene_model',
+      'practice_experience',
+      'scene_category',
       'name',
       'scene_version',
       'status',
-      'turn_policy_ref',
-      'session_policy_ref',
-      'evaluation_policy_ref',
       'prompt',
       'roles',
       'practice_options',
     },
   );
   final sceneId = _resourceId(object['scene_id']);
-  final family = SceneFamily.fromWireValue(_wireEnum(object['scene_family']));
-  final model = SceneModel.fromWireValue(_wireEnum(object['scene_model']));
+  final experience = PracticeExperience.fromWireValue(
+    _wireEnum(object['practice_experience']),
+  );
+  final category = SceneCategory.fromWireValue(
+    _wireEnum(object['scene_category']),
+  );
   final status = switch (_string(object['status'], maximumBytes: 16)) {
     'active' => SceneStatus.active,
     'inactive' => SceneStatus.inactive,
     _ => throw const SceneWireFormatException(),
   };
-  if (family == null || model == null || !_validFamilyModel(family, model)) {
+  if (experience == null ||
+      category == null ||
+      !_validExperienceCategory(experience, category)) {
     throw const SceneWireFormatException();
   }
 
@@ -127,14 +130,11 @@ SceneDefinition decodeSceneDefinition(Object? value) {
 
   return SceneDefinition(
     id: sceneId,
-    family: family,
-    model: model,
+    experience: experience,
+    category: category,
     name: _string(object['name']),
     version: _version(object['scene_version']),
     status: status,
-    turnPolicyRef: _resourceId(object['turn_policy_ref']),
-    sessionPolicyRef: _resourceId(object['session_policy_ref']),
-    evaluationPolicyRef: _resourceId(object['evaluation_policy_ref']),
     prompt: _scenePrompt(object['prompt']),
     roles: List<RoleDefinition>.unmodifiable(roles),
     practiceOptions: List<PracticeOption>.unmodifiable(options),
@@ -224,27 +224,40 @@ PracticeOption decodePracticeOption(Object? value) {
     required: const <String>{
       'practice_option_id',
       'scene_id',
-      'practice_option_type',
+      'practice_mode',
       'display_name',
+      'suggested_duration_seconds',
+      'turn_policy_ref',
+      'session_policy_ref',
+      'evaluation_policy_ref',
     },
     optional: const <String>{'role_definition_id'},
   );
-  final type = PracticeOptionType.fromWireValue(
-    _wireEnum(object['practice_option_type']),
-  );
+  final mode = PracticeMode.fromWireValue(_wireEnum(object['practice_mode']));
   final roleId = object.containsKey('role_definition_id')
       ? _resourceId(object['role_definition_id'])
       : null;
-  if (type == null ||
-      (type == PracticeOptionType.fullSimulation && roleId != null) ||
-      (type == PracticeOptionType.focus && roleId == null)) {
+  final duration = object['suggested_duration_seconds'];
+  if (mode == null ||
+      duration is! int ||
+      duration < 1 ||
+      duration > 3600 ||
+      (mode == PracticeMode.fullSimulation && roleId != null) ||
+      (mode == PracticeMode.focus && roleId == null) ||
+      (mode != PracticeMode.fullSimulation &&
+          mode != PracticeMode.focus &&
+          roleId != null)) {
     throw const SceneWireFormatException();
   }
   return PracticeOption(
     id: _resourceId(object['practice_option_id']),
     sceneId: _resourceId(object['scene_id']),
-    type: type,
+    mode: mode,
     displayName: _string(object['display_name']),
+    suggestedDurationSeconds: duration,
+    turnPolicyRef: _resourceId(object['turn_policy_ref']),
+    sessionPolicyRef: _resourceId(object['session_policy_ref']),
+    evaluationPolicyRef: _resourceId(object['evaluation_policy_ref']),
     roleId: roleId,
   );
 }
@@ -260,13 +273,8 @@ ScenePrompt _scenePrompt(Object? value) {
       'persona_summary',
       'focus_areas',
       'turn_blueprints',
-      'suggested_duration_seconds',
     },
   );
-  final duration = object['suggested_duration_seconds'];
-  if (duration is! int || duration < 1 || duration > 3600) {
-    throw const SceneWireFormatException();
-  }
   return ScenePrompt(
     publicSceneBrief: _string(object['public_scene_brief']),
     practiceGoal: _string(object['practice_goal']),
@@ -278,7 +286,6 @@ ScenePrompt _scenePrompt(Object? value) {
       object['turn_blueprints'],
       maximumItemBytes: 4096,
     ),
-    suggestedDurationSeconds: duration,
   );
 }
 
@@ -349,18 +356,19 @@ List<String> _stringList(Object? value, {int maximumItemBytes = 128}) {
   return List<String>.unmodifiable(result);
 }
 
-bool _validFamilyModel(SceneFamily family, SceneModel model) =>
-    switch ((family, model)) {
-      (SceneFamily.interview, SceneModel.projectExperienceDeepDive) ||
-      (SceneFamily.interview, SceneModel.interviewBasicDialogue) ||
-      (SceneFamily.exam, SceneModel.ieltsSpeakingPart1) ||
-      (SceneFamily.exam, SceneModel.ieltsSpeakingPart2) ||
-      (SceneFamily.exam, SceneModel.ieltsSpeakingPart3) ||
-      (SceneFamily.exam, SceneModel.ieltsSpeakingFullMock) ||
-      (SceneFamily.exam, SceneModel.examBasicDialogue) ||
-      (SceneFamily.workplace, SceneModel.progressAndRiskUpdate) ||
-      (SceneFamily.workplace, SceneModel.workplaceBasicDialogue) ||
-      (SceneFamily.daily, SceneModel.hotelCheckinAndIssueHandling) ||
-      (SceneFamily.daily, SceneModel.dailyBasicDialogue) => true,
-      _ => false,
-    };
+bool _validExperienceCategory(
+  PracticeExperience experience,
+  SceneCategory category,
+) => switch ((experience, category)) {
+  (PracticeExperience.interview, SceneCategory.interviewRecruiter) ||
+  (PracticeExperience.interview, SceneCategory.interviewBehavioral) ||
+  (PracticeExperience.interview, SceneCategory.interviewProfessional) ||
+  (PracticeExperience.interview, SceneCategory.interviewHiringManager) ||
+  (PracticeExperience.interview, SceneCategory.interviewCustom) ||
+  (PracticeExperience.ieltsSpeaking, SceneCategory.ieltsSpeaking) ||
+  (PracticeExperience.roleplay, SceneCategory.roleplayWorkplace) ||
+  (PracticeExperience.roleplay, SceneCategory.roleplayTravel) ||
+  (PracticeExperience.roleplay, SceneCategory.roleplayDaily) ||
+  (PracticeExperience.roleplay, SceneCategory.roleplayCustom) => true,
+  _ => false,
+};

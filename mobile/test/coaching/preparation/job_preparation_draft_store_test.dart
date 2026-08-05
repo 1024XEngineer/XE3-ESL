@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/identity/session_store.dart';
 
 void main() {

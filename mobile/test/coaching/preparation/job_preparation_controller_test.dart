@@ -1,14 +1,15 @@
 import '../../support/scene_fixtures.dart';
+import '../../support/practice_fixtures.dart';
 
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_client.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
@@ -624,6 +625,7 @@ JobPreparationController _workspaceJobController({
             scene: scene,
             sessionId: bootstrap.session.id,
             planId: bootstrap.session.planId,
+            practiceMode: bootstrap.session.practiceMode,
             turnLimit: bootstrap.maxEffectiveTurns,
             clientOperationId: clientOperationId,
           );
@@ -711,8 +713,10 @@ final class _WorkspacePracticeClient
       sessionId: seed.sessionId,
       planId: seed.planId,
       sessionVersion: 1,
-      sceneFamily: SceneFamily.interview,
-      sceneModel: SceneModel.projectExperienceDeepDive,
+      practiceExperience: PracticeExperience.interview,
+      sceneCategory: SceneCategory.interviewProfessional,
+      practiceMode: PracticeMode.focus,
+      capabilities: testPracticeCapabilities,
       completedTurns: 0,
       turnLimit: seed.turnLimit,
       sessionCompleted: false,
@@ -1159,8 +1163,8 @@ final PreparationSnapshot _snapshot = PreparationSnapshot(
 
 final _scene = testScene(
   id: _sceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'Technical interview',
   version: 1,
   prompt: _prompt,
@@ -1176,7 +1180,6 @@ const _prompt = ScenePrompt(
   personaSummary: 'Precise and evidence seeking.',
   focusAreas: <String>['system_design'],
   turnBlueprints: <String>['Ask for a project overview.'],
-  suggestedDurationSeconds: 900,
 );
 
 final _role = testRole(
@@ -1192,7 +1195,7 @@ final _role = testRole(
 final _option = testPracticeOption(
   id: _optionId,
   sceneId: _sceneId,
-  type: PracticeOptionType.focus,
+  mode: PracticeMode.focus,
   displayName: 'System design focus',
   roleId: _roleId,
 );
@@ -1213,6 +1216,9 @@ const _policy = PreparationSessionPolicy(
   earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
   retryAllowed: false,
   questionTranslationAllowed: true,
+  questionTipsAllowed: true,
+  avatarAllowed: true,
+  speechFeedbackAllowed: true,
 );
 
 final PracticePlan _plan = _planWithRevision(1);
@@ -1221,8 +1227,9 @@ final PreparationPracticeBootstrap _bootstrap = PreparationPracticeBootstrap(
   session: PreparationPracticeSession(
     id: _sessionId,
     planId: _planId,
-    sceneFamily: SceneFamily.interview,
-    sceneModel: SceneModel.projectExperienceDeepDive,
+    practiceExperience: PracticeExperience.interview,
+    sceneCategory: SceneCategory.interviewProfessional,
+    practiceMode: PracticeMode.focus,
     snapshotId: 'session-snapshot-1',
     status: 'starting',
     version: 1,
@@ -1237,8 +1244,9 @@ final PreparationPracticeBootstrap _replacementBootstrap =
       session: PreparationPracticeSession(
         id: _replacementSessionId,
         planId: _planId,
-        sceneFamily: SceneFamily.interview,
-        sceneModel: SceneModel.projectExperienceDeepDive,
+        practiceExperience: PracticeExperience.interview,
+        sceneCategory: SceneCategory.interviewProfessional,
+        practiceMode: PracticeMode.focus,
         snapshotId: 'session-snapshot-2',
         status: 'starting',
         version: 1,

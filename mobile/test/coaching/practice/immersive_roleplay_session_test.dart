@@ -1,3 +1,4 @@
+import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -10,7 +11,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
@@ -214,8 +215,10 @@ void main() {
     final snapshot = PracticeSessionSnapshot(
       sessionId: 'session-retry-1',
       planId: 'plan-retry-1',
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
+      practiceExperience: scene.experience,
+      sceneCategory: scene.category,
+      practiceMode: PracticeMode.fullSimulation,
+      capabilities: testPracticeCapabilities,
       sessionVersion: 1,
       completedTurns: 0,
       turnLimit: 3,
@@ -383,8 +386,10 @@ void main() {
     final snapshot = PracticeSessionSnapshot(
       sessionId: 'session-avatar-1',
       planId: 'plan-avatar-1',
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
+      practiceExperience: scene.experience,
+      sceneCategory: scene.category,
+      practiceMode: PracticeMode.fullSimulation,
+      capabilities: testPracticeCapabilities,
       sessionVersion: 1,
       completedTurns: 0,
       turnLimit: 3,
@@ -448,8 +453,10 @@ Future<PracticeController> _immersivePracticeController() async {
   final snapshot = PracticeSessionSnapshot(
     sessionId: sessionId,
     planId: 'plan-daily-travel',
-    sceneFamily: scene.family,
-    sceneModel: scene.model,
+    practiceExperience: scene.experience,
+    sceneCategory: scene.category,
+    practiceMode: PracticeMode.fullSimulation,
+    capabilities: testPracticeCapabilities,
     sessionVersion: 1,
     completedTurns: 0,
     turnLimit: 3,
@@ -475,14 +482,15 @@ Future<void> _activateCreatedPractice(
   scene: scene,
   sessionId: snapshot.sessionId,
   planId: snapshot.planId,
+  practiceMode: snapshot.practiceMode,
   turnLimit: snapshot.turnLimit,
   clientOperationId: 'activate-${snapshot.sessionId}',
 );
 
 SceneDefinition _dailyTravelScene(String id) => testScene(
   id: id,
-  family: SceneFamily.daily,
-  model: SceneModel.dailyBasicDialogue,
+  experience: PracticeExperience.roleplay,
+  category: SceneCategory.roleplayDaily,
   name: '旅行对话',
   prompt: const ScenePrompt(
     publicSceneBrief: '练习旅行中的真实交流。',
@@ -492,7 +500,6 @@ SceneDefinition _dailyTravelScene(String id) => testScene(
     personaSummary: 'Helpful and natural.',
     focusAreas: <String>['clarity'],
     turnBlueprints: <String>['Ask one travel question.'],
-    suggestedDurationSeconds: 600,
   ),
 );
 

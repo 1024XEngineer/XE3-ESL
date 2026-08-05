@@ -185,7 +185,9 @@ func testReviewReport(id string, createdAt time.Time) review.Report {
 		Revision:             1,
 		SchemaVersion:        "evaluation-report/v1",
 		SceneType:            "INTERVIEW",
-		SceneModel:           "project_interview",
+		PracticeExperience:   "INTERVIEW",
+		SceneCategory:        "INTERVIEW_PROFESSIONAL",
+		PracticeMode:         "FULL_SIMULATION",
 		ScoreabilityStatus:   "PROVISIONAL",
 		Summary:              "练习报告摘要",
 		Dimensions: []review.ReportDimension{{

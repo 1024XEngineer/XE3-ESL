@@ -31,8 +31,9 @@ type Item struct {
 	PlanRevision             int      `json:"plan_revision"`
 	Target                   string   `json:"target"`
 	SceneName                string   `json:"scene_name"`
-	SceneFamily              string   `json:"scene_family"`
-	SceneModel               string   `json:"scene_model"`
+	PracticeExperience       string   `json:"practice_experience"`
+	SceneCategory            string   `json:"scene_category"`
+	PracticeMode             string   `json:"practice_mode"`
 	Roles                    []string `json:"roles"`
 	PracticeScope            string   `json:"practice_scope"`
 	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
@@ -58,8 +59,9 @@ func Validate(item Item) error {
 		item.PlanRevision < 1 ||
 		!validText(item.Target, 500) ||
 		!validText(item.SceneName, 200) ||
-		!validText(item.SceneFamily, 100) ||
-		!validText(item.SceneModel, 200) ||
+		!validText(item.PracticeExperience, 100) ||
+		!validText(item.SceneCategory, 200) ||
+		!validText(item.PracticeMode, 100) ||
 		!validText(item.PracticeScope, 200) ||
 		item.SuggestedDurationSeconds < 1 ||
 		item.MinEffectiveTurns < 1 ||

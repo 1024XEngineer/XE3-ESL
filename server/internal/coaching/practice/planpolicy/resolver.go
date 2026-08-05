@@ -24,7 +24,7 @@ func (*Resolver) ResolveSessionPolicy(
 	requestedMaxEffectiveTurns int,
 ) (preparation.SessionPolicy, error) {
 	policy, err := practice.ResolveSessionPolicy(
-		definition.SessionPolicyRef,
+		option.SessionPolicyRef,
 		practice.ScenePrompt{
 			PublicSceneBrief: definition.Prompt.PublicSceneBrief,
 			PracticeGoal:     definition.Prompt.PracticeGoal,
@@ -37,15 +37,17 @@ func (*Resolver) ResolveSessionPolicy(
 			TurnBlueprints: append(
 				[]string(nil), definition.Prompt.TurnBlueprints...,
 			),
-			SuggestedDurationSeconds: definition.Prompt.
-				SuggestedDurationSeconds,
 		},
 		practice.PracticeOption{
-			ID:               option.ID,
-			SceneID:          option.SceneID,
-			RoleDefinitionID: option.RoleDefinitionID,
-			Type:             practice.PracticeOptionType(option.Type),
-			DisplayName:      option.DisplayName,
+			ID:                       option.ID,
+			SceneID:                  option.SceneID,
+			RoleDefinitionID:         option.RoleDefinitionID,
+			Mode:                     practice.PracticeMode(option.Mode),
+			DisplayName:              option.DisplayName,
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+			TurnPolicyRef:            option.TurnPolicyRef,
+			SessionPolicyRef:         option.SessionPolicyRef,
+			EvaluationPolicyRef:      option.EvaluationPolicyRef,
 		},
 		requestedMaxEffectiveTurns,
 	)
@@ -71,6 +73,9 @@ func (*Resolver) ResolveSessionPolicy(
 		),
 		RetryAllowed:               policy.RetryAllowed,
 		QuestionTranslationAllowed: policy.QuestionTranslationAllowed,
+		QuestionTipsAllowed:        policy.QuestionTipsAllowed,
+		AvatarAllowed:              policy.AvatarAllowed,
+		SpeechFeedbackAllowed:      policy.SpeechFeedbackAllowed,
 	}, nil
 }
 

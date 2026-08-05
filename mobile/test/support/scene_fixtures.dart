@@ -9,20 +9,16 @@ const _prompt = ScenePrompt(
   personaSummary: 'Structured and evidence seeking.',
   focusAreas: <String>['clarity'],
   turnBlueprints: <String>['Ask for one concrete example.'],
-  suggestedDurationSeconds: 600,
 );
 
 const testScenes = <SceneDefinition>[
   SceneDefinition(
     id: 'self-introduction',
-    family: SceneFamily.interview,
-    model: SceneModel.interviewBasicDialogue,
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewRecruiter,
     name: '英文自我介绍',
     version: 1,
     status: SceneStatus.active,
-    turnPolicyRef: 'turn-policy-interview',
-    sessionPolicyRef: 'session-policy-interview',
-    evaluationPolicyRef: 'evaluation-policy-interview',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -44,21 +40,22 @@ const testScenes = <SceneDefinition>[
       PracticeOption(
         id: 'option-self-introduction',
         sceneId: 'self-introduction',
-        type: PracticeOptionType.fullSimulation,
+        mode: PracticeMode.fullSimulation,
         displayName: '完整练习',
+        suggestedDurationSeconds: 600,
+        turnPolicyRef: 'turn-policy-interview',
+        sessionPolicyRef: 'session-policy-interview',
+        evaluationPolicyRef: 'evaluation-policy-interview',
       ),
     ],
   ),
   SceneDefinition(
     id: 'behavioral-interview',
-    family: SceneFamily.interview,
-    model: SceneModel.interviewBasicDialogue,
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewBehavioral,
     name: '行为面试',
     version: 1,
     status: SceneStatus.active,
-    turnPolicyRef: 'turn-policy-interview',
-    sessionPolicyRef: 'session-policy-interview',
-    evaluationPolicyRef: 'evaluation-policy-interview',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -80,21 +77,22 @@ const testScenes = <SceneDefinition>[
       PracticeOption(
         id: 'option-behavioral-interview',
         sceneId: 'behavioral-interview',
-        type: PracticeOptionType.fullSimulation,
+        mode: PracticeMode.fullSimulation,
         displayName: '完整练习',
+        suggestedDurationSeconds: 600,
+        turnPolicyRef: 'turn-policy-interview',
+        sessionPolicyRef: 'session-policy-interview',
+        evaluationPolicyRef: 'evaluation-policy-interview',
       ),
     ],
   ),
   SceneDefinition(
     id: 'project-deep-dive',
-    family: SceneFamily.interview,
-    model: SceneModel.projectExperienceDeepDive,
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewProfessional,
     name: '项目经历深挖',
     version: 1,
     status: SceneStatus.active,
-    turnPolicyRef: 'turn-policy-project',
-    sessionPolicyRef: 'session-policy-project',
-    evaluationPolicyRef: 'evaluation-policy-project',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -116,21 +114,22 @@ const testScenes = <SceneDefinition>[
       PracticeOption(
         id: 'option-project-deep-dive',
         sceneId: 'project-deep-dive',
-        type: PracticeOptionType.fullSimulation,
+        mode: PracticeMode.fullSimulation,
         displayName: '完整练习',
+        suggestedDurationSeconds: 600,
+        turnPolicyRef: 'turn-policy-project',
+        sessionPolicyRef: 'session-policy-project',
+        evaluationPolicyRef: 'evaluation-policy-project',
       ),
     ],
   ),
   SceneDefinition(
     id: 'technical-qa',
-    family: SceneFamily.interview,
-    model: SceneModel.interviewBasicDialogue,
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewProfessional,
     name: '技术问答',
     version: 1,
     status: SceneStatus.active,
-    turnPolicyRef: 'turn-policy-technical',
-    sessionPolicyRef: 'session-policy-technical',
-    evaluationPolicyRef: 'evaluation-policy-technical',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -152,8 +151,12 @@ const testScenes = <SceneDefinition>[
       PracticeOption(
         id: 'option-technical-qa',
         sceneId: 'technical-qa',
-        type: PracticeOptionType.fullSimulation,
+        mode: PracticeMode.fullSimulation,
         displayName: '完整练习',
+        suggestedDurationSeconds: 600,
+        turnPolicyRef: 'turn-policy-technical',
+        sessionPolicyRef: 'session-policy-technical',
+        evaluationPolicyRef: 'evaluation-policy-technical',
       ),
     ],
   ),
@@ -161,8 +164,8 @@ const testScenes = <SceneDefinition>[
 
 SceneDefinition testScene({
   String id = 'scene-test',
-  SceneFamily family = SceneFamily.interview,
-  SceneModel model = SceneModel.interviewBasicDialogue,
+  PracticeExperience experience = PracticeExperience.interview,
+  SceneCategory category = SceneCategory.interviewRecruiter,
   String name = 'Test scene',
   int version = 1,
   SceneStatus status = SceneStatus.active,
@@ -199,21 +202,22 @@ SceneDefinition testScene({
           PracticeOption(
             id: 'option-$id',
             sceneId: id,
-            type: PracticeOptionType.fullSimulation,
+            mode: PracticeMode.fullSimulation,
             displayName: 'Full simulation',
+            suggestedDurationSeconds: 600,
+            turnPolicyRef: turnPolicyRef ?? 'turn-$id',
+            sessionPolicyRef: sessionPolicyRef ?? 'session-$id',
+            evaluationPolicyRef: evaluationPolicyRef ?? 'evaluation-$id',
           ),
         ]
       : resolvedOptions;
   return SceneDefinition(
     id: id,
-    family: family,
-    model: model,
+    experience: experience,
+    category: category,
     name: name,
     version: version,
     status: status,
-    turnPolicyRef: turnPolicyRef ?? 'turn-$id',
-    sessionPolicyRef: sessionPolicyRef ?? 'session-$id',
-    evaluationPolicyRef: evaluationPolicyRef ?? 'evaluation-$id',
     prompt: resolvedPrompt,
     roles: List<RoleDefinition>.unmodifiable(completeRoles),
     practiceOptions: List<PracticeOption>.unmodifiable(completeOptions),
@@ -250,15 +254,23 @@ RoleDefinition testRole({
 PracticeOption testPracticeOption({
   required String id,
   required String sceneId,
-  required PracticeOptionType type,
+  required PracticeMode mode,
   required String displayName,
   String? roleId,
+  int suggestedDurationSeconds = 600,
+  String? turnPolicyRef,
+  String? sessionPolicyRef,
+  String? evaluationPolicyRef,
 }) => PracticeOption(
   id: id,
   sceneId: sceneId,
-  type: type,
+  mode: mode,
   displayName: displayName,
   roleId: roleId,
+  suggestedDurationSeconds: suggestedDurationSeconds,
+  turnPolicyRef: turnPolicyRef ?? 'turn-$id',
+  sessionPolicyRef: sessionPolicyRef ?? 'session-$id',
+  evaluationPolicyRef: evaluationPolicyRef ?? 'evaluation-$id',
 );
 
 Goal testGoal({

@@ -10,8 +10,9 @@ type RetryTurnAuthorization struct {
 	PracticeSessionID            string
 	OriginalTurnID               string
 	QuestionID                   string
-	SceneFamily                  SceneFamily
-	SceneModel                   SceneModel
+	Experience                   PracticeExperience
+	Category                     SceneCategory
+	PracticeMode                 PracticeMode
 	SessionStatusAtAuthorization SessionStatus
 	CountsTowardEffectiveLimit   bool
 	CreatedAt                    time.Time

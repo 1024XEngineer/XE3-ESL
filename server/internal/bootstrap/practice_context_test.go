@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -19,8 +20,8 @@ const (
 	testHRInterviewerRoleID        = "role_hr_interviewer"
 	testFullSimulationOptionID     = "option_full_simulation"
 	testTechnicalFocusOptionID     = "option_technical_focus"
-	testIELTSFullMockSceneID       = "scn_ielts_speaking_full"
-	testIELTSFullSimulationID      = "option_ielts_full_simulation"
+	testIELTSFullMockSceneID       = "scn_ielts_speaking"
+	testIELTSFullSimulationID      = "option_ielts_speaking_full_mock"
 	testWorkplaceProgressSceneID   = "scn_workplace_progress_risk_update"
 	testDirectManagerRoleID        = "role_direct_manager"
 	testDirectManagerFocusOptionID = "option_direct_manager_focus"
@@ -132,58 +133,87 @@ func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
 	}
 	catalog, err := scene.NewCatalog([]scene.SceneDefinition{
 		{
-			ID:                  testProgrammerInterviewSceneID,
-			Family:              scene.SceneFamilyInterview,
-			Model:               scene.SceneModelProjectExperienceDeepDive,
-			Name:                "Technical interview",
-			Version:             1,
-			Status:              scene.SceneStatusActive,
-			TurnPolicyRef:       "interview.project_deep_dive.turn.v1",
-			SessionPolicyRef:    "interview.project_deep_dive.session.v1",
-			EvaluationPolicyRef: "interview.shadow.evaluation.v1",
-			Prompt:              bootstrapTestScenePrompt(),
-			Roles:               []scene.RoleDefinition{programmerRole},
+			ID:         testProgrammerInterviewSceneID,
+			Experience: scene.PracticeExperienceInterview,
+			Category:   scene.SceneCategoryInterviewProfessional,
+			Name:       "Technical interview",
+			Version:    1,
+			Status:     scene.SceneStatusActive,
+			Prompt:     bootstrapTestScenePrompt(),
+			Roles:      []scene.RoleDefinition{programmerRole},
 			PracticeOptions: []scene.PracticeOption{
 				{
-					ID:          testFullSimulationOptionID,
-					SceneID:     testProgrammerInterviewSceneID,
-					Type:        scene.PracticeOptionFullSimulation,
-					DisplayName: "Full simulation",
+					ID:                       testFullSimulationOptionID,
+					SceneID:                  testProgrammerInterviewSceneID,
+					Mode:                     scene.PracticeModeFullSimulation,
+					DisplayName:              "Full simulation",
+					SuggestedDurationSeconds: 600,
+					TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+					SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+					EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 				},
 				{
-					ID:               testTechnicalFocusOptionID,
-					SceneID:          testProgrammerInterviewSceneID,
-					RoleDefinitionID: testTechnicalInterviewerRoleID,
-					Type:             scene.PracticeOptionFocus,
-					DisplayName:      "Technical focus",
+					ID:                       testTechnicalFocusOptionID,
+					SceneID:                  testProgrammerInterviewSceneID,
+					RoleDefinitionID:         testTechnicalInterviewerRoleID,
+					Mode:                     scene.PracticeModeFocus,
+					DisplayName:              "Technical focus",
+					SuggestedDurationSeconds: 600,
+					TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+					SessionPolicyRef:         "interview.project_deep_dive.session.v1",
+					EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 				},
 			},
 		},
 		{
-			ID:                  testIELTSFullMockSceneID,
-			Family:              scene.SceneFamilyExam,
-			Model:               scene.SceneModelIELTSSpeakingFullMock,
-			Name:                "IELTS Speaking full mock",
-			Version:             1,
-			Status:              scene.SceneStatusActive,
-			TurnPolicyRef:       "ielts.speaking_full_mock.turn.v1",
-			SessionPolicyRef:    "ielts.speaking_full_mock.session.v1",
-			EvaluationPolicyRef: "ielts.speaking_full_mock.evaluation.v1",
-			Prompt:              bootstrapTestScenePrompt(),
-			Roles:               []scene.RoleDefinition{ieltsRole},
+			ID:         testIELTSFullMockSceneID,
+			Experience: scene.PracticeExperienceIELTSSpeaking,
+			Category:   scene.SceneCategoryIELTSSpeaking,
+			Name:       "IELTS Speaking",
+			Version:    1,
+			Status:     scene.SceneStatusActive,
+			Prompt:     bootstrapTestScenePrompt(),
+			Roles:      []scene.RoleDefinition{ieltsRole},
 			PracticeOptions: []scene.PracticeOption{
 				{
-					ID:          testIELTSFullSimulationID,
-					SceneID:     testIELTSFullMockSceneID,
-					Type:        scene.PracticeOptionFullSimulation,
-					DisplayName: "Full mock",
+					ID:                       testIELTSFullSimulationID,
+					SceneID:                  testIELTSFullMockSceneID,
+					Mode:                     scene.PracticeModeFullMock,
+					DisplayName:              "Full mock",
+					SuggestedDurationSeconds: 900,
+					TurnPolicyRef:            "ielts.speaking_full_mock.turn.v1",
+					SessionPolicyRef:         "ielts.speaking_full_mock.session.v1",
+					EvaluationPolicyRef:      "ielts.speaking_full_mock.evaluation.v1",
 				},
 				{
-					ID:               "option_ielts_examiner_focus",
-					SceneID:          testIELTSFullMockSceneID,
-					RoleDefinitionID: ieltsRole.ID,
-					Type:             scene.PracticeOptionFocus,
-					DisplayName:      "Examiner focus",
+					ID:                       "option_ielts_speaking_part_1",
+					SceneID:                  testIELTSFullMockSceneID,
+					Mode:                     scene.PracticeModePart1,
+					DisplayName:              "Part 1",
+					SuggestedDurationSeconds: 300,
+					TurnPolicyRef:            "ielts.speaking_part1.turn.v1",
+					SessionPolicyRef:         "ielts.speaking_part1.session.v1",
+					EvaluationPolicyRef:      "ielts.speaking_practice.evaluation.v1",
+				},
+				{
+					ID:                       "option_ielts_speaking_part_2",
+					SceneID:                  testIELTSFullMockSceneID,
+					Mode:                     scene.PracticeModePart2,
+					DisplayName:              "Part 2",
+					SuggestedDurationSeconds: 600,
+					TurnPolicyRef:            "ielts.speaking_part2.turn.v1",
+					SessionPolicyRef:         "ielts.speaking_part2.session.v1",
+					EvaluationPolicyRef:      "ielts.speaking_practice.evaluation.v1",
+				},
+				{
+					ID:                       "option_ielts_speaking_part_3",
+					SceneID:                  testIELTSFullMockSceneID,
+					Mode:                     scene.PracticeModePart3,
+					DisplayName:              "Part 3",
+					SuggestedDurationSeconds: 300,
+					TurnPolicyRef:            "ielts.speaking_part3.turn.v1",
+					SessionPolicyRef:         "ielts.speaking_part3.session.v1",
+					EvaluationPolicyRef:      "ielts.speaking_practice.evaluation.v1",
 				},
 			},
 		},
@@ -196,15 +226,23 @@ func newBootstrapTestCatalog(t *testing.T) *scene.Catalog {
 
 func bootstrapTestScenePrompt() scene.ScenePrompt {
 	return scene.ScenePrompt{
-		PublicSceneBrief:         "Practice one realistic spoken English exchange.",
-		PracticeGoal:             "Respond clearly with relevant evidence.",
-		UserRole:                 "Learner",
-		AIRole:                   "Facilitator",
-		PersonaSummary:           "A precise language coach.",
-		FocusAreas:               []string{"clarity"},
-		TurnBlueprints:           []string{"Ask one primary question."},
-		SuggestedDurationSeconds: 600,
+		PublicSceneBrief: "Practice one realistic spoken English exchange.",
+		PracticeGoal:     "Respond clearly with relevant evidence.",
+		UserRole:         "Learner",
+		AIRole:           "Facilitator",
+		PersonaSummary:   "A precise language coach.",
+		FocusAreas:       []string{"clarity"},
+		TurnBlueprints:   []string{"Ask one primary question."},
 	}
+}
+
+func newBootstrapTestIELTSQuestionBank(t *testing.T) *ielts.Bank {
+	t.Helper()
+	bank, err := ielts.NewBank()
+	if err != nil {
+		t.Fatalf("ielts.NewBank: %v", err)
+	}
+	return bank
 }
 
 func contextCompositionActor() requestcontext.Actor {

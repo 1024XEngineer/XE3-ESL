@@ -475,8 +475,7 @@ func ensureSpeechFeedbackTurnSnapshot(
 		evidenceVersion int64
 		candidateID     string
 		transcriptID    string
-		scenarioType    string
-		scenarioModel   string
+		feedbackAllowed bool
 		audioAssetID    string
 		audioVersion    int64
 		audioChecksum   string
@@ -487,8 +486,8 @@ func ensureSpeechFeedbackTurnSnapshot(
 			turn.evidence_version,
 			candidate.candidate_id,
 			candidate.transcript_id,
-			session.scene_family,
-			session.scene_model,
+			(snapshot.snapshot_document->'session_policy'->>
+			 'speech_feedback_allowed')::boolean,
 			audio.audio_asset_id,
 			audio.version,
 			audio.checksum_sha256
@@ -502,6 +501,10 @@ func ensureSpeechFeedbackTurnSnapshot(
 		JOIN practice_sessions AS session
 		  ON session.owner_user_id = turn.owner_user_id
 		 AND session.session_id = turn.practice_session_id
+		JOIN practice_session_snapshots AS snapshot
+		  ON snapshot.owner_user_id = session.owner_user_id
+		 AND snapshot.session_id = session.session_id
+		 AND snapshot.snapshot_id = session.snapshot_id
 		JOIN practice_audio_assets AS audio
 		  ON audio.owner_user_id = turn.owner_user_id
 		 AND audio.turn_id = turn.turn_id
@@ -517,8 +520,7 @@ func ensureSpeechFeedbackTurnSnapshot(
 		&evidenceVersion,
 		&candidateID,
 		&transcriptID,
-		&scenarioType,
-		&scenarioModel,
+		&feedbackAllowed,
 		&audioAssetID,
 		&audioVersion,
 		&audioChecksum,
@@ -533,7 +535,7 @@ func ensureSpeechFeedbackTurnSnapshot(
 			err,
 		)
 	}
-	if !eligibleSpeechFeedbackScenario(scenarioType, scenarioModel) ||
+	if !feedbackAllowed ||
 		evidenceVersion < 1 ||
 		!validSpeechFeedbackText(answerText, 16*1024) {
 		return speechFeedbackTurnSnapshot{},
@@ -706,31 +708,6 @@ func selectConfirmedAgentSpeechFeedbackSource(
 		canonicalText,
 	)
 	return source, canonicalText, digest, nil
-}
-
-func eligibleSpeechFeedbackScenario(
-	scenarioType string,
-	scenarioModel string,
-) bool {
-	switch scenarioType {
-	case "DAILY":
-		return scenarioModel == "HOTEL_CHECKIN_AND_ISSUE_HANDLING" ||
-			scenarioModel == "DAILY_BASIC_DIALOGUE"
-	case "WORKPLACE":
-		return scenarioModel == "PROGRESS_AND_RISK_UPDATE" ||
-			scenarioModel == "WORKPLACE_BASIC_DIALOGUE"
-	case "INTERVIEW":
-		return scenarioModel == "PROJECT_EXPERIENCE_DEEP_DIVE" ||
-			scenarioModel == "INTERVIEW_BASIC_DIALOGUE"
-	case "EXAM":
-		return scenarioModel == "IELTS_SPEAKING_PART_1" ||
-			scenarioModel == "IELTS_SPEAKING_PART_2" ||
-			scenarioModel == "IELTS_SPEAKING_PART_3" ||
-			scenarioModel == "IELTS_SPEAKING_FULL_MOCK" ||
-			scenarioModel == "EXAM_BASIC_DIALOGUE"
-	default:
-		return false
-	}
 }
 
 func lockSpeechFeedbackSource(

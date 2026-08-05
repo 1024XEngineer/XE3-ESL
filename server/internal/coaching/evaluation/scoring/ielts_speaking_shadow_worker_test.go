@@ -165,7 +165,7 @@ func validIELTSSpeakingShadowClaim(
 		Model:                configuration.Model,
 		Snapshot: ieltsSpeakingTestSnapshot(
 			t,
-			IELTSQuestionCount,
+			ieltsTestQuestionCount,
 		),
 	}
 }

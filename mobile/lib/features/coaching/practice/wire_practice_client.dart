@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment_codec.dart';
 
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -249,9 +251,7 @@ final class WirePracticeClient
         path: _endpoints.voiceActivationPath(sessionId),
         extraHeaders: <String, String>{'Idempotency-Key': clientOperationId},
       );
-      // The server returns 200 for both the initial idempotent activation and
-      // its replay. Keep accepting 201 for compatibility with older servers.
-      _requireStatus(response, const {HttpStatus.ok, HttpStatus.created});
+      _requireStatus(response, const {HttpStatus.ok});
       return _decodeSessionState(response.body, expectedSessionId: sessionId);
     });
   }
@@ -784,25 +784,38 @@ PracticeSessionSnapshot _decodeSessionState(
       'practice_plan_id',
       'scene_id',
       'scene_version',
-      'scene_family',
-      'scene_model',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
       'practice_session_status',
+      'practice_capabilities',
       'session_version',
       'effective_turns',
       'turn_limit',
       'session_completed',
     },
-    optional: const {'current_question', 'current_turn', 'turn_history'},
+    optional: const {
+      'ielts_assignment',
+      'current_question',
+      'current_turn',
+      'turn_history',
+    },
   );
   final sessionId = _string(root, 'practice_session_id');
   final planId = _string(root, 'practice_plan_id');
   _string(root, 'scene_id');
   final sceneVersion = _integer(root, 'scene_version');
-  final sceneFamily = SceneFamily.fromWireValue(
-    _string(root, 'scene_family', maxLength: 32),
+  final practiceExperience = PracticeExperience.fromWireValue(
+    _string(root, 'practice_experience', maxLength: 32),
   );
-  final sceneModel = SceneModel.fromWireValue(
-    _string(root, 'scene_model', maxLength: 64),
+  final sceneCategory = SceneCategory.fromWireValue(
+    _string(root, 'scene_category', maxLength: 64),
+  );
+  final practiceMode = PracticeMode.fromWireValue(
+    _string(root, 'practice_mode', maxLength: 32),
+  );
+  final capabilities = _decodePracticeCapabilities(
+    _object(root['practice_capabilities']),
   );
   final sessionStatus = switch (_string(
     root,
@@ -822,7 +835,11 @@ PracticeSessionSnapshot _decodeSessionState(
   final terminal =
       sessionStatus == PracticeSessionLifecycleStatus.completed ||
       sessionStatus == PracticeSessionLifecycleStatus.endedEarly;
+  final ieltsAssignment = root.containsKey('ielts_assignment')
+      ? _decodeIeltsAssignment(root['ielts_assignment'])
+      : null;
   if (const {
+    'ielts_assignment',
     'current_question',
     'current_turn',
     'turn_history',
@@ -842,16 +859,21 @@ PracticeSessionSnapshot _decodeSessionState(
       .where((exchange) => exchange.turn.countsTowardEffectiveTurnLimit)
       .length;
   if ((expectedSessionId != null && sessionId != expectedSessionId) ||
-      sceneFamily == null ||
-      sceneModel == null ||
+      practiceExperience == null ||
+      sceneCategory == null ||
+      practiceMode == null ||
       sceneVersion < 1 ||
-      !validPracticeSceneIdentity(sceneFamily, sceneModel) ||
       sessionVersion < 1 ||
       completed != terminal ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
-      turnLimit > 24 ||
+      turnLimit > practiceTurnSafetyLimit ||
       effectiveTurns > turnLimit ||
+      (practiceExperience == PracticeExperience.ieltsSpeaking) !=
+          (ieltsAssignment != null) ||
+      (ieltsAssignment != null &&
+          (ieltsAssignment.mode != practiceMode ||
+              ieltsAssignment.turnBlueprints.length != turnLimit)) ||
       (!completed && question == null) ||
       (completed &&
           (question != null || (effectiveTurns > 0 && turn == null))) ||
@@ -860,7 +882,7 @@ PracticeSessionSnapshot _decodeSessionState(
           (turn.sessionId != sessionId ||
               turn.effectiveTurns != effectiveTurns ||
               turn.sessionCompleted != completed)) ||
-      (isTurnFeedbackEligiblePracticeScene(sceneFamily, sceneModel) &&
+      (capabilities.speechFeedbackAllowed &&
           effectiveTurns > 0 &&
           !root.containsKey('turn_history')) ||
       (turnHistory.isNotEmpty &&
@@ -877,20 +899,33 @@ PracticeSessionSnapshot _decodeSessionState(
   return PracticeSessionSnapshot(
     sessionId: sessionId,
     planId: planId,
-    sceneFamily: sceneFamily,
-    sceneModel: sceneModel,
+    practiceExperience: practiceExperience,
+    sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
+    capabilities: capabilities,
     sessionVersion: sessionVersion,
     completedTurns: effectiveTurns,
     turnLimit: turnLimit,
     sessionCompleted: completed,
+    ieltsAssignment: ieltsAssignment,
     currentQuestion: question,
     currentTurn: turn,
     turnHistory: turnHistory,
   );
 }
 
+IeltsPracticeAssignment _decodeIeltsAssignment(Object? value) {
+  try {
+    return decodeIeltsAssignment(value);
+  } on IeltsAssignmentWireFormatException {
+    throw _invalidResponse();
+  }
+}
+
 List<PracticeTurnExchange> _decodeTurnHistory(Object? value) {
-  if (value is! List<Object?> || value.isEmpty || value.length > 56) {
+  if (value is! List<Object?> ||
+      value.isEmpty ||
+      value.length > practiceTurnSafetyLimit) {
     throw _invalidResponse();
   }
   final exchanges = <PracticeTurnExchange>[];
@@ -935,8 +970,9 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
       'practice_session_id',
       'practice_plan_id',
       'plan_revision',
-      'scene_family',
-      'scene_model',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
       'evaluation_policy_ref',
       'snapshot_id',
       'practice_session_status',
@@ -948,8 +984,9 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
   final sessionId = _string(root, 'practice_session_id');
   _string(root, 'practice_plan_id');
   final planRevision = _integer(root, 'plan_revision');
-  _string(root, 'scene_family', maxLength: 32);
-  _string(root, 'scene_model', maxLength: 64);
+  _string(root, 'practice_experience', maxLength: 32);
+  _string(root, 'scene_category', maxLength: 64);
+  _string(root, 'practice_mode', maxLength: 32);
   _string(root, 'evaluation_policy_ref');
   _string(root, 'snapshot_id');
   final rawStatus = _string(root, 'practice_session_status', maxLength: 32);
@@ -1350,12 +1387,34 @@ PracticeTurnConfirmation _confirmationFromState(
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
     sessionCompleted: state.sessionCompleted,
-    sceneFamily: state.sceneFamily,
-    sceneModel: state.sceneModel,
+    practiceExperience: state.practiceExperience,
+    sceneCategory: state.sceneCategory,
+    practiceMode: state.practiceMode,
+    capabilities: state.capabilities,
     sessionVersion: state.sessionVersion,
     nextQuestion: state.currentQuestion,
     audioAssetId: turn.audioAssetId,
     speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
+  );
+}
+
+PracticeCapabilities _decodePracticeCapabilities(Map<String, Object?> value) {
+  final root = _exactObject(
+    value,
+    required: const {
+      'retry_allowed',
+      'question_translation_allowed',
+      'question_tips_allowed',
+      'avatar_allowed',
+      'speech_feedback_allowed',
+    },
+  );
+  return PracticeCapabilities(
+    retryAllowed: _boolean(root, 'retry_allowed'),
+    questionTranslationAllowed: _boolean(root, 'question_translation_allowed'),
+    questionTipsAllowed: _boolean(root, 'question_tips_allowed'),
+    avatarAllowed: _boolean(root, 'avatar_allowed'),
+    speechFeedbackAllowed: _boolean(root, 'speech_feedback_allowed'),
   );
 }
 

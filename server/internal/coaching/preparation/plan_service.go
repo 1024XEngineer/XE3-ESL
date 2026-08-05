@@ -11,12 +11,17 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 var planObjectiveIDPattern = regexp.MustCompile(
 	`^[a-z][a-z0-9_]{0,127}$`,
 )
+
+// maxPlanEffectiveTurns is a transport/runtime safety bound, not an IELTS
+// question-count rule.
+const maxPlanEffectiveTurns = 64
 
 type PlanApplication interface {
 	PlanReader
@@ -47,7 +52,7 @@ type PlanService struct {
 	goals      goal.Reader
 	threads    SourceThreadReader
 	selections scene.AccessibleSelectionReader
-	ielts      scene.IELTSQuestionBankReader
+	ielts      ielts.QuestionSetResolver
 	policies   PolicyResolver
 }
 
@@ -58,15 +63,13 @@ func NewPlanService(
 	goals goal.Reader,
 	threads SourceThreadReader,
 	catalog scene.CatalogReader,
+	ieltsQuestions ielts.QuestionSetResolver,
 	policies PolicyResolver,
 ) (*PlanService, error) {
 	if repository == nil || ids == nil || snapshots == nil || goals == nil ||
-		threads == nil || catalog == nil || policies == nil {
+		threads == nil || catalog == nil || ieltsQuestions == nil ||
+		policies == nil {
 		return nil, errors.New("preparation: plan dependency is required")
-	}
-	ielts, ok := catalog.(scene.IELTSQuestionBankReader)
-	if !ok {
-		return nil, errors.New("preparation: IELTS question catalog is required")
 	}
 	selections, ok := catalog.(scene.AccessibleSelectionReader)
 	if !ok {
@@ -79,7 +82,7 @@ func NewPlanService(
 		goals:      goals,
 		threads:    threads,
 		selections: selections,
-		ielts:      ielts,
+		ielts:      ieltsQuestions,
 		policies:   policies,
 	}, nil
 }
@@ -270,6 +273,14 @@ func (s *PlanService) RevisePlan(
 	if err != nil {
 		return PracticePlan{}, false, err
 	}
+	selection, ieltsAssignment, err := freezeIELTSAssignment(
+		s.ielts,
+		selection,
+		request.IELTSSelection,
+	)
+	if err != nil {
+		return PracticePlan{}, false, err
+	}
 	policy, objectives, err := buildPlanExecution(
 		s.policies,
 		selection,
@@ -284,7 +295,7 @@ func (s *PlanService) RevisePlan(
 		SceneSelection:       clonePlanSceneSelection(selection),
 		SessionPolicy:        policy,
 		PracticeObjectives:   clonePlanObjectives(objectives),
-		IELTSAssignment:      cloneIELTSAssignment(current.IELTSAssignment),
+		IELTSAssignment:      cloneIELTSAssignment(ieltsAssignment),
 		Intent:               intent,
 	})
 	if err != nil {
@@ -400,14 +411,16 @@ func validCreatePlanRequest(request CreatePlanRequest) bool {
 		validPlanResourceID(request.PracticeOptionID) &&
 		request.MaxEffectiveTurns >= 0 &&
 		(request.IELTSSelection == nil ||
-			validIELTSQuestionSelection(*request.IELTSSelection))
+			validIELTSSelectionShape(*request.IELTSSelection))
 }
 
 func validRevisePlanRequest(request RevisePlanRequest) bool {
 	return request.ExpectedPlanRevision > 0 &&
 		validUniquePlanIDs(request.SelectedRoleIDs) &&
 		validPlanResourceID(request.PracticeOptionID) &&
-		request.MaxEffectiveTurns > 0
+		request.MaxEffectiveTurns > 0 &&
+		(request.IELTSSelection == nil ||
+			validIELTSSelectionShape(*request.IELTSSelection))
 }
 
 func validPlanPreparationSnapshot(snapshot Snapshot, expectedID string) bool {
@@ -444,61 +457,67 @@ func selectionMatchesCreateRequest(
 }
 
 func freezeIELTSAssignment(
-	catalog scene.IELTSQuestionBankReader,
+	questions ielts.QuestionSetResolver,
 	selection scene.SelectionSnapshot,
 	request *IELTSQuestionSelection,
 ) (scene.SelectionSnapshot, *IELTSAssignmentSnapshot, error) {
-	expectedMode, isIELTS := expectedIELTSMode(selection.Scene)
+	option, err := selection.PracticeOption()
+	if err != nil {
+		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
+	}
+	isIELTS := selection.Scene.Experience ==
+		scene.PracticeExperienceIELTSSpeaking
 	if !isIELTS {
 		if request != nil {
 			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 		}
 		return clonePlanSceneSelection(selection), nil, nil
 	}
-	if request == nil || request.Mode != expectedMode ||
-		!validIELTSQuestionSelection(*request) {
+	mode, validMode := ieltsPracticeMode(option.Mode)
+	if selection.Scene.Category != scene.SceneCategoryIELTSSpeaking ||
+		!validMode || request == nil ||
+		!validIELTSQuestionSelection(option.Mode, *request) {
 		return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 	}
-	resolved, err := catalog.ResolveIELTSQuestionSet(
-		scene.IELTSQuestionSetSelection{
-			Mode:         request.Mode,
+	resolved, err := questions.ResolveQuestionSet(
+		ielts.QuestionSetSelection{
+			Mode:         mode,
 			Part1SetID:   request.Part1SetID,
 			TopicGroupID: request.TopicGroupID,
 		},
 	)
 	if err != nil {
 		switch {
-		case errors.Is(err, scene.ErrIELTSQuestionSetNotFound):
+		case errors.Is(err, ielts.ErrQuestionSetNotFound):
 			return scene.SelectionSnapshot{}, nil, ErrPlanNotFound
-		case errors.Is(err, scene.ErrIELTSPracticeModeInvalid):
+		case errors.Is(err, ielts.ErrPracticeModeInvalid):
 			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 		default:
 			return scene.SelectionSnapshot{}, nil, err
 		}
 	}
-	if !validResolvedIELTSQuestionSet(*request, resolved) {
+	if !validResolvedIELTSQuestionSet(option.Mode, *request, resolved) {
 		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
 	}
 
 	assignment := &IELTSAssignmentSnapshot{
-		BankID:         resolved.BankID,
-		Season:         resolved.Season,
-		Mode:           resolved.Mode,
-		Part1SetID:     resolved.Part1SetID,
-		TopicGroupID:   resolved.TopicGroupID,
-		TopicTitle:     resolved.TopicTitle,
-		Part1Questions: resolved.Part1Questions,
-		Part2Questions: resolved.Part2Questions,
-		Part3Questions: resolved.Part3Questions,
-		TurnBlueprints: clonePlanStrings(resolved.TurnBlueprints),
+		BankID: resolved.BankID,
+		Season: resolved.Season,
+		Mode:   option.Mode,
+		Parts:  make([]IELTSAssignmentPartSnapshot, len(resolved.Parts)),
 	}
-	if resolved.Mode == scene.IELTSPracticeModeFullMock ||
-		resolved.Mode == scene.IELTSPracticeModePart2 {
-		assignment.Part2CueCard = resolved.Part2CueCard
+	for index, part := range resolved.Parts {
+		assignment.Parts[index] = IELTSAssignmentPartSnapshot{
+			Part:           scene.PracticeMode(part.Part),
+			SourceID:       part.SourceID,
+			TopicTitle:     part.TopicTitle,
+			CueCard:        part.CueCard,
+			TurnBlueprints: clonePlanStrings(part.TurnBlueprints),
+		}
 	}
 	selection = clonePlanSceneSelection(selection)
 	selection.Scene.Prompt.TurnBlueprints = clonePlanStrings(
-		assignment.TurnBlueprints,
+		ieltsAssignmentTurnBlueprints(*assignment),
 	)
 	selection.Scene.Prompt.PublicSceneBrief = ieltsAssignmentSceneBrief(
 		*assignment,
@@ -509,35 +528,30 @@ func freezeIELTSAssignment(
 	return selection, assignment, nil
 }
 
-func expectedIELTSMode(
-	definition scene.SceneDefinition,
-) (scene.IELTSPracticeMode, bool) {
-	if definition.Family != scene.SceneFamilyExam {
-		return "", false
-	}
-	switch definition.Model {
-	case scene.SceneModelIELTSSpeakingFullMock:
-		return scene.IELTSPracticeModeFullMock, true
-	case scene.SceneModelIELTSSpeakingPart1:
-		return scene.IELTSPracticeModePart1, true
-	case scene.SceneModelIELTSSpeakingPart2:
-		return scene.IELTSPracticeModePart2, true
-	case scene.SceneModelIELTSSpeakingPart3:
-		return scene.IELTSPracticeModePart3, true
+func ieltsPracticeMode(mode scene.PracticeMode) (ielts.PracticeMode, bool) {
+	switch mode {
+	case scene.PracticeModeFullMock,
+		scene.PracticeModePart1,
+		scene.PracticeModePart2,
+		scene.PracticeModePart3:
+		return ielts.PracticeMode(mode), true
 	default:
 		return "", false
 	}
 }
 
-func validIELTSQuestionSelection(selection IELTSQuestionSelection) bool {
-	switch selection.Mode {
-	case scene.IELTSPracticeModeFullMock:
+func validIELTSQuestionSelection(
+	mode scene.PracticeMode,
+	selection IELTSQuestionSelection,
+) bool {
+	switch mode {
+	case scene.PracticeModeFullMock:
 		return validPlanResourceID(selection.Part1SetID) &&
 			validPlanResourceID(selection.TopicGroupID)
-	case scene.IELTSPracticeModePart1:
+	case scene.PracticeModePart1:
 		return validPlanResourceID(selection.Part1SetID) &&
 			selection.TopicGroupID == ""
-	case scene.IELTSPracticeModePart2, scene.IELTSPracticeModePart3:
+	case scene.PracticeModePart2, scene.PracticeModePart3:
 		return selection.Part1SetID == "" &&
 			validPlanResourceID(selection.TopicGroupID)
 	default:
@@ -545,117 +559,146 @@ func validIELTSQuestionSelection(selection IELTSQuestionSelection) bool {
 	}
 }
 
+func validIELTSSelectionShape(selection IELTSQuestionSelection) bool {
+	part1Valid := selection.Part1SetID == "" ||
+		validPlanResourceID(selection.Part1SetID)
+	topicValid := selection.TopicGroupID == "" ||
+		validPlanResourceID(selection.TopicGroupID)
+	return part1Valid && topicValid &&
+		(selection.Part1SetID != "" || selection.TopicGroupID != "")
+}
+
 func validResolvedIELTSQuestionSet(
+	mode scene.PracticeMode,
 	request IELTSQuestionSelection,
-	resolved scene.IELTSResolvedQuestionSet,
+	resolved ielts.ResolvedQuestionSet,
 ) bool {
-	if resolved.Mode != request.Mode ||
-		resolved.Part1SetID != request.Part1SetID ||
-		resolved.TopicGroupID != request.TopicGroupID ||
+	if scene.PracticeMode(resolved.Mode) != mode ||
 		!validPlanResourceID(resolved.BankID) ||
-		!validPlanText(resolved.Season) ||
-		!validIELTSTurnBlueprints(resolved.TurnBlueprints) {
+		!validPlanText(resolved.Season) {
 		return false
 	}
-	switch resolved.Mode {
-	case scene.IELTSPracticeModeFullMock:
-		return validPlanText(resolved.TopicTitle) &&
-			validPlanText(resolved.Part2CueCard) &&
-			resolved.Part1Questions == 8 &&
-			resolved.Part2Questions == 1 &&
-			resolved.Part3Questions >= 1 &&
-			resolved.Part3Questions <= 5 &&
-			len(resolved.TurnBlueprints) == 9+resolved.Part3Questions
-	case scene.IELTSPracticeModePart1:
-		return resolved.TopicTitle == "" &&
-			resolved.Part2CueCard == "" &&
-			resolved.Part1Questions >= 2 &&
-			resolved.Part1Questions <= 24 &&
-			resolved.Part2Questions == 0 &&
-			resolved.Part3Questions == 0 &&
-			len(resolved.TurnBlueprints) == resolved.Part1Questions
-	case scene.IELTSPracticeModePart2:
-		return validPlanText(resolved.TopicTitle) &&
-			validPlanText(resolved.Part2CueCard) &&
-			resolved.Part1Questions == 0 &&
-			resolved.Part2Questions == 1 &&
-			resolved.Part3Questions >= 1 &&
-			resolved.Part3Questions <= 6 &&
-			len(resolved.TurnBlueprints) == 1+resolved.Part3Questions
-	case scene.IELTSPracticeModePart3:
-		return validPlanText(resolved.TopicTitle) &&
-			resolved.Part1Questions == 0 &&
-			resolved.Part2Questions == 0 &&
-			resolved.Part3Questions >= 1 &&
-			resolved.Part3Questions <= 6 &&
-			len(resolved.TurnBlueprints) == resolved.Part3Questions
-	default:
+	parts := make([]IELTSAssignmentPartSnapshot, len(resolved.Parts))
+	for index, part := range resolved.Parts {
+		parts[index] = IELTSAssignmentPartSnapshot{
+			Part:           scene.PracticeMode(part.Part),
+			SourceID:       part.SourceID,
+			TopicTitle:     part.TopicTitle,
+			CueCard:        part.CueCard,
+			TurnBlueprints: part.TurnBlueprints,
+		}
+	}
+	if !validIELTSAssignmentParts(mode, parts) {
 		return false
 	}
+	for _, part := range parts {
+		switch part.Part {
+		case scene.PracticeModePart1:
+			if part.SourceID != request.Part1SetID {
+				return false
+			}
+		case scene.PracticeModePart2, scene.PracticeModePart3:
+			if part.SourceID != request.TopicGroupID {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validPlanIELTSAssignment(
 	selection scene.SelectionSnapshot,
 	assignment *IELTSAssignmentSnapshot,
 ) bool {
-	expectedMode, isIELTS := expectedIELTSMode(selection.Scene)
+	option, err := selection.PracticeOption()
+	if err != nil {
+		return false
+	}
+	isIELTS := selection.Scene.Experience ==
+		scene.PracticeExperienceIELTSSpeaking
 	if !isIELTS {
 		return assignment == nil
 	}
-	if assignment == nil || assignment.Mode != expectedMode ||
+	if selection.Scene.Category != scene.SceneCategoryIELTSSpeaking ||
+		assignment == nil || assignment.Mode != option.Mode ||
 		!validPlanResourceID(assignment.BankID) ||
 		!validPlanText(assignment.Season) ||
-		!validIELTSTurnBlueprints(assignment.TurnBlueprints) ||
-		!equalPlanStrings(
-			selection.Scene.Prompt.TurnBlueprints,
-			assignment.TurnBlueprints,
-		) || !validPlanText(selection.Scene.Prompt.PublicSceneBrief) {
+		!validIELTSAssignmentParts(assignment.Mode, assignment.Parts) ||
+		!validPlanText(selection.Scene.Prompt.PublicSceneBrief) {
 		return false
 	}
-	switch assignment.Mode {
-	case scene.IELTSPracticeModeFullMock:
-		return validPlanResourceID(assignment.Part1SetID) &&
-			validPlanResourceID(assignment.TopicGroupID) &&
-			validPlanText(assignment.TopicTitle) &&
-			validPlanText(assignment.Part2CueCard) &&
-			assignment.Part1Questions == 8 &&
-			assignment.Part2Questions == 1 &&
-			assignment.Part3Questions >= 1 &&
-			assignment.Part3Questions <= 5 &&
-			len(assignment.TurnBlueprints) == 9+assignment.Part3Questions
-	case scene.IELTSPracticeModePart1:
-		return validPlanResourceID(assignment.Part1SetID) &&
-			assignment.TopicGroupID == "" &&
-			assignment.TopicTitle == "" &&
-			assignment.Part2CueCard == "" &&
-			assignment.Part1Questions >= 2 &&
-			assignment.Part1Questions <= 24 &&
-			assignment.Part2Questions == 0 &&
-			assignment.Part3Questions == 0 &&
-			len(assignment.TurnBlueprints) == assignment.Part1Questions
-	case scene.IELTSPracticeModePart2:
-		return assignment.Part1SetID == "" &&
-			validPlanResourceID(assignment.TopicGroupID) &&
-			validPlanText(assignment.TopicTitle) &&
-			validPlanText(assignment.Part2CueCard) &&
-			assignment.Part1Questions == 0 &&
-			assignment.Part2Questions == 1 &&
-			assignment.Part3Questions >= 1 &&
-			assignment.Part3Questions <= 6 &&
-			len(assignment.TurnBlueprints) == 1+assignment.Part3Questions
-	case scene.IELTSPracticeModePart3:
-		return assignment.Part1SetID == "" &&
-			validPlanResourceID(assignment.TopicGroupID) &&
-			validPlanText(assignment.TopicTitle) &&
-			assignment.Part2CueCard == "" &&
-			assignment.Part1Questions == 0 &&
-			assignment.Part2Questions == 0 &&
-			assignment.Part3Questions >= 1 &&
-			assignment.Part3Questions <= 6 &&
-			len(assignment.TurnBlueprints) == assignment.Part3Questions
+	blueprints := ieltsAssignmentTurnBlueprints(*assignment)
+	return len(blueprints) <= maxPlanEffectiveTurns &&
+		equalPlanStrings(selection.Scene.Prompt.TurnBlueprints, blueprints)
+}
+
+func validIELTSAssignmentParts(
+	mode scene.PracticeMode,
+	parts []IELTSAssignmentPartSnapshot,
+) bool {
+	expected := []scene.PracticeMode(nil)
+	switch mode {
+	case scene.PracticeModeFullMock:
+		expected = []scene.PracticeMode{
+			scene.PracticeModePart1,
+			scene.PracticeModePart2,
+			scene.PracticeModePart3,
+		}
+	case scene.PracticeModePart1:
+		expected = []scene.PracticeMode{scene.PracticeModePart1}
+	case scene.PracticeModePart2:
+		expected = []scene.PracticeMode{
+			scene.PracticeModePart2,
+			scene.PracticeModePart3,
+		}
+	case scene.PracticeModePart3:
+		expected = []scene.PracticeMode{scene.PracticeModePart3}
 	default:
 		return false
 	}
+	if len(parts) != len(expected) {
+		return false
+	}
+	for index, part := range parts {
+		if part.Part != expected[index] ||
+			!validPlanResourceID(part.SourceID) ||
+			!validIELTSTurnBlueprints(part.TurnBlueprints) {
+			return false
+		}
+		switch part.Part {
+		case scene.PracticeModePart1:
+			if part.TopicTitle != "" || part.CueCard != "" {
+				return false
+			}
+		case scene.PracticeModePart2:
+			if !validPlanText(part.TopicTitle) ||
+				!validPlanText(part.CueCard) ||
+				len(part.TurnBlueprints) != 1 {
+				return false
+			}
+		case scene.PracticeModePart3:
+			if !validPlanText(part.TopicTitle) || part.CueCard != "" {
+				return false
+			}
+		}
+	}
+	if len(parts) >= 2 &&
+		parts[len(parts)-2].Part == scene.PracticeModePart2 &&
+		(parts[len(parts)-2].SourceID != parts[len(parts)-1].SourceID ||
+			parts[len(parts)-2].TopicTitle != parts[len(parts)-1].TopicTitle) {
+		return false
+	}
+	return true
+}
+
+func ieltsAssignmentTurnBlueprints(
+	assignment IELTSAssignmentSnapshot,
+) []string {
+	var result []string
+	for _, part := range assignment.Parts {
+		result = append(result, part.TurnBlueprints...)
+	}
+	return result
 }
 
 func validIELTSTurnBlueprints(values []string) bool {
@@ -671,15 +714,22 @@ func validIELTSTurnBlueprints(values []string) bool {
 }
 
 func ieltsAssignmentSceneBrief(assignment IELTSAssignmentSnapshot) string {
+	topicTitle := ""
+	for _, part := range assignment.Parts {
+		if part.TopicTitle != "" {
+			topicTitle = part.TopicTitle
+			break
+		}
+	}
 	switch assignment.Mode {
-	case scene.IELTSPracticeModeFullMock:
+	case scene.PracticeModeFullMock:
 		return "完成冻结的 Part 1 套题，并继续同主题 Part 2 与 Part 3。"
-	case scene.IELTSPracticeModePart1:
+	case scene.PracticeModePart1:
 		return "完成冻结的三个熟悉话题和八道 Part 1 问题。"
-	case scene.IELTSPracticeModePart2:
-		return "完成“" + assignment.TopicTitle + "”题卡，并可继续同主题 Part 3。"
-	case scene.IELTSPracticeModePart3:
-		return "围绕“" + assignment.TopicTitle + "”完成同主题 Part 3 讨论。"
+	case scene.PracticeModePart2:
+		return "完成“" + topicTitle + "”题卡，并可继续同主题 Part 3。"
+	case scene.PracticeModePart3:
+		return "围绕“" + topicTitle + "”完成同主题 Part 3 讨论。"
 	default:
 		return ""
 	}
@@ -726,10 +776,14 @@ func validSelectedPlanOption(
 			return false
 		}
 	}
-	switch option.Type {
-	case scene.PracticeOptionFullSimulation:
+	switch option.Mode {
+	case scene.PracticeModeFullSimulation,
+		scene.PracticeModeFullMock,
+		scene.PracticeModePart1,
+		scene.PracticeModePart2,
+		scene.PracticeModePart3:
 		return option.RoleDefinitionID == ""
-	case scene.PracticeOptionFocus:
+	case scene.PracticeModeFocus:
 		return len(roles) == 1 && option.RoleDefinitionID == roles[0].ID
 	default:
 		return false
@@ -880,6 +934,7 @@ func validStoredSessionPolicy(policy SessionPolicy) bool {
 	return policy.SuggestedDurationSeconds > 0 &&
 		policy.MinEffectiveTurns > 0 &&
 		policy.MaxEffectiveTurns >= policy.MinEffectiveTurns &&
+		policy.MaxEffectiveTurns <= maxPlanEffectiveTurns &&
 		policy.CoverageCheckpointTurn > 0 &&
 		policy.CoverageCheckpointTurn <= policy.MaxEffectiveTurns &&
 		policy.MaxFollowUpsPerQuestion >= 0 &&
@@ -989,7 +1044,13 @@ func cloneIELTSAssignment(
 		return nil
 	}
 	result := *source
-	result.TurnBlueprints = clonePlanStrings(source.TurnBlueprints)
+	result.Parts = make([]IELTSAssignmentPartSnapshot, len(source.Parts))
+	for index, part := range source.Parts {
+		result.Parts[index] = part
+		result.Parts[index].TurnBlueprints = clonePlanStrings(
+			part.TurnBlueprints,
+		)
+	}
 	return &result
 }
 

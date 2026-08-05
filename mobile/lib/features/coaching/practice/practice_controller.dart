@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
@@ -58,8 +59,11 @@ final class PracticeController extends ChangeNotifier
   final PracticeClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   String? _practiceSessionId;
-  SceneFamily? _practiceSceneFamily;
-  SceneModel? _practiceSceneModel;
+  PracticeExperience? _practiceExperience;
+  SceneCategory? _practiceSceneCategory;
+  PracticeMode? _practiceMode;
+  IeltsPracticeAssignment? _ieltsAssignment;
+  PracticeCapabilities? _practiceCapabilities;
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
@@ -101,8 +105,16 @@ final class PracticeController extends ChangeNotifier
   int _mediaGeneration = 0;
   Future<void>? _mediaOperation;
   String? get practiceSessionId => _practiceSessionId;
-  SceneFamily? get practiceSceneFamily => _practiceSceneFamily;
-  SceneModel? get practiceSceneModel => _practiceSceneModel;
+  PracticeExperience? get practiceExperience => _practiceExperience;
+  SceneCategory? get practiceSceneCategory => _practiceSceneCategory;
+  PracticeMode? get practiceMode => _practiceMode;
+  IeltsPracticeAssignment? get ieltsAssignment => _ieltsAssignment;
+  PracticeCapabilities? get practiceCapabilities => _practiceCapabilities;
+  bool get canTranslateQuestion =>
+      _practiceCapabilities?.questionTranslationAllowed ?? false;
+  bool get canUseAvatar => _practiceCapabilities?.avatarAllowed ?? false;
+  bool get canReceiveSpeechFeedback =>
+      _practiceCapabilities?.speechFeedbackAllowed ?? false;
   int? get practiceSessionVersion => _practiceSessionVersion;
   PracticeQuestion? get currentQuestion => _currentQuestion;
   PracticeQuestionTip? get questionTip => _questionTip;
@@ -110,7 +122,7 @@ final class PracticeController extends ChangeNotifier
   String? get questionTipErrorMessage => _questionTipErrorMessage;
   bool get canRequestQuestionTip =>
       client is PracticeQuestionTipClient &&
-      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel) &&
+      (_practiceCapabilities?.questionTipsAllowed ?? false) &&
       _practiceSessionId != null &&
       _currentQuestion != null &&
       !_sessionCompleted &&
@@ -202,15 +214,12 @@ final class PracticeController extends ChangeNotifier
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
-  bool get isInterviewPractice =>
-      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
-  bool get isFinalInterviewSubmission =>
+  bool get isFinalSubmission =>
       _recordingState == PracticeRecordingState.submitting &&
       _speechFeedbackRetry == null &&
       !_sessionCompleted &&
       _turnLimit > 0 &&
-      _completedTurns + 1 == _turnLimit &&
-      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
+      _completedTurns + 1 == _turnLimit;
   bool get isBusy =>
       _busy ||
       _practiceRequestInFlight ||
@@ -222,10 +231,7 @@ final class PracticeController extends ChangeNotifier
   bool get canStartSpeechFeedbackRetry =>
       client is PracticeSpeechFeedbackRetryClient &&
       _practiceSessionId != null &&
-      isTurnFeedbackEligiblePracticeScene(
-        _practiceSceneFamily,
-        _practiceSceneModel,
-      ) &&
+      (_practiceCapabilities?.retryAllowed ?? false) &&
       !_disposed &&
       !isBusy &&
       _speechFeedbackRetry == null &&
@@ -284,6 +290,7 @@ final class PracticeController extends ChangeNotifier
     required SceneDefinition scene,
     required String sessionId,
     required String planId,
+    required PracticeMode practiceMode,
     required int turnLimit,
     required String clientOperationId,
   }) async {
@@ -294,7 +301,7 @@ final class PracticeController extends ChangeNotifier
         scene.id.trim().isEmpty ||
         scene.name.trim().isEmpty ||
         turnLimit < 1 ||
-        turnLimit > 24 ||
+        turnLimit > practiceTurnSafetyLimit ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
         _disposed) {
@@ -321,8 +328,9 @@ final class PracticeController extends ChangeNotifier
       }
       if (snapshot.sessionId != sessionId ||
           snapshot.planId != planId ||
-          snapshot.sceneFamily != scene.family ||
-          snapshot.sceneModel != scene.model ||
+          snapshot.practiceExperience != scene.experience ||
+          snapshot.sceneCategory != scene.category ||
+          snapshot.practiceMode != practiceMode ||
           snapshot.turnLimit != turnLimit) {
         throw StateError(
           'Voice activation did not return the created Practice Session.',
@@ -360,8 +368,8 @@ final class PracticeController extends ChangeNotifier
         throw const PracticeClientOperationCancelled();
       }
       if (snapshot.sessionId != sessionId ||
-          snapshot.sceneFamily != scene.family ||
-          snapshot.sceneModel != scene.model) {
+          snapshot.practiceExperience != scene.experience ||
+          snapshot.sceneCategory != scene.category) {
         throw StateError(
           'Voice restore returned a different Practice Session.',
         );
@@ -1320,10 +1328,7 @@ final class PracticeController extends ChangeNotifier
         _recordingState != PracticeRecordingState.awaitingConfirmation) {
       return;
     }
-    final isFinalInterviewTurn =
-        _turnLimit > 0 &&
-        _completedTurns + 1 == _turnLimit &&
-        isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
+    final isFinalTurn = _turnLimit > 0 && _completedTurns + 1 == _turnLimit;
     final completedTurns = _completedTurns;
     final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
@@ -1353,7 +1358,7 @@ final class PracticeController extends ChangeNotifier
       _applyPracticeConfirmation(confirmation);
     } catch (error) {
       if (_isOperationCurrent(fence)) {
-        final reconciled = isFinalInterviewTurn && _canRetry(error)
+        final reconciled = isFinalTurn && _canRetry(error)
             ? await _reconcileFinalInterviewSubmission(
                 practice: practice,
                 fence: fence,
@@ -1454,10 +1459,7 @@ final class PracticeController extends ChangeNotifier
       _activeConfirmationId = _newClientId('text-turn');
       _activeTextAnswer = text;
     }
-    final isFinalInterviewTurn =
-        _turnLimit > 0 &&
-        _completedTurns + 1 == _turnLimit &&
-        isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
+    final isFinalTurn = _turnLimit > 0 && _completedTurns + 1 == _turnLimit;
     final completedTurns = _completedTurns;
     final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
@@ -1493,7 +1495,7 @@ final class PracticeController extends ChangeNotifier
       return true;
     } catch (error) {
       if (_isOperationCurrent(fence)) {
-        final reconciled = isFinalInterviewTurn && _canRetry(error)
+        final reconciled = isFinalTurn && _canRetry(error)
             ? await _reconcileFinalInterviewSubmission(
                 practice: practice,
                 fence: fence,
@@ -1521,13 +1523,14 @@ final class PracticeController extends ChangeNotifier
   }
 
   void _applyPracticeConfirmation(PracticeTurnConfirmation confirmation) {
-    _practiceSceneFamily = confirmation.sceneFamily;
-    _practiceSceneModel = confirmation.sceneModel;
+    _practiceExperience = confirmation.practiceExperience;
+    _practiceSceneCategory = confirmation.sceneCategory;
+    _practiceMode = confirmation.practiceMode;
+    _practiceCapabilities = confirmation.capabilities;
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
     _sessionCompleted = confirmation.sessionCompleted;
-    _practiceSessionVersion =
-        confirmation.sessionVersion ?? _practiceSessionVersion;
+    _practiceSessionVersion = confirmation.sessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _clearQuestionTip();
@@ -1565,7 +1568,7 @@ final class PracticeController extends ChangeNotifier
     if (client is! PracticeQuestionTipClient ||
         sessionId == null ||
         question == null ||
-        !isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel) ||
+        !(_practiceCapabilities?.questionTipsAllowed ?? false) ||
         _sessionCompleted ||
         _recordingState != PracticeRecordingState.idle) {
       return null;
@@ -1648,8 +1651,9 @@ final class PracticeController extends ChangeNotifier
       }
       final currentTurn = snapshot.currentTurn;
       if (snapshot.sessionId != expectedSessionId ||
-          snapshot.sceneFamily != _practiceSceneFamily ||
-          snapshot.sceneModel != _practiceSceneModel ||
+          snapshot.practiceExperience != _practiceExperience ||
+          snapshot.sceneCategory != _practiceSceneCategory ||
+          snapshot.practiceMode != _practiceMode ||
           !snapshot.sessionCompleted ||
           snapshot.completedTurns != previousCompletedTurns + 1 ||
           snapshot.completedTurns != expectedTurnLimit ||
@@ -1680,8 +1684,11 @@ final class PracticeController extends ChangeNotifier
     _practiceGeneration++;
     _pendingPracticeAudio = null;
     _practiceSessionId = null;
-    _practiceSceneFamily = null;
-    _practiceSceneModel = null;
+    _practiceExperience = null;
+    _practiceSceneCategory = null;
+    _practiceMode = null;
+    _ieltsAssignment = null;
+    _practiceCapabilities = null;
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
     _currentQuestion = null;
@@ -1808,8 +1815,11 @@ final class PracticeController extends ChangeNotifier
     unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
-      _practiceSceneFamily = null;
-      _practiceSceneModel = null;
+      _practiceExperience = null;
+      _practiceSceneCategory = null;
+      _practiceMode = null;
+      _ieltsAssignment = null;
+      _practiceCapabilities = null;
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
       _currentQuestion = null;
@@ -1830,8 +1840,11 @@ final class PracticeController extends ChangeNotifier
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
-    _practiceSceneFamily = snapshot.sceneFamily;
-    _practiceSceneModel = snapshot.sceneModel;
+    _practiceExperience = snapshot.practiceExperience;
+    _practiceSceneCategory = snapshot.sceneCategory;
+    _practiceMode = snapshot.practiceMode;
+    _ieltsAssignment = snapshot.ieltsAssignment;
+    _practiceCapabilities = snapshot.capabilities;
     _practiceSessionVersion = snapshot.sessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
@@ -2075,15 +2088,17 @@ final class PracticeController extends ChangeNotifier
   void _validatePracticeSnapshot(PracticeSessionSnapshot snapshot) {
     if (snapshot.sessionId.trim().isEmpty ||
         snapshot.planId.trim().isEmpty ||
-        !validPracticeSceneIdentity(
-          snapshot.sceneFamily,
-          snapshot.sceneModel,
-        ) ||
         snapshot.completedTurns < 0 ||
         snapshot.turnLimit < 1 ||
-        snapshot.turnLimit > 24 ||
+        snapshot.turnLimit > practiceTurnSafetyLimit ||
         snapshot.completedTurns > snapshot.turnLimit ||
         snapshot.sessionVersion < 1 ||
+        (snapshot.practiceExperience == PracticeExperience.ieltsSpeaking) !=
+            (snapshot.ieltsAssignment != null) ||
+        (snapshot.ieltsAssignment != null &&
+            (snapshot.ieltsAssignment!.mode != snapshot.practiceMode ||
+                snapshot.ieltsAssignment!.turnBlueprints.length !=
+                    snapshot.turnLimit)) ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
         (snapshot.currentQuestion != null &&
             snapshot.currentQuestion!.sessionId != snapshot.sessionId) ||
@@ -2224,8 +2239,10 @@ final class PracticeController extends ChangeNotifier
     required String expectedAnswer,
   }) {
     if (confirmation.turnId.trim().isEmpty ||
-        confirmation.sceneFamily != _practiceSceneFamily ||
-        confirmation.sceneModel != _practiceSceneModel ||
+        confirmation.practiceExperience != _practiceExperience ||
+        confirmation.sceneCategory != _practiceSceneCategory ||
+        confirmation.practiceMode != _practiceMode ||
+        confirmation.capabilities != _practiceCapabilities ||
         confirmation.candidateId.trim().isEmpty ||
         confirmation.sessionId != expectedSessionId ||
         confirmation.questionId != expectedQuestionId ||
@@ -2234,10 +2251,9 @@ final class PracticeController extends ChangeNotifier
         confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
         confirmation.turnLimit < 1 ||
-        confirmation.turnLimit > 24 ||
+        confirmation.turnLimit > practiceTurnSafetyLimit ||
         confirmation.completedTurns > confirmation.turnLimit ||
-        (confirmation.sessionVersion != null &&
-            confirmation.sessionVersion! < 1) ||
+        confirmation.sessionVersion < 1 ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&
             confirmation.nextQuestion!.sessionId != confirmation.sessionId) ||

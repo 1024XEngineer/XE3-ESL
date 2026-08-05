@@ -1,3 +1,6 @@
+/// Account-scoped IELTS question-set progress storage.
+library;
+
 import 'dart:convert';
 
 import 'package:speakup/identity/session_store.dart';

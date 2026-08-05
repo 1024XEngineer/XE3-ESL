@@ -18,10 +18,12 @@ func (fakeLatestPracticeReportPort) LatestPracticeReport(
 ) (LatestPracticeReport, error) {
 	score := 76.0
 	return LatestPracticeReport{
-		Scene:          "面试英语",
-		SceneModel:     "PROJECT_EXPERIENCE_DEEP_DIVE",
-		AssessmentMode: "暂定评分与反馈",
-		Summary:        "本次练习已形成面试表达评估。",
+		Scene:              "面试英语",
+		PracticeExperience: "INTERVIEW",
+		SceneCategory:      "INTERVIEW_PROFESSIONAL",
+		PracticeMode:       "FULL_SIMULATION",
+		AssessmentMode:     "暂定评分与反馈",
+		Summary:            "本次练习已形成面试表达评估。",
 		Dimensions: []ReportDimension{{
 			Key:   "INTERVIEW_RELEVANCE",
 			Name:  "回答相关性",

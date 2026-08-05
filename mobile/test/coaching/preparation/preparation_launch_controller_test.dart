@@ -1,4 +1,5 @@
 import '../../support/scene_fixtures.dart';
+import '../../support/practice_fixtures.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -10,7 +11,7 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_client.
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
@@ -120,18 +121,23 @@ void main() {
 
   test('passes the IELTS selection to Plan creation', () async {
     final scene = testScene(
-      id: 'ielts-speaking-part-1',
-      family: SceneFamily.exam,
-      model: SceneModel.ieltsSpeakingPart1,
+      id: 'scn_ielts_speaking',
+      experience: PracticeExperience.ieltsSpeaking,
+      category: SceneCategory.ieltsSpeaking,
+      practiceOptions: <PracticeOption>[
+        testPracticeOption(
+          id: 'option-ielts-part-1',
+          sceneId: 'scn_ielts_speaking',
+          mode: PracticeMode.part1,
+          displayName: 'Part 1',
+        ),
+      ],
     );
     final selection = PreparationLaunchSelection(
       scene: scene,
       selectedRoleIds: <String>[scene.roles.single.id],
       practiceOptionId: scene.practiceOptions.single.id,
-      ieltsSelection: const IeltsPracticeSelection(
-        mode: IeltsPracticeMode.part1,
-        part1SetId: 'part-1-set-1',
-      ),
+      ieltsSelection: const IeltsPracticeSelection(part1SetId: 'part-1-set-1'),
     );
     final client = _LaunchClient();
     final controller = PreparationLaunchController(
@@ -665,6 +671,7 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
             scene: scene,
             sessionId: bootstrap.session.id,
             planId: bootstrap.session.planId,
+            practiceMode: bootstrap.session.practiceMode,
             turnLimit: bootstrap.maxEffectiveTurns,
             clientOperationId: clientOperationId,
           );
@@ -818,8 +825,10 @@ final class _WorkspacePracticeClient implements PracticeClient {
       sessionId: next.sessionId,
       planId: _planId,
       sessionVersion: 1,
-      sceneFamily: SceneFamily.interview,
-      sceneModel: SceneModel.projectExperienceDeepDive,
+      practiceExperience: PracticeExperience.interview,
+      sceneCategory: SceneCategory.interviewProfessional,
+      practiceMode: PracticeMode.focus,
+      capabilities: testPracticeCapabilities,
       completedTurns: 0,
       turnLimit: 3,
       sessionCompleted: false,
@@ -969,8 +978,8 @@ const _context = AgentPracticeContext(threadId: _threadId, goalId: _goalId);
 
 final _selectionScene = testScene(
   id: 'scene-1',
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'Technical interview',
   version: 1,
   prompt: const ScenePrompt(
@@ -981,7 +990,6 @@ final _selectionScene = testScene(
     personaSummary: 'Precise and evidence seeking.',
     focusAreas: <String>['system_design'],
     turnBlueprints: <String>['Ask for a project overview.'],
-    suggestedDurationSeconds: 900,
   ),
   roles: const <RoleDefinition>[
     RoleDefinition(
@@ -999,11 +1007,11 @@ final _selectionScene = testScene(
       ],
     ),
   ],
-  practiceOptions: const <PracticeOption>[
-    PracticeOption(
+  practiceOptions: <PracticeOption>[
+    testPracticeOption(
       id: 'option-1',
       sceneId: 'scene-1',
-      type: PracticeOptionType.focus,
+      mode: PracticeMode.focus,
       displayName: 'System design focus',
       roleId: 'role-1',
     ),
@@ -1068,6 +1076,9 @@ PracticePlan _planForInput(CreatePreparationPlanInput input) => PracticePlan(
     earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
     retryAllowed: false,
     questionTranslationAllowed: true,
+    questionTipsAllowed: true,
+    avatarAllowed: true,
+    speechFeedbackAllowed: true,
   ),
   practiceObjectives: const <PracticeObjective>[
     PracticeObjective(
@@ -1085,8 +1096,9 @@ final _bootstrap = PreparationPracticeBootstrap(
   session: PreparationPracticeSession(
     id: _sessionId,
     planId: _planId,
-    sceneFamily: SceneFamily.interview,
-    sceneModel: SceneModel.projectExperienceDeepDive,
+    practiceExperience: PracticeExperience.interview,
+    sceneCategory: SceneCategory.interviewProfessional,
+    practiceMode: PracticeMode.focus,
     snapshotId: 'session-snapshot-1',
     status: 'starting',
     version: 1,

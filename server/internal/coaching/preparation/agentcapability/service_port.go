@@ -176,8 +176,9 @@ func practicePlanHandoff(
 		PlanRevision:             plan.Revision,
 		Target:                   target,
 		SceneName:                plan.SceneSelection.Scene.Name,
-		SceneFamily:              string(plan.SceneSelection.Scene.Family),
-		SceneModel:               string(plan.SceneSelection.Scene.Model),
+		PracticeExperience:       string(plan.SceneSelection.Scene.Experience),
+		SceneCategory:            string(plan.SceneSelection.Scene.Category),
+		PracticeMode:             string(option.Mode),
 		Roles:                    roleNames,
 		PracticeScope:            option.DisplayName,
 		SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
@@ -201,17 +202,26 @@ func (port *ServicePort) resolveCandidates(
 	}
 	result := make([]CatalogCandidate, len(items))
 	for index, item := range items {
+		options := make([]CatalogPracticeOption, len(item.Scene.PracticeOptions))
+		for optionIndex, option := range item.Scene.PracticeOptions {
+			options[optionIndex] = CatalogPracticeOption{
+				ID:          option.ID,
+				DisplayName: option.DisplayName,
+				Mode:        string(option.Mode),
+			}
+		}
 		result[index] = CatalogCandidate{
-			SceneID:      item.Scene.ID,
-			SceneVersion: item.Scene.Version,
-			Name:         item.Scene.Name,
-			SceneFamily:  string(item.Scene.Family),
-			SceneModel:   string(item.Scene.Model),
+			SceneID:            item.Scene.ID,
+			SceneVersion:       item.Scene.Version,
+			Name:               item.Scene.Name,
+			PracticeExperience: string(item.Scene.Experience),
+			SceneCategory:      string(item.Scene.Category),
 			DefaultRoleIDs: append(
 				[]string(nil),
 				item.DefaultRoleIDs...,
 			),
 			DefaultPracticeOptionID: item.DefaultOption.ID,
+			PracticeOptions:         options,
 		}
 	}
 	return result, nil
@@ -263,7 +273,11 @@ func previewMissingFields(
 	if input.MaxEffectiveTurns < 1 {
 		missing = append(missing, "max_effective_turns")
 	}
-	if mode, isIELTS := previewIELTSMode(input.SceneID, candidates); isIELTS &&
+	if mode, isIELTS := previewIELTSMode(
+		input.SceneID,
+		input.PracticeOptionID,
+		candidates,
+	); isIELTS &&
 		!validPreviewIELTSSelection(mode, input.IELTSSelection) {
 		missing = append(missing, "ielts_selection")
 	}
@@ -295,40 +309,38 @@ func containsPreviewSceneVersion(
 
 func previewIELTSMode(
 	sceneID string,
+	practiceOptionID string,
 	candidates []CatalogCandidate,
-) (scene.IELTSPracticeMode, bool) {
+) (scene.PracticeMode, bool) {
 	for _, candidate := range candidates {
 		if candidate.SceneID != sceneID ||
-			candidate.SceneFamily != string(scene.SceneFamilyExam) {
+			candidate.PracticeExperience !=
+				string(scene.PracticeExperienceIELTSSpeaking) {
 			continue
 		}
-		switch scene.SceneModel(candidate.SceneModel) {
-		case scene.SceneModelIELTSSpeakingFullMock:
-			return scene.IELTSPracticeModeFullMock, true
-		case scene.SceneModelIELTSSpeakingPart1:
-			return scene.IELTSPracticeModePart1, true
-		case scene.SceneModelIELTSSpeakingPart2:
-			return scene.IELTSPracticeModePart2, true
-		case scene.SceneModelIELTSSpeakingPart3:
-			return scene.IELTSPracticeModePart3, true
+		for _, option := range candidate.PracticeOptions {
+			if option.ID == practiceOptionID {
+				return scene.PracticeMode(option.Mode), true
+			}
 		}
+		return "", true
 	}
 	return "", false
 }
 
 func validPreviewIELTSSelection(
-	mode scene.IELTSPracticeMode,
+	mode scene.PracticeMode,
 	selection *preparation.IELTSQuestionSelection,
 ) bool {
-	if selection == nil || selection.Mode != mode {
+	if selection == nil {
 		return false
 	}
 	switch mode {
-	case scene.IELTSPracticeModeFullMock:
+	case scene.PracticeModeFullMock:
 		return selection.Part1SetID != "" && selection.TopicGroupID != ""
-	case scene.IELTSPracticeModePart1:
+	case scene.PracticeModePart1:
 		return selection.Part1SetID != "" && selection.TopicGroupID == ""
-	case scene.IELTSPracticeModePart2, scene.IELTSPracticeModePart3:
+	case scene.PracticeModePart2, scene.PracticeModePart3:
 		return selection.Part1SetID == "" && selection.TopicGroupID != ""
 	default:
 		return false

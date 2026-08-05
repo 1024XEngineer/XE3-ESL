@@ -33,17 +33,17 @@ func TestValidContextSnapshotRejectsLegacyParticipantRoles(t *testing.T) {
 	}
 }
 
-func TestRetryExecutionPolicyIgnoresSceneFamilyAndModelMetadata(t *testing.T) {
+func TestRetryExecutionPolicyIgnoresSceneClassificationMetadata(t *testing.T) {
 	t.Parallel()
 	snapshot := validSessionCommandFixture("user-1").Snapshot
-	snapshot.SceneSelection.Scene.SessionPolicyRef =
+	snapshot.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.DailyPracticeSessionPolicy
 	option, err := snapshot.SceneSelection.PracticeOption()
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy, err := practice.ResolveSessionPolicy(
-		snapshot.SceneSelection.Scene.SessionPolicyRef,
+		option.SessionPolicyRef,
 		snapshot.SceneSelection.Scene.Prompt,
 		option,
 		0,
@@ -52,13 +52,12 @@ func TestRetryExecutionPolicyIgnoresSceneFamilyAndModelMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot.SessionPolicy = policy
-	snapshot.SceneFamily = practice.SceneFamilyExam
-	snapshot.SceneModel = practice.SceneModelIELTSSpeakingFullMock
-	snapshot.SceneSelection.Scene.Family = practice.SceneFamilyExam
-	snapshot.SceneSelection.Scene.Model =
-		practice.SceneModelIELTSSpeakingFullMock
+	snapshot.Experience = practice.PracticeExperienceIELTSSpeaking
+	snapshot.Category = practice.SceneCategory("EXAM")
+	snapshot.SceneSelection.Scene.Experience = snapshot.Experience
+	snapshot.SceneSelection.Scene.Category = snapshot.Category
 	if !validRetryExecutionPolicy(snapshot) {
-		t.Fatal("retry behavior changed with Family/Model metadata")
+		t.Fatal("retry behavior changed with Scene classification metadata")
 	}
 }
 
@@ -67,18 +66,14 @@ func validSessionCommandFixture(
 ) practice.CreateSessionCommand {
 	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
 	definition := practice.SceneDefinition{
-		ID:                  "scene-1",
-		Family:              practice.SceneFamilyInterview,
-		Model:               practice.SceneModelInterviewBasicDialogue,
-		Version:             1,
-		Status:              practice.SceneStatusActive,
-		TurnPolicyRef:       practice.GenericPracticeTurnPolicy,
-		SessionPolicyRef:    practice.GenericPracticeSessionPolicy,
-		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
+		ID:         "scene-1",
+		Experience: practice.PracticeExperienceInterview,
+		Category:   practice.SceneCategory("PROFESSIONAL"),
+		Version:    1,
+		Status:     practice.SceneStatusActive,
 		Prompt: practice.ScenePrompt{
-			FocusAreas:               []string{"clarity"},
-			TurnBlueprints:           []string{"question"},
-			SuggestedDurationSeconds: 600,
+			FocusAreas:     []string{"clarity"},
+			TurnBlueprints: []string{"question"},
 		},
 		Roles: []practice.RoleDefinition{{
 			ID: "role-1", SceneID: "scene-1",
@@ -87,16 +82,22 @@ func validSessionCommandFixture(
 			}},
 		}},
 		PracticeOptions: []practice.PracticeOption{{
-			ID: "option-1", SceneID: "scene-1",
-			Type: practice.PracticeOptionFullSimulation,
+			ID:                       "option-1",
+			SceneID:                  "scene-1",
+			Mode:                     practice.PracticeModeFullSimulation,
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
+			SessionPolicyRef:         practice.GenericPracticeSessionPolicy,
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 		}},
 	}
 	snapshot := practice.SessionSnapshot{
 		ID:           "snapshot-1",
 		SessionID:    "session-1",
 		PlanRevision: 1,
-		SceneFamily:  definition.Family,
-		SceneModel:   definition.Model,
+		Experience:   definition.Experience,
+		Category:     definition.Category,
+		PracticeMode: practice.PracticeModeFullSimulation,
 		SceneSelection: practice.SceneSelection{
 			Scene: definition, SelectedRoleIDs: []string{"role-1"},
 			PracticeOptionID: "option-1",

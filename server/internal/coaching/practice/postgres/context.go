@@ -110,14 +110,19 @@ func (r *Repository) CreateSession(
 	}
 
 	snapshot := command.Snapshot
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return practice.SessionBootstrap{}, false, practice.ErrConflict
+	}
 	var createdAt pgtype.Timestamptz
 	err = tx.QueryRow(ctx, `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, plan_revision,
 			status, version, effective_turns, snapshot_id,
-			scene_family, scene_model, evaluation_policy_ref
+			practice_experience, scene_category, practice_mode,
+			evaluation_policy_ref
 		) VALUES (
-			$1, $2, $3, $4, 'starting', 1, 0, $5, $6, $7, $8
+			$1, $2, $3, $4, 'starting', 1, 0, $5, $6, $7, $8, $9
 		)
 		RETURNING created_at
 	`,
@@ -126,9 +131,10 @@ func (r *Repository) CreateSession(
 		command.PlanID,
 		command.PlanRevision,
 		command.SnapshotID,
-		snapshot.SceneFamily,
-		snapshot.SceneModel,
-		snapshot.SceneSelection.Scene.EvaluationPolicyRef,
+		snapshot.Experience,
+		snapshot.Category,
+		snapshot.PracticeMode,
+		option.EvaluationPolicyRef,
 	).Scan(&createdAt)
 	if err != nil {
 		return practice.SessionBootstrap{}, false,
@@ -156,13 +162,13 @@ func (r *Repository) CreateSession(
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO practice_session_snapshots (
-			owner_user_id, session_id, mode, target_ids,
+			owner_user_id, session_id, practice_mode, target_ids,
 			participants, turn_limit, snapshot_id, snapshot_document
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`,
 		actor.UserID,
 		command.SessionID,
-		snapshot.SceneFamily,
+		snapshot.PracticeMode,
 		targetIDs,
 		participants,
 		snapshot.SessionPolicy.MaxEffectiveTurns,
@@ -178,9 +184,10 @@ func (r *Repository) CreateSession(
 			ID:                  command.SessionID,
 			PlanID:              command.PlanID,
 			PlanRevision:        command.PlanRevision,
-			SceneFamily:         snapshot.SceneFamily,
-			SceneModel:          snapshot.SceneModel,
-			EvaluationPolicyRef: snapshot.SceneSelection.Scene.EvaluationPolicyRef,
+			Experience:          snapshot.Experience,
+			Category:            snapshot.Category,
+			PracticeMode:        snapshot.PracticeMode,
+			EvaluationPolicyRef: option.EvaluationPolicyRef,
 			SnapshotID:          command.SnapshotID,
 			Status:              practice.SessionStarting,
 			Version:             1,
@@ -652,8 +659,9 @@ const contextSessionSelect = `
 		session.session_id,
 		session.plan_id,
 		session.plan_revision,
-		session.scene_family,
-		session.scene_model,
+			session.practice_experience,
+			session.scene_category,
+			session.practice_mode,
 		session.evaluation_policy_ref,
 		session.snapshot_id,
 		session.status,
@@ -675,8 +683,9 @@ const contextBootstrapSelect = `
 		session.session_id,
 		session.plan_id,
 		session.plan_revision,
-		session.scene_family,
-		session.scene_model,
+			session.practice_experience,
+			session.scene_category,
+			session.practice_mode,
 		session.evaluation_policy_ref,
 		session.snapshot_id,
 		session.status,
@@ -720,8 +729,9 @@ func scanSession(row contextRowScanner) (practice.Session, error) {
 		&session.ID,
 		&session.PlanID,
 		&session.PlanRevision,
-		&session.SceneFamily,
-		&session.SceneModel,
+		&session.Experience,
+		&session.Category,
+		&session.PracticeMode,
 		&session.EvaluationPolicyRef,
 		&session.SnapshotID,
 		&session.Status,
@@ -767,8 +777,9 @@ func scanContextBootstrap(
 		&session.ID,
 		&session.PlanID,
 		&session.PlanRevision,
-		&session.SceneFamily,
-		&session.SceneModel,
+		&session.Experience,
+		&session.Category,
+		&session.PracticeMode,
 		&session.EvaluationPolicyRef,
 		&session.SnapshotID,
 		&session.Status,
@@ -961,11 +972,8 @@ func validContextSnapshot(
 	if !validContextResourceID(snapshot.ID) ||
 		!validContextResourceID(snapshot.SessionID) ||
 		snapshot.PlanRevision < 1 ||
-		snapshot.SceneSelection.Scene.Family != snapshot.SceneFamily ||
-		snapshot.SceneSelection.Scene.Model != snapshot.SceneModel ||
-		!validEvaluationPolicyRef(
-			snapshot.SceneSelection.Scene.EvaluationPolicyRef,
-		) ||
+		snapshot.SceneSelection.Scene.Experience != snapshot.Experience ||
+		snapshot.SceneSelection.Scene.Category != snapshot.Category ||
 		snapshot.SceneSelection.Scene.Status != practice.SceneStatusActive ||
 		!validContextResourceID(snapshot.Preparation.ID) ||
 		!validContextResourceID(snapshot.Preparation.SourceProfileID) ||
@@ -979,16 +987,19 @@ func validContextSnapshot(
 		return false
 	}
 	option, err := snapshot.SceneSelection.PracticeOption()
-	if err != nil || !practice.ValidSessionPolicy(
-		snapshot.SceneSelection.Scene.SessionPolicyRef,
-		option.Type,
-		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
-		snapshot.SessionPolicy,
-	) {
+	if err != nil || option.Mode != snapshot.PracticeMode ||
+		!validEvaluationPolicyRef(option.EvaluationPolicyRef) ||
+		!practice.ValidSessionPolicy(
+			option.SessionPolicyRef,
+			option.Mode,
+			len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+			option.SuggestedDurationSeconds,
+			snapshot.SessionPolicy,
+		) {
 		return false
 	}
 	if _, err := practice.ResolveTurnPolicy(
-		snapshot.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	); err != nil {
 		return false
 	}
@@ -1048,8 +1059,12 @@ func validContextSnapshot(
 func validCreatedIELTSAssignment(
 	snapshot practice.SessionSnapshot,
 ) bool {
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return false
+	}
 	turnPolicy, err := practice.ResolveTurnPolicy(
-		snapshot.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	)
 	if err != nil {
 		return false
@@ -1057,41 +1072,11 @@ func validCreatedIELTSAssignment(
 	if turnPolicy.Kind != practice.TurnPolicyFrozenIELTS {
 		return snapshot.IELTSAssignment == nil
 	}
-	assignment := snapshot.IELTSAssignment
-	if assignment == nil || assignment.Mode != turnPolicy.IELTSMode ||
-		!validContextResourceID(assignment.BankID) ||
-		strings.TrimSpace(assignment.Season) == "" ||
-		len(assignment.TurnBlueprints) == 0 ||
-		!equalContextStrings(
-			assignment.TurnBlueprints,
-			snapshot.SceneSelection.Scene.Prompt.TurnBlueprints,
-		) {
-		return false
-	}
-	switch turnPolicy.IELTSMode {
-	case practice.IELTSPracticeModeFullMock:
-		return validContextResourceID(assignment.Part1SetID) &&
-			validContextResourceID(assignment.TopicGroupID) &&
-			assignment.Part1Questions == 8 && assignment.Part2Questions == 1 &&
-			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
-	case practice.IELTSPracticeModePart1:
-		return validContextResourceID(assignment.Part1SetID) &&
-			assignment.TopicGroupID == "" && assignment.Part1Questions >= 2 &&
-			assignment.Part1Questions <= 24 &&
-			assignment.Part2Questions == 0 && assignment.Part3Questions == 0
-	case practice.IELTSPracticeModePart2:
-		return assignment.Part1SetID == "" &&
-			validContextResourceID(assignment.TopicGroupID) &&
-			assignment.Part1Questions == 0 && assignment.Part2Questions == 1 &&
-			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 6
-	case practice.IELTSPracticeModePart3:
-		return assignment.Part1SetID == "" &&
-			validContextResourceID(assignment.TopicGroupID) &&
-			assignment.Part1Questions == 0 && assignment.Part2Questions == 0 &&
-			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 6
-	default:
-		return false
-	}
+	return practice.ValidIELTSAssignment(
+		snapshot.IELTSAssignment,
+		turnPolicy.Mode,
+		snapshot.SceneSelection.Scene.Prompt.TurnBlueprints,
+	)
 }
 
 func validContextObjectives(values []practice.PracticeObjective) bool {
@@ -1163,12 +1148,21 @@ func validStoredContextBootstrap(
 		bootstrap.Snapshot.ID == bootstrap.Session.SnapshotID &&
 		bootstrap.Snapshot.SessionID == bootstrap.Session.ID &&
 		bootstrap.Snapshot.PlanRevision == bootstrap.Session.PlanRevision &&
-		bootstrap.Snapshot.SceneFamily == bootstrap.Session.SceneFamily &&
-		bootstrap.Snapshot.SceneModel == bootstrap.Session.SceneModel &&
-		bootstrap.Snapshot.SceneSelection.Scene.EvaluationPolicyRef ==
+		bootstrap.Snapshot.Experience == bootstrap.Session.Experience &&
+		bootstrap.Snapshot.Category == bootstrap.Session.Category &&
+		bootstrap.Snapshot.PracticeMode == bootstrap.Session.PracticeMode &&
+		selectedEvaluationPolicyRef(bootstrap.Snapshot) ==
 			bootstrap.Session.EvaluationPolicyRef &&
 		!bootstrap.Snapshot.CreatedAt.IsZero() &&
 		validContextSnapshot(bootstrap.Snapshot, learnerUserID(bootstrap.Snapshot))
+}
+
+func selectedEvaluationPolicyRef(snapshot practice.SessionSnapshot) string {
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return ""
+	}
+	return option.EvaluationPolicyRef
 }
 
 func learnerUserID(snapshot practice.SessionSnapshot) string {

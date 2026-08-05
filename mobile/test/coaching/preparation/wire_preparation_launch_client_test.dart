@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_wire_codec.dart';
@@ -281,46 +282,57 @@ void main() {
     );
   });
 
-  test('decodes a six-question IELTS Part 3 assignment', () {
+  test('decodes the canonical IELTS Part 3 assignment shape', () {
     final assignment = decodeIeltsPracticeAssignment(<String, Object?>{
       'bank_id': 'ielts-2026-05-08',
       'season': '2026-05-08',
       'mode': 'PART_3',
-      'topic_group_id': 'p23-new-001',
-      'topic_title': '语言学习',
-      'part_1_questions': 0,
-      'part_2_questions': 0,
-      'part_3_questions': 6,
-      'turn_blueprints': List<String>.generate(
-        6,
-        (index) => 'Question ${index + 1}',
-      ),
+      'parts': <Object?>[
+        <String, Object?>{
+          'part': 'PART_3',
+          'source_id': 'p23-new-001',
+          'topic_title': '语言学习',
+          'turn_blueprints': <String>['Question 1', 'Question 2'],
+        },
+      ],
     });
 
-    expect(assignment.mode, IeltsPracticeMode.part3);
-    expect(assignment.part2CueCard, isNull);
-    expect(assignment.turnBlueprints, hasLength(6));
+    expect(assignment.mode, PracticeMode.part3);
+    expect(assignment.part(IeltsSpeakingPart.part3)?.cueCard, isNull);
+    expect(assignment.turnBlueprints, hasLength(2));
   });
 
-  test('decodes a complete twenty-two-question IELTS Part 1 topic', () {
-    final assignment = decodeIeltsPracticeAssignment(<String, Object?>{
-      'bank_id': 'ielts-2026-05-08',
-      'season': '2026-05-08',
-      'mode': 'PART_1',
-      'part_1_set_id': 'p1-topic-020',
-      'part_1_questions': 22,
-      'part_2_questions': 0,
-      'part_3_questions': 0,
-      'turn_blueprints': List<String>.generate(
-        22,
-        (index) => 'Question ${index + 1}',
-      ),
-    });
+  test(
+    'rejects IELTS assignments with invalid part boundaries or metadata',
+    () {
+      for (final mutate in <void Function(Map<String, Object?>)>[
+        (root) => _ieltsAssignmentPart(root, 0)['topic_title'] = 'Not allowed',
+        (root) => _ieltsAssignmentPart(root, 1).remove('cue_card'),
+        (root) => _ieltsAssignmentPart(root, 1)['turn_blueprints'] = <String>[
+          'Cue card 1',
+          'Cue card 2',
+        ],
+        (root) => _ieltsAssignmentPart(root, 2)['cue_card'] = 'Not allowed',
+        (root) => _ieltsAssignmentPart(root, 2)['source_id'] = 'other-topic',
+        (root) {
+          final parts = root['parts']! as List<Object?>;
+          final first = parts[0];
+          parts[0] = parts[1];
+          parts[1] = first;
+        },
+        (root) => _ieltsAssignmentPart(root, 2)['turn_blueprints'] =
+            List<String>.generate(56, (index) => 'Extra ${index + 1}'),
+      ]) {
+        final invalid = _ieltsAssignmentJson();
+        mutate(invalid);
 
-    expect(assignment.mode, IeltsPracticeMode.part1);
-    expect(assignment.part1SetId, 'p1-topic-020');
-    expect(assignment.turnBlueprints, hasLength(22));
-  });
+        expect(
+          () => decodeIeltsPracticeAssignment(invalid),
+          throwsA(isA<PreparationWireFormatException>()),
+        );
+      }
+    },
+  );
 
   group('rejects cross-resource Session bootstrap data', () {
     final cases = <String, void Function(Map<String, Object?>)>{
@@ -349,10 +361,10 @@ void main() {
         _sessionPolicy(root)['max_effective_turns'] = 6;
       },
       'missing turn policy reference': (root) {
-        _sceneSnapshot(root).remove('turn_policy_ref');
+        _practiceOptionSnapshot(root).remove('turn_policy_ref');
       },
       'invalid session policy reference': (root) {
-        _sceneSnapshot(root)['session_policy_ref'] = '';
+        _practiceOptionSnapshot(root)['session_policy_ref'] = '';
       },
     };
 
@@ -441,8 +453,11 @@ void main() {
     );
 
     expect(bootstrap.maxEffectiveTurns, 14);
-    expect(bootstrap.session.sceneModel, SceneModel.ieltsSpeakingFullMock);
-    expect(plan.ieltsAssignment?.topicGroupId, 'p23-new-001');
+    expect(bootstrap.session.sceneCategory, SceneCategory.ieltsSpeaking);
+    expect(
+      plan.ieltsAssignment?.part(IeltsSpeakingPart.part2)?.sourceId,
+      'p23-new-001',
+    );
     expect(jsonDecode(transport.calls.first.body!), {
       'source_thread_id': _threadId,
       'goal_id': _goalId,
@@ -452,7 +467,6 @@ void main() {
       'selected_role_ids': [_roleId],
       'practice_option_id': _ieltsFullOptionId,
       'ielts_selection': {
-        'mode': 'FULL_MOCK',
         'part_1_set_id': 'p1-002',
         'topic_group_id': 'p23-new-001',
       },
@@ -473,7 +487,9 @@ void main() {
       _configureIeltsPolicy(_sessionPolicy(response));
       final snapshot = response['snapshot']! as Map<String, Object?>;
       final assignment = snapshot['ielts_assignment']! as Map<String, Object?>;
-      assignment['topic_title'] = 'A different frozen topic';
+      final parts = assignment['parts']! as List<Object?>;
+      final part2 = parts[1]! as Map<String, Object?>;
+      part2['topic_title'] = 'A different frozen topic';
       final client = _client(_QueueTransport([_response(response)]));
 
       await expectLater(
@@ -666,14 +682,18 @@ Map<String, Object?> _bootstrapJson({
   final role = selection.scene.roles.singleWhere(
     (role) => role.id == selection.selectedRoleIds.single,
   );
+  final option = selection.scene.practiceOptions.singleWhere(
+    (option) => option.id == selection.practiceOptionId,
+  );
   return {
     'practice_session': {
       'practice_session_id': _sessionId,
       'practice_plan_id': _planId,
       'plan_revision': 1,
-      'scene_family': selection.scene.family.wireValue,
-      'scene_model': selection.scene.model.wireValue,
-      'evaluation_policy_ref': selection.scene.evaluationPolicyRef,
+      'practice_experience': selection.scene.experience.wireValue,
+      'scene_category': selection.scene.category.wireValue,
+      'practice_mode': option.mode.wireValue,
+      'evaluation_policy_ref': option.evaluationPolicyRef,
       'snapshot_id': _sessionSnapshotId,
       'practice_session_status': 'starting',
       'session_version': 1,
@@ -683,8 +703,9 @@ Map<String, Object?> _bootstrapJson({
       'snapshot_id': _sessionSnapshotId,
       'practice_session_id': _sessionId,
       'plan_revision': 1,
-      'scene_family': selection.scene.family.wireValue,
-      'scene_model': selection.scene.model.wireValue,
+      'practice_experience': selection.scene.experience.wireValue,
+      'scene_category': selection.scene.category.wireValue,
+      'practice_mode': option.mode.wireValue,
       'scene_selection': _sceneSelectionJson(selection),
       'preparation_snapshot': _snapshotJson(),
       'participants': [
@@ -737,14 +758,11 @@ Map<String, Object?> _sceneSelectionJson(
 
 Map<String, Object?> _sceneJson(SceneDefinition scene) => <String, Object?>{
   'scene_id': scene.id,
-  'scene_family': scene.family.wireValue,
-  'scene_model': scene.model.wireValue,
+  'practice_experience': scene.experience.wireValue,
+  'scene_category': scene.category.wireValue,
   'name': scene.name,
   'scene_version': scene.version,
   'status': scene.status.name,
-  'turn_policy_ref': scene.turnPolicyRef,
-  'session_policy_ref': scene.sessionPolicyRef,
-  'evaluation_policy_ref': scene.evaluationPolicyRef,
   'prompt': <String, Object?>{
     'public_scene_brief': scene.prompt.publicSceneBrief,
     'practice_goal': scene.prompt.practiceGoal,
@@ -752,10 +770,9 @@ Map<String, Object?> _sceneJson(SceneDefinition scene) => <String, Object?>{
     'ai_role': scene.prompt.aiRole,
     'persona_summary': scene.prompt.personaSummary,
     'focus_areas': scene.prompt.focusAreas,
-    'turn_blueprints': scene.model == SceneModel.ieltsSpeakingFullMock
+    'turn_blueprints': scene.category == SceneCategory.ieltsSpeaking
         ? _ieltsTurnBlueprints()
         : scene.prompt.turnBlueprints,
-    'suggested_duration_seconds': scene.prompt.suggestedDurationSeconds,
   },
   'roles': scene.roles.map(_roleJson).toList(growable: false),
   'practice_options': scene.practiceOptions
@@ -785,9 +802,13 @@ Map<String, Object?> _practiceOptionJson(PracticeOption option) =>
     <String, Object?>{
       'practice_option_id': option.id,
       'scene_id': option.sceneId,
-      'practice_option_type': option.type.wireValue,
+      'practice_mode': option.mode.wireValue,
       'display_name': option.displayName,
       'role_definition_id': ?option.roleId,
+      'suggested_duration_seconds': option.suggestedDurationSeconds,
+      'turn_policy_ref': option.turnPolicyRef,
+      'session_policy_ref': option.sessionPolicyRef,
+      'evaluation_policy_ref': option.evaluationPolicyRef,
     };
 
 Map<String, Object?> _sessionPolicyJson() => <String, Object?>{
@@ -799,6 +820,9 @@ Map<String, Object?> _sessionPolicyJson() => <String, Object?>{
   'early_completion_rule': 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
   'retry_allowed': false,
   'question_translation_allowed': true,
+  'question_tips_allowed': true,
+  'avatar_allowed': false,
+  'speech_feedback_allowed': true,
 };
 
 CreatePreparationPlanInput _planInput({
@@ -818,15 +842,32 @@ Map<String, Object?> _ieltsAssignmentJson() => <String, Object?>{
   'bank_id': 'ielts-2026-05-08',
   'season': '2026-05-08',
   'mode': 'FULL_MOCK',
-  'part_1_set_id': 'p1-002',
-  'topic_group_id': 'p23-new-001',
-  'topic_title': '语言学习',
-  'part_2_cue_card': 'Describe a language you would like to learn',
-  'part_1_questions': 8,
-  'part_2_questions': 1,
-  'part_3_questions': 5,
-  'turn_blueprints': _ieltsTurnBlueprints(),
+  'parts': <Object?>[
+    <String, Object?>{
+      'part': 'PART_1',
+      'source_id': 'p1-002',
+      'turn_blueprints': _ieltsTurnBlueprints().sublist(0, 8),
+    },
+    <String, Object?>{
+      'part': 'PART_2',
+      'source_id': 'p23-new-001',
+      'topic_title': '语言学习',
+      'cue_card': 'Describe a language you would like to learn',
+      'turn_blueprints': <String>[_ieltsTurnBlueprints()[8]],
+    },
+    <String, Object?>{
+      'part': 'PART_3',
+      'source_id': 'p23-new-001',
+      'topic_title': '语言学习',
+      'turn_blueprints': _ieltsTurnBlueprints().sublist(9),
+    },
+  ],
 };
+
+Map<String, Object?> _ieltsAssignmentPart(
+  Map<String, Object?> assignment,
+  int index,
+) => (assignment['parts']! as List<Object?>)[index]! as Map<String, Object?>;
 
 List<String> _ieltsTurnBlueprints() => List<String>.generate(
   14,
@@ -863,6 +904,11 @@ Map<String, Object?> _sceneSnapshot(Map<String, Object?> root) {
   return selection['scene']! as Map<String, Object?>;
 }
 
+Map<String, Object?> _practiceOptionSnapshot(Map<String, Object?> root) {
+  final options = _sceneSnapshot(root)['practice_options']! as List<Object?>;
+  return options.single! as Map<String, Object?>;
+}
+
 Map<String, Object?> _preparationSnapshot(Map<String, Object?> root) {
   final snapshot = root['snapshot']! as Map<String, Object?>;
   return snapshot['preparation_snapshot']! as Map<String, Object?>;
@@ -893,7 +939,7 @@ const _sceneId = 'scene-1';
 const _roleId = 'role-1';
 const _optionId = 'option-1';
 const _fullOptionId = 'option-full';
-const _ieltsSceneId = 'scn_ielts_speaking_full';
+const _ieltsSceneId = 'scn_ielts_speaking_test';
 const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
 const _background = 'Backend engineer preparing a technical interview.';
 
@@ -915,28 +961,33 @@ const _technicalRole = RoleDefinition(
 const _focusOption = PracticeOption(
   id: _optionId,
   sceneId: _sceneId,
-  type: PracticeOptionType.focus,
+  mode: PracticeMode.focus,
   displayName: 'Focused practice',
+  suggestedDurationSeconds: 600,
+  turnPolicyRef: 'interview.project_deep_dive.turn.v1',
+  sessionPolicyRef: 'interview.project_deep_dive.session.v1',
+  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
   roleId: _roleId,
 );
 
 const _fullOption = PracticeOption(
   id: _fullOptionId,
   sceneId: _sceneId,
-  type: PracticeOptionType.fullSimulation,
+  mode: PracticeMode.fullSimulation,
   displayName: 'Full simulation',
+  suggestedDurationSeconds: 900,
+  turnPolicyRef: 'interview.project_deep_dive.turn.v1',
+  sessionPolicyRef: 'interview.project_deep_dive.session.v1',
+  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
 );
 
 const _scene = SceneDefinition(
   id: _sceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.projectExperienceDeepDive,
+  experience: PracticeExperience.interview,
+  category: SceneCategory.interviewProfessional,
   name: 'Technical interview',
   version: 1,
   status: SceneStatus.active,
-  turnPolicyRef: 'interview.project_deep_dive.turn.v1',
-  sessionPolicyRef: 'interview.project_deep_dive.session.v1',
-  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: 'Discuss one backend project.',
     practiceGoal: 'Explain decisions with evidence.',
@@ -945,7 +996,6 @@ const _scene = SceneDefinition(
     personaSummary: 'Precise and evidence seeking.',
     focusAreas: <String>['system_design'],
     turnBlueprints: <String>['Ask for a project overview.'],
-    suggestedDurationSeconds: 900,
   ),
   roles: <RoleDefinition>[_technicalRole],
   practiceOptions: <PracticeOption>[_focusOption, _fullOption],
@@ -989,20 +1039,54 @@ const _ieltsRole = RoleDefinition(
 const _ieltsFullOption = PracticeOption(
   id: _ieltsFullOptionId,
   sceneId: _ieltsSceneId,
-  type: PracticeOptionType.fullSimulation,
+  mode: PracticeMode.fullMock,
   displayName: '完整模考',
+  suggestedDurationSeconds: 900,
+  turnPolicyRef: 'ielts.speaking.full.turn.v2',
+  sessionPolicyRef: 'ielts.speaking.full.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
+);
+
+const _ieltsPart1Option = PracticeOption(
+  id: 'option_ielts_speaking_part_1',
+  sceneId: _ieltsSceneId,
+  mode: PracticeMode.part1,
+  displayName: 'Part 1',
+  suggestedDurationSeconds: 300,
+  turnPolicyRef: 'ielts.speaking.part_1.turn.v2',
+  sessionPolicyRef: 'ielts.speaking.part_1.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
+);
+
+const _ieltsPart2Option = PracticeOption(
+  id: 'option_ielts_speaking_part_2',
+  sceneId: _ieltsSceneId,
+  mode: PracticeMode.part2,
+  displayName: 'Part 2',
+  suggestedDurationSeconds: 420,
+  turnPolicyRef: 'ielts.speaking.part_2.turn.v2',
+  sessionPolicyRef: 'ielts.speaking.part_2.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
+);
+
+const _ieltsPart3Option = PracticeOption(
+  id: 'option_ielts_speaking_part_3',
+  sceneId: _ieltsSceneId,
+  mode: PracticeMode.part3,
+  displayName: 'Part 3',
+  suggestedDurationSeconds: 300,
+  turnPolicyRef: 'ielts.speaking.part_3.turn.v2',
+  sessionPolicyRef: 'ielts.speaking.part_3.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
 );
 
 const _ieltsScene = SceneDefinition(
   id: _ieltsSceneId,
-  family: SceneFamily.exam,
-  model: SceneModel.ieltsSpeakingFullMock,
+  experience: PracticeExperience.ieltsSpeaking,
+  category: SceneCategory.ieltsSpeaking,
   name: 'IELTS 口语完整模拟',
   version: 2,
   status: SceneStatus.active,
-  turnPolicyRef: 'ielts.speaking.full.turn.v2',
-  sessionPolicyRef: 'ielts.speaking.full.session.v2',
-  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: '按 Part 1、Part 2、Part 3 连续完成。',
     practiceGoal: 'Complete a full speaking mock.',
@@ -1011,10 +1095,14 @@ const _ieltsScene = SceneDefinition(
     personaSummary: 'Neutral and concise.',
     focusAreas: <String>['part_1', 'part_2', 'part_3'],
     turnBlueprints: <String>['Run the complete speaking mock.'],
-    suggestedDurationSeconds: 900,
   ),
   roles: <RoleDefinition>[_ieltsRole],
-  practiceOptions: <PracticeOption>[_ieltsFullOption],
+  practiceOptions: <PracticeOption>[
+    _ieltsFullOption,
+    _ieltsPart1Option,
+    _ieltsPart2Option,
+    _ieltsPart3Option,
+  ],
 );
 
 const _ieltsFullSelection = PreparationLaunchSelection(
@@ -1022,7 +1110,6 @@ const _ieltsFullSelection = PreparationLaunchSelection(
   selectedRoleIds: <String>[_roleId],
   practiceOptionId: _ieltsFullOptionId,
   ieltsSelection: IeltsPracticeSelection(
-    mode: IeltsPracticeMode.fullMock,
     part1SetId: 'p1-002',
     topicGroupId: 'p23-new-001',
   ),

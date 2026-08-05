@@ -1,5 +1,6 @@
-import 'package:speakup/features/coaching/preparation/job_preparation_models.dart';
-import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 final class AgentPracticeContext {
@@ -99,6 +100,9 @@ final class PreparationSessionPolicy {
     required this.earlyCompletionRule,
     required this.retryAllowed,
     required this.questionTranslationAllowed,
+    required this.questionTipsAllowed,
+    required this.avatarAllowed,
+    required this.speechFeedbackAllowed,
   });
 
   final int suggestedDurationSeconds;
@@ -109,72 +113,12 @@ final class PreparationSessionPolicy {
   final String earlyCompletionRule;
   final bool retryAllowed;
   final bool questionTranslationAllowed;
+  final bool questionTipsAllowed;
+  final bool avatarAllowed;
+  final bool speechFeedbackAllowed;
 }
 
 enum PracticePlanStatus { ready, archived }
-
-final class IeltsPracticeAssignment {
-  const IeltsPracticeAssignment({
-    required this.bankId,
-    required this.season,
-    required this.mode,
-    required this.part1QuestionCount,
-    required this.part2QuestionCount,
-    required this.part3QuestionCount,
-    required this.turnBlueprints,
-    this.part1SetId,
-    this.topicGroupId,
-    this.topicTitle,
-    this.part2CueCard,
-  });
-
-  final String bankId;
-  final String season;
-  final IeltsPracticeMode mode;
-  final String? part1SetId;
-  final String? topicGroupId;
-  final String? topicTitle;
-  final String? part2CueCard;
-  final int part1QuestionCount;
-  final int part2QuestionCount;
-  final int part3QuestionCount;
-  final List<String> turnBlueprints;
-
-  bool matchesSelection(IeltsPracticeSelection selection) =>
-      mode == selection.mode &&
-      part1SetId == selection.part1SetId &&
-      topicGroupId == selection.topicGroupId;
-
-  @override
-  bool operator ==(Object other) =>
-      other is IeltsPracticeAssignment &&
-      other.bankId == bankId &&
-      other.season == season &&
-      other.mode == mode &&
-      other.part1SetId == part1SetId &&
-      other.topicGroupId == topicGroupId &&
-      other.topicTitle == topicTitle &&
-      other.part2CueCard == part2CueCard &&
-      other.part1QuestionCount == part1QuestionCount &&
-      other.part2QuestionCount == part2QuestionCount &&
-      other.part3QuestionCount == part3QuestionCount &&
-      _sameStrings(other.turnBlueprints, turnBlueprints);
-
-  @override
-  int get hashCode => Object.hash(
-    bankId,
-    season,
-    mode,
-    part1SetId,
-    topicGroupId,
-    topicTitle,
-    part2CueCard,
-    part1QuestionCount,
-    part2QuestionCount,
-    part3QuestionCount,
-    Object.hashAll(turnBlueprints),
-  );
-}
 
 final class PracticePlan {
   const PracticePlan({
@@ -267,18 +211,6 @@ final class CreatePreparationPlanInput {
   final String practiceOptionId;
   final int? maxEffectiveTurns;
   final IeltsPracticeSelection? ieltsSelection;
-}
-
-bool _sameStrings(List<String> left, List<String> right) {
-  if (left.length != right.length) {
-    return false;
-  }
-  for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 final class RevisePreparationPlanInput {

@@ -61,7 +61,7 @@ func (service *QuestionTipService) EnsureQuestionTip(
 	idempotencyKey string,
 ) (QuestionTipResult, error) {
 	if service == nil || service.store == nil || service.generator == nil ||
-		!actor.Valid() || session.ID == "" || session.SceneFamily != "INTERVIEW" ||
+		!actor.Valid() || session.ID == "" || !session.QuestionTipsAllowed ||
 		question.ID == "" || question.SessionID != session.ID ||
 		strings.TrimSpace(question.Content) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {

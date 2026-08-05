@@ -11,7 +11,7 @@ import (
 
 func TestContractValues(t *testing.T) {
 	tests := map[string]string{
-		"scene interview":           string(scene.SceneFamilyInterview),
+		"scene interview":           string(scene.PracticeExperienceInterview),
 		"plan ready":                string(preparation.PlanStatusReady),
 		"plan archived":             string(preparation.PlanStatusArchived),
 		"session starting":          string(practice.SessionStarting),

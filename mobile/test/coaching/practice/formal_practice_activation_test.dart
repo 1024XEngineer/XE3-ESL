@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 
+import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 
 void main() {
@@ -23,6 +24,7 @@ void main() {
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       );
@@ -50,6 +52,7 @@ void main() {
           scene: _scene,
           sessionId: _sessionId,
           planId: _planId,
+          practiceMode: PracticeMode.fullSimulation,
           turnLimit: 6,
           clientOperationId: _voiceKey,
         ),
@@ -72,6 +75,7 @@ void main() {
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -87,6 +91,7 @@ void main() {
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
+      practiceMode: PracticeMode.fullSimulation,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -100,8 +105,10 @@ void main() {
       snapshot: PracticeSessionSnapshot(
         sessionId: 'session-other',
         planId: _planId,
-        sceneFamily: _scene.family,
-        sceneModel: _scene.model,
+        practiceExperience: _scene.experience,
+        sceneCategory: _scene.category,
+        practiceMode: PracticeMode.fullSimulation,
+        capabilities: testPracticeCapabilities,
         sessionVersion: 1,
         completedTurns: 0,
         turnLimit: 6,
@@ -121,6 +128,7 @@ void main() {
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -142,6 +150,7 @@ void main() {
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
+      practiceMode: PracticeMode.fullSimulation,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -169,6 +178,7 @@ void main() {
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
+      practiceMode: PracticeMode.fullSimulation,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -178,6 +188,7 @@ void main() {
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 3,
         clientOperationId: _voiceKey,
       ),
@@ -188,6 +199,7 @@ void main() {
         scene: _scene,
         sessionId: 'session-other',
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -211,6 +223,7 @@ void main() {
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
+      practiceMode: PracticeMode.fullSimulation,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -230,8 +243,10 @@ void main() {
         snapshot: PracticeSessionSnapshot(
           sessionId: _sessionId,
           planId: _planId,
-          sceneFamily: _scene.family,
-          sceneModel: _scene.model,
+          practiceExperience: _scene.experience,
+          sceneCategory: _scene.category,
+          practiceMode: PracticeMode.fullSimulation,
+          capabilities: testPracticeCapabilities,
           sessionVersion: 1,
           completedTurns: 4,
           turnLimit: 6,
@@ -245,6 +260,7 @@ void main() {
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
+        practiceMode: PracticeMode.fullSimulation,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       );
@@ -261,8 +277,10 @@ PracticeSessionSnapshot _snapshot({required int turnLimit}) {
   return PracticeSessionSnapshot(
     sessionId: _sessionId,
     planId: _planId,
-    sceneFamily: _scene.family,
-    sceneModel: _scene.model,
+    practiceExperience: _scene.experience,
+    sceneCategory: _scene.category,
+    practiceMode: PracticeMode.fullSimulation,
+    capabilities: testPracticeCapabilities,
     sessionVersion: 1,
     completedTurns: 0,
     turnLimit: turnLimit,
@@ -379,6 +397,5 @@ final _scene = testScene(
     personaSummary: 'Professional and focused.',
     focusAreas: <String>['clarity'],
     turnBlueprints: <String>['Ask one technical interview question.'],
-    suggestedDurationSeconds: 600,
   ),
 );

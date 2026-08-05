@@ -12,7 +12,8 @@ import (
 func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
 	translator := &questionTranslatorStub{content: "接下来发生了什么？"}
 	allowed := sessionFixture()
-	allowed.SceneFamily = "DAILY"
+	allowed.PracticeExperience = "ROLEPLAY"
+	allowed.SceneCategory = "ROLEPLAY_DAILY"
 	application := translationApplication(
 		t,
 		sessionPortStub{session: allowed},
@@ -34,7 +35,8 @@ func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
 	}
 
 	daily := sessionFixture()
-	daily.SceneFamily = "INTERVIEW"
+	daily.PracticeExperience = "INTERVIEW"
+	daily.SceneCategory = "INTERVIEW_PROFESSIONAL"
 	daily.QuestionTranslationAllowed = false
 	dailyTranslator := &questionTranslatorStub{content: "不应调用"}
 	dailyApplication := translationApplication(
@@ -208,13 +210,14 @@ func (checkpointPortStub) ListTurnHistory(
 
 func sessionFixture() Session {
 	return Session{
-		ID:            "session-1",
-		PlanID:        "plan-1",
-		SceneID:       "scene-1",
-		SceneVersion:  1,
-		SceneFamily:   "INTERVIEW",
-		SceneModel:    "INTERVIEW_STANDARD",
-		TurnPolicyRef: practice.InterviewProjectDeepDiveTurnPolicy,
+		ID:                 "session-1",
+		PlanID:             "plan-1",
+		SceneID:            "scene-1",
+		SceneVersion:       1,
+		PracticeExperience: "INTERVIEW",
+		SceneCategory:      "INTERVIEW_PROFESSIONAL",
+		PracticeMode:       "FULL_SIMULATION",
+		TurnPolicyRef:      practice.InterviewProjectDeepDiveTurnPolicy,
 		Prompt: practice.ScenePrompt{
 			PublicSceneBrief: "Interview practice",
 			PracticeGoal:     "Answer clearly",

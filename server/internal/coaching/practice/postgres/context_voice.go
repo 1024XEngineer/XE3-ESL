@@ -130,21 +130,22 @@ func (r *Repository) advanceTurnInTransaction(
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.SessionID ||
 		snapshot.SessionPolicy.MaxEffectiveTurns != turnLimit ||
-		turnLimit < 1 || turnLimit > 24 ||
+		turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
 		effectiveTurns < 0 || effectiveTurns > turnLimit {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
 	option, err := snapshot.SceneSelection.PracticeOption()
 	if err != nil || !practice.ValidSessionPolicy(
-		snapshot.SceneSelection.Scene.SessionPolicyRef,
-		option.Type,
+		option.SessionPolicyRef,
+		option.Mode,
 		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+		option.SuggestedDurationSeconds,
 		snapshot.SessionPolicy,
 	) {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
 	if _, err := practice.ResolveTurnPolicy(
-		snapshot.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	); err != nil {
 		return practice.TurnResult{}, practice.ErrConflict
 	}

@@ -5,13 +5,80 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 void main() {
+  test('decodes the frozen IELTS assignment from voice state', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        response: _json(HttpStatus.ok, _ieltsPart2SessionJson()),
+      ),
+    ]);
+
+    final snapshot = await _client(
+      transport,
+    ).restorePractice(sessionId: _sessionId);
+
+    expect(snapshot.practiceExperience, PracticeExperience.ieltsSpeaking);
+    expect(snapshot.practiceMode, PracticeMode.part2);
+    expect(snapshot.turnLimit, 3);
+    expect(
+      snapshot.ieltsAssignment?.parts.map((part) => part.part),
+      const <IeltsSpeakingPart>[
+        IeltsSpeakingPart.part2,
+        IeltsSpeakingPart.part3,
+      ],
+    );
+    expect(
+      snapshot.ieltsAssignment?.part(IeltsSpeakingPart.part2)?.cueCard,
+      'Describe a useful skill you learned.',
+    );
+    expect(snapshot.ieltsAssignment?.turnBlueprints, hasLength(3));
+    transport.expectDone();
+  });
+
+  test(
+    'rejects voice state whose IELTS assignment is absent or mismatched',
+    () async {
+      final invalidStates = <Map<String, Object?>>[
+        _ieltsPart2SessionJson()..remove('ielts_assignment'),
+        _ieltsPart2SessionJson()..['practice_mode'] = 'PART_3',
+        _ieltsPart2SessionJson()..['turn_limit'] = 4,
+        _sessionJson()..['ielts_assignment'] = _ieltsPart2AssignmentJson(),
+      ];
+
+      for (final state in invalidStates) {
+        final client = _client(
+          _Transport([
+            _Step(
+              method: 'GET',
+              path: '/v1/practice-sessions/$_sessionId/voice-state',
+              response: _json(HttpStatus.ok, state),
+            ),
+          ]),
+        );
+        await expectLater(
+          client.restorePractice(sessionId: _sessionId),
+          throwsA(
+            isA<PracticeClientException>().having(
+              (error) => error.kind,
+              'kind',
+              PracticeClientFailureKind.invalidResponse,
+            ),
+          ),
+        );
+      }
+    },
+  );
+
   test(
     'accepts server-authoritative completion before the frozen max turns',
     () async {
@@ -24,8 +91,10 @@ void main() {
             'practice_plan_id': 'plan-1',
             'scene_id': 'scene-project-deep-dive',
             'scene_version': 1,
-            'scene_family': 'INTERVIEW',
-            'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+            'practice_experience': 'INTERVIEW',
+            'scene_category': 'INTERVIEW_PROFESSIONAL',
+            'practice_mode': 'FOCUS',
+            'practice_capabilities': _practiceCapabilitiesJson,
             'practice_session_status': 'completed',
             'session_version': 5,
             'effective_turns': 4,
@@ -53,8 +122,8 @@ void main() {
       expect(snapshot.completedTurns, 4);
       expect(snapshot.turnLimit, 6);
       expect(snapshot.sessionCompleted, isTrue);
-      expect(snapshot.sceneFamily, _scene.family);
-      expect(snapshot.sceneModel, _scene.model);
+      expect(snapshot.practiceExperience, _scene.experience);
+      expect(snapshot.sceneCategory, _scene.category);
       transport.expectDone();
     },
   );
@@ -69,9 +138,11 @@ void main() {
           'practice_plan_id': 'plan-1',
           'scene_id': 'scene-project-deep-dive',
           'scene_version': 1,
-          'scene_family': 'INTERVIEW',
-          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_experience': 'INTERVIEW',
+          'scene_category': 'INTERVIEW_PROFESSIONAL',
+          'practice_mode': 'FOCUS',
           'practice_session_status': 'ended_early',
+          'practice_capabilities': _practiceCapabilitiesJson,
           'session_version': 2,
           'effective_turns': 0,
           'turn_limit': 6,
@@ -243,8 +314,10 @@ void main() {
           'practice_plan_id': 'plan-1',
           'scene_id': 'scene-project-deep-dive',
           'scene_version': 1,
-          'scene_family': 'INTERVIEW',
-          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_experience': 'INTERVIEW',
+          'scene_category': 'INTERVIEW_PROFESSIONAL',
+          'practice_mode': 'FOCUS',
+          'practice_capabilities': _practiceCapabilitiesJson,
           'practice_session_status': 'in_progress',
           'session_version': 2,
           'effective_turns': 1,
@@ -368,8 +441,10 @@ void main() {
           'practice_plan_id': 'plan-1',
           'scene_id': 'scene-project-deep-dive',
           'scene_version': 1,
-          'scene_family': 'INTERVIEW',
-          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_experience': 'INTERVIEW',
+          'scene_category': 'INTERVIEW_PROFESSIONAL',
+          'practice_mode': 'FOCUS',
+          'practice_capabilities': _practiceCapabilitiesJson,
           'practice_session_status': 'in_progress',
           'session_version': 2,
           'effective_turns': 1,
@@ -427,8 +502,9 @@ void main() {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
           'plan_revision': 1,
-          'scene_family': 'INTERVIEW',
-          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'practice_experience': 'INTERVIEW',
+          'scene_category': 'INTERVIEW_PROFESSIONAL',
+          'practice_mode': 'FOCUS',
           'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
           'snapshot_id': 'snapshot-1',
           'practice_session_status': 'ended_early',
@@ -671,63 +747,12 @@ void main() {
     transport.expectDone();
   });
 
-  test('accepts the server activation success status', () async {
-    final response = <String, Object?>{
-      ..._sessionJson(),
-      'scene_id': 'scn_ielts_speaking_part_1',
-      'scene_version': 1,
-    };
+  test('does not accept a noncanonical success status', () async {
     final transport = _Transport([
       _Step(
         method: 'POST',
         path: '/v1/practice-sessions/$_sessionId/voice-activation',
-        response: _json(HttpStatus.ok, response),
-      ),
-    ]);
-
-    final snapshot = await _client(transport).activatePractice(
-      sessionId: _sessionId,
-      clientOperationId: 'scene-operation',
-    );
-
-    expect(snapshot.sessionId, _sessionId);
-    transport.expectDone();
-  });
-
-  test('accepts the legacy server activation created status', () async {
-    final response = <String, Object?>{
-      ..._sessionJson(),
-      'scene_id': 'scn_ielts_speaking_part_1',
-      'scene_version': 1,
-    };
-    final transport = _Transport([
-      _Step(
-        method: 'POST',
-        path: '/v1/practice-sessions/$_sessionId/voice-activation',
-        response: _json(HttpStatus.created, response),
-      ),
-    ]);
-
-    final snapshot = await _client(transport).activatePractice(
-      sessionId: _sessionId,
-      clientOperationId: 'scene-operation',
-    );
-
-    expect(snapshot.sessionId, _sessionId);
-    transport.expectDone();
-  });
-
-  test('rejects malformed server scene identity metadata', () async {
-    final response = <String, Object?>{
-      ..._sessionJson(),
-      'scene_id': 'scn_ielts_speaking_part_1',
-      'scene_version': 0,
-    };
-    final transport = _Transport([
-      _Step(
-        method: 'POST',
-        path: '/v1/practice-sessions/$_sessionId/voice-activation',
-        response: _json(HttpStatus.ok, response),
+        response: _json(HttpStatus.created, _sessionJson()),
       ),
     ]);
 
@@ -915,8 +940,10 @@ Map<String, Object?> _sessionJson() {
     'practice_plan_id': 'plan-1',
     'scene_id': 'scene-project-deep-dive',
     'scene_version': 1,
-    'scene_family': 'INTERVIEW',
-    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'practice_experience': 'INTERVIEW',
+    'scene_category': 'INTERVIEW_PROFESSIONAL',
+    'practice_mode': 'FOCUS',
+    'practice_capabilities': _practiceCapabilitiesJson,
     'practice_session_status': 'in_progress',
     'session_version': 1,
     'effective_turns': 0,
@@ -932,6 +959,47 @@ Map<String, Object?> _sessionJson() {
     },
   };
 }
+
+Map<String, Object?> _ieltsPart2SessionJson() => <String, Object?>{
+  ..._sessionJson(),
+  'practice_experience': 'IELTS_SPEAKING',
+  'scene_category': 'IELTS_SPEAKING',
+  'practice_mode': 'PART_2',
+  'turn_limit': 3,
+  'ielts_assignment': _ieltsPart2AssignmentJson(),
+};
+
+Map<String, Object?> _ieltsPart2AssignmentJson() => <String, Object?>{
+  'bank_id': 'ielts-bank-test',
+  'season': '2026-08',
+  'mode': 'PART_2',
+  'parts': <Object?>[
+    <String, Object?>{
+      'part': 'PART_2',
+      'source_id': 'topic-group-test',
+      'topic_title': 'Learning skills',
+      'cue_card': 'Describe a useful skill you learned.',
+      'turn_blueprints': <String>['Describe a useful skill you learned.'],
+    },
+    <String, Object?>{
+      'part': 'PART_3',
+      'source_id': 'topic-group-test',
+      'topic_title': 'Learning skills',
+      'turn_blueprints': <String>[
+        'Why do people learn new skills?',
+        'Should employers support learning?',
+      ],
+    },
+  ],
+};
+
+const _practiceCapabilitiesJson = <String, Object?>{
+  'retry_allowed': true,
+  'question_translation_allowed': true,
+  'question_tips_allowed': true,
+  'avatar_allowed': false,
+  'speech_feedback_allowed': false,
+};
 
 PracticeWireResponse _json(int statusCode, Object body) {
   return PracticeWireResponse(statusCode: statusCode, body: jsonEncode(body));

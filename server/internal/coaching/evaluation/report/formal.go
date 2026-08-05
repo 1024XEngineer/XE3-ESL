@@ -31,7 +31,9 @@ const (
 type FormalReport struct {
 	SchemaVersion      string                 `json:"schema_version"`
 	SceneType          evaluation.SceneType   `json:"scene_type"`
-	SceneModel         string                 `json:"scene_model"`
+	PracticeExperience string                 `json:"practice_experience"`
+	SceneCategory      string                 `json:"scene_category"`
+	PracticeMode       string                 `json:"practice_mode"`
 	ScoreabilityStatus ReportScoreability     `json:"scoreability_status"`
 	Summary            string                 `json:"summary"`
 	Dimensions         []ReportDimension      `json:"dimensions"`
@@ -99,7 +101,9 @@ func ProjectInterviewFormalReport(
 	report := FormalReport{
 		SchemaVersion:      FormalReportSchemaVersion,
 		SceneType:          evaluation.SceneInterview,
-		SceneModel:         practiceContext.SceneModel,
+		PracticeExperience: practiceContext.PracticeExperience,
+		SceneCategory:      practiceContext.SceneCategory,
+		PracticeMode:       practiceContext.PracticeMode,
 		ScoreabilityStatus: ReportScoreabilityProvisional,
 		Summary:            "本次练习已形成面试表达评估，可按优先行动继续复练。",
 		Dimensions:         make([]ReportDimension, len(detail.Dimensions)),
@@ -158,7 +162,9 @@ func ProjectIELTSFormalReport(
 	report := FormalReport{
 		SchemaVersion:      FormalReportSchemaVersion,
 		SceneType:          evaluation.SceneIELTSSpeaking,
-		SceneModel:         practiceContext.SceneModel,
+		PracticeExperience: practiceContext.PracticeExperience,
+		SceneCategory:      practiceContext.SceneCategory,
+		PracticeMode:       practiceContext.PracticeMode,
 		ScoreabilityStatus: ReportScoreabilityProvisional,
 		Summary:            "本次练习已形成 IELTS 口语评估，可按优先行动继续复练。",
 		Dimensions:         make([]ReportDimension, len(detail.Criteria)),
@@ -203,7 +209,9 @@ func ProjectIELTSFormalReport(
 func (report FormalReport) Valid() bool {
 	if report.SchemaVersion != FormalReportSchemaVersion ||
 		!validSceneType(report.SceneType) ||
-		!validIdentifier(report.SceneModel) ||
+		!validIdentifier(report.PracticeExperience) ||
+		!validIdentifier(report.SceneCategory) ||
+		!validIdentifier(report.PracticeMode) ||
 		(report.ScoreabilityStatus != ReportScoreabilityProvisional &&
 			report.ScoreabilityStatus != ReportScoreabilityInsufficient) ||
 		strings.TrimSpace(report.Summary) == "" ||
@@ -348,7 +356,9 @@ func reportPracticeContext(
 ) (evidence.PracticeContext, error) {
 	var payload evidence.SnapshotPayload
 	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil ||
-		payload.PracticeContext.SceneModel == "" {
+		payload.PracticeContext.PracticeExperience == "" ||
+		payload.PracticeContext.SceneCategory == "" ||
+		payload.PracticeContext.PracticeMode == "" {
 		return evidence.PracticeContext{}, evaluation.ErrInvalidRequest
 	}
 	return payload.PracticeContext, nil

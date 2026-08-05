@@ -33,13 +33,11 @@ func TestSessionStateResponseContainsOnlyPracticeRuntimeState(t *testing.T) {
 			SessionVersion: 2,
 			EffectiveTurns: 1,
 			TurnLimit:      3,
-			Status:         "in_progress",
 		},
 		Question: &question,
 		Turn:     &turn,
 	})
 	if response["practice_session_id"] != "session-1" ||
-		response["practice_session_status"] != "in_progress" ||
 		response["current_question"] == nil ||
 		response["current_turn"] == nil {
 		t.Fatalf("response = %#v", response)
@@ -59,6 +57,26 @@ func TestConfirmedTurnResponseHasNoReviewCheckpoint(t *testing.T) {
 	})
 	if _, leaked := response["review_id"]; leaked {
 		t.Fatalf("Turn response contains Review checkpoint: %#v", response)
+	}
+}
+
+func TestSessionStateResponseIncludesFrozenIELTSAssignment(t *testing.T) {
+	assignment := &practice.IELTSAssignment{
+		BankID: "ielts-bank-1",
+		Season: "2026-05",
+		Mode:   practice.PracticeModePart3,
+		Parts: []practice.IELTSPart{{
+			Part:           practice.PracticeModePart3,
+			SourceID:       "topic-group-1",
+			TopicTitle:     "Technology",
+			TurnBlueprints: []string{"Part 3 question: Why does it matter?"},
+		}},
+	}
+	response := SessionStateResponse(practicevoice.SessionState{
+		Session: practicevoice.Session{IELTSAssignment: assignment},
+	})
+	if response["ielts_assignment"] != assignment {
+		t.Fatalf("response = %#v", response)
 	}
 }
 

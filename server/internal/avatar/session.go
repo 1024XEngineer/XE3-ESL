@@ -24,6 +24,11 @@ type SessionReader interface {
 		requestcontext.Actor,
 		string,
 	) (practice.Session, error)
+	GetSessionSnapshot(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (practice.SessionSnapshot, error)
 }
 
 type ServiceConfiguration struct {
@@ -110,11 +115,21 @@ func (service *Service) IssueSessionToken(
 		)
 	}
 	if session.ID != practiceSessionID ||
-		(session.SceneFamily != practice.SceneFamilyWorkplace &&
-			session.SceneFamily != practice.SceneFamilyDaily &&
-			session.SceneFamily != practice.SceneFamilyInterview) ||
 		(session.Status != practice.SessionStarting &&
 			session.Status != practice.SessionInProgress) {
+		return SessionToken{}, apperror.New(
+			apperror.Conflict,
+			"resource_conflict",
+			"The practice session cannot start an avatar connection.",
+		)
+	}
+	snapshot, err := service.sessions.GetSessionSnapshot(
+		ctx,
+		actor,
+		practiceSessionID,
+	)
+	if err != nil || snapshot.SessionID != session.ID ||
+		!snapshot.SessionPolicy.AvatarAllowed {
 		return SessionToken{}, apperror.New(
 			apperror.Conflict,
 			"resource_conflict",

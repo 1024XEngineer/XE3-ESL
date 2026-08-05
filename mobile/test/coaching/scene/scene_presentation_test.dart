@@ -4,29 +4,29 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import '../../support/scene_fixtures.dart';
 
 void main() {
-  test('routes each Scene Family to its intended presentation', () {
+  test('routes each Practice Experience to its intended presentation', () {
     expect(
-      testScene(family: SceneFamily.interview).presentationMode,
+      testScene(experience: PracticeExperience.interview).presentationMode,
       ScenePresentationMode.immersiveRoleplay,
     );
     expect(
       testScene(
-        family: SceneFamily.workplace,
-        model: SceneModel.workplaceBasicDialogue,
+        experience: PracticeExperience.roleplay,
+        category: SceneCategory.roleplayWorkplace,
       ).presentationMode,
       ScenePresentationMode.immersiveRoleplay,
     );
     expect(
       testScene(
-        family: SceneFamily.daily,
-        model: SceneModel.dailyBasicDialogue,
+        experience: PracticeExperience.roleplay,
+        category: SceneCategory.roleplayDaily,
       ).presentationMode,
       ScenePresentationMode.immersiveRoleplay,
     );
     expect(
       testScene(
-        family: SceneFamily.exam,
-        model: SceneModel.examBasicDialogue,
+        experience: PracticeExperience.ieltsSpeaking,
+        category: SceneCategory.ieltsSpeaking,
       ).presentationMode,
       ScenePresentationMode.standard,
     );

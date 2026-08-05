@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 )
 
 type EvidenceSnapshot struct {
@@ -212,10 +212,7 @@ func evidencePayloadMatchesSnapshot(
 		!typedEvidencePayloadMatchesCanonical(payload, evidence) ||
 		scope != evaluation.ScopeSession ||
 		evidence.PracticeContext.PracticeSessionID != practiceSessionID ||
-		!evidencePracticeContextMatchesScene(
-			evidence.PracticeContext,
-			sceneType,
-		) ||
+		!validEvidencePracticeContext(evidence.PracticeContext) ||
 		!validEvidenceUnavailableDeclarations(evidence) ||
 		len(evidence.ConfirmedTurns) == 0 ||
 		len(evidence.EvidenceRefs) != len(evidence.ConfirmedTurns) ||
@@ -546,10 +543,7 @@ func validEvidenceParticipantBindings(
 		len(all) > 1 && len(candidates) == 1 && len(facilitators) > 0
 }
 
-func evidencePracticeContextMatchesScene(
-	context PracticeContext,
-	sceneType evaluation.SceneType,
-) bool {
+func validEvidencePracticeContext(context PracticeContext) bool {
 	return validIdentifier(context.PracticeSessionID) &&
 		validIdentifier(context.SessionSnapshotID) &&
 		context.SessionVersion > 0 &&
@@ -557,7 +551,12 @@ func evidencePracticeContextMatchesScene(
 		validIdentifier(context.Scene.ID) &&
 		context.Scene.Version > 0 &&
 		validIdentifier(context.PracticeOption.ID) &&
-		strings.TrimSpace(context.PracticeOption.Type) != "" &&
+		strings.TrimSpace(context.PracticeExperience) != "" &&
+		strings.TrimSpace(context.SceneCategory) != "" &&
+		strings.TrimSpace(context.PracticeMode) != "" &&
+		validIdentifier(context.EvaluationPolicyRef) &&
+		strings.TrimSpace(context.PracticeOption.Mode) != "" &&
+		context.PracticeOption.Mode == context.PracticeMode &&
 		strings.TrimSpace(context.UserRole) != "" &&
 		strings.TrimSpace(context.FacilitatorRole) != "" &&
 		strings.TrimSpace(context.PracticeGoal) != "" &&
@@ -566,11 +565,76 @@ func evidencePracticeContextMatchesScene(
 		context.Preparation.SourceVersion > 0 &&
 		len(context.TaskBlueprints) > 0 &&
 		len(context.Participants) > 1 &&
-		evidenceSceneMatches(
-			practice.SceneFamily(context.SceneFamily),
-			practice.SceneModel(context.SceneModel),
-			sceneType,
-		)
+		validEvidenceIELTSAssignment(context)
+}
+
+func validEvidenceIELTSAssignment(context PracticeContext) bool {
+	assignment := context.IELTSAssignment
+	var expectedParts []string
+	switch context.PracticeMode {
+	case "FULL_MOCK":
+		expectedParts = []string{"PART_1", "PART_2", "PART_3"}
+	case "PART_1":
+		expectedParts = []string{"PART_1"}
+	case "PART_2":
+		expectedParts = []string{"PART_2", "PART_3"}
+	case "PART_3":
+		expectedParts = []string{"PART_3"}
+	default:
+		return assignment == nil
+	}
+	if assignment == nil || !validIdentifier(assignment.BankID) ||
+		strings.TrimSpace(assignment.Season) == "" ||
+		strings.TrimSpace(assignment.Season) != assignment.Season ||
+		assignment.Mode != context.PracticeMode ||
+		len(assignment.Parts) != len(expectedParts) {
+		return false
+	}
+	blueprints := make([]string, 0, len(context.TaskBlueprints))
+	for index, part := range assignment.Parts {
+		if part.Part != expectedParts[index] ||
+			!validIdentifier(part.SourceID) ||
+			len(part.TurnBlueprints) == 0 {
+			return false
+		}
+		for _, blueprint := range part.TurnBlueprints {
+			if strings.TrimSpace(blueprint) == "" ||
+				strings.TrimSpace(blueprint) != blueprint {
+				return false
+			}
+		}
+		switch part.Part {
+		case "PART_1":
+			if part.TopicTitle != "" || part.CueCard != "" {
+				return false
+			}
+		case "PART_2":
+			if strings.TrimSpace(part.TopicTitle) == "" ||
+				strings.TrimSpace(part.TopicTitle) != part.TopicTitle ||
+				strings.TrimSpace(part.CueCard) == "" ||
+				strings.TrimSpace(part.CueCard) != part.CueCard ||
+				len(part.TurnBlueprints) != 1 {
+				return false
+			}
+		case "PART_3":
+			if strings.TrimSpace(part.TopicTitle) == "" ||
+				strings.TrimSpace(part.TopicTitle) != part.TopicTitle ||
+				part.CueCard != "" {
+				return false
+			}
+		}
+		blueprints = append(blueprints, part.TurnBlueprints...)
+	}
+	parts := assignment.Parts
+	if len(parts) >= 2 && parts[len(parts)-2].Part == "PART_2" {
+		part2 := parts[len(parts)-2]
+		part3 := parts[len(parts)-1]
+		if part2.SourceID != part3.SourceID ||
+			part2.TopicTitle != part3.TopicTitle {
+			return false
+		}
+	}
+	return slices.Equal(blueprints, context.TaskBlueprints)
 }
 
 func validEvidenceUnavailableDeclarations(evidence SnapshotPayload) bool {

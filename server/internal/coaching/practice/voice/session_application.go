@@ -18,10 +18,12 @@ type Session struct {
 	PlanID                     string
 	SceneID                    string
 	SceneVersion               int
-	SceneFamily                string
-	SceneModel                 string
+	PracticeExperience         string
+	SceneCategory              string
+	PracticeMode               string
 	TurnPolicyRef              string
 	Prompt                     practice.ScenePrompt
+	IELTSAssignment            *practice.IELTSAssignment
 	PreviousUserResponse       string
 	PreviousQuestion           string
 	SessionVersion             int
@@ -29,6 +31,10 @@ type Session struct {
 	TurnLimit                  int
 	MaxFollowUpsPerQuestion    int
 	QuestionTranslationAllowed bool
+	QuestionTipsAllowed        bool
+	AvatarAllowed              bool
+	RetryAllowed               bool
+	SpeechFeedbackAllowed      bool
 	Completed                  bool
 	Status                     string
 	FacilitatorParticipantID   string
@@ -190,7 +196,7 @@ func (application *SessionApplication) EnsureQuestionTip(
 	if err != nil {
 		return QuestionTipResult{}, err
 	}
-	if session.ID != sessionID || session.SceneFamily != "INTERVIEW" ||
+	if session.ID != sessionID || !session.QuestionTipsAllowed ||
 		session.Completed || session.Status == "paused" ||
 		session.Status == "ended_early" {
 		return QuestionTipResult{}, ErrInvalidContext
@@ -343,7 +349,7 @@ func (application *SessionApplication) state(
 		!validVoiceScenePrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
-		session.TurnLimit > 24 ||
+		session.TurnLimit > practice.MaxPracticeTurns ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
 		!validVoiceSessionLifecycle(session) ||
@@ -514,8 +520,9 @@ func validVoiceTurnPolicy(reference string) bool {
 
 func validVoiceScenePrompt(session Session) bool {
 	prompt := session.Prompt
-	return strings.TrimSpace(session.SceneFamily) != "" &&
-		strings.TrimSpace(session.SceneModel) != "" &&
+	return strings.TrimSpace(session.PracticeExperience) != "" &&
+		strings.TrimSpace(session.SceneCategory) != "" &&
+		strings.TrimSpace(session.PracticeMode) != "" &&
 		strings.TrimSpace(prompt.PublicSceneBrief) != "" &&
 		strings.TrimSpace(prompt.PracticeGoal) != "" &&
 		strings.TrimSpace(prompt.UserRole) != "" &&

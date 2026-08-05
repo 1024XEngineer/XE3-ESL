@@ -1190,8 +1190,9 @@ components:
         - plan_revision
         - target
         - scene_name
-        - scene_family
-        - scene_model
+        - practice_experience
+        - scene_category
+        - practice_mode
         - roles
         - practice_scope
         - suggested_duration_seconds
@@ -1227,10 +1228,12 @@ components:
           minLength: 1
           maxLength: 200
           readOnly: true
-        scene_family:
-          $ref: ./scene.yaml#/components/schemas/SceneFamily
-        scene_model:
-          $ref: ./scene.yaml#/components/schemas/SceneModel
+        practice_experience:
+          $ref: ./scene.yaml#/components/schemas/PracticeExperience
+        scene_category:
+          $ref: ./scene.yaml#/components/schemas/SceneCategory
+        practice_mode:
+          $ref: ./scene.yaml#/components/schemas/PracticeMode
         roles:
           type: array
           minItems: 1

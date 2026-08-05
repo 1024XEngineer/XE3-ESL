@@ -95,6 +95,10 @@ func (a *SessionApplication) CreateSession(
 		return SessionBootstrap{}, false,
 			ErrConflict
 	}
+	option, err := selection.PracticeOption()
+	if err != nil {
+		return SessionBootstrap{}, false, ErrConflict
+	}
 	sessionID, snapshotID, participants, err := a.newSessionIdentities(
 		actor,
 		roles,
@@ -106,8 +110,9 @@ func (a *SessionApplication) CreateSession(
 		ID:             snapshotID,
 		SessionID:      sessionID,
 		PlanRevision:   plan.Revision,
-		SceneFamily:    selection.Scene.Family,
-		SceneModel:     selection.Scene.Model,
+		Experience:     selection.Scene.Experience,
+		Category:       selection.Scene.Category,
+		PracticeMode:   option.Mode,
 		SceneSelection: selection,
 		Preparation:    plan.Preparation,
 		Participants:   participants,
@@ -275,9 +280,6 @@ func validExecutablePlan(
 		plan.SceneSelection.Scene.ID == "" ||
 		plan.SceneSelection.Scene.Version < 1 ||
 		plan.SceneSelection.Scene.Status != SceneStatusActive ||
-		!validEvaluationPolicyRef(
-			plan.SceneSelection.Scene.EvaluationPolicyRef,
-		) ||
 		len(plan.PracticeObjectives) == 0 {
 		return false
 	}
@@ -286,15 +288,17 @@ func validExecutablePlan(
 		return false
 	}
 	option, err := plan.SceneSelection.PracticeOption()
-	if err != nil || option.SceneID != plan.SceneSelection.Scene.ID {
+	if err != nil || option.SceneID != plan.SceneSelection.Scene.ID ||
+		!validEvaluationPolicyRef(option.EvaluationPolicyRef) {
 		return false
 	}
 	if _, err := ResolveTurnPolicy(
-		plan.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	); err != nil || !ValidSessionPolicy(
-		plan.SceneSelection.Scene.SessionPolicyRef,
-		option.Type,
+		option.SessionPolicyRef,
+		option.Mode,
 		len(plan.SceneSelection.Scene.Prompt.TurnBlueprints),
+		option.SuggestedDurationSeconds,
 		plan.SessionPolicy,
 	) {
 		return false
@@ -319,8 +323,12 @@ func validCreateSessionRequest(request CreateSessionRequest) bool {
 
 func validFrozenIELTSPlan(plan PlanProjection) bool {
 	assignment := plan.IELTSAssignment
+	option, err := plan.SceneSelection.PracticeOption()
+	if err != nil {
+		return false
+	}
 	turnPolicy, err := ResolveTurnPolicy(
-		plan.SceneSelection.Scene.TurnPolicyRef,
+		option.TurnPolicyRef,
 	)
 	if err != nil {
 		return false
@@ -328,22 +336,11 @@ func validFrozenIELTSPlan(plan PlanProjection) bool {
 	if turnPolicy.Kind != TurnPolicyFrozenIELTS {
 		return assignment == nil
 	}
-	if assignment == nil || assignment.Mode != turnPolicy.IELTSMode ||
-		!validContextResourceID(assignment.BankID) ||
-		strings.TrimSpace(assignment.Season) == "" ||
-		len(assignment.TurnBlueprints) == 0 ||
-		!equalStrings(
-			assignment.TurnBlueprints,
-			plan.SceneSelection.Scene.Prompt.TurnBlueprints,
-		) {
-		return false
-	}
-	for _, blueprint := range assignment.TurnBlueprints {
-		if strings.TrimSpace(blueprint) == "" {
-			return false
-		}
-	}
-	return true
+	return ValidIELTSAssignment(
+		assignment,
+		turnPolicy.Mode,
+		plan.SceneSelection.Scene.Prompt.TurnBlueprints,
+	)
 }
 
 func equalStrings(left, right []string) bool {
@@ -365,7 +362,13 @@ func cloneIELTSAssignment(
 		return nil
 	}
 	result := *source
-	result.TurnBlueprints = cloneStrings(source.TurnBlueprints)
+	result.Parts = make([]IELTSPart, len(source.Parts))
+	for index, part := range source.Parts {
+		result.Parts[index] = part
+		result.Parts[index].TurnBlueprints = cloneStrings(
+			part.TurnBlueprints,
+		)
+	}
 	return &result
 }
 

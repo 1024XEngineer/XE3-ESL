@@ -13,9 +13,9 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart
 import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
-import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
 import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
 import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -115,14 +115,11 @@ void main() {
             'scenes': [
               {
                 'scene_id': 'scn_programmer_interview',
-                'scene_family': 'INTERVIEW',
-                'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+                'practice_experience': 'INTERVIEW',
+                'scene_category': 'INTERVIEW_PROFESSIONAL',
                 'name': 'English interview for technical roles',
                 'scene_version': 1,
                 'status': 'active',
-                'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
-                'session_policy_ref': 'interview.project_deep_dive.session.v1',
-                'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
                 'prompt': {
                   'public_scene_brief': 'Discuss one backend project.',
                   'practice_goal': 'Explain decisions with evidence.',
@@ -131,7 +128,6 @@ void main() {
                   'persona_summary': 'Precise and evidence seeking.',
                   'focus_areas': <String>['system_design'],
                   'turn_blueprints': <String>['Ask for a project overview.'],
-                  'suggested_duration_seconds': 900,
                 },
                 'roles': <Object?>[
                   <String, Object?>{
@@ -153,8 +149,13 @@ void main() {
                   <String, Object?>{
                     'practice_option_id': 'option-full-interview',
                     'scene_id': 'scn_programmer_interview',
-                    'practice_option_type': 'FULL_SIMULATION',
+                    'practice_mode': 'FULL_SIMULATION',
                     'display_name': 'Full interview',
+                    'suggested_duration_seconds': 900,
+                    'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+                    'session_policy_ref':
+                        'interview.project_deep_dive.session.v1',
+                    'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
                   },
                 ],
               },
@@ -194,6 +195,7 @@ void main() {
       addTearDown(dependencies.messageAudioController.dispose);
       addTearDown(dependencies.practiceController.dispose);
       addTearDown(dependencies.preparationController.dispose);
+      addTearDown(dependencies.ieltsPreparationController.dispose);
       addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
@@ -257,6 +259,7 @@ void main() {
           messageAudioController: dependencies.messageAudioController,
           practiceController: dependencies.practiceController,
           preparationController: dependencies.preparationController,
+          ieltsPreparationController: dependencies.ieltsPreparationController,
           jobPreparationController: dependencies.jobPreparationController,
           preparationLaunchController: dependencies.preparationLaunchController,
           reviewHistoryController: dependencies.reviewHistoryController,

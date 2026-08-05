@@ -17,8 +17,16 @@ void main() {
       completedTurns: 3,
       turnLimit: 3,
       sessionCompleted: true,
-      sceneFamily: SceneFamily.interview,
-      sceneModel: SceneModel.projectExperienceDeepDive,
+      practiceExperience: PracticeExperience.interview,
+      sceneCategory: SceneCategory.interviewProfessional,
+      practiceMode: PracticeMode.focus,
+      capabilities: PracticeCapabilities(
+        retryAllowed: false,
+        questionTranslationAllowed: false,
+        questionTipsAllowed: true,
+        avatarAllowed: false,
+        speechFeedbackAllowed: true,
+      ),
       sessionVersion: 4,
     );
 

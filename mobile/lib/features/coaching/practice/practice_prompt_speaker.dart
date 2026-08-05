@@ -1,6 +1,6 @@
 import 'package:flutter_tts/flutter_tts.dart';
 
-abstract interface class IeltsExaminerSpeaker {
+abstract interface class PracticePromptSpeaker {
   Future<void> speak(String text);
 
   Future<void> stop();
@@ -8,8 +8,8 @@ abstract interface class IeltsExaminerSpeaker {
   Future<void> dispose();
 }
 
-final class SystemIeltsExaminerSpeaker implements IeltsExaminerSpeaker {
-  SystemIeltsExaminerSpeaker({FlutterTts? flutterTts})
+final class SystemPracticePromptSpeaker implements PracticePromptSpeaker {
+  SystemPracticePromptSpeaker({FlutterTts? flutterTts})
     : _flutterTts = flutterTts ?? FlutterTts();
 
   final FlutterTts _flutterTts;

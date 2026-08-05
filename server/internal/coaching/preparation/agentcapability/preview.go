@@ -24,13 +24,20 @@ type PreviewInput struct {
 }
 
 type CatalogCandidate struct {
-	SceneID                 string   `json:"scene_id"`
-	SceneVersion            int      `json:"scene_version"`
-	Name                    string   `json:"name"`
-	SceneFamily             string   `json:"scene_family"`
-	SceneModel              string   `json:"scene_model"`
-	DefaultRoleIDs          []string `json:"default_role_ids"`
-	DefaultPracticeOptionID string   `json:"default_practice_option_id"`
+	SceneID                 string                  `json:"scene_id"`
+	SceneVersion            int                     `json:"scene_version"`
+	Name                    string                  `json:"name"`
+	PracticeExperience      string                  `json:"practice_experience"`
+	SceneCategory           string                  `json:"scene_category"`
+	DefaultRoleIDs          []string                `json:"default_role_ids"`
+	DefaultPracticeOptionID string                  `json:"default_practice_option_id"`
+	PracticeOptions         []CatalogPracticeOption `json:"practice_options"`
+}
+
+type CatalogPracticeOption struct {
+	ID          string `json:"practice_option_id"`
+	DisplayName string `json:"display_name"`
+	Mode        string `json:"practice_mode"`
 }
 
 type PreviewResult struct {
@@ -97,20 +104,13 @@ func (value PreviewTool) Definition() capability.Definition {
 				100,
 			),
 			"ielts_selection": capability.ObjectSchema(map[string]any{
-				"mode": capability.StringEnumSchema(
-					"Exact IELTS practice mode required by the selected Scene.",
-					"FULL_MOCK",
-					"PART_1",
-					"PART_2",
-					"PART_3",
-				),
 				"part_1_set_id": capability.IdentifierSchema(
 					"Exact published Part 1 set id.",
 				),
 				"topic_group_id": capability.IdentifierSchema(
 					"Exact published Part 2/3 topic-group id.",
 				),
-			}, []string{"mode"}),
+			}, nil),
 		}, nil),
 		ReadOnly: false,
 		Risk:     capability.RiskLowRiskWrite,

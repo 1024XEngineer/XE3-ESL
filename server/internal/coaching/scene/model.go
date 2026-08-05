@@ -1,30 +1,29 @@
 package scene
 
-// SceneFamily identifies the broad behavior family of a Scene.
-type SceneFamily string
+// PracticeExperience identifies the product entry that owns a Scene.
+type PracticeExperience string
 
 const (
-	SceneFamilyInterview SceneFamily = "INTERVIEW"
-	SceneFamilyExam      SceneFamily = "EXAM"
-	SceneFamilyWorkplace SceneFamily = "WORKPLACE"
-	SceneFamilyDaily     SceneFamily = "DAILY"
+	PracticeExperienceInterview     PracticeExperience = "INTERVIEW"
+	PracticeExperienceIELTSSpeaking PracticeExperience = "IELTS_SPEAKING"
+	PracticeExperienceRoleplay      PracticeExperience = "ROLEPLAY"
 )
 
-// SceneModel identifies the concrete behavior model within one family.
-type SceneModel string
+// SceneCategory identifies the server-authored catalog group within one
+// PracticeExperience. It is presentation metadata, not a runtime policy key.
+type SceneCategory string
 
 const (
-	SceneModelProjectExperienceDeepDive    SceneModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
-	SceneModelInterviewBasicDialogue       SceneModel = "INTERVIEW_BASIC_DIALOGUE"
-	SceneModelIELTSSpeakingPart1           SceneModel = "IELTS_SPEAKING_PART_1"
-	SceneModelIELTSSpeakingPart2           SceneModel = "IELTS_SPEAKING_PART_2"
-	SceneModelIELTSSpeakingPart3           SceneModel = "IELTS_SPEAKING_PART_3"
-	SceneModelIELTSSpeakingFullMock        SceneModel = "IELTS_SPEAKING_FULL_MOCK"
-	SceneModelExamBasicDialogue            SceneModel = "EXAM_BASIC_DIALOGUE"
-	SceneModelProgressAndRiskUpdate        SceneModel = "PROGRESS_AND_RISK_UPDATE"
-	SceneModelWorkplaceBasicDialogue       SceneModel = "WORKPLACE_BASIC_DIALOGUE"
-	SceneModelHotelCheckinAndIssueHandling SceneModel = "HOTEL_CHECKIN_AND_ISSUE_HANDLING"
-	SceneModelDailyBasicDialogue           SceneModel = "DAILY_BASIC_DIALOGUE"
+	SceneCategoryInterviewRecruiter     SceneCategory = "INTERVIEW_RECRUITER"
+	SceneCategoryInterviewBehavioral    SceneCategory = "INTERVIEW_BEHAVIORAL"
+	SceneCategoryInterviewProfessional  SceneCategory = "INTERVIEW_PROFESSIONAL"
+	SceneCategoryInterviewHiringManager SceneCategory = "INTERVIEW_HIRING_MANAGER"
+	SceneCategoryInterviewCustom        SceneCategory = "INTERVIEW_CUSTOM"
+	SceneCategoryIELTSSpeaking          SceneCategory = "IELTS_SPEAKING"
+	SceneCategoryRoleplayWorkplace      SceneCategory = "ROLEPLAY_WORKPLACE"
+	SceneCategoryRoleplayTravel         SceneCategory = "ROLEPLAY_TRAVEL"
+	SceneCategoryRoleplayDaily          SceneCategory = "ROLEPLAY_DAILY"
+	SceneCategoryRoleplayCustom         SceneCategory = "ROLEPLAY_CUSTOM"
 )
 
 type SceneStatus string
@@ -34,23 +33,26 @@ const (
 	SceneStatusInactive SceneStatus = "inactive"
 )
 
-type PracticeOptionType string
+type PracticeMode string
 
 const (
-	PracticeOptionFullSimulation PracticeOptionType = "FULL_SIMULATION"
-	PracticeOptionFocus          PracticeOptionType = "FOCUS"
+	PracticeModeFullSimulation PracticeMode = "FULL_SIMULATION"
+	PracticeModeFocus          PracticeMode = "FOCUS"
+	PracticeModeFullMock       PracticeMode = "FULL_MOCK"
+	PracticeModePart1          PracticeMode = "PART_1"
+	PracticeModePart2          PracticeMode = "PART_2"
+	PracticeModePart3          PracticeMode = "PART_3"
 )
 
 // ScenePrompt is prompt and preview content owned by one Scene version.
 type ScenePrompt struct {
-	PublicSceneBrief         string   `json:"public_scene_brief"`
-	PracticeGoal             string   `json:"practice_goal"`
-	UserRole                 string   `json:"user_role"`
-	AIRole                   string   `json:"ai_role"`
-	PersonaSummary           string   `json:"persona_summary"`
-	FocusAreas               []string `json:"focus_areas"`
-	TurnBlueprints           []string `json:"turn_blueprints"`
-	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
+	PublicSceneBrief string   `json:"public_scene_brief"`
+	PracticeGoal     string   `json:"practice_goal"`
+	UserRole         string   `json:"user_role"`
+	AIRole           string   `json:"ai_role"`
+	PersonaSummary   string   `json:"persona_summary"`
+	FocusAreas       []string `json:"focus_areas"`
+	TurnBlueprints   []string `json:"turn_blueprints"`
 }
 
 // PracticeObjectiveDefinition is one executable objective offered by a Role.
@@ -74,30 +76,31 @@ type RoleDefinition struct {
 
 // PracticeOption describes one stable role-selection mode owned by a Scene.
 type PracticeOption struct {
-	ID               string             `json:"practice_option_id"`
-	SceneID          string             `json:"scene_id"`
-	RoleDefinitionID string             `json:"role_definition_id,omitempty"`
-	Type             PracticeOptionType `json:"practice_option_type"`
-	DisplayName      string             `json:"display_name"`
-	DisplayOrder     int                `json:"-"`
+	ID                       string       `json:"practice_option_id"`
+	SceneID                  string       `json:"scene_id"`
+	RoleDefinitionID         string       `json:"role_definition_id,omitempty"`
+	Mode                     PracticeMode `json:"practice_mode"`
+	DisplayName              string       `json:"display_name"`
+	SuggestedDurationSeconds int          `json:"suggested_duration_seconds"`
+	TurnPolicyRef            string       `json:"turn_policy_ref"`
+	SessionPolicyRef         string       `json:"session_policy_ref"`
+	EvaluationPolicyRef      string       `json:"evaluation_policy_ref"`
+	DisplayOrder             int          `json:"-"`
 }
 
 // SceneDefinition is the single immutable, versioned authority for one Scene.
 // Prompt, roles, options, and policy references change only with SceneVersion.
 type SceneDefinition struct {
-	ID                  string           `json:"scene_id"`
-	Family              SceneFamily      `json:"scene_family"`
-	Model               SceneModel       `json:"scene_model"`
-	Name                string           `json:"name"`
-	Version             int              `json:"scene_version"`
-	Status              SceneStatus      `json:"status"`
-	TurnPolicyRef       string           `json:"turn_policy_ref"`
-	SessionPolicyRef    string           `json:"session_policy_ref"`
-	EvaluationPolicyRef string           `json:"evaluation_policy_ref"`
-	Prompt              ScenePrompt      `json:"prompt"`
-	Roles               []RoleDefinition `json:"roles"`
-	PracticeOptions     []PracticeOption `json:"practice_options"`
-	DisplayOrder        int              `json:"-"`
+	ID              string             `json:"scene_id"`
+	Experience      PracticeExperience `json:"practice_experience"`
+	Category        SceneCategory      `json:"scene_category"`
+	Name            string             `json:"name"`
+	Version         int                `json:"scene_version"`
+	Status          SceneStatus        `json:"status"`
+	Prompt          ScenePrompt        `json:"prompt"`
+	Roles           []RoleDefinition   `json:"roles"`
+	PracticeOptions []PracticeOption   `json:"practice_options"`
+	DisplayOrder    int                `json:"-"`
 }
 
 // SelectionSnapshot freezes one exact Scene version and the user's selection.

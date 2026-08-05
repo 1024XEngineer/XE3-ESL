@@ -1,4 +1,4 @@
-package scene
+package ielts
 
 import (
 	_ "embed"
@@ -6,51 +6,53 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 var (
-	ErrIELTSQuestionBankUnavailable = errors.New("ielts question bank unavailable")
-	ErrIELTSQuestionSetNotFound     = errors.New("ielts question set not found")
-	ErrIELTSPracticeModeInvalid     = errors.New("ielts practice mode invalid")
+	ErrQuestionBankUnavailable = errors.New("ielts question bank unavailable")
+	ErrQuestionSetNotFound     = errors.New("ielts question set not found")
+	ErrPracticeModeInvalid     = errors.New("ielts practice mode invalid")
 )
 
-//go:embed ielts_question_bank.json
-var embeddedIELTSQuestionBank []byte
+//go:embed question_bank.json
+var embeddedQuestionBank []byte
 
-type IELTSPracticeMode string
+type PracticeMode = scene.PracticeMode
 
 const (
-	IELTSPracticeModeFullMock IELTSPracticeMode = "FULL_MOCK"
-	IELTSPracticeModePart1    IELTSPracticeMode = "PART_1"
-	IELTSPracticeModePart2    IELTSPracticeMode = "PART_2"
-	IELTSPracticeModePart3    IELTSPracticeMode = "PART_3"
+	PracticeModeFullMock = scene.PracticeModeFullMock
+	PracticeModePart1    = scene.PracticeModePart1
+	PracticeModePart2    = scene.PracticeModePart2
+	PracticeModePart3    = scene.PracticeModePart3
 )
 
-type IELTSQuestionBank struct {
-	SchemaVersion int                       `json:"schema_version"`
-	BankID        string                    `json:"bank_id"`
-	Season        string                    `json:"season"`
-	SourceCutoff  string                    `json:"source_cutoff"`
-	Part1Sets     []IELTSPart1Set           `json:"part1_sets"`
-	Part1Topics   []IELTSPart1PracticeTopic `json:"part1_topics"`
-	TopicGroups   []IELTSTopicGroup         `json:"topic_groups"`
+type QuestionBank struct {
+	SchemaVersion int                  `json:"schema_version"`
+	BankID        string               `json:"bank_id"`
+	Season        string               `json:"season"`
+	SourceCutoff  string               `json:"source_cutoff"`
+	Part1Sets     []Part1Set           `json:"part1_sets"`
+	Part1Topics   []Part1PracticeTopic `json:"part1_topics"`
+	TopicGroups   []TopicGroup         `json:"topic_groups"`
 }
 
-type IELTSPart1Set struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Topics        []IELTSPart1Topic `json:"topics"`
-	QuestionCount int               `json:"question_count"`
-	Published     bool              `json:"published"`
+type Part1Set struct {
+	ID            string       `json:"id"`
+	Title         string       `json:"title"`
+	Topics        []Part1Topic `json:"topics"`
+	QuestionCount int          `json:"question_count"`
+	Published     bool         `json:"published"`
 }
 
-type IELTSPart1Topic struct {
+type Part1Topic struct {
 	Title     string   `json:"title"`
 	Release   string   `json:"release"`
 	Questions []string `json:"questions"`
 }
 
-type IELTSPart1PracticeTopic struct {
+type Part1PracticeTopic struct {
 	ID        string   `json:"id"`
 	TitleZH   string   `json:"title_zh"`
 	TitleEN   string   `json:"title_en"`
@@ -60,73 +62,107 @@ type IELTSPart1PracticeTopic struct {
 	Published bool     `json:"published"`
 }
 
-type IELTSTopicGroup struct {
-	ID                        string            `json:"id"`
-	TitleZH                   string            `json:"title_zh"`
-	Release                   string            `json:"release"`
-	Region                    string            `json:"region"`
-	Category                  string            `json:"category"`
-	Part2                     IELTSPart2CueCard `json:"part2"`
-	Part3Questions            []string          `json:"part3_questions"`
-	Published                 bool              `json:"published"`
-	SupplementedQuestionCount int               `json:"supplemented_question_count"`
+type TopicGroup struct {
+	ID                        string       `json:"id"`
+	TitleZH                   string       `json:"title_zh"`
+	Release                   string       `json:"release"`
+	Region                    string       `json:"region"`
+	Category                  string       `json:"category"`
+	Part2                     Part2CueCard `json:"part2"`
+	Part3Questions            []string     `json:"part3_questions"`
+	Published                 bool         `json:"published"`
+	SupplementedQuestionCount int          `json:"supplemented_question_count"`
 }
 
-type IELTSPart2CueCard struct {
+type Part2CueCard struct {
 	Prompt string   `json:"prompt"`
 	Points []string `json:"points"`
 }
 
-type IELTSQuestionSetSelection struct {
-	Mode         IELTSPracticeMode
+type QuestionSetSelection struct {
+	Mode         PracticeMode
 	Part1SetID   string
 	TopicGroupID string
 }
 
-type IELTSResolvedQuestionSet struct {
-	BankID         string
-	Season         string
-	Mode           IELTSPracticeMode
-	Part1SetID     string
-	TopicGroupID   string
+type ResolvedQuestionSet struct {
+	BankID string
+	Season string
+	Mode   PracticeMode
+	Parts  []ResolvedPart
+}
+
+// ResolvedPart keeps each IELTS Part's source and turn sequence together.
+// Part 2 and Part 3 deliberately share a source ID when they continue the
+// same topic group.
+type ResolvedPart struct {
+	Part           PracticeMode
+	SourceID       string
 	TopicTitle     string
-	Part2CueCard   string
+	CueCard        string
 	TurnBlueprints []string
-	Part1Questions int
-	Part2Questions int
-	Part3Questions int
 }
 
-type IELTSQuestionBankReader interface {
-	IELTSQuestionBank() (IELTSQuestionBank, error)
-	ResolveIELTSQuestionSet(
-		IELTSQuestionSetSelection,
-	) (IELTSResolvedQuestionSet, error)
+type QuestionBankReader interface {
+	QuestionBank() (QuestionBank, error)
 }
 
-func loadEmbeddedIELTSQuestionBank() (IELTSQuestionBank, error) {
-	var bank IELTSQuestionBank
-	if err := json.Unmarshal(embeddedIELTSQuestionBank, &bank); err != nil {
-		return IELTSQuestionBank{}, fmt.Errorf(
+type QuestionSetResolver interface {
+	ResolveQuestionSet(QuestionSetSelection) (ResolvedQuestionSet, error)
+}
+
+// Bank owns the validated, embedded IELTS question-bank content.
+type Bank struct {
+	data QuestionBank
+}
+
+func NewBank() (*Bank, error) {
+	data, err := loadEmbeddedQuestionBank()
+	if err != nil {
+		return nil, err
+	}
+	return &Bank{data: data}, nil
+}
+
+func (bank *Bank) QuestionBank() (QuestionBank, error) {
+	if bank == nil {
+		return QuestionBank{}, ErrQuestionBankUnavailable
+	}
+	return publishedQuestionBank(bank.data), nil
+}
+
+func (bank *Bank) ResolveQuestionSet(
+	selection QuestionSetSelection,
+) (ResolvedQuestionSet, error) {
+	if bank == nil {
+		return ResolvedQuestionSet{}, ErrQuestionBankUnavailable
+	}
+	return resolveQuestionSet(bank.data, selection)
+}
+
+func loadEmbeddedQuestionBank() (QuestionBank, error) {
+	var bank QuestionBank
+	if err := json.Unmarshal(embeddedQuestionBank, &bank); err != nil {
+		return QuestionBank{}, fmt.Errorf(
 			"%w: decode embedded data: %v",
-			ErrIELTSQuestionBankUnavailable,
+			ErrQuestionBankUnavailable,
 			err,
 		)
 	}
-	if err := validateIELTSQuestionBank(bank); err != nil {
-		return IELTSQuestionBank{}, err
+	if err := validateQuestionBank(bank); err != nil {
+		return QuestionBank{}, err
 	}
 	return bank, nil
 }
 
-func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
+func validateQuestionBank(bank QuestionBank) error {
 	if bank.SchemaVersion != 2 ||
 		!nonBlank(bank.BankID) ||
 		!nonBlank(bank.Season) ||
 		!nonBlank(bank.SourceCutoff) ||
 		len(bank.Part1Sets) != 38 ||
 		len(bank.Part1Topics) != 38 {
-		return ErrIELTSQuestionBankUnavailable
+		return ErrQuestionBankUnavailable
 	}
 	part1IDs := make(map[string]struct{}, len(bank.Part1Sets))
 	part1QuestionsByTopic := make(map[string]map[string]struct{})
@@ -136,10 +172,10 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 			!set.Published ||
 			set.QuestionCount != 8 ||
 			len(set.Topics) != 3 {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		if _, duplicate := part1IDs[set.ID]; duplicate {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		part1IDs[set.ID] = struct{}{}
 		questionCount := 0
@@ -148,10 +184,10 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 			if !nonBlank(topic.Title) ||
 				!nonBlank(topic.Release) ||
 				len(topic.Questions) < 2 {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, duplicate := topicTitles[topic.Title]; duplicate {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			topicTitles[topic.Title] = struct{}{}
 			questions, ok := part1QuestionsByTopic[topic.Title]
@@ -161,14 +197,14 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 			}
 			for _, question := range topic.Questions {
 				if !nonBlank(question) {
-					return ErrIELTSQuestionBankUnavailable
+					return ErrQuestionBankUnavailable
 				}
 				questions[question] = struct{}{}
 				questionCount++
 			}
 		}
 		if questionCount != set.QuestionCount {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 	}
 	part1QuestionCount := 0
@@ -176,7 +212,7 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 		part1QuestionCount += len(questions)
 	}
 	if len(part1QuestionsByTopic) != 38 || part1QuestionCount != 234 {
-		return ErrIELTSQuestionBankUnavailable
+		return ErrQuestionBankUnavailable
 	}
 	practiceTopicIDs := make(map[string]struct{}, len(bank.Part1Topics))
 	practiceTopicTitles := make(map[string]struct{}, len(bank.Part1Topics))
@@ -185,41 +221,41 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 		if !validResourceID(topic.ID) ||
 			!nonBlank(topic.TitleZH) ||
 			!nonBlank(topic.TitleEN) ||
-			!validIELTSRelease(topic.Release, true) ||
-			!validIELTSCategory(topic.Category) ||
+			!validRelease(topic.Release, true) ||
+			!validCategory(topic.Category) ||
 			!topic.Published ||
 			len(topic.Questions) < 2 {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		if _, duplicate := practiceTopicIDs[topic.ID]; duplicate {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		if _, duplicate := practiceTopicTitles[topic.TitleEN]; duplicate {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		practiceTopicIDs[topic.ID] = struct{}{}
 		practiceTopicTitles[topic.TitleEN] = struct{}{}
 		canonicalQuestions, exists := part1QuestionsByTopic[topic.TitleEN]
 		if !exists || len(canonicalQuestions) != len(topic.Questions) {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		questions := make(map[string]struct{}, len(topic.Questions))
 		for _, question := range topic.Questions {
 			if !nonBlank(question) {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, duplicate := questions[question]; duplicate {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, canonical := canonicalQuestions[question]; !canonical {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			questions[question] = struct{}{}
 			practiceQuestionCount++
 		}
 	}
 	if practiceQuestionCount != 234 {
-		return ErrIELTSQuestionBankUnavailable
+		return ErrQuestionBankUnavailable
 	}
 	published := 0
 	hidden := 0
@@ -232,27 +268,27 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 			!nonBlank(group.TitleZH) ||
 			!nonBlank(group.Release) ||
 			!nonBlank(group.Region) ||
-			!validIELTSCategory(group.Category) ||
+			!validCategory(group.Category) ||
 			!nonBlank(group.Part2.Prompt) ||
 			len(group.Part2.Points) < 3 {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		if _, duplicate := groupIDs[group.ID]; duplicate {
-			return ErrIELTSQuestionBankUnavailable
+			return ErrQuestionBankUnavailable
 		}
 		groupIDs[group.ID] = struct{}{}
 		for _, point := range group.Part2.Points {
 			if !nonBlank(point) {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 		}
 		part3Questions := make(map[string]struct{}, len(group.Part3Questions))
 		for _, question := range group.Part3Questions {
 			if !nonBlank(question) {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, duplicate := part3Questions[question]; duplicate {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			part3Questions[question] = struct{}{}
 		}
@@ -261,13 +297,13 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 			if group.Region != "mainland" ||
 				len(group.Part3Questions) < 1 ||
 				len(group.Part3Questions) > 6 {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, duplicate := publishedTitles[group.TitleZH]; duplicate {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			if _, duplicate := publishedPrompts[group.Part2.Prompt]; duplicate {
-				return ErrIELTSQuestionBankUnavailable
+				return ErrQuestionBankUnavailable
 			}
 			publishedTitles[group.TitleZH] = struct{}{}
 			publishedPrompts[group.Part2.Prompt] = struct{}{}
@@ -277,18 +313,18 @@ func validateIELTSQuestionBank(bank IELTSQuestionBank) error {
 		}
 	}
 	if published != 56 || hidden != 8 || publishedPart3Questions != 317 {
-		return ErrIELTSQuestionBankUnavailable
+		return ErrQuestionBankUnavailable
 	}
 	return nil
 }
 
-func cloneIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
+func cloneQuestionBank(source QuestionBank) QuestionBank {
 	result := source
-	result.Part1Sets = make([]IELTSPart1Set, len(source.Part1Sets))
+	result.Part1Sets = make([]Part1Set, len(source.Part1Sets))
 	for index, set := range source.Part1Sets {
 		result.Part1Sets[index] = set
 		result.Part1Sets[index].Topics = make(
-			[]IELTSPart1Topic,
+			[]Part1Topic,
 			len(set.Topics),
 		)
 		for topicIndex, topic := range set.Topics {
@@ -300,7 +336,7 @@ func cloneIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
 		}
 	}
 	result.Part1Topics = make(
-		[]IELTSPart1PracticeTopic,
+		[]Part1PracticeTopic,
 		len(source.Part1Topics),
 	)
 	for index, topic := range source.Part1Topics {
@@ -310,7 +346,7 @@ func cloneIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
 			topic.Questions...,
 		)
 	}
-	result.TopicGroups = make([]IELTSTopicGroup, len(source.TopicGroups))
+	result.TopicGroups = make([]TopicGroup, len(source.TopicGroups))
 	for index, group := range source.TopicGroups {
 		result.TopicGroups[index] = group
 		result.TopicGroups[index].Part2.Points = append(
@@ -325,8 +361,8 @@ func cloneIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
 	return result
 }
 
-func publishedIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
-	result := cloneIELTSQuestionBank(source)
+func publishedQuestionBank(source QuestionBank) QuestionBank {
+	result := cloneQuestionBank(source)
 	part1Sets := result.Part1Sets[:0]
 	for _, set := range result.Part1Sets {
 		if set.Published {
@@ -351,12 +387,12 @@ func publishedIELTSQuestionBank(source IELTSQuestionBank) IELTSQuestionBank {
 	return result
 }
 
-func resolveIELTSQuestionSet(
-	bank IELTSQuestionBank,
-	selection IELTSQuestionSetSelection,
-) (IELTSResolvedQuestionSet, error) {
-	var part1Set *IELTSPart1Set
-	if selection.Part1SetID != "" && selection.Mode == IELTSPracticeModeFullMock {
+func resolveQuestionSet(
+	bank QuestionBank,
+	selection QuestionSetSelection,
+) (ResolvedQuestionSet, error) {
+	var part1Set *Part1Set
+	if selection.Part1SetID != "" && selection.Mode == PracticeModeFullMock {
 		for index := range bank.Part1Sets {
 			if bank.Part1Sets[index].ID == selection.Part1SetID &&
 				bank.Part1Sets[index].Published {
@@ -365,11 +401,11 @@ func resolveIELTSQuestionSet(
 			}
 		}
 		if part1Set == nil {
-			return IELTSResolvedQuestionSet{}, ErrIELTSQuestionSetNotFound
+			return ResolvedQuestionSet{}, ErrQuestionSetNotFound
 		}
 	}
-	var part1Topic *IELTSPart1PracticeTopic
-	if selection.Part1SetID != "" && selection.Mode == IELTSPracticeModePart1 {
+	var part1Topic *Part1PracticeTopic
+	if selection.Part1SetID != "" && selection.Mode == PracticeModePart1 {
 		for index := range bank.Part1Topics {
 			if bank.Part1Topics[index].ID == selection.Part1SetID &&
 				bank.Part1Topics[index].Published {
@@ -378,10 +414,10 @@ func resolveIELTSQuestionSet(
 			}
 		}
 		if part1Topic == nil {
-			return IELTSResolvedQuestionSet{}, ErrIELTSQuestionSetNotFound
+			return ResolvedQuestionSet{}, ErrQuestionSetNotFound
 		}
 	}
-	var topicGroup *IELTSTopicGroup
+	var topicGroup *TopicGroup
 	if selection.TopicGroupID != "" {
 		for index := range bank.TopicGroups {
 			if bank.TopicGroups[index].ID == selection.TopicGroupID &&
@@ -391,94 +427,99 @@ func resolveIELTSQuestionSet(
 			}
 		}
 		if topicGroup == nil {
-			return IELTSResolvedQuestionSet{}, ErrIELTSQuestionSetNotFound
+			return ResolvedQuestionSet{}, ErrQuestionSetNotFound
 		}
 	}
-	if !validIELTSSelectionShape(selection, part1Set, part1Topic, topicGroup) {
-		return IELTSResolvedQuestionSet{}, ErrIELTSPracticeModeInvalid
+	if !validSelectionShape(selection, part1Set, part1Topic, topicGroup) {
+		return ResolvedQuestionSet{}, ErrPracticeModeInvalid
 	}
-	result := IELTSResolvedQuestionSet{
-		BankID:         bank.BankID,
-		Season:         bank.Season,
-		Mode:           selection.Mode,
-		Part1SetID:     selection.Part1SetID,
-		TopicGroupID:   selection.TopicGroupID,
-		Part1Questions: 0,
-		Part2Questions: 0,
-		Part3Questions: 0,
+	result := ResolvedQuestionSet{
+		BankID: bank.BankID,
+		Season: bank.Season,
+		Mode:   selection.Mode,
 	}
 	if part1Set != nil {
+		part := ResolvedPart{
+			Part:     PracticeModePart1,
+			SourceID: part1Set.ID,
+		}
 		for _, topic := range part1Set.Topics {
 			for _, question := range topic.Questions {
-				result.TurnBlueprints = append(
-					result.TurnBlueprints,
+				part.TurnBlueprints = append(
+					part.TurnBlueprints,
 					"Part 1 question: "+question,
 				)
-				result.Part1Questions++
 			}
 		}
+		result.Parts = append(result.Parts, part)
 	}
 	if part1Topic != nil {
+		part := ResolvedPart{
+			Part:     PracticeModePart1,
+			SourceID: part1Topic.ID,
+		}
 		for _, question := range part1Topic.Questions {
-			result.TurnBlueprints = append(
-				result.TurnBlueprints,
+			part.TurnBlueprints = append(
+				part.TurnBlueprints,
 				"Part 1 question: "+question,
 			)
-			result.Part1Questions++
 		}
+		result.Parts = append(result.Parts, part)
 	}
 	if topicGroup != nil {
-		result.TopicTitle = topicGroup.TitleZH
-		result.Part2CueCard = formatIELTSCueCard(topicGroup.Part2)
-		if selection.Mode == IELTSPracticeModeFullMock ||
-			selection.Mode == IELTSPracticeModePart2 {
-			result.TurnBlueprints = append(
-				result.TurnBlueprints,
-				"Part 2 cue card: "+result.Part2CueCard,
-			)
-			result.Part2Questions = 1
+		if selection.Mode == PracticeModeFullMock ||
+			selection.Mode == PracticeModePart2 {
+			cueCard := formatCueCard(topicGroup.Part2)
+			result.Parts = append(result.Parts, ResolvedPart{
+				Part:           PracticeModePart2,
+				SourceID:       topicGroup.ID,
+				TopicTitle:     topicGroup.TitleZH,
+				CueCard:        cueCard,
+				TurnBlueprints: []string{"Part 2 cue card: " + cueCard},
+			})
 		}
-		part3Questions := topicGroup.Part3Questions
-		if selection.Mode == IELTSPracticeModeFullMock && len(part3Questions) > 5 {
-			part3Questions = part3Questions[:5]
+		part3 := ResolvedPart{
+			Part:       PracticeModePart3,
+			SourceID:   topicGroup.ID,
+			TopicTitle: topicGroup.TitleZH,
 		}
-		for _, question := range part3Questions {
-			result.TurnBlueprints = append(
-				result.TurnBlueprints,
+		for _, question := range topicGroup.Part3Questions {
+			part3.TurnBlueprints = append(
+				part3.TurnBlueprints,
 				"Part 3 question: "+question,
 			)
-			result.Part3Questions++
 		}
+		result.Parts = append(result.Parts, part3)
 	}
 	return result, nil
 }
 
-func validIELTSSelectionShape(
-	selection IELTSQuestionSetSelection,
-	part1Set *IELTSPart1Set,
-	part1Topic *IELTSPart1PracticeTopic,
-	topicGroup *IELTSTopicGroup,
+func validSelectionShape(
+	selection QuestionSetSelection,
+	part1Set *Part1Set,
+	part1Topic *Part1PracticeTopic,
+	topicGroup *TopicGroup,
 ) bool {
 	switch selection.Mode {
-	case IELTSPracticeModeFullMock:
+	case PracticeModeFullMock:
 		return part1Set != nil && part1Topic == nil && topicGroup != nil
-	case IELTSPracticeModePart1:
+	case PracticeModePart1:
 		return part1Set == nil && part1Topic != nil && topicGroup == nil
-	case IELTSPracticeModePart2, IELTSPracticeModePart3:
+	case PracticeModePart2, PracticeModePart3:
 		return part1Set == nil && part1Topic == nil && topicGroup != nil
 	default:
 		return false
 	}
 }
 
-func validIELTSRelease(value string, allowEvergreen bool) bool {
+func validRelease(value string, allowEvergreen bool) bool {
 	if value == "new" || value == "carry_over" {
 		return true
 	}
 	return allowEvergreen && value == "evergreen"
 }
 
-func validIELTSCategory(value string) bool {
+func validCategory(value string) bool {
 	switch value {
 	case "person", "place", "thing", "event":
 		return true
@@ -487,7 +528,7 @@ func validIELTSCategory(value string) bool {
 	}
 }
 
-func formatIELTSCueCard(card IELTSPart2CueCard) string {
+func formatCueCard(card Part2CueCard) string {
 	var builder strings.Builder
 	builder.WriteString(card.Prompt)
 	builder.WriteString("\nYou should say:")
@@ -496,4 +537,13 @@ func formatIELTSCueCard(card IELTSPart2CueCard) string {
 		builder.WriteString(point)
 	}
 	return builder.String()
+}
+
+func validResourceID(value string) bool {
+	return value != "" && len(value) <= 128 &&
+		strings.TrimSpace(value) == value
+}
+
+func nonBlank(value string) bool {
+	return value != "" && strings.TrimSpace(value) == value
 }
