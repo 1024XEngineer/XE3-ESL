@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -10,9 +9,9 @@ void main() {
       sessionId: 'session-1',
       questionId: 'question-3',
       candidateId: 'candidate-3',
-      answer: AgentMessage(
+      answer: PracticeMessage(
         id: 'answer-3',
-        role: AgentMessageRole.user,
+        role: PracticeMessageRole.user,
         text: 'Final answer',
       ),
       completedTurns: 3,

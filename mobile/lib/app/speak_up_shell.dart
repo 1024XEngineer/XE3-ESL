@@ -2,15 +2,17 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
-import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
@@ -20,10 +22,12 @@ import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/resume/resume.dart';
 
 class SpeakUpShell extends StatefulWidget {
@@ -41,7 +45,10 @@ class SpeakUpShell extends StatefulWidget {
     this.ieltsSpeakingReportController,
     this.speechFeedbackController,
     this.resumeController,
-    required this.agentController,
+    required this.conversationController,
+    required this.composerController,
+    this.messageAudioController,
+    required this.practiceController,
     super.key,
   });
 
@@ -49,7 +56,10 @@ class SpeakUpShell extends StatefulWidget {
   final bool previewMode;
   final User? user;
   final AuthController? authController;
-  final AgentController agentController;
+  final ConversationController conversationController;
+  final ComposerController composerController;
+  final AgentMessageAudioController? messageAudioController;
+  final PracticeController practiceController;
   final PreparationController? preparationController;
   final PreparationLaunchController? preparationLaunchController;
   final PracticePlanHandoffController? practicePlanHandoffController;
@@ -90,29 +100,50 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+  AgentConversationFeedbackPresenter? _feedbackPresenter;
   bool _practiceRouteInFlight = false;
   int _navigationGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    widget.agentController.addListener(_handleAgentState);
+    widget.conversationController.addListener(_handleAgentInteractionState);
+    widget.composerController.addListener(_handleAgentInteractionState);
+    widget.practiceController.addListener(_handlePracticeState);
+    _feedbackPresenter = _createFeedbackPresenter();
   }
 
   @override
   void didUpdateWidget(covariant SpeakUpShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final agentControllerChanged =
-        oldWidget.agentController != widget.agentController;
-    if (agentControllerChanged) {
-      oldWidget.agentController.removeListener(_handleAgentState);
-      widget.agentController.addListener(_handleAgentState);
+    final conversationControllerChanged =
+        oldWidget.conversationController != widget.conversationController;
+    if (conversationControllerChanged) {
+      oldWidget.conversationController.removeListener(
+        _handleAgentInteractionState,
+      );
+      widget.conversationController.addListener(_handleAgentInteractionState);
+    }
+    if (oldWidget.composerController != widget.composerController) {
+      oldWidget.composerController.removeListener(_handleAgentInteractionState);
+      widget.composerController.addListener(_handleAgentInteractionState);
+    }
+    if (oldWidget.practiceController != widget.practiceController) {
+      oldWidget.practiceController.removeListener(_handlePracticeState);
+      widget.practiceController.addListener(_handlePracticeState);
+    }
+    if (oldWidget.speechFeedbackController != widget.speechFeedbackController) {
+      _feedbackPresenter?.dispose();
+      _feedbackPresenter = _createFeedbackPresenter();
     }
   }
 
   @override
   void dispose() {
-    widget.agentController.removeListener(_handleAgentState);
+    widget.conversationController.removeListener(_handleAgentInteractionState);
+    widget.composerController.removeListener(_handleAgentInteractionState);
+    widget.practiceController.removeListener(_handlePracticeState);
+    _feedbackPresenter?.dispose();
     super.dispose();
   }
 
@@ -133,7 +164,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
     final navigationGeneration = ++_navigationGeneration;
     if (_selectedIndex == 0 && index != 0) {
-      final parked = await widget.agentController.prepareToLeaveAgent();
+      final parked =
+          await widget.conversationController.prepareToLeaveConversation() &&
+          await widget.composerController.prepareToLeave();
       if (!mounted || navigationGeneration != _navigationGeneration) {
         return;
       }
@@ -162,7 +195,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     if (!mounted || navigationGeneration != _navigationGeneration) {
       return;
     }
-    unawaited(widget.agentController.stopPracticeAudio());
+    unawaited(widget.practiceController.stopPracticeAudio());
     if (index == 2) {
       _refreshReviewIndexes();
     }
@@ -196,7 +229,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     if (handoff is! ConfirmPracticePlanHandoff ||
         controller == null ||
         controller.isBusy ||
-        widget.agentController.isBusy) {
+        widget.conversationController.isBusy) {
       return;
     }
     final confirmed = await controller.confirm(handoff);
@@ -218,10 +251,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     final navigationGeneration = _navigationGeneration;
     final selectedIndex = _selectedIndex;
     try {
-      if (!widget.agentController.supportsPracticeFlow) {
-        _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
-        return;
-      }
       final launch = widget.preparationLaunchController;
       if (launch?.hasResumablePractice ?? false) {
         final resumed = await launch!.resumeCurrentPractice();
@@ -242,7 +271,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           return;
         }
       }
-      if (!widget.agentController.hasActivePractice) {
+      if (!widget.practiceController.hasActivePractice) {
         _showMockNotice('请先从训练页选择一项练习');
         return;
       }
@@ -269,7 +298,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
   }
 
-  void _handleAgentState() {
+  void _handleAgentInteractionState() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
+  }
+
+  void _handlePracticeState() {
     if (!mounted) {
       return;
     }
@@ -278,9 +314,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   @override
   Widget build(BuildContext context) {
-    final practiceAvailable = widget.agentController.supportsPracticeFlow;
+    const practiceAvailable = true;
     final canContinuePractice =
-        widget.agentController.hasActivePractice ||
+        widget.practiceController.hasActivePractice ||
         (widget.preparationLaunchController?.hasResumablePractice ?? false);
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final practiceSelected = _selectedIndex == 1;
@@ -295,68 +331,70 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
-        threadId: widget.agentController.threadId,
+        threadId: widget.conversationController.threadId,
         displayName: widget.authController?.profile?.displayName,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
         onCreatePlan: () => unawaited(
-          widget.agentController.sendText('我想创建一场模拟面试，请先帮我梳理面试信息。'),
+          widget.composerController.sendText('我想创建一场模拟面试，请先帮我梳理面试信息。'),
         ),
         onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
         onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
-        onStartVoice: widget.agentController.supportsAgentVoice
-            ? widget.agentController.startAgentVoiceRecording
+        onStartVoice: widget.composerController.supportsAgentVoice
+            ? widget.composerController.startAgentVoiceRecording
             : null,
-        voiceController: widget.agentController.voiceController,
-        pendingImages: widget.agentController.pendingImages,
-        imageErrorMessage: widget.agentController.imageErrorMessage,
-        imageSelectionInFlight: widget.agentController.isImageSelectionInFlight,
-        onPickImages: widget.agentController.supportsAgentImages
-            ? widget.agentController.pickAgentImages
+        voiceController: widget.composerController.voiceController,
+        messageAudioController: widget.messageAudioController,
+        pendingImages: widget.composerController.pendingImages,
+        imageErrorMessage: widget.composerController.imageErrorMessage,
+        imageSelectionInFlight:
+            widget.composerController.isImageSelectionInFlight,
+        onPickImages: widget.composerController.supportsAgentImages
+            ? widget.composerController.pickAgentImages
             : null,
-        onTakePhoto: widget.agentController.supportsAgentImages
-            ? widget.agentController.takeAgentPhoto
+        onTakePhoto: widget.composerController.supportsAgentImages
+            ? widget.composerController.takeAgentPhoto
             : null,
-        onRemovePendingImage: widget.agentController.removePendingImage,
-        onRetryPendingImage: widget.agentController.retryPendingImage,
-        onRefreshMessageImage: widget.agentController.refreshMessageImage,
-        onCreateConversation: widget.agentController.supportsThreadHistory
-            ? () => unawaited(widget.agentController.createThread())
-            : null,
+        onRemovePendingImage: widget.composerController.removePendingImage,
+        onRetryPendingImage: widget.composerController.retryPendingImage,
+        onRefreshMessageImage:
+            widget.conversationController.refreshMessageImage,
+        onCreateConversation: () =>
+            unawaited(widget.conversationController.createThread()),
         draftThreadRecoveryGeneration:
-            widget.agentController.draftThreadRecoveryGeneration,
-        messages: widget.agentController.messages,
-        activeScene: widget.agentController.scene,
+            widget.conversationController.draftThreadRecoveryGeneration,
+        messages: widget.conversationController.messages,
+        activeSceneName: widget.practiceController.scene?.name,
         hasFocusedThread:
-            !widget.agentController.isInitialized ||
-            widget.agentController.threadId != null,
-        hasEarlierMessages: widget.agentController.hasEarlierMessages,
+            !widget.conversationController.isInitialized ||
+            widget.conversationController.threadId != null,
+        hasEarlierMessages: widget.conversationController.hasEarlierMessages,
         isLoadingEarlierMessages:
-            widget.agentController.isLoadingEarlierMessages,
-        isBusy: widget.agentController.isBusy,
+            widget.conversationController.isLoadingEarlierMessages,
+        isBusy: widget.conversationController.isBusy,
         errorMessage:
-            widget.agentController.errorMessage ??
-            widget.agentController.threadHistoryErrorMessage,
-        onSubmitText: widget.agentController.sendText,
-        onRetryOperation: widget.agentController.canRetry
-            ? widget.agentController.retryLastOperation
-            : widget.agentController.canRetryThreadHistory &&
-                  !widget.agentController.isBusy
-            ? widget.agentController.retryThreadHistory
+            widget.conversationController.errorMessage ??
+            widget.conversationController.threadHistoryErrorMessage,
+        onSubmitText: widget.composerController.sendText,
+        onRetryOperation: widget.conversationController.canRetry
+            ? widget.conversationController.retryLastOperation
+            : widget.conversationController.canRetryThreadHistory &&
+                  !widget.conversationController.isBusy
+            ? widget.conversationController.retryThreadHistory
             : null,
-        onLoadEarlierMessages: widget.agentController.hasEarlierMessages
-            ? widget.agentController.loadEarlierMessages
+        onLoadEarlierMessages: widget.conversationController.hasEarlierMessages
+            ? widget.conversationController.loadEarlierMessages
             : null,
-        speechFeedbackController: widget.speechFeedbackController,
+        feedbackPresenter: _feedbackPresenter,
       ),
       PreparationPage(
         showBackButton: widget.showBackButton,
         previewMode: widget.previewMode,
-        agentController: widget.agentController,
+        practiceController: widget.practiceController,
         preparationController: widget.preparationController,
         launchController: widget.preparationLaunchController,
         onOpenJobPreparation: widget.jobPreparationController == null
@@ -393,7 +431,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           : Colors.transparent,
       drawer: _ConversationDrawer(
         previewMode: widget.previewMode,
-        controller: widget.agentController,
+        controller: widget.conversationController,
         hiddenThreadIds: {
           ?widget
               .preparationLaunchController
@@ -413,6 +451,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             ),
     );
   }
+
+  AgentConversationFeedbackPresenter? _createFeedbackPresenter() {
+    final controller = widget.speechFeedbackController;
+    return controller == null
+        ? null
+        : AgentConversationFeedbackPresenter(controller: controller);
+  }
 }
 
 class _ConversationDrawer extends StatelessWidget {
@@ -423,7 +468,7 @@ class _ConversationDrawer extends StatelessWidget {
   });
 
   final bool previewMode;
-  final AgentController controller;
+  final ConversationController controller;
   final Set<String> hiddenThreadIds;
 
   @override
@@ -462,7 +507,7 @@ class _ConversationDrawer extends StatelessWidget {
             const SizedBox(height: 20),
             FilledButton.tonalIcon(
               key: const Key('new-conversation-button'),
-              onPressed: controller.isBusy || !controller.supportsThreadHistory
+              onPressed: controller.isBusy
                   ? null
                   : () async {
                       final created = await controller.createThread();
@@ -507,13 +552,8 @@ class _ConversationDrawer extends StatelessWidget {
                 selected: true,
                 enabled: !controller.isBusy,
                 onTap: () => Navigator.of(context).pop(),
-                onDelete: controller.supportsThreadDeletion
-                    ? () => _confirmDelete(
-                        context,
-                        currentThreadId,
-                        current?.title,
-                      )
-                    : null,
+                onDelete: () =>
+                    _confirmDelete(context, currentThreadId, current?.title),
               ),
             const SizedBox(height: 24),
             const Text('近期对话', style: SpeakUpDesign.label),
@@ -542,9 +582,8 @@ class _ConversationDrawer extends StatelessWidget {
                     }
                     Navigator.of(context).pop();
                   },
-                  onDelete: controller.supportsThreadDeletion
-                      ? () => _confirmDelete(context, thread.id, thread.title)
-                      : null,
+                  onDelete: () =>
+                      _confirmDelete(context, thread.id, thread.title),
                 ),
             if (controller.threadHistoryErrorMessage case final message?) ...[
               const SizedBox(height: 10),

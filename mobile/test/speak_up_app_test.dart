@@ -1,19 +1,16 @@
-import 'package:speakup/features/coaching/scene/scene.dart';
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/coaching/goal/goal.dart';
-import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/review/review.dart';
@@ -239,12 +236,14 @@ void main() {
   testWidgets('home surfaces a definite lazy Thread creation failure', (
     tester,
   ) async {
-    final controller = AgentController(
+    final controller = ConversationController(
       client: _DefiniteCreateFailureAgentClient(),
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpWidget(
+      SpeakUpApp.preview(conversationController: controller),
+    );
     await tester.pumpAndSettle();
 
     await _openAgentTextInput(tester);
@@ -632,9 +631,11 @@ void main() {
   testWidgets(
     'new conversation becomes selected and the old one stays recent',
     (tester) async {
-      final controller = AgentController(client: FakeAgentClient());
+      final controller = ConversationController(client: FakeAgentClient());
       addTearDown(controller.dispose);
-      await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+      await tester.pumpWidget(
+        SpeakUpApp.preview(conversationController: controller),
+      );
       await tester.pumpAndSettle();
       final originalThreadId = controller.threadId;
 
@@ -668,9 +669,11 @@ void main() {
   testWidgets('conversation drawer confirms and deletes each Thread', (
     tester,
   ) async {
-    final controller = AgentController(client: FakeAgentClient());
+    final controller = ConversationController(client: FakeAgentClient());
     addTearDown(controller.dispose);
-    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpWidget(
+      SpeakUpApp.preview(conversationController: controller),
+    );
     await tester.pumpAndSettle();
     final originalThreadId = controller.threadId!;
 
@@ -1006,15 +1009,11 @@ Future<void> _tapVisible(WidgetTester tester, String key) async {
   await tester.pumpAndSettle();
 }
 
-final class _DefiniteCreateFailureAgentClient
-    implements AgentClient, AgentThreadHistoryClient {
+final class _DefiniteCreateFailureAgentClient implements AgentClient {
   final FakeAgentClient _delegate = FakeAgentClient();
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
 
   @override
   Future<AgentThreadPage> listThreads({
@@ -1044,6 +1043,10 @@ final class _DefiniteCreateFailureAgentClient
   Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
 
   @override
+  Future<void> deleteThread({required String threadId}) =>
+      _delegate.deleteThread(threadId: threadId);
+
+  @override
   Future<AgentMessagePage> listMessages({
     required String threadId,
     int pageSize = 50,
@@ -1055,24 +1058,15 @@ final class _DefiniteCreateFailureAgentClient
   );
 
   @override
-  Future<Goal> startScene({
-    required String threadId,
-    required SceneDefinition scene,
-    required String clientOperationId,
-  }) => _delegate.startScene(
-    threadId: threadId,
-    scene: scene,
-    clientOperationId: clientOperationId,
-  );
-
-  @override
   Future<AgentExchange> sendText({
     required String threadId,
     required String text,
     required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
   }) => _delegate.sendText(
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
+    imageAssetIds: imageAssetIds,
   );
 }

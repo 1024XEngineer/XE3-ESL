@@ -1,7 +1,32 @@
 import 'package:speakup/features/coaching/scene/scene.dart';
 
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+
+enum PracticeMessageRole { user, assistant }
+
+final class PracticeMessage {
+  const PracticeMessage({
+    required this.id,
+    required this.role,
+    required this.text,
+    this.speechFeedbackStatusUrl,
+  });
+
+  final String id;
+  final PracticeMessageRole role;
+  final String text;
+  final String? speechFeedbackStatusUrl;
+}
+
+enum PracticeRecordingState {
+  idle,
+  starting,
+  recording,
+  transcribing,
+  awaitingConfirmation,
+  submitting,
+  completed,
+}
 
 bool validPracticeSceneIdentity(
   SceneFamily? sceneFamily,
@@ -75,8 +100,8 @@ final class PracticeQuestion {
 
   bool get isFollowUp => questionType == 'FOLLOW_UP';
 
-  AgentMessage get presentation =>
-      AgentMessage(id: id, role: AgentMessageRole.assistant, text: text);
+  PracticeMessage get presentation =>
+      PracticeMessage(id: id, role: PracticeMessageRole.assistant, text: text);
 }
 
 /// The server-authoritative practice projection consumed by Flutter.
@@ -207,7 +232,7 @@ final class PracticeTurnConfirmation {
   final String sessionId;
   final String questionId;
   final String candidateId;
-  final AgentMessage answer;
+  final PracticeMessage answer;
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;

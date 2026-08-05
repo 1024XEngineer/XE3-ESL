@@ -1,14 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/image_picker_agent_image_picker.dart';
-import 'package:speakup/agent/agent_voice_recording.dart';
-import 'package:speakup/agent/wire_agent_client.dart';
-import 'package:speakup/agent/wire_agent_image_client.dart';
-import 'package:speakup/agent/wire_agent_voice_client.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/composer/image/image_picker_agent_image_picker.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/providers/agent/wire_agent_client.dart';
+import 'package:speakup/providers/agent/wire_agent_image_client.dart';
+import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/goal/goal_client.dart';
+import 'package:speakup/features/coaching/goal/wire_goal_client.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/ielts_practice_history_store.dart';
@@ -31,6 +36,7 @@ import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
@@ -53,7 +59,10 @@ void main() {
   runApp(
     SpeakUpApp(
       authController: dependencies.authController,
-      agentController: dependencies.agentController,
+      conversationController: dependencies.conversationController,
+      composerController: dependencies.composerController,
+      messageAudioController: dependencies.messageAudioController,
+      practiceController: dependencies.practiceController,
       preparationController: dependencies.preparationController,
       jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
@@ -71,7 +80,11 @@ void main() {
 final class ProductionAppDependencies {
   const ProductionAppDependencies({
     required this.authController,
-    required this.agentController,
+    required this.conversationController,
+    required this.composerController,
+    required this.messageAudioController,
+    required this.practiceController,
+    required this.goalClient,
     required this.preparationController,
     required this.jobPreparationController,
     required this.preparationLaunchController,
@@ -85,7 +98,11 @@ final class ProductionAppDependencies {
   });
 
   final AuthController authController;
-  final AgentController agentController;
+  final ConversationController conversationController;
+  final ComposerController composerController;
+  final AgentMessageAudioController messageAudioController;
+  final PracticeController practiceController;
+  final GoalClient goalClient;
   final PreparationController preparationController;
   final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
@@ -102,6 +119,7 @@ ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
+  IdentityHttpTransport? goalTransport,
   AgentVoiceWireTransport? agentVoiceTransport,
   AgentVoiceWireTransport? signedAgentVoiceTransport,
   AgentImageWireTransport? agentImageTransport,
@@ -117,7 +135,8 @@ ProductionAppDependencies createProductionAppDependencies({
   PracticeMediaWireTransport? signedAudioTransport,
   PracticeRecorder? practiceRecorder,
   AgentVoiceRecorder? agentVoiceRecorder,
-  AgentVoiceAudioPlayer? agentVoiceAudioPlayer,
+  AgentAudioPlayer? agentComposerAudioPlayer,
+  AgentAudioPlayer? agentMessageAudioPlayer,
   PracticeMediaClient? practiceMediaClient,
   PracticeAudioPlayer? practiceAudioPlayer,
   AvatarSessionTokenClient? avatarSessionTokenClient,
@@ -138,6 +157,18 @@ ProductionAppDependencies createProductionAppDependencies({
           );
         },
     transport: agentTransport,
+  );
+  final goalClient = WireGoalClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: goalTransport,
   );
   final agentVoiceClient = WireAgentVoiceClient(
     baseUri: baseUri,
@@ -207,42 +238,57 @@ ProductionAppDependencies createProductionAppDependencies({
     return controller;
   }
 
-  final agentController = AgentController(
+  final practiceClient = WirePracticeClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: practiceTransport,
+  );
+  final resolvedPracticeMediaClient =
+      practiceMediaClient ??
+      WirePracticeMediaClient(
+        baseUri: baseUri,
+        credentialProvider: () => authController.currentCredential,
+        invalidateSession:
+            ({required expectedSessionToken, required expectedGeneration}) {
+              return authController.invalidateSession(
+                expectedSessionToken: expectedSessionToken,
+                expectedGeneration: expectedGeneration,
+              );
+            },
+        apiTransport: practiceMediaTransport,
+        signedAudioTransport: signedAudioTransport,
+      );
+  final conversationController = ConversationController(
     client: agentClient,
+    messageImageClient: agentImageClient,
+  );
+  final GoalActivationClient goalActivationClient = goalClient;
+  final messageAudioController = AgentMessageAudioController(
+    conversationController: conversationController,
+    client: agentVoiceClient,
+    audioPlayer: agentMessageAudioPlayer ?? AudioplayersAgentAudioPlayer(),
+  );
+  final composerController = ComposerController(
+    conversationController: conversationController,
     imageClient: agentImageClient,
     imagePicker: ImagePickerAgentImagePicker(),
     voiceClient: agentVoiceClient,
     voiceRecorder: agentVoiceRecorder ?? IosAgentVoiceRecorder(),
-    voiceAudioPlayer:
-        agentVoiceAudioPlayer ?? AudioplayersAgentVoiceAudioPlayer(),
-    practiceClient: WirePracticeClient(
-      baseUri: baseUri,
-      credentialProvider: () => authController.currentCredential,
-      invalidateSession:
-          ({required expectedSessionToken, required expectedGeneration}) {
-            return authController.invalidateSession(
-              expectedSessionToken: expectedSessionToken,
-              expectedGeneration: expectedGeneration,
-            );
-          },
-      transport: practiceTransport,
-    ),
+    draftAudioPlayer:
+        agentComposerAudioPlayer ?? AudioplayersAgentAudioPlayer(),
+    onAssistantCommitted: messageAudioController.playCommittedAssistant,
+  );
+  final practiceController = PracticeController(
+    client: practiceClient,
     recorder: practiceRecorder ?? IosPracticeRecorder(),
-    mediaClient:
-        practiceMediaClient ??
-        WirePracticeMediaClient(
-          baseUri: baseUri,
-          credentialProvider: () => authController.currentCredential,
-          invalidateSession:
-              ({required expectedSessionToken, required expectedGeneration}) {
-                return authController.invalidateSession(
-                  expectedSessionToken: expectedSessionToken,
-                  expectedGeneration: expectedGeneration,
-                );
-              },
-          apiTransport: practiceMediaTransport,
-          signedAudioTransport: signedAudioTransport,
-        ),
+    mediaClient: resolvedPracticeMediaClient,
     audioPlayer: resolvedPracticeAudioPlayer,
   );
   final reviewHistoryController = ReviewHistoryController(
@@ -312,7 +358,8 @@ ProductionAppDependencies createProductionAppDependencies({
     ieltsHistoryStore: const SecureIeltsPracticeHistoryStore(),
   );
   final practiceWorkspaceController = PracticeWorkspaceController(
-    agentController: agentController,
+    conversationController: conversationController,
+    practiceController: practiceController,
     recordStore:
         practiceLaunchRecordStore ?? const SecurePracticeLaunchRecordStore(),
   );
@@ -332,24 +379,28 @@ ProductionAppDependencies createProductionAppDependencies({
     client: preparationLaunchClient,
     workspaceController: practiceWorkspaceController,
     contextProvider: () {
-      final threadId = agentController.threadId;
-      final goalId = agentController.activeGoal?.id;
+      final threadId = conversationController.threadId;
+      final goalId = conversationController.activeGoalId;
       if (threadId == null || goalId == null) {
         return null;
       }
       return AgentPracticeContext(threadId: threadId, goalId: goalId);
     },
-    threadIdProvider: () => agentController.threadId,
+    threadIdProvider: () => conversationController.threadId,
     goalActivator:
         ({
           required threadId,
           required selection,
           required clientOperationId,
         }) async {
-          final goal = await agentController.activateGoalForScene(
+          final goal = await goalActivationClient.startScene(
             threadId: threadId,
             scene: selection.scene,
             clientOperationId: clientOperationId,
+          );
+          conversationController.applyActiveGoal(
+            threadId: threadId,
+            goalId: goal.id,
           );
           return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
@@ -359,8 +410,7 @@ ProductionAppDependencies createProductionAppDependencies({
           required scene,
           required bootstrap,
           required clientOperationId,
-        }) => agentController.activateCreatedPractice(
-          threadId: context.threadId,
+        }) => practiceController.activateCreatedPractice(
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
@@ -369,7 +419,8 @@ ProductionAppDependencies createProductionAppDependencies({
         ),
   );
   final practicePlanHandoffController = PracticePlanHandoffController(
-    agentController: agentController,
+    conversationController: conversationController,
+    practiceController: practiceController,
     workspaceController: practiceWorkspaceController,
     readPlan: preparationLaunchClient.getPlan,
     confirmPlan: ({required plan, required input, required idempotencyKey}) =>
@@ -395,7 +446,7 @@ ProductionAppDependencies createProductionAppDependencies({
     draftStore:
         jobPreparationDraftStore ?? const SecureJobPreparationDraftStore(),
     workspaceController: practiceWorkspaceController,
-    threadIdProvider: () => agentController.threadId,
+    threadIdProvider: () => conversationController.threadId,
     goalActivator:
         ({
           required threadId,
@@ -408,10 +459,14 @@ ProductionAppDependencies createProductionAppDependencies({
           if (scene.version != candidate.catalogRecommendation.sceneVersion) {
             throw StateError('Scene catalog changed before Goal activation.');
           }
-          final goal = await agentController.activateGoalForScene(
+          final goal = await goalActivationClient.startScene(
             threadId: threadId,
             scene: scene,
             clientOperationId: clientOperationId,
+          );
+          conversationController.applyActiveGoal(
+            threadId: threadId,
+            goalId: goal.id,
           );
           return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
@@ -421,8 +476,7 @@ ProductionAppDependencies createProductionAppDependencies({
           required scene,
           required bootstrap,
           required clientOperationId,
-        }) => agentController.activateCreatedPractice(
-          threadId: context.threadId,
+        }) => practiceController.activateCreatedPractice(
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
@@ -453,48 +507,41 @@ ProductionAppDependencies createProductionAppDependencies({
     final controllers = accountAvatarControllers.toList(growable: false);
     activeAvatarControllers.clear();
     accountAvatarControllers.clear();
-    await Future.wait<void>([
-      for (final controller in controllers)
-        controller.clearAccountState().catchError((_) {}),
+    await _runAllPrivateStateCleanups([
+      for (final controller in controllers) controller.clearAccountState,
+      resolvedAvatarSessionTokenClient.clearAccountState,
     ]);
-    await resolvedAvatarSessionTokenClient.clearAccountState();
   }
 
   authController = AuthController(
     identityClient: identityClient,
     profileClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
-    clearPrivateState: () async {
-      final interviewReportCleanup = interviewReportController
-          .clearPrivateState();
-      final ieltsSpeakingReportCleanup = ieltsSpeakingReportController
-          .clearPrivateState();
-      final speechFeedbackCleanup = speechFeedbackController
-          .clearPrivateState();
-      final resumeCleanup = resumeController.clearPrivateState();
-      try {
-        await preparationLaunchController.clearPrivateState();
-        await practicePlanHandoffController.clearAccountState();
-        await clearAvatarPrivateState();
-        await Future.wait<void>([
-          agentController.clearPrivateState(),
-          preparationController.clearPrivateState(),
-          jobPreparationController.clearPrivateState(),
-          reviewHistoryController.clearPrivateState(),
-        ]);
-      } finally {
-        await Future.wait<void>([
-          interviewReportCleanup,
-          ieltsSpeakingReportCleanup,
-          speechFeedbackCleanup,
-          resumeCleanup,
-        ]);
-      }
-    },
+    clearPrivateState: () => _runAllPrivateStateCleanups([
+      interviewReportController.clearPrivateState,
+      ieltsSpeakingReportController.clearPrivateState,
+      speechFeedbackController.clearPrivateState,
+      resumeController.clearPrivateState,
+      preparationLaunchController.clearPrivateState,
+      practicePlanHandoffController.clearAccountState,
+      clearAvatarPrivateState,
+      conversationController.clearPrivateState,
+      composerController.clearPrivateState,
+      messageAudioController.clearPrivateState,
+      practiceController.clearPrivateState,
+      goalClient.clearAccountState,
+      preparationController.clearPrivateState,
+      jobPreparationController.clearPrivateState,
+      reviewHistoryController.clearPrivateState,
+    ]),
   );
   return ProductionAppDependencies(
     authController: authController,
-    agentController: agentController,
+    conversationController: conversationController,
+    composerController: composerController,
+    messageAudioController: messageAudioController,
+    practiceController: practiceController,
+    goalClient: goalClient,
     preparationController: preparationController,
     jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
@@ -506,4 +553,24 @@ ProductionAppDependencies createProductionAppDependencies({
     speechFeedbackController: speechFeedbackController,
     resumeController: resumeController,
   );
+}
+
+Future<void> _runAllPrivateStateCleanups(
+  List<Future<void> Function()> cleanups,
+) async {
+  Object? firstError;
+  StackTrace? firstStackTrace;
+  for (final cleanup in cleanups) {
+    try {
+      await cleanup();
+    } catch (error, stackTrace) {
+      if (firstError == null) {
+        firstError = error;
+        firstStackTrace = stackTrace;
+      }
+    }
+  }
+  if (firstError case final error?) {
+    Error.throwWithStackTrace(error, firstStackTrace!);
+  }
 }

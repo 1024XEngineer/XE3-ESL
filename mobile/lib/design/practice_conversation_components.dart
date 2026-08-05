@@ -1,61 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
-
-class PracticeChatBubble extends StatelessWidget {
-  const PracticeChatBubble({
-    required this.message,
-    this.actions,
-    this.maxWidth = 520,
-    super.key,
-  });
-
-  final AgentMessage message;
-  final Widget? actions;
-  final double maxWidth;
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = message.role == AgentMessageRole.user;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Semantics(
-        label: '${isUser ? '你' : '对话伙伴'}：${message.text}',
-        child: Container(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          padding: EdgeInsets.fromLTRB(
-            isUser ? 14 : 2,
-            10,
-            isUser ? 14 : 10,
-            10,
-          ),
-          decoration: BoxDecoration(
-            color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
-            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-            border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                message.text,
-                style: SpeakUpDesign.body.copyWith(
-                  color: SpeakUpDesign.ink,
-                  height: 1.45,
-                ),
-              ),
-              if (actions != null) ...[const SizedBox(height: 6), actions!],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class PracticeIdleComposer extends StatelessWidget {
   const PracticeIdleComposer({

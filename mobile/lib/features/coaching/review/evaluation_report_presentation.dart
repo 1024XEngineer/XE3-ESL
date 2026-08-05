@@ -1,7 +1,7 @@
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/review/review_summary.dart';
 
-AgentReview presentEvaluationReport(EvaluationReport report) {
+ReviewSummary presentEvaluationReport(EvaluationReport report) {
   final strength =
       report.dimensions
           .expand((dimension) => dimension.strengths)
@@ -31,7 +31,7 @@ AgentReview presentEvaluationReport(EvaluationReport report) {
           .map((finding) => finding.suggestion ?? finding.message)
           .firstOrNull ??
       report.summary;
-  return AgentReview(
+  return ReviewSummary(
     id: report.id,
     title: evaluationReportTitle(report),
     summary: report.summary,

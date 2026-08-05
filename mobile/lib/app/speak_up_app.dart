@@ -3,12 +3,17 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_message_image_client.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
@@ -22,6 +27,7 @@ import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
@@ -31,7 +37,10 @@ import 'package:speakup/resume/resume_controller.dart';
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
     required AuthController authController,
-    required this.agentController,
+    required this.conversationController,
+    required this.composerController,
+    required this.messageAudioController,
+    required this.practiceController,
     required this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
@@ -47,7 +56,10 @@ class SpeakUpApp extends StatelessWidget {
        _allowFakePreview = false;
 
   const SpeakUpApp.preview({
-    this.agentController,
+    this.conversationController,
+    this.composerController,
+    this.messageAudioController,
+    this.practiceController,
     this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
@@ -63,7 +75,10 @@ class SpeakUpApp extends StatelessWidget {
        _allowFakePreview = true;
 
   final ({AuthController controller})? _authentication;
-  final AgentController? agentController;
+  final ConversationController? conversationController;
+  final ComposerController? composerController;
+  final AgentMessageAudioController? messageAudioController;
+  final PracticeController? practiceController;
   final PreparationController? preparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
@@ -85,7 +100,10 @@ class SpeakUpApp extends StatelessWidget {
       theme: SpeakUpTheme.light,
       home: controller == null
           ? _AuthenticatedNavigator(
-              agentController: agentController,
+              conversationController: conversationController,
+              composerController: composerController,
+              messageAudioController: messageAudioController,
+              practiceController: practiceController,
               preparationController: preparationController,
               jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
@@ -103,7 +121,10 @@ class SpeakUpApp extends StatelessWidget {
               authenticatedBuilder: (_, user) => _AuthenticatedNavigator(
                 user: user,
                 authController: controller,
-                agentController: agentController,
+                conversationController: conversationController,
+                composerController: composerController,
+                messageAudioController: messageAudioController,
+                practiceController: practiceController,
                 preparationController: preparationController,
                 jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
@@ -125,7 +146,10 @@ class _AuthenticatedNavigator extends StatefulWidget {
   const _AuthenticatedNavigator({
     this.user,
     this.authController,
-    this.agentController,
+    this.conversationController,
+    this.composerController,
+    this.messageAudioController,
+    this.practiceController,
     this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
@@ -141,7 +165,10 @@ class _AuthenticatedNavigator extends StatefulWidget {
 
   final User? user;
   final AuthController? authController;
-  final AgentController? agentController;
+  final ConversationController? conversationController;
+  final ComposerController? composerController;
+  final AgentMessageAudioController? messageAudioController;
+  final PracticeController? practiceController;
   final PreparationController? preparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
@@ -161,26 +188,74 @@ class _AuthenticatedNavigator extends StatefulWidget {
 
 class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   final _navigatorKey = GlobalKey<NavigatorState>();
-  late final AgentController _agentController;
-  late final bool _ownsAgentController;
+  late final ConversationController _conversationController;
+  late final ComposerController _composerController;
+  late final AgentMessageAudioController? _messageAudioController;
+  late final PracticeController _practiceController;
+  late final bool _ownsConversationController;
+  late final bool _ownsComposerController;
+  late final bool _ownsMessageAudioController;
+  late final bool _ownsPracticeController;
 
   @override
   void initState() {
     super.initState();
-    final injectedController = widget.agentController;
+    final previewVoiceClient = widget.allowFakePreview
+        ? FakeAgentVoiceClient()
+        : null;
+    final injectedController = widget.conversationController;
     if (injectedController == null && !widget.allowFakePreview) {
       throw StateError(
-        'Production SpeakUpApp requires an injected AgentController.',
+        'Production SpeakUpApp requires an injected ConversationController.',
       );
     }
-    _ownsAgentController = injectedController == null;
-    _agentController =
+    _ownsConversationController = injectedController == null;
+    _conversationController =
         injectedController ??
-        AgentController(
+        ConversationController(
           client: FakeAgentClient(),
-          practiceClient: FakePracticeClient(),
+          messageImageClient: FakeAgentMessageImageClient(),
         );
-    _agentController.initialize();
+    final injectedMessageAudioController = widget.messageAudioController;
+    if (injectedMessageAudioController == null && !widget.allowFakePreview) {
+      throw StateError(
+        'Production SpeakUpApp requires an injected '
+        'AgentMessageAudioController.',
+      );
+    }
+    _ownsMessageAudioController = injectedMessageAudioController == null;
+    _messageAudioController =
+        injectedMessageAudioController ??
+        AgentMessageAudioController(
+          conversationController: _conversationController,
+          client: previewVoiceClient!,
+          audioPlayer: FakeAgentAudioPlayer(),
+        );
+    final injectedComposerController = widget.composerController;
+    if (injectedComposerController == null && !widget.allowFakePreview) {
+      throw StateError(
+        'Production SpeakUpApp requires an injected ComposerController.',
+      );
+    }
+    _ownsComposerController = injectedComposerController == null;
+    _composerController =
+        injectedComposerController ??
+        ComposerController(
+          conversationController: _conversationController,
+          voiceClient: previewVoiceClient,
+          onAssistantCommitted: _messageAudioController?.playCommittedAssistant,
+        );
+    final injectedPracticeController = widget.practiceController;
+    if (injectedPracticeController == null && !widget.allowFakePreview) {
+      throw StateError(
+        'Production SpeakUpApp requires an injected PracticeController.',
+      );
+    }
+    _ownsPracticeController = injectedPracticeController == null;
+    _practiceController =
+        injectedPracticeController ??
+        PracticeController(client: FakePracticeClient());
+    _conversationController.initialize();
     final user = widget.user;
     if (user != null) {
       unawaited(_activateAccount(user.id));
@@ -216,8 +291,17 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   @override
   void dispose() {
-    if (_ownsAgentController) {
-      _agentController.dispose();
+    if (_ownsComposerController) {
+      _composerController.dispose();
+    }
+    if (_ownsMessageAudioController) {
+      _messageAudioController?.dispose();
+    }
+    if (_ownsConversationController) {
+      _conversationController.dispose();
+    }
+    if (_ownsPracticeController) {
+      _practiceController.dispose();
     }
     super.dispose();
   }
@@ -233,7 +317,10 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             user: widget.user,
             authController: widget.authController,
-            agentController: _agentController,
+            conversationController: _conversationController,
+            composerController: _composerController,
+            messageAudioController: _messageAudioController,
+            practiceController: _practiceController,
             preparationController: widget.preparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
@@ -247,7 +334,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
             previewMode: widget.allowFakePreview,
-            agentController: _agentController,
+            practiceController: _practiceController,
             preparationController: widget.preparationController,
             launchController: widget.preparationLaunchController,
             onOpenJobPreparation: widget.jobPreparationController == null
@@ -272,7 +359,10 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             user: widget.user,
             authController: widget.authController,
-            agentController: _agentController,
+            conversationController: _conversationController,
+            composerController: _composerController,
+            messageAudioController: _messageAudioController,
+            practiceController: _practiceController,
             preparationController: widget.preparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
@@ -286,7 +376,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           AppRoutes.review => ReviewPage(
             showBackButton: true,
             previewMode: widget.allowFakePreview,
-            practiceAvailable: _agentController.supportsPracticeFlow,
+            practiceAvailable: true,
             historyController: widget.reviewHistoryController,
           ),
           _ => null,
@@ -306,13 +396,13 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     final launchController = widget.preparationLaunchController;
     final presentationMode = launchController?.hasResumablePractice ?? false
         ? launchController!.resumablePresentationMode
-        : _agentController.scene?.presentationMode ??
+        : _practiceController.scene?.presentationMode ??
               ScenePresentationMode.standard;
     if (presentationMode == ScenePresentationMode.immersiveRoleplay) {
       final factory = widget.avatarControllerFactory;
       if (factory != null) {
         return ImmersiveRoleplaySession(
-          agentController: _agentController,
+          practiceController: _practiceController,
           avatarControllerFactory: factory,
           interviewReportController: widget.interviewReportController,
           speechFeedbackController: widget.speechFeedbackController,
@@ -322,7 +412,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       }
       return ImmersiveRoleplayPage(
         previewMode: widget.allowFakePreview,
-        agentController: _agentController,
+        practiceController: _practiceController,
         interviewReportController: widget.interviewReportController,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
@@ -331,7 +421,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     }
     return PracticePage(
       previewMode: widget.allowFakePreview,
-      agentController: _agentController,
+      practiceController: _practiceController,
       preparationController: widget.preparationController,
       interviewReportController: widget.interviewReportController,
       ieltsSpeakingReportController: widget.ieltsSpeakingReportController,

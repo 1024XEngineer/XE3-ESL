@@ -5,9 +5,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
@@ -35,7 +34,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           avatarStatusLabel: '画面已连接',
           avatarSurfaceBuilder: (_) => const ColoredBox(
             key: Key('test-avatar-surface'),
@@ -73,7 +72,7 @@ void main() {
             onPressed: () => Navigator.of(context).push<void>(
               MaterialPageRoute<void>(
                 builder: (_) => ImmersiveRoleplayPage(
-                  agentController: controller,
+                  practiceController: controller,
                   avatarSurfaceBuilder: (_) => const ColoredBox(
                     key: Key('test-avatar-surface'),
                     color: Colors.green,
@@ -107,7 +106,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onBeforeSubmitText: () async {
             interruptedBeforeSubmit = true;
           },
@@ -127,9 +126,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      controller.messages.any(
+      controller.practiceMessages.any(
         (message) =>
-            message.role == AgentMessageRole.user && message.text == answer,
+            message.role == PracticeMessageRole.user && message.text == answer,
       ),
       isTrue,
     );
@@ -150,7 +149,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
     );
     await tester.pump();
 
@@ -178,7 +177,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onBeforeStartRecording: () => neverCompletes.future,
         ),
       ),
@@ -204,7 +203,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onBeforeStartRecording: () {
             interruptCalls++;
             return tapInterrupt.future;
@@ -229,7 +228,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onBeforeStartRecording: () async {
             interruptCalls++;
           },
@@ -252,7 +251,7 @@ void main() {
     final controller = await _roleplayController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
     );
 
     final send = await tester.startGesture(
@@ -265,8 +264,8 @@ void main() {
     expect(controller.completedTurns, 1);
     expect(controller.recordingState, PracticeRecordingState.idle);
 
-    final userTurnsAfterSend = controller.messages
-        .where((message) => message.role == AgentMessageRole.user)
+    final userTurnsAfterSend = controller.practiceMessages
+        .where((message) => message.role == PracticeMessageRole.user)
         .length;
     final cancel = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('immersive-record'))),
@@ -278,8 +277,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.completedTurns, 1);
     expect(
-      controller.messages
-          .where((message) => message.role == AgentMessageRole.user)
+      controller.practiceMessages
+          .where((message) => message.role == PracticeMessageRole.user)
           .length,
       userTurnsAfterSend,
     );
@@ -297,7 +296,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
     );
 
     final send = await tester.startGesture(
@@ -346,7 +345,7 @@ void main() {
       MaterialApp(
         theme: SpeakUpTheme.light,
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           speechFeedbackController: feedbackController,
         ),
       ),
@@ -396,7 +395,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           interviewReportController: reportController,
         ),
       ),
@@ -421,7 +420,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onReplayQuestion: () async {
             replayCalls++;
           },
@@ -444,7 +443,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
-          agentController: controller,
+          practiceController: controller,
           onReplayQuestion: () async {},
         ),
       ),
@@ -473,7 +472,7 @@ void main() {
             size: Size(320, 568),
             textScaler: TextScaler.linear(2),
           ),
-          child: ImmersiveRoleplayPage(agentController: controller),
+          child: ImmersiveRoleplayPage(practiceController: controller),
         ),
       ),
     );
@@ -484,7 +483,7 @@ void main() {
 
     tester.view.physicalSize = const Size(844, 390);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
     );
     await tester.pump();
 
@@ -496,7 +495,7 @@ void main() {
   });
 }
 
-Future<AgentController> _roleplayController({
+Future<PracticeController> _roleplayController({
   PracticeClient? practiceClient,
 }) async {
   final sceneFamily = switch (practiceClient) {
@@ -528,14 +527,8 @@ Future<AgentController> _roleplayController({
   final resolvedPracticeClient =
       practiceClient ??
       _ScenePracticeClient(sceneFamily: sceneFamily, sceneModel: sceneModel);
-  final controller = AgentController(
-    client: FakeAgentClient(),
-    practiceClient: resolvedPracticeClient,
-  );
-  await controller.initialize();
-  await controller.selectScene(scene);
+  final controller = PracticeController(client: resolvedPracticeClient);
   await controller.activateCreatedPractice(
-    threadId: controller.threadId!,
     scene: scene,
     sessionId: _roleplaySessionId,
     planId: 'practice-plan-$_roleplaySessionId',
@@ -652,8 +645,8 @@ final class _FailOncePracticeClient implements PracticeClient {
   ) {
     if (_shouldFail) {
       _shouldFail = false;
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         retryable: true,
       );
     }
@@ -764,7 +757,12 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       sessionId: confirmation.sessionId,
       questionId: confirmation.questionId,
       candidateId: confirmation.candidateId,
-      answer: confirmation.answer.copyWith(speechFeedbackStatusUrl: statusUrl),
+      answer: PracticeMessage(
+        id: confirmation.answer.id,
+        role: confirmation.answer.role,
+        text: confirmation.answer.text,
+        speechFeedbackStatusUrl: statusUrl,
+      ),
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,

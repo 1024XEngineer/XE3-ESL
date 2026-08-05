@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/agent_voice_widgets.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 
 void main() {

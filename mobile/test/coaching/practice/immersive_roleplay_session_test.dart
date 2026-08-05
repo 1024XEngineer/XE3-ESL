@@ -6,8 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
@@ -26,8 +25,8 @@ void main() {
   testWidgets('owns one avatar connection and fences app lifecycle', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
     AvatarController createAvatarController() {
@@ -45,7 +44,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: createAvatarController,
         ),
       ),
@@ -53,7 +52,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tokenClient.requestedSessionIds, [
-      agentController.practiceSessionId,
+      practiceController.practiceSessionId,
     ]);
     expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
     expect(find.byKey(const Key('immersive-avatar-surface')), findsOneWidget);
@@ -84,8 +83,8 @@ void main() {
   testWidgets('retries a transient session failure with a fresh renderer', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final failedTokenClient = FakeAvatarSessionTokenClient(
       error: const AvatarSessionTokenException(
         failure: AvatarSessionTokenFailure.unavailable,
@@ -100,7 +99,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
             renderers.add(renderer);
@@ -134,15 +133,15 @@ void main() {
   testWidgets('reconnects after a live renderer network failure', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
 
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
             renderers.add(renderer);
@@ -176,15 +175,15 @@ void main() {
   testWidgets('falls back when avatar preparation does not finish in time', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final prepareGate = Completer<void>();
     final renderer = FakeAvatarRenderer(prepareGate: prepareGate);
 
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () => AvatarController(
             renderer: renderer,
             tokenClient: FakeAvatarSessionTokenClient(),
@@ -230,16 +229,13 @@ void main() {
     );
     final media = _QuestionMediaClient();
     final fallbackPlayer = _FallbackPlayer();
-    final agentController = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: _SnapshotPracticeClient(snapshot),
+    final practiceController = PracticeController(
+      client: _SnapshotPracticeClient(snapshot),
       mediaClient: media,
       audioPlayer: fallbackPlayer,
     );
-    addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(scene);
-    await _activateCreatedPractice(agentController, scene, snapshot);
+    addTearDown(practiceController.dispose);
+    await _activateCreatedPractice(practiceController, scene, snapshot);
     final failedTokenClient = FakeAvatarSessionTokenClient(
       error: const AvatarSessionTokenException(
         failure: AvatarSessionTokenFailure.unavailable,
@@ -253,7 +249,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
             renderers.add(renderer);
@@ -288,15 +284,15 @@ void main() {
   testWidgets('caps repeated surface connection failures at three attempts', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
 
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer(connectOnPrepare: false);
             renderers.add(renderer);
@@ -347,15 +343,15 @@ void main() {
   testWidgets('routes an immersive scene through the avatar coordinator', (
     tester,
   ) async {
-    final agentController = await _immersiveAgentController();
-    addTearDown(agentController.dispose);
+    final practiceController = await _immersivePracticeController();
+    addTearDown(practiceController.dispose);
     final renderer = FakeAvatarRenderer();
     final tokenClient = FakeAvatarSessionTokenClient();
     var factoryCalls = 0;
 
     await tester.pumpWidget(
       SpeakUpApp.preview(
-        agentController: agentController,
+        practiceController: practiceController,
         avatarControllerFactory: () {
           factoryCalls++;
           return AvatarController(
@@ -402,16 +398,13 @@ void main() {
     );
     final media = _QuestionMediaClient();
     final fallbackPlayer = _FallbackPlayer();
-    final agentController = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: _SnapshotPracticeClient(snapshot),
+    final practiceController = PracticeController(
+      client: _SnapshotPracticeClient(snapshot),
       mediaClient: media,
       audioPlayer: fallbackPlayer,
     );
-    addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(scene);
-    await _activateCreatedPractice(agentController, scene, snapshot);
+    addTearDown(practiceController.dispose);
+    await _activateCreatedPractice(practiceController, scene, snapshot);
     final renderer = FakeAvatarRenderer();
     final avatarController = AvatarController(
       renderer: renderer,
@@ -424,7 +417,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplaySession(
-          agentController: agentController,
+          practiceController: practiceController,
           avatarControllerFactory: () => avatarController,
         ),
       ),
@@ -449,7 +442,7 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
   fail('Condition was not reached.');
 }
 
-Future<AgentController> _immersiveAgentController() async {
+Future<PracticeController> _immersivePracticeController() async {
   final scene = _dailyTravelScene('daily-travel');
   const sessionId = 'session-daily-travel';
   final snapshot = PracticeSessionSnapshot(
@@ -467,22 +460,18 @@ Future<AgentController> _immersiveAgentController() async {
       text: 'Where would you like to go?',
     ),
   );
-  final controller = AgentController(
-    client: FakeAgentClient(),
-    practiceClient: _SnapshotPracticeClient(snapshot),
+  final controller = PracticeController(
+    client: _SnapshotPracticeClient(snapshot),
   );
-  await controller.initialize();
-  await controller.selectScene(scene);
   await _activateCreatedPractice(controller, scene, snapshot);
   return controller;
 }
 
 Future<void> _activateCreatedPractice(
-  AgentController controller,
+  PracticeController controller,
   SceneDefinition scene,
   PracticeSessionSnapshot snapshot,
 ) => controller.activateCreatedPractice(
-  threadId: controller.threadId!,
   scene: scene,
   sessionId: snapshot.sessionId,
   planId: snapshot.planId,

@@ -1,5 +1,5 @@
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/review/review_summary.dart';
 
 final class ReviewHistoryItem {
   const ReviewHistoryItem({
@@ -10,7 +10,7 @@ final class ReviewHistoryItem {
     required this.completedAt,
   });
 
-  final AgentReview review;
+  final ReviewSummary review;
   final EvaluationReport report;
   final String practiceSessionId;
   final DateTime createdAt;

@@ -6,11 +6,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_voice_models.dart';
-import 'package:speakup/agent/agent_voice_recording.dart';
-import 'package:speakup/agent/wire_agent_client.dart';
-import 'package:speakup/agent/wire_agent_voice_client.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
+import 'package:speakup/providers/agent/wire_agent_client.dart';
+import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
@@ -167,7 +168,8 @@ void main() {
       final practiceMediaClient = _TrackingPracticeMediaClient();
       final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
       final agentVoiceRecorder = _TrackingAgentVoiceRecorder();
-      final agentVoiceAudioPlayer = _TrackingAgentVoiceAudioPlayer();
+      final agentComposerAudioPlayer = _TrackingAgentAudioPlayer();
+      final agentMessageAudioPlayer = _TrackingAgentAudioPlayer();
       final dependencies = production.createProductionAppDependencies(
         baseUri: Uri.parse('https://api.speak-up.test'),
         identityTransport: identityTransport,
@@ -178,44 +180,55 @@ void main() {
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
         agentVoiceRecorder: agentVoiceRecorder,
-        agentVoiceAudioPlayer: agentVoiceAudioPlayer,
+        agentComposerAudioPlayer: agentComposerAudioPlayer,
+        agentMessageAudioPlayer: agentMessageAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
         jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
         practiceLaunchRecordStore: practiceLaunchRecordStore,
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
-      addTearDown(dependencies.agentController.dispose);
+      addTearDown(dependencies.conversationController.dispose);
+      addTearDown(dependencies.composerController.dispose);
+      addTearDown(dependencies.messageAudioController.dispose);
+      addTearDown(dependencies.practiceController.dispose);
       addTearDown(dependencies.preparationController.dispose);
       addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
       addTearDown(dependencies.interviewReportController.dispose);
 
-      expect(dependencies.agentController.client, isA<WireAgentClient>());
       expect(
-        dependencies.agentController.client,
+        dependencies.conversationController.client,
+        isA<WireAgentClient>(),
+      );
+      expect(
+        dependencies.conversationController.client,
         isNot(isA<FakeAgentClient>()),
       );
       expect(
-        dependencies.agentController.mediaClient,
+        dependencies.practiceController.mediaClient,
         same(practiceMediaClient),
       );
       expect(
-        dependencies.agentController.audioPlayer,
+        dependencies.practiceController.audioPlayer,
         same(practiceAudioPlayer),
       );
       expect(
-        dependencies.agentController.voiceController?.client,
+        dependencies.composerController.voiceController?.client,
         isA<WireAgentVoiceClient>(),
       );
       expect(
-        dependencies.agentController.voiceController?.recorder,
+        dependencies.composerController.voiceController?.recorder,
         same(agentVoiceRecorder),
       );
       expect(
-        dependencies.agentController.voiceController?.audioPlayer,
-        same(agentVoiceAudioPlayer),
+        dependencies.composerController.voiceController?.audioPlayer,
+        same(agentComposerAudioPlayer),
+      );
+      expect(
+        dependencies.messageAudioController.audioPlayer,
+        same(agentMessageAudioPlayer),
       );
       expect(
         dependencies.reviewHistoryController.client,
@@ -238,7 +251,10 @@ void main() {
       await tester.pumpWidget(
         SpeakUpApp(
           authController: dependencies.authController,
-          agentController: dependencies.agentController,
+          conversationController: dependencies.conversationController,
+          composerController: dependencies.composerController,
+          messageAudioController: dependencies.messageAudioController,
+          practiceController: dependencies.practiceController,
           preparationController: dependencies.preparationController,
           jobPreparationController: dependencies.jobPreparationController,
           preparationLaunchController: dependencies.preparationLaunchController,
@@ -249,23 +265,20 @@ void main() {
       for (var attempt = 0; attempt < 100; attempt++) {
         await tester.pump(const Duration(milliseconds: 20));
         if (dependencies.authController.state is AuthAuthenticated &&
-            dependencies.agentController.threadId != null) {
+            dependencies.conversationController.threadId != null) {
           break;
         }
       }
 
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-      expect(
-        dependencies.agentController.practiceClient,
-        isA<WirePracticeClient>(),
-      );
+      expect(dependencies.practiceController.client, isA<WirePracticeClient>());
       expect(find.byKey(const Key('agent-practice-unavailable')), findsNothing);
       expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
       expect(find.byKey(const Key('agent-preview-label')), findsNothing);
       expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
-      expect(dependencies.agentController.threadId, _threadId);
+      expect(dependencies.conversationController.threadId, _threadId);
       expect(
-        dependencies.agentController.currentThreadSummary?.title,
+        dependencies.conversationController.currentThreadSummary?.title,
         '英文面试准备',
       );
       await tester.tap(find.byKey(const Key('conversation-menu-button')));
@@ -287,8 +300,9 @@ void main() {
         ),
         isTrue,
       );
-      expect(agentVoiceRecorder.clearCount, 2);
-      expect(agentVoiceAudioPlayer.clearCount, 2);
+      expect(agentVoiceRecorder.clearCount, 0);
+      expect(agentComposerAudioPlayer.clearCount, 0);
+      expect(agentMessageAudioPlayer.clearCount, 0);
 
       await dependencies.preparationController.loadIfNeeded();
       expect(dependencies.preparationController.errorMessage, isNull);
@@ -354,13 +368,14 @@ void main() {
       expect(dependencies.preparationController.selectedScene, isNull);
       expect(dependencies.jobPreparationController.target, isNull);
       expect(dependencies.jobPreparationController.plan, isNull);
-      expect(dependencies.agentController.threadId, isNull);
-      expect(dependencies.agentController.messages, isEmpty);
+      expect(dependencies.conversationController.threadId, isNull);
+      expect(dependencies.conversationController.messages, isEmpty);
       expect(practiceRecorder.clearCount, 1);
       expect(practiceMediaClient.clearCount, 1);
       expect(practiceAudioPlayer.clearCount, 2);
-      expect(agentVoiceRecorder.clearCount, 4);
-      expect(agentVoiceAudioPlayer.clearCount, 4);
+      expect(agentVoiceRecorder.clearCount, 2);
+      expect(agentComposerAudioPlayer.clearCount, 2);
+      expect(agentMessageAudioPlayer.clearCount, 2);
 
       reviewHistoryTransport.completeWithReview();
       await tester.pump();
@@ -385,6 +400,128 @@ void main() {
       identityTransport.expectDone();
       agentTransport.expectDone();
       preparationTransport.expectDone();
+    },
+  );
+
+  test(
+    'logout attempts every module cleanup after an earlier cleanup fails',
+    () async {
+      final identityTransport = _Transport([
+        _Response(
+          method: 'GET',
+          path: '/v1/me',
+          statusCode: HttpStatus.ok,
+          body: {'user_id': 'user_cleanup', 'email': 'cleanup@example.com'},
+        ),
+        const _Response(
+          method: 'GET',
+          path: '/v1/me/profile',
+          statusCode: HttpStatus.notFound,
+          body: {'error_code': 'profile_not_found'},
+        ),
+        const _Response(
+          method: 'POST',
+          path: '/v1/auth/logout',
+          statusCode: HttpStatus.noContent,
+          body: null,
+        ),
+      ]);
+      final agentTransport = _Transport([
+        _Response(
+          method: 'GET',
+          path: '/v1/agent-threads',
+          statusCode: HttpStatus.ok,
+          body: {
+            'threads': [
+              {
+                'thread_id': _threadId,
+                'title': 'Cleanup boundary',
+                'created_at': _timestamp,
+                'updated_at': _timestamp,
+              },
+            ],
+            'focused_thread_id': _threadId,
+          },
+        ),
+        _Response(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          statusCode: HttpStatus.ok,
+          body: {
+            'thread_id': _threadId,
+            'title': 'Cleanup boundary',
+            'created_at': _timestamp,
+            'updated_at': _timestamp,
+          },
+        ),
+        const _Response(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          statusCode: HttpStatus.ok,
+          body: {'messages': <Object?>[]},
+        ),
+      ]);
+      final practiceRecorder = _TrackingPracticeRecorder();
+      final practiceMediaClient = _TrackingPracticeMediaClient();
+      final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
+      final agentVoiceRecorder = _TrackingAgentVoiceRecorder();
+      final agentComposerAudioPlayer = _TrackingAgentAudioPlayer();
+      final agentMessageAudioPlayer = _TrackingAgentAudioPlayer();
+      final launchRecordStore = _FailingPracticeLaunchRecordStore();
+      final dependencies = production.createProductionAppDependencies(
+        baseUri: Uri.parse('https://api.speak-up.test'),
+        identityTransport: identityTransport,
+        agentTransport: agentTransport,
+        practiceTransport: _PracticeTransport(),
+        practiceRecorder: practiceRecorder,
+        agentVoiceRecorder: agentVoiceRecorder,
+        agentComposerAudioPlayer: agentComposerAudioPlayer,
+        agentMessageAudioPlayer: agentMessageAudioPlayer,
+        practiceMediaClient: practiceMediaClient,
+        practiceAudioPlayer: practiceAudioPlayer,
+        jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
+        practiceLaunchRecordStore: launchRecordStore,
+        sessionStore: _MemorySessionStore('sess_cleanup'),
+      );
+      addTearDown(dependencies.conversationController.dispose);
+      addTearDown(dependencies.composerController.dispose);
+      addTearDown(dependencies.messageAudioController.dispose);
+      addTearDown(dependencies.practiceController.dispose);
+      addTearDown(dependencies.preparationController.dispose);
+      addTearDown(dependencies.preparationLaunchController.dispose);
+      addTearDown(dependencies.jobPreparationController.dispose);
+      addTearDown(dependencies.reviewHistoryController.dispose);
+      addTearDown(dependencies.interviewReportController.dispose);
+
+      await dependencies.authController.initialize();
+      await dependencies.conversationController.initialize();
+      await dependencies.preparationLaunchController.activateAccount(
+        'user_cleanup',
+      );
+      expect(dependencies.authController.state, isA<AuthAuthenticated>());
+      expect(dependencies.conversationController.threadId, _threadId);
+
+      await dependencies.authController.logout();
+
+      expect(launchRecordStore.deleteCount, 1);
+      expect(dependencies.conversationController.threadId, isNull);
+      expect(dependencies.conversationController.messages, isEmpty);
+      expect(agentVoiceRecorder.clearCount, greaterThan(0));
+      expect(agentComposerAudioPlayer.clearCount, greaterThan(0));
+      expect(agentMessageAudioPlayer.clearCount, greaterThan(0));
+      expect(practiceRecorder.clearCount, greaterThan(0));
+      expect(practiceMediaClient.clearCount, greaterThan(0));
+      expect(practiceAudioPlayer.clearCount, greaterThan(0));
+      expect(
+        dependencies.authController.state,
+        isA<AuthRetryableError>().having(
+          (state) => state.action,
+          'action',
+          AuthRetryAction.clearLocalState,
+        ),
+      );
+      identityTransport.expectDone();
+      agentTransport.expectDone();
     },
   );
 }
@@ -447,7 +584,7 @@ final class _TrackingAgentVoiceRecorder implements AgentVoiceRecorder {
   }
 }
 
-final class _TrackingAgentVoiceAudioPlayer implements AgentVoiceAudioPlayer {
+final class _TrackingAgentAudioPlayer implements AgentAudioPlayer {
   int clearCount = 0;
 
   @override
@@ -694,6 +831,23 @@ final class _BlockingPracticeLaunchRecordStore
     if (!_deleteRelease.isCompleted) {
       _deleteRelease.complete();
     }
+  }
+}
+
+final class _FailingPracticeLaunchRecordStore
+    implements PracticeLaunchRecordStore {
+  int deleteCount = 0;
+
+  @override
+  Future<String?> read(String accountId) async => null;
+
+  @override
+  Future<void> write(String accountId, String value) async {}
+
+  @override
+  Future<void> delete(String accountId) async {
+    deleteCount++;
+    throw StateError('simulated practice launch record cleanup failure');
   }
 }
 

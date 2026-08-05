@@ -4,8 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
@@ -26,7 +25,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.da
 class PracticePage extends StatefulWidget {
   const PracticePage({
     this.previewMode = false,
-    this.agentController,
+    this.practiceController,
     this.onExitRequested,
     this.onContinueWithAgent,
     this.ieltsMockProgressStore,
@@ -39,7 +38,7 @@ class PracticePage extends StatefulWidget {
   });
 
   final bool previewMode;
-  final AgentController? agentController;
+  final PracticeController? practiceController;
   final Future<bool> Function()? onExitRequested;
   final Future<bool> Function()? onContinueWithAgent;
   final IeltsMockProgressStore? ieltsMockProgressStore;
@@ -79,7 +78,7 @@ class _PracticePageState extends State<PracticePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _messageScrollController.addListener(_handleMessageScroll);
-    widget.agentController?.addListener(_handleState);
+    widget.practiceController?.addListener(_handleState);
     _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _syncSpeechFeedbackSources();
     widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
@@ -98,12 +97,12 @@ class _PracticePageState extends State<PracticePage>
       _removeSpeechFeedbackSources(oldWidget.speechFeedbackController);
       widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     }
-    if (oldWidget.agentController == widget.agentController) {
+    if (oldWidget.practiceController == widget.practiceController) {
       _syncSpeechFeedbackSources();
       return;
     }
-    oldWidget.agentController?.removeListener(_handleState);
-    widget.agentController?.addListener(_handleState);
+    oldWidget.practiceController?.removeListener(_handleState);
+    widget.practiceController?.addListener(_handleState);
     _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
     _syncSpeechFeedbackSources();
@@ -113,7 +112,7 @@ class _PracticePageState extends State<PracticePage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    widget.agentController?.removeListener(_handleState);
+    widget.practiceController?.removeListener(_handleState);
     widget.speechFeedbackController?.removeListener(_handleSpeechFeedbackState);
     _removeSpeechFeedbackSources(widget.speechFeedbackController);
     _recordingTicker?.cancel();
@@ -122,7 +121,7 @@ class _PracticePageState extends State<PracticePage>
       ..dispose();
     _textAnswerController.dispose();
     _textAnswerFocusNode.dispose();
-    unawaited(widget.agentController?.stopPracticeAudio(notify: false));
+    unawaited(widget.practiceController?.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
@@ -132,8 +131,8 @@ class _PracticePageState extends State<PracticePage>
     }
     final shouldScroll =
         _stickToLatestMessage || !_messageScrollController.hasClients;
-    final controller = widget.agentController;
-    final messages = controller?.practiceMessages ?? const <AgentMessage>[];
+    final controller = widget.practiceController;
+    final messages = controller?.practiceMessages ?? const <PracticeMessage>[];
     final lastMessageId = messages.lastOrNull?.id;
     final recordingState = controller?.recordingState;
     _ieltsRouteActive = _ieltsRouteActive || _controllerIsIeltsSpeaking;
@@ -169,16 +168,16 @@ class _PracticePageState extends State<PracticePage>
 
   Future<void> _openInterviewReport() async {
     final reportController = widget.interviewReportController;
-    final agentController = widget.agentController;
-    final sessionId = agentController?.practiceSessionId;
+    final practiceController = widget.practiceController;
+    final sessionId = practiceController?.practiceSessionId;
     if (reportController == null ||
-        agentController == null ||
+        practiceController == null ||
         sessionId == null ||
-        agentController.recordingState != PracticeRecordingState.completed ||
+        practiceController.recordingState != PracticeRecordingState.completed ||
         _interviewReportRouteActive ||
         !isInterviewPracticeScene(
-          agentController.practiceSceneFamily,
-          agentController.practiceSceneModel,
+          practiceController.practiceSceneFamily,
+          practiceController.practiceSceneModel,
         )) {
       return;
     }
@@ -189,7 +188,7 @@ class _PracticePageState extends State<PracticePage>
           builder: (_) => InterviewReportPage(
             practiceSessionId: sessionId,
             controller: reportController,
-            title: '${agentController.scene?.name ?? '面试'} · 复盘',
+            title: '${practiceController.scene?.name ?? '面试'} · 复盘',
             speechFeedbackController: widget.speechFeedbackController,
             speechFeedbackSourceKeys: List<String>.unmodifiable(
               _feedbackSources.keys,
@@ -208,8 +207,8 @@ class _PracticePageState extends State<PracticePage>
 
   void _syncSpeechFeedbackSources() {
     final controller = widget.speechFeedbackController;
-    final agentController = widget.agentController;
-    if (controller == null || agentController == null) {
+    final practiceController = widget.practiceController;
+    if (controller == null || practiceController == null) {
       if (controller != null) {
         for (final sourceKey in _feedbackSources.keys) {
           controller.removeSource(sourceKey);
@@ -219,10 +218,10 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
     final current = <String, String>{};
-    for (final message in agentController.practiceMessages) {
+    for (final message in practiceController.practiceMessages) {
       final statusUrl = message.speechFeedbackStatusUrl;
       if (statusUrl != null) {
-        current[_practiceFeedbackSourceKey(agentController, message)] =
+        current[_practiceFeedbackSourceKey(practiceController, message)] =
             statusUrl;
       }
     }
@@ -271,8 +270,8 @@ class _PracticePageState extends State<PracticePage>
   }
 
   void _captureConversationState() {
-    final controller = widget.agentController;
-    final messages = controller?.practiceMessages ?? const <AgentMessage>[];
+    final controller = widget.practiceController;
+    final messages = controller?.practiceMessages ?? const <PracticeMessage>[];
     _messageCount = messages.length;
     _lastMessageId = messages.lastOrNull?.id;
     _lastRecordingState = controller?.recordingState;
@@ -310,7 +309,7 @@ class _PracticePageState extends State<PracticePage>
 
   void _syncRecordingTimer() {
     final recording =
-        widget.agentController?.recordingState ==
+        widget.practiceController?.recordingState ==
         PracticeRecordingState.recording;
     if (recording) {
       if (_recordingTicker != null) {
@@ -334,13 +333,14 @@ class _PracticePageState extends State<PracticePage>
     _recordingTicker = null;
     _recordingStartedAt = null;
     _recordingSeconds = 0;
-    if (widget.agentController?.recordingState != PracticeRecordingState.idle) {
+    if (widget.practiceController?.recordingState !=
+        PracticeRecordingState.idle) {
       _textAnswerMode = false;
     }
   }
 
   Future<void> _submitTextAnswer() async {
-    final controller = widget.agentController;
+    final controller = widget.practiceController;
     if (controller == null) {
       return;
     }
@@ -369,7 +369,7 @@ class _PracticePageState extends State<PracticePage>
   }
 
   void _startSpeechFeedbackRetry(SpeechFeedbackItem item) {
-    final controller = widget.agentController;
+    final controller = widget.practiceController;
     if (controller == null) {
       return;
     }
@@ -382,7 +382,7 @@ class _PracticePageState extends State<PracticePage>
     unawaited(controller.startSpeechFeedbackRetry(item));
   }
 
-  void _showPracticeRecordings(AgentController controller) {
+  void _showPracticeRecordings(PracticeController controller) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -443,7 +443,7 @@ class _PracticePageState extends State<PracticePage>
 
   @override
   Widget build(BuildContext context) {
-    final controller = widget.agentController;
+    final controller = widget.practiceController;
     if (controller != null && _isIeltsSpeaking) {
       return IeltsSpeakingMockPage(
         controller: controller,
@@ -518,18 +518,18 @@ class _PracticePageState extends State<PracticePage>
   }
 
   bool get _controllerIsIeltsSpeaking =>
-      widget.agentController != null &&
-      isIeltsSpeakingSession(widget.agentController!);
+      widget.practiceController != null &&
+      isIeltsSpeakingSession(widget.practiceController!);
 
   bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
 
-  bool _isInterview(AgentController controller) =>
+  bool _isInterview(PracticeController controller) =>
       controller.practiceSceneFamily == SceneFamily.interview;
 }
 
 String _practiceFeedbackSourceKey(
-  AgentController controller,
-  AgentMessage message,
+  PracticeController controller,
+  PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
 
 class _NoScene extends StatelessWidget {
@@ -549,7 +549,7 @@ class _NoScene extends StatelessWidget {
 class _InterviewProgress extends StatelessWidget {
   const _InterviewProgress({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -597,7 +597,7 @@ class _SceneConversationMessageList extends StatelessWidget {
     this.speechFeedbackController,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final ScrollController scrollController;
   final bool previewMode;
   final SpeechFeedbackRepracticeCallback onRepractice;
@@ -622,7 +622,7 @@ class _SceneConversationMessageList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final message in messages) ...[
-            if (message.role == AgentMessageRole.assistant)
+            if (message.role == PracticeMessageRole.assistant)
               _SceneAIMessageBubble(
                 key: ValueKey('practice-ai-${message.id}'),
                 message: message,
@@ -698,7 +698,7 @@ class _SceneConversationMessageList extends StatelessWidget {
     );
   }
 
-  SpeechFeedbackProjection? _feedbackProjection(AgentMessage message) {
+  SpeechFeedbackProjection? _feedbackProjection(PracticeMessage message) {
     if (message.speechFeedbackStatusUrl == null ||
         speechFeedbackController == null) {
       return null;
@@ -717,7 +717,7 @@ class _SceneAIMessageBubble extends StatelessWidget {
     super.key,
   });
 
-  final AgentMessage message;
+  final PracticeMessage message;
   final String roleName;
   final Widget? actions;
 
@@ -776,7 +776,7 @@ class _SceneAIMessageBubble extends StatelessWidget {
 class _SceneUserMessageBubble extends StatelessWidget {
   const _SceneUserMessageBubble({required this.message, super.key});
 
-  final AgentMessage message;
+  final PracticeMessage message;
 
   @override
   Widget build(BuildContext context) {
@@ -864,7 +864,7 @@ class _SceneAIThinkingBubble extends StatelessWidget {
 class _QuestionAudioAction extends StatelessWidget {
   const _QuestionAudioAction({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -901,7 +901,7 @@ class _RecordingPanel extends StatefulWidget {
     required this.onOpenReport,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final TextEditingController textController;
   final FocusNode textFocusNode;
   final VoidCallback onSubmitText;
@@ -1074,7 +1074,7 @@ class _IdleAnswerPanel extends StatelessWidget {
 class _PendingPracticeAudioPanel extends StatelessWidget {
   const _PendingPracticeAudioPanel({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,7 +1114,7 @@ class _PendingPracticeAudioPanel extends StatelessWidget {
 class _TranscriptConfirmation extends StatelessWidget {
   const _TranscriptConfirmation({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {

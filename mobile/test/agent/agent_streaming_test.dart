@@ -1,16 +1,13 @@
-import 'package:speakup/features/coaching/scene/scene.dart';
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -18,7 +15,7 @@ void main() {
     'publishes input immediately and coalesces canonical stream deltas',
     () async {
       final client = _StreamingAgentClient();
-      final controller = AgentController(
+      final controller = ConversationController(
         client: client,
         clientIdFactory: (_) => 'stream-client-message',
       );
@@ -71,7 +68,7 @@ void main() {
     'loads the trusted handoff immediately after stream completion',
     () async {
       final client = _StreamingHistoryAgentClient();
-      final controller = AgentController(
+      final controller = ConversationController(
         client: client,
         clientIdFactory: (_) => 'stream-handoff-message',
       );
@@ -130,7 +127,7 @@ void main() {
 
   test('retries only the authoritative handoff Message refresh', () async {
     final client = _StreamingHistoryAgentClient(messageFailuresRemaining: 1);
-    final controller = AgentController(
+    final controller = ConversationController(
       client: client,
       clientIdFactory: (_) => 'stream-handoff-retry-message',
     );
@@ -325,17 +322,36 @@ final class _StreamingAgentClient
   Future<void> clearAccountState() => delegate.clearAccountState();
 
   @override
-  Future<AgentThreadSnapshot> restoreThread() => delegate.restoreThread();
+  Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) =>
+      delegate.listThreads(pageSize: pageSize, cursor: cursor);
 
   @override
-  Future<Goal> startScene({
+  Future<AgentThreadSnapshot?> getFocusedThread() =>
+      delegate.getFocusedThread();
+
+  @override
+  Future<AgentThreadSummary> createThread() => delegate.createThread();
+
+  @override
+  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
+      delegate.setFocusedThread(threadId: threadId);
+
+  @override
+  Future<void> clearFocusedThread() => delegate.clearFocusedThread();
+
+  @override
+  Future<void> deleteThread({required String threadId}) =>
+      delegate.deleteThread(threadId: threadId);
+
+  @override
+  Future<AgentMessagePage> listMessages({
     required String threadId,
-    required SceneDefinition scene,
-    required String clientOperationId,
-  }) => delegate.startScene(
+    int pageSize = 50,
+    String? cursor,
+  }) => delegate.listMessages(
     threadId: threadId,
-    scene: scene,
-    clientOperationId: clientOperationId,
+    pageSize: pageSize,
+    cursor: cursor,
   );
 
   @override
@@ -343,15 +359,17 @@ final class _StreamingAgentClient
     required String threadId,
     required String text,
     required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
   }) => delegate.sendText(
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
+    imageAssetIds: imageAssetIds,
   );
 }
 
 final class _StreamingHistoryAgentClient
-    implements AgentClient, AgentStreamingTextClient, AgentThreadHistoryClient {
+    implements AgentClient, AgentStreamingTextClient {
   _StreamingHistoryAgentClient({this.messageFailuresRemaining = 0});
 
   final FakeAgentClient _delegate = FakeAgentClient();
@@ -372,9 +390,6 @@ final class _StreamingHistoryAgentClient
   Future<void> clearAccountState() => _delegate.clearAccountState();
 
   @override
-  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
-
-  @override
   Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) =>
       _delegate.listThreads(pageSize: pageSize, cursor: cursor);
 
@@ -393,6 +408,10 @@ final class _StreamingHistoryAgentClient
   Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
 
   @override
+  Future<void> deleteThread({required String threadId}) =>
+      _delegate.deleteThread(threadId: threadId);
+
+  @override
   Future<AgentMessagePage> listMessages({
     required String threadId,
     int pageSize = 50,
@@ -407,25 +426,16 @@ final class _StreamingHistoryAgentClient
   }
 
   @override
-  Future<Goal> startScene({
-    required String threadId,
-    required SceneDefinition scene,
-    required String clientOperationId,
-  }) => _delegate.startScene(
-    threadId: threadId,
-    scene: scene,
-    clientOperationId: clientOperationId,
-  );
-
-  @override
   Future<AgentExchange> sendText({
     required String threadId,
     required String text,
     required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
   }) => _delegate.sendText(
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
+    imageAssetIds: imageAssetIds,
   );
 }
 

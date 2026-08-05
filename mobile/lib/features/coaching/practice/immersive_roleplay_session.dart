@@ -2,8 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -19,7 +18,7 @@ typedef AvatarControllerFactory = AvatarController Function();
 /// future provider).
 class ImmersiveRoleplaySession extends StatefulWidget {
   const ImmersiveRoleplaySession({
-    required this.agentController,
+    required this.practiceController,
     required this.avatarControllerFactory,
     this.interviewReportController,
     this.speechFeedbackController,
@@ -28,7 +27,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
     super.key,
   });
 
-  final AgentController agentController;
+  final PracticeController practiceController;
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController? interviewReportController;
   final SpeechFeedbackController? speechFeedbackController;
@@ -71,8 +70,8 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   void initState() {
     super.initState();
     _avatarController = widget.avatarControllerFactory();
-    _observedQuestionId = widget.agentController.questionId;
-    widget.agentController.addListener(_handleAgentState);
+    _observedQuestionId = widget.practiceController.questionId;
+    widget.practiceController.addListener(_handlePracticeState);
     _avatarController.addListener(_handleAvatarState);
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
@@ -89,12 +88,12 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   @override
   void didUpdateWidget(covariant ImmersiveRoleplaySession oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.agentController == widget.agentController) {
+    if (oldWidget.practiceController == widget.practiceController) {
       return;
     }
-    oldWidget.agentController.removeListener(_handleAgentState);
-    widget.agentController.addListener(_handleAgentState);
-    _observedQuestionId = widget.agentController.questionId;
+    oldWidget.practiceController.removeListener(_handlePracticeState);
+    widget.practiceController.addListener(_handlePracticeState);
+    _observedQuestionId = widget.practiceController.questionId;
     _autoHandledQuestionId = null;
     _generation++;
     _scheduleSync();
@@ -107,7 +106,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     _cancelConnectionTimers();
     if (!_foreground) {
       // Never replay an interrupted question just because the App resumes.
-      _autoHandledQuestionId = widget.agentController.questionId;
+      _autoHandledQuestionId = widget.practiceController.questionId;
     }
     _queueLifecycleReconciliation();
   }
@@ -187,8 +186,8 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     return operation;
   }
 
-  void _handleAgentState() {
-    final questionId = widget.agentController.questionId;
+  void _handlePracticeState() {
+    final questionId = widget.practiceController.questionId;
     if (questionId != _observedQuestionId) {
       _observedQuestionId = questionId;
       _autoHandledQuestionId = null;
@@ -212,7 +211,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       _readinessTimer?.cancel();
       _readinessTimer = null;
     }
-    final sessionId = widget.agentController.practiceSessionId;
+    final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId != null &&
         !_connectionInFlight &&
         _isRetryableAvatarFailure(_avatarController.state.failure)) {
@@ -251,7 +250,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   }
 
   Future<void> _synchronize() async {
-    final sessionId = widget.agentController.practiceSessionId;
+    final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId == null || sessionId.isEmpty) {
       return;
     }
@@ -265,11 +264,11 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     if (_disposed || !_foreground || !_hasLiveAvatarController) {
       return;
     }
-    final question = widget.agentController.currentQuestion;
+    final question = widget.practiceController.currentQuestion;
     if (question == null ||
         _speechInFlight ||
         question.id == _autoHandledQuestionId ||
-        !_canSpeakNow(widget.agentController)) {
+        !_canSpeakNow(widget.practiceController)) {
       return;
     }
     final phase = _avatarController.state.phase;
@@ -380,7 +379,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
         _hasLiveAvatarController &&
         identical(_avatarController, controller) &&
         operationId == _connectionOperationId &&
-        widget.agentController.practiceSessionId == sessionId;
+        widget.practiceController.practiceSessionId == sessionId;
   }
 
   bool _isRetryableAvatarFailure(AvatarRendererFailure? failure) {
@@ -396,7 +395,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
         !_hasLiveAvatarController ||
         _reconnectTimer != null ||
         _connectionAttempts >= _maximumConnectionAttempts ||
-        widget.agentController.practiceSessionId != sessionId) {
+        widget.practiceController.practiceSessionId != sessionId) {
       return;
     }
     final delay = Duration(milliseconds: 500 * (_connectionAttempts + 1));
@@ -404,14 +403,14 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       _reconnectTimer = null;
       if (_disposed ||
           !_foreground ||
-          widget.agentController.practiceSessionId != sessionId) {
+          widget.practiceController.practiceSessionId != sessionId) {
         return;
       }
       await _replaceAvatarController(resetConnectionAttempts: false);
       if (_disposed ||
           !_foreground ||
           !_hasLiveAvatarController ||
-          widget.agentController.practiceSessionId != sessionId) {
+          widget.practiceController.practiceSessionId != sessionId) {
         return;
       }
       _connectionAttemptedSessionId = null;
@@ -427,12 +426,12 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       return;
     }
     final avatarController = _avatarController;
-    final mediaClient = widget.agentController.mediaClient;
+    final mediaClient = widget.practiceController.mediaClient;
     final speechPath = question.speechPath;
     if (_speechInFlight || mediaClient == null || speechPath == null) {
       return;
     }
-    final sessionId = widget.agentController.practiceSessionId;
+    final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId == null || question.sessionId != sessionId) {
       return;
     }
@@ -447,7 +446,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
 
     Uint8List? bytes;
     try {
-      await widget.agentController.stopPracticeAudio(notify: false);
+      await widget.practiceController.stopPracticeAudio(notify: false);
       bytes = await mediaClient.loadQuestionSpeech(speechPath);
       if (!_speechFenceMatches(
         generation: generation,
@@ -490,26 +489,26 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     required String speechPath,
     required AvatarController avatarController,
   }) {
-    final current = widget.agentController.currentQuestion;
+    final current = widget.practiceController.currentQuestion;
     return !_disposed &&
         _foreground &&
         _hasLiveAvatarController &&
         identical(_avatarController, avatarController) &&
         generation == _generation &&
-        widget.agentController.practiceSessionId == sessionId &&
+        widget.practiceController.practiceSessionId == sessionId &&
         current?.id == questionId &&
         current?.speechPath == speechPath;
   }
 
   Future<void> _replayQuestion() async {
-    if (_replayLoading || !_canSpeakNow(widget.agentController)) {
+    if (_replayLoading || !_canSpeakNow(widget.practiceController)) {
       return;
     }
     if (_isAvatarSpeaking) {
       await _interruptForUserTurn();
       return;
     }
-    final question = widget.agentController.currentQuestion;
+    final question = widget.practiceController.currentQuestion;
     if (question != null) {
       await _speakQuestion(question, replay: true);
     }
@@ -519,7 +518,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     _generation++;
     final operations = <Future<void>>[
       _bestEffort(
-        () => widget.agentController.stopPracticeAudio(notify: false),
+        () => widget.practiceController.stopPracticeAudio(notify: false),
       ),
     ];
     if (_hasLiveAvatarController) {
@@ -558,7 +557,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   @override
   Widget build(BuildContext context) {
     return ImmersiveRoleplayPage(
-      agentController: widget.agentController,
+      practiceController: widget.practiceController,
       avatarSurfaceBuilder: (_) => _hasLiveAvatarController
           ? _avatarController.buildSurface(
               key: const Key('immersive-avatar-surface'),
@@ -568,7 +567,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       onBeforeStartRecording: _interruptForUserTurn,
       onBeforeSubmitText: _interruptForUserTurn,
       onReplayQuestion:
-          widget.agentController.currentQuestion?.speechPath == null
+          widget.practiceController.currentQuestion?.speechPath == null
           ? null
           : _replayQuestion,
       interviewReportController: widget.interviewReportController,
@@ -587,7 +586,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     _connectionOperationId++;
     _cancelConnectionTimers();
     WidgetsBinding.instance.removeObserver(this);
-    widget.agentController.removeListener(_handleAgentState);
+    widget.practiceController.removeListener(_handlePracticeState);
     if (_hasLiveAvatarController) {
       final controller = _avatarController;
       _hasLiveAvatarController = false;
@@ -598,7 +597,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   }
 }
 
-bool _canSpeakNow(AgentController controller) {
+bool _canSpeakNow(PracticeController controller) {
   if (controller.isBusy) {
     return false;
   }

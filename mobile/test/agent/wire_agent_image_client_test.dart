@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_image_client.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/wire_agent_image_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/providers/agent/wire_agent_image_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -70,7 +70,9 @@ void main() {
         ),
         idempotencyKey: 'image-upload-123',
       );
-      final content = await client.getImageContent(imageAssetId: _imageId);
+      final content = await client.getMessageImageContent(
+        imageAssetId: _imageId,
+      );
       await client.deleteImage(imageAssetId: _imageId);
 
       expect(asset.id, _imageId);

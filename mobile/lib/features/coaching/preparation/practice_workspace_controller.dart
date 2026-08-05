@@ -5,8 +5,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 
 final class PracticeWorkspaceLease {
@@ -41,13 +42,15 @@ final class PracticeWorkspaceLease {
 /// guess a recent Session or reuse the ordinary Agent Thread.
 final class PracticeWorkspaceController extends ChangeNotifier {
   PracticeWorkspaceController({
-    required this.agentController,
+    required this.conversationController,
+    required this.practiceController,
     required this.recordStore,
   }) {
-    agentController.addListener(_capturePracticeProgress);
+    practiceController.addListener(_capturePracticeProgress);
   }
 
-  final AgentController agentController;
+  final ConversationController conversationController;
+  final PracticeController practiceController;
   final PracticeLaunchRecordStore recordStore;
 
   String? _accountId;
@@ -104,15 +107,15 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         return;
       }
       if (encoded == null) {
-        await agentController.initialize();
+        await conversationController.initialize();
         if (!_isCurrentAccount(accountGeneration, accountId)) {
           return;
         }
-        if (!agentController.isInitialized) {
+        if (!conversationController.isInitialized) {
           _setErrorIfAbsent('Agent 对话仍在恢复，暂时无法核对上次练习。');
           return;
         }
-        if (!agentController.hasActivePractice) {
+        if (!practiceController.hasActivePractice) {
           loaded = true;
         } else {
           final adopted = _adoptFocusedPractice(accountId);
@@ -139,14 +142,14 @@ final class PracticeWorkspaceController extends ChangeNotifier {
           expectedAccountId: accountId,
         );
         if (restored == null) {
-          await agentController.initialize();
+          await conversationController.initialize();
           if (!_isCurrentAccount(accountGeneration, accountId) ||
               !await _prepareToLeavePractice()) {
             return;
           }
-          await agentController.clearFocusedThread();
+          await conversationController.clearFocusedThread();
           if (!_isCurrentAccount(accountGeneration, accountId) ||
-              agentController.threadId != null) {
+              conversationController.threadId != null) {
             _setErrorIfAbsent('本机练习记录已失效，但暂时无法重置首页状态。');
             return;
           }
@@ -231,8 +234,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
           }
           return replacement;
         }
-        final latestReturnThreadId = agentController.threadId;
-        if (!agentController.hasActivePractice &&
+        final latestReturnThreadId = conversationController.threadId;
+        if (!practiceController.hasActivePractice &&
             latestReturnThreadId != current.practiceThreadId &&
             latestReturnThreadId != current.returnThreadId) {
           current = current.withReturnThreadId(latestReturnThreadId);
@@ -293,8 +296,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       var current = _current;
       if (current == null ||
           current.lease != lease ||
-          agentController.threadId != lease.practiceThreadId ||
-          (goalId != null && agentController.activeGoal?.id != goalId)) {
+          conversationController.threadId != lease.practiceThreadId ||
+          (goalId != null && conversationController.activeGoalId != goalId)) {
         _setError('练习空间已经变化，未保存本次练习。');
         return false;
       }
@@ -302,7 +305,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         goalId: goalId,
         sessionId: sessionId,
         scene: scene,
-        completedTurns: agentController.completedTurns,
+        completedTurns: practiceController.completedTurns,
       );
       _current = committed;
       notifyListeners();
@@ -336,8 +339,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     final operationGeneration = ++_operationGeneration;
     _beginOperation();
     try {
-      final latestReturnThreadId = agentController.threadId;
-      if (!agentController.hasActivePractice &&
+      final latestReturnThreadId = conversationController.threadId;
+      if (!practiceController.hasActivePractice &&
           latestReturnThreadId != current.practiceThreadId) {
         current = current.withReturnThreadId(latestReturnThreadId);
         _current = current;
@@ -417,11 +420,11 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       _capturePracticeProgress();
       final terminalPracticeWasFocused =
           current.isCommitted &&
-          agentController.threadId == current.practiceThreadId &&
-          agentController.practiceSessionId == current.sessionId &&
+          conversationController.threadId == current.practiceThreadId &&
+          practiceController.practiceSessionId == current.sessionId &&
           (current.goalId == null ||
-              agentController.activeGoal?.id == current.goalId) &&
-          !agentController.hasActivePractice;
+              conversationController.activeGoalId == current.goalId) &&
+          !practiceController.hasActivePractice;
       if (!await _prepareToLeavePractice()) {
         return false;
       }
@@ -464,18 +467,18 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     if (current == null ||
         !current.isCommitted ||
         current.returnThreadId == null ||
-        agentController.threadId != current.practiceThreadId ||
-        agentController.practiceSessionId != current.sessionId ||
-        agentController.recordingState != PracticeRecordingState.completed) {
+        conversationController.threadId != current.practiceThreadId ||
+        practiceController.practiceSessionId != current.sessionId ||
+        practiceController.recordingState != PracticeRecordingState.completed) {
       _setError('练习尚未完整结束，暂时无法回到 Agent 复盘。');
       return false;
     }
     final title = current.scene!.name;
-    final completedTurns = agentController.completedTurns;
+    final completedTurns = practiceController.completedTurns;
     if (!await parkCurrentPractice()) {
       return false;
     }
-    final sent = await agentController.sendText(
+    final sent = await conversationController.sendText(
       '我刚完成了“$title”的 $completedTurns 轮练习。'
       '请直接读取这次练习的真实评分与报告，先概括我的主要表现，'
       '再问我想重点复盘哪一项。',
@@ -545,8 +548,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         }
         return replacement;
       }
-      final latestReturnThreadId = agentController.threadId;
-      if (!agentController.hasActivePractice &&
+      final latestReturnThreadId = conversationController.threadId;
+      if (!practiceController.hasActivePractice &&
           latestReturnThreadId != current.practiceThreadId) {
         current = current.withReturnThreadId(latestReturnThreadId);
         _current = current;
@@ -593,13 +596,16 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         return null;
       }
       if (verification == _PracticeResumeVerification.active) {
-        final ended = await agentController.endActivePracticeEarly();
-        if (!ended || agentController.hasActivePractice) {
-          final focusRestored = await _restoreReturnFocus(
-            current,
-            preparedToLeave: true,
-            fallbackToEmpty: true,
-          );
+        final ended = await practiceController.endActivePracticeEarly();
+        if (!ended || practiceController.hasActivePractice) {
+          final parked = await practiceController.parkPractice();
+          final focusRestored =
+              parked &&
+              await _restoreReturnFocus(
+                current,
+                preparedToLeave: true,
+                fallbackToEmpty: true,
+              );
           _setError(
             focusRestored ? '暂时无法结束当前练习，进度仍已保留。' : '暂时无法结束当前练习，也无法返回首页，请稍后重试。',
           );
@@ -671,12 +677,12 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     _StoredPracticeWorkspace record, {
     required int accountGeneration,
   }) async {
-    await agentController.initialize();
+    await conversationController.initialize();
     if (!_isCurrentAccount(accountGeneration, record.accountId)) {
       return false;
     }
-    if (agentController.threadId != record.practiceThreadId &&
-        !agentController.hasActivePractice) {
+    if (conversationController.threadId != record.practiceThreadId &&
+        !practiceController.hasActivePractice) {
       return true;
     }
     if (!await _prepareToLeavePractice() ||
@@ -686,28 +692,28 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     var restored = false;
     final returnThreadId = record.returnThreadId;
     if (returnThreadId == null) {
-      await agentController.clearFocusedThread();
-      restored = agentController.threadId == null;
+      await conversationController.clearFocusedThread();
+      restored = conversationController.threadId == null;
     } else {
-      restored = await agentController.selectThread(returnThreadId);
+      restored = await conversationController.selectThread(returnThreadId);
       restored =
           restored &&
-          agentController.threadId == returnThreadId &&
-          !agentController.hasActivePractice;
+          conversationController.threadId == returnThreadId &&
+          !practiceController.hasActivePractice;
     }
     if (!_isCurrentAccount(accountGeneration, record.accountId)) {
       return false;
     }
     if (!restored) {
-      await agentController.clearFocusedThread();
+      await conversationController.clearFocusedThread();
       if (!_isCurrentAccount(accountGeneration, record.accountId)) {
         return false;
       }
-      restored = agentController.threadId == null;
+      restored = conversationController.threadId == null;
     }
     if (!restored ||
-        agentController.threadId == record.practiceThreadId ||
-        agentController.hasActivePractice) {
+        conversationController.threadId == record.practiceThreadId ||
+        practiceController.hasActivePractice) {
       _setError('上次练习已保留，但暂时无法返回首页对话。');
       return false;
     }
@@ -715,18 +721,18 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   }
 
   _StoredPracticeWorkspace? _adoptFocusedPractice(String accountId) {
-    if (!agentController.hasActivePractice) {
+    if (!practiceController.hasActivePractice) {
       return null;
     }
-    final practiceThreadId = agentController.threadId;
-    final goal = agentController.activeGoal;
-    final scene = agentController.scene;
-    final sessionId = agentController.practiceSessionId;
+    final practiceThreadId = conversationController.threadId;
+    final goalId = conversationController.activeGoalId;
+    final scene = practiceController.scene;
+    final sessionId = practiceController.practiceSessionId;
     if (practiceThreadId == null ||
         scene == null ||
         sessionId == null ||
         !_validOpaqueId(practiceThreadId) ||
-        (goal != null && !_validOpaqueId(goal.id)) ||
+        (goalId != null && !_validOpaqueId(goalId)) ||
         !_validOpaqueId(sessionId) ||
         !_validOpaqueId(scene.id) ||
         !_validTitle(scene.name)) {
@@ -739,10 +745,10 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       practiceThreadId: practiceThreadId,
       returnThreadId: null,
     ).commit(
-      goalId: goal?.id,
+      goalId: goalId,
       sessionId: sessionId,
       scene: scene,
-      completedTurns: agentController.completedTurns,
+      completedTurns: practiceController.completedTurns,
     );
   }
 
@@ -751,11 +757,11 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     if (_disposed ||
         current == null ||
         !current.isCommitted ||
-        agentController.threadId != current.practiceThreadId ||
-        agentController.practiceSessionId != current.sessionId) {
+        conversationController.threadId != current.practiceThreadId ||
+        practiceController.practiceSessionId != current.sessionId) {
       return;
     }
-    final completedTurns = agentController.completedTurns;
+    final completedTurns = practiceController.completedTurns;
     if (current.completedTurns == completedTurns) {
       return;
     }
@@ -790,14 +796,14 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       _setError('首页对话状态异常，暂时无法开始练习。');
       return null;
     }
-    if (agentController.hasPendingThreadCreationRecovery) {
+    if (conversationController.hasPendingThreadCreationRecovery) {
       _setError('有一条新对话仍在恢复，请先回到首页完成恢复，再开始练习。');
       return null;
     }
     if (!preparedToLeave && !await _prepareToLeavePractice()) {
       return null;
     }
-    final created = await agentController.createIndependentThread();
+    final created = await conversationController.createIndependentThread();
     if (!_isCurrentOperation(
       accountGeneration,
       operationGeneration,
@@ -805,11 +811,11 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     )) {
       return null;
     }
-    if (!created && agentController.hasPendingThreadCreationRecovery) {
+    if (!created && conversationController.hasPendingThreadCreationRecovery) {
       _setError('有一条新对话仍在恢复，请先回到首页完成恢复，再开始练习。');
       return null;
     }
-    final practiceThreadId = agentController.threadId;
+    final practiceThreadId = conversationController.threadId;
     if (!created ||
         practiceThreadId == null ||
         !_validOpaqueId(practiceThreadId) ||
@@ -848,20 +854,20 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       return _PracticeResumeVerification.unavailable;
     }
     try {
-      await agentController.restoreCreatedPractice(
+      await practiceController.restoreCreatedPractice(
         sessionId: record.sessionId!,
         scene: record.scene!,
       );
     } on Object {
       return _PracticeResumeVerification.unavailable;
     }
-    if (agentController.threadId != record.practiceThreadId ||
-        agentController.practiceSessionId != record.sessionId ||
+    if (conversationController.threadId != record.practiceThreadId ||
+        practiceController.practiceSessionId != record.sessionId ||
         (record.goalId != null &&
-            agentController.activeGoal?.id != record.goalId)) {
+            conversationController.activeGoalId != record.goalId)) {
       return _PracticeResumeVerification.mismatch;
     }
-    return agentController.hasActivePractice
+    return practiceController.hasActivePractice
         ? _PracticeResumeVerification.active
         : _PracticeResumeVerification.terminal;
   }
@@ -875,29 +881,30 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     // practice lands them back where they were, instead of the stale launch
     // Home. Only fall back to the stored return thread when the current
     // thread is the practice thread itself or there is no focused Home.
-    final currentThreadId = agentController.threadId;
+    final currentThreadId = conversationController.threadId;
     final returnThreadId =
         currentThreadId != null && currentThreadId != record.practiceThreadId
         ? currentThreadId
         : record.returnThreadId;
     if (returnThreadId == null) {
-      await agentController.clearFocusedThread();
-      return agentController.threadId == null;
+      await conversationController.clearFocusedThread();
+      return conversationController.threadId == null;
     }
     final restored = await _focusThread(
       returnThreadId,
       preparedToLeave: preparedToLeave,
     );
-    final safeHomeFocus = restored && !agentController.hasActivePractice;
+    final safeHomeFocus = restored && !practiceController.hasActivePractice;
     if (safeHomeFocus || !fallbackToEmpty) {
       return safeHomeFocus;
     }
-    await agentController.clearFocusedThread();
-    return agentController.threadId == null;
+    await conversationController.clearFocusedThread();
+    return conversationController.threadId == null;
   }
 
-  String? get _safeCurrentReturnThreadId =>
-      agentController.hasActivePractice ? null : agentController.threadId;
+  String? get _safeCurrentReturnThreadId => practiceController.hasActivePractice
+      ? null
+      : conversationController.threadId;
 
   Future<bool> _clearStoredRecord(
     _StoredPracticeWorkspace record, {
@@ -929,18 +936,18 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     String threadId, {
     bool preparedToLeave = false,
   }) async {
-    if (agentController.threadId == threadId) {
+    if (conversationController.threadId == threadId) {
       return true;
     }
     if (!preparedToLeave && !await _prepareToLeavePractice()) {
       return false;
     }
-    final selected = await agentController.selectThread(threadId);
-    return selected && agentController.threadId == threadId;
+    final selected = await conversationController.selectThread(threadId);
+    return selected && conversationController.threadId == threadId;
   }
 
   Future<bool> _prepareToLeavePractice() async {
-    if (await agentController.prepareToLeavePractice()) {
+    if (await practiceController.parkPractice()) {
       return true;
     }
     _setError('请先完成正在提交的一轮，再离开当前练习。');
@@ -1046,7 +1053,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    agentController.removeListener(_capturePracticeProgress);
+    practiceController.removeListener(_capturePracticeProgress);
     ++_accountGeneration;
     ++_operationGeneration;
     super.dispose();

@@ -2,18 +2,22 @@ import '../../support/scene_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/coaching/goal/goal_client.dart';
 
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+
+import 'preparation_test_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -24,29 +28,30 @@ void main() {
       final store = _InspectableRecordStore(writeFailures: 1);
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
-      final initialThreadCount = harness.agent.threads.length;
+      final homeThreadId = harness.conversation.threadId;
+      final initialThreadCount = harness.conversation.threads.length;
 
       final firstAttempt = await workspace.acquireThread('launch-operation-1');
 
       expect(firstAttempt, isNull);
       expect(workspace.currentLease, isNotNull);
-      expect(harness.agent.threadId, isNot(homeThreadId));
-      expect(harness.agent.threads, hasLength(initialThreadCount + 1));
+      expect(harness.conversation.threadId, isNot(homeThreadId));
+      expect(harness.conversation.threads, hasLength(initialThreadCount + 1));
 
       final retried = await workspace.acquireThread('launch-operation-1');
 
       expect(retried, workspace.currentLease);
       expect(retried?.returnThreadId, homeThreadId);
-      expect(harness.agent.threads, hasLength(initialThreadCount + 1));
+      expect(harness.conversation.threads, hasLength(initialThreadCount + 1));
       final record = jsonDecode((await store.read('account-1'))!);
       expect(
         record,
@@ -61,7 +66,7 @@ void main() {
       expect(replacement, isNotNull);
       expect(replacement?.practiceThreadId, isNot(retried?.practiceThreadId));
       expect(replacement?.returnThreadId, homeThreadId);
-      expect(harness.agent.threads, hasLength(initialThreadCount + 2));
+      expect(harness.conversation.threads, hasLength(initialThreadCount + 2));
     },
   );
 
@@ -71,12 +76,13 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final firstWorkspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
-      addTearDown(harness.agent.dispose);
+      addTearDown(harness.dispose);
       await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: firstWorkspace,
@@ -90,14 +96,15 @@ void main() {
       expect(firstWorkspace.hasResumable, isTrue);
       expect(firstWorkspace.resumableHasProgress, isFalse);
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, homeThreadId);
-      expect(await harness.agent.createThread(), isTrue);
-      final newerHomeThreadId = harness.agent.threadId;
+      expect(harness.conversation.threadId, homeThreadId);
+      expect(await harness.conversation.createThread(), isTrue);
+      final newerHomeThreadId = harness.conversation.threadId;
       expect(newerHomeThreadId, isNot(homeThreadId));
       firstWorkspace.dispose();
 
       final restoredWorkspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(restoredWorkspace.dispose);
@@ -111,12 +118,15 @@ void main() {
       );
       expect(restoredWorkspace.hasResumable, isTrue);
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, launched.lease.practiceThreadId);
-      expect(harness.agent.activeGoal?.id, launched.goal.id);
-      expect(harness.agent.practiceSessionId, 'practice-session-1');
-      expect(harness.agent.hasActivePractice, isTrue);
+      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
+      expect(harness.conversation.activeGoalId, launched.goal.id);
+      expect(
+        harness.practiceController.practiceSessionId,
+        'practice-session-1',
+      );
+      expect(harness.practiceController.hasActivePractice, isTrue);
       expect(await restoredWorkspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, newerHomeThreadId);
+      expect(harness.conversation.threadId, newerHomeThreadId);
     },
   );
 
@@ -126,12 +136,13 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
       await _launchPractice(
@@ -145,7 +156,9 @@ void main() {
 
       expect(workspace.resumableHasProgress, isFalse);
       expect(
-        await harness.agent.submitPracticeText('A confirmed answer.'),
+        await harness.practiceController.submitPracticeText(
+          'A confirmed answer.',
+        ),
         isTrue,
       );
       await Future<void>.delayed(Duration.zero);
@@ -163,15 +176,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final launchHomeThreadId = harness.agent.threadId;
+      final launchHomeThreadId = harness.conversation.threadId;
       await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -181,19 +195,19 @@ void main() {
         sessionId: 'practice-session-1',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, launchHomeThreadId);
+      expect(harness.conversation.threadId, launchHomeThreadId);
 
       // The user switches to a different conversation (e.g. via the drawer)
       // while the practice stays parked and resumable.
-      await harness.agent.createThread();
-      final otherHomeThreadId = harness.agent.threadId;
+      await harness.conversation.createThread();
+      final otherHomeThreadId = harness.conversation.threadId;
       expect(otherHomeThreadId, isNot(launchHomeThreadId));
 
       // Leaving the training tab parks the practice again; the user should
       // land back on the conversation they were actually viewing instead of
       // the original launch Home.
       expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, otherHomeThreadId);
+      expect(harness.conversation.threadId, otherHomeThreadId);
     },
   );
 
@@ -203,10 +217,11 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final firstWorkspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
-      addTearDown(harness.agent.dispose);
+      addTearDown(harness.dispose);
       await firstWorkspace.activateAccount('account-1');
       await _launchPractice(
         harness: harness,
@@ -226,7 +241,8 @@ void main() {
       firstWorkspace.dispose();
 
       final restoredWorkspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(restoredWorkspace.dispose);
@@ -252,15 +268,16 @@ void main() {
     () async {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
-      await harness.agent.clearFocusedThread();
-      expect(harness.agent.threadId, isNull);
+      await harness.conversation.clearFocusedThread();
+      expect(harness.conversation.threadId, isNull);
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
 
@@ -274,17 +291,17 @@ void main() {
       );
 
       expect(launched.lease.returnThreadId, isNull);
-      expect(harness.agent.threadId, launched.lease.practiceThreadId);
-      expect(harness.agent.hasActivePractice, isTrue);
+      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
+      expect(harness.practiceController.hasActivePractice, isTrue);
 
       expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, isNull);
+      expect(harness.conversation.threadId, isNull);
       expect(workspace.hasResumable, isTrue);
 
       expect(await workspace.resumeCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, launched.lease.practiceThreadId);
+      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
       expect(
-        harness.agent.practiceSessionId,
+        harness.practiceController.practiceSessionId,
         'practice-session-without-home-thread',
       );
     },
@@ -296,20 +313,24 @@ void main() {
       final client = _FailingFocusAgentClient();
       final harness = await _createHarness(client: client);
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: _InspectableRecordStore(),
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      await harness.agent.clearFocusedThread();
+      await harness.conversation.clearFocusedThread();
       client.focusFailuresRemaining = 1;
 
-      expect(await harness.agent.sendText('Keep this Home draft'), isFalse);
-      expect(harness.agent.threadId, isNull);
-      expect(harness.agent.hasPendingThreadCreationRecovery, isTrue);
+      expect(
+        await harness.conversation.sendText('Keep this Home draft'),
+        isFalse,
+      );
+      expect(harness.conversation.threadId, isNull);
+      expect(harness.conversation.hasPendingThreadCreationRecovery, isTrue);
       final createCallsAfterDraft = client.createCalls;
 
       expect(
@@ -319,10 +340,10 @@ void main() {
 
       expect(workspace.errorMessage, contains('先回到首页完成恢复'));
       expect(client.createCalls, createCallsAfterDraft);
-      expect(harness.agent.threadId, isNull);
+      expect(harness.conversation.threadId, isNull);
 
-      await harness.agent.retryThreadHistory();
-      final recoveredHomeThreadId = harness.agent.threadId;
+      await harness.conversation.retryThreadHistory();
+      final recoveredHomeThreadId = harness.conversation.threadId;
       expect(recoveredHomeThreadId, isNotNull);
 
       final lease = await workspace.acquireThread(
@@ -341,7 +362,7 @@ void main() {
     () async {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
-      final practiceThreadId = harness.agent.threadId!;
+      final practiceThreadId = harness.conversation.threadId!;
       final scene = testScene(
         id: 'interview-practice-without-record',
         name: '英文面试',
@@ -356,19 +377,20 @@ void main() {
           suggestedDurationSeconds: 600,
         ),
       );
-      final goal = await harness.agent.activateGoalForScene(
+      final goal = await activateTestGoal(
+        goalClient: harness.goalClient,
+        conversationController: harness.conversation,
         threadId: practiceThreadId,
         scene: scene,
         clientOperationId: 'practice-goal-without-record',
       );
-      harness.practice.armStart(
+      harness.practiceClient.armStart(
         threadId: practiceThreadId,
         sessionId: 'practice-session-without-record',
         planId: 'practice-plan-without-record',
         scene: scene,
       );
-      await harness.agent.activateCreatedPractice(
-        threadId: practiceThreadId,
+      await harness.practiceController.activateCreatedPractice(
         scene: scene,
         sessionId: 'practice-session-without-record',
         planId: 'practice-plan-without-record',
@@ -376,12 +398,13 @@ void main() {
         clientOperationId: 'practice-voice-without-record',
       );
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
 
       await workspace.activateAccount('account-1');
@@ -393,17 +416,17 @@ void main() {
       expect(workspace.currentSceneId, scene.id);
       expect(workspace.currentTitle, scene.name);
       expect(workspace.currentLease?.returnThreadId, isNull);
-      expect(harness.agent.threadId, isNull);
+      expect(harness.conversation.threadId, isNull);
       expect(await store.read('account-1'), isNotNull);
 
       expect(await workspace.resumeCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, practiceThreadId);
+      expect(harness.conversation.threadId, practiceThreadId);
       expect(
-        harness.agent.practiceSessionId,
+        harness.practiceController.practiceSessionId,
         'practice-session-without-record',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, isNull);
+      expect(harness.conversation.threadId, isNull);
     },
   );
 
@@ -413,11 +436,12 @@ void main() {
       final store = _InspectableRecordStore();
       final firstHarness = await _createHarness();
       final firstWorkspace = PracticeWorkspaceController(
-        agentController: firstHarness.agent,
+        conversationController: firstHarness.conversation,
+        practiceController: firstHarness.practiceController,
         recordStore: store,
       );
       await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = firstHarness.agent.threadId;
+      final homeThreadId = firstHarness.conversation.threadId;
       final launched = await _launchPractice(
         harness: firstHarness,
         workspace: firstWorkspace,
@@ -426,28 +450,37 @@ void main() {
         sceneTitle: '招聘初筛',
         sessionId: 'practice-session-1',
       );
-      expect(firstHarness.agent.threadId, launched.lease.practiceThreadId);
+      expect(
+        firstHarness.conversation.threadId,
+        launched.lease.practiceThreadId,
+      );
       firstWorkspace.dispose();
-      firstHarness.agent.dispose();
+      firstHarness.practiceController.dispose();
+      firstHarness.conversation.dispose();
 
-      final restartedAgent = AgentController(
+      final restartedConversation = ConversationController(
         client: firstHarness.client,
-        practiceClient: firstHarness.practice,
         clientIdFactory: (scope) => '$scope-restarted-operation',
       );
+      final restartedPracticeController = PracticeController(
+        client: firstHarness.practiceClient,
+        clientIdFactory: (scope) => '$scope-restarted-practice-operation',
+      );
       final restartedWorkspace = PracticeWorkspaceController(
-        agentController: restartedAgent,
+        conversationController: restartedConversation,
+        practiceController: restartedPracticeController,
         recordStore: store,
       );
       addTearDown(() {
         restartedWorkspace.dispose();
-        restartedAgent.dispose();
+        restartedPracticeController.dispose();
+        restartedConversation.dispose();
       });
 
       await restartedWorkspace.activateAccount('account-1');
 
-      expect(restartedAgent.isInitialized, isTrue);
-      expect(restartedAgent.threadId, homeThreadId);
+      expect(restartedConversation.isInitialized, isTrue);
+      expect(restartedConversation.threadId, homeThreadId);
       expect(restartedWorkspace.hasResumable, isTrue);
       expect(
         restartedWorkspace.currentPracticeThreadId,
@@ -462,36 +495,43 @@ void main() {
       final store = _InspectableRecordStore();
       final firstHarness = await _createHarness();
       final firstWorkspace = PracticeWorkspaceController(
-        agentController: firstHarness.agent,
+        conversationController: firstHarness.conversation,
+        practiceController: firstHarness.practiceController,
         recordStore: store,
       );
       await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = firstHarness.agent.threadId;
+      final homeThreadId = firstHarness.conversation.threadId;
       final incomplete = await firstWorkspace.acquireThread(
         'incomplete-operation-1',
       );
       expect(incomplete, isNotNull);
-      expect(firstHarness.agent.threadId, incomplete?.practiceThreadId);
+      expect(firstHarness.conversation.threadId, incomplete?.practiceThreadId);
       firstWorkspace.dispose();
-      firstHarness.agent.dispose();
+      firstHarness.practiceController.dispose();
+      firstHarness.conversation.dispose();
 
-      final restartedAgent = AgentController(
+      final restartedConversation = ConversationController(
         client: firstHarness.client,
-        practiceClient: firstHarness.practice,
         clientIdFactory: (scope) => '$scope-restarted-operation',
       );
+      final restartedPracticeController = PracticeController(
+        client: firstHarness.practiceClient,
+        clientIdFactory: (scope) => '$scope-restarted-practice-operation',
+      );
       final restartedWorkspace = PracticeWorkspaceController(
-        agentController: restartedAgent,
+        conversationController: restartedConversation,
+        practiceController: restartedPracticeController,
         recordStore: store,
       );
       addTearDown(() {
         restartedWorkspace.dispose();
-        restartedAgent.dispose();
+        restartedPracticeController.dispose();
+        restartedConversation.dispose();
       });
 
       await restartedWorkspace.activateAccount('account-1');
 
-      expect(restartedAgent.threadId, homeThreadId);
+      expect(restartedConversation.threadId, homeThreadId);
       expect(restartedWorkspace.currentLease, isNull);
       expect(restartedWorkspace.hasResumable, isFalse);
       expect(await store.read('account-1'), isNull);
@@ -511,15 +551,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -529,21 +570,21 @@ void main() {
         sessionId: 'practice-session-1',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practice.replaceSession(
+      harness.practiceClient.replaceSession(
         launched.lease.practiceThreadId,
         'practice-session-unrelated',
       );
 
       expect(await workspace.resumeCurrentPractice(), isFalse);
       expect(workspace.errorMessage, contains('无法核验上次练习'));
-      expect(harness.agent.threadId, launched.lease.practiceThreadId);
-      expect(harness.agent.practiceSessionId, isNull);
+      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
+      expect(harness.practiceController.practiceSessionId, isNull);
       expect(workspace.hasResumable, isTrue);
       expect(workspace.currentSessionId, 'practice-session-1');
       expect(await store.read('account-1'), isNotNull);
 
       expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.agent.threadId, homeThreadId);
+      expect(harness.conversation.threadId, homeThreadId);
       expect(workspace.hasResumable, isTrue);
     },
   );
@@ -554,15 +595,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -572,12 +614,12 @@ void main() {
         sessionId: 'practice-session-1',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practice.complete(launched.lease.practiceThreadId);
+      harness.practiceClient.complete(launched.lease.practiceThreadId);
 
       expect(await workspace.resumeCurrentPractice(), isFalse);
 
       expect(workspace.errorMessage, contains('已经结束'));
-      expect(harness.agent.threadId, homeThreadId);
+      expect(harness.conversation.threadId, homeThreadId);
       expect(workspace.hasResumable, isFalse);
       expect(await store.read('account-1'), isNull);
     },
@@ -589,15 +631,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -612,15 +655,15 @@ void main() {
         'replace-operation-2',
       );
 
-      expect(harness.practice.endedSessionIds, ['practice-session-1']);
+      expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
       expect(replacement, isNotNull);
       expect(
         replacement?.practiceThreadId,
         isNot(launched.lease.practiceThreadId),
       );
       expect(replacement?.returnThreadId, homeThreadId);
-      expect(harness.agent.threadId, replacement?.practiceThreadId);
-      expect(harness.agent.hasActivePractice, isFalse);
+      expect(harness.conversation.threadId, replacement?.practiceThreadId);
+      expect(harness.practiceController.hasActivePractice, isFalse);
       expect(workspace.hasResumable, isFalse);
       final record = jsonDecode((await store.read('account-1'))!);
       expect(record, containsPair('goal_id', isNull));
@@ -634,15 +677,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -652,7 +696,7 @@ void main() {
         sessionId: 'practice-session-1',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practice.replaceSession(
+      harness.practiceClient.replaceSession(
         launched.lease.practiceThreadId,
         'practice-session-unrelated',
       );
@@ -662,12 +706,12 @@ void main() {
       );
 
       expect(replacement, isNull);
-      expect(harness.practice.endedSessionIds, isEmpty);
+      expect(harness.practiceClient.endedSessionIds, isEmpty);
       expect(workspace.currentSessionId, 'practice-session-1');
       expect(workspace.hasResumable, isTrue);
       expect(await store.read('account-1'), isNotNull);
       expect(workspace.errorMessage, contains('无法核验当前练习'));
-      expect(harness.agent.threadId, launched.lease.practiceThreadId);
+      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
       expect(homeThreadId, isNot(launched.lease.practiceThreadId));
     },
   );
@@ -676,15 +720,16 @@ void main() {
     final store = _InspectableRecordStore();
     final harness = await _createHarness();
     final workspace = PracticeWorkspaceController(
-      agentController: harness.agent,
+      conversationController: harness.conversation,
+      practiceController: harness.practiceController,
       recordStore: store,
     );
     addTearDown(() {
       workspace.dispose();
-      harness.agent.dispose();
+      harness.dispose();
     });
     await workspace.activateAccount('account-1');
-    final homeThreadId = harness.agent.threadId;
+    final homeThreadId = harness.conversation.threadId;
     await _launchPractice(
       harness: harness,
       workspace: workspace,
@@ -694,14 +739,14 @@ void main() {
       sessionId: 'practice-session-1',
     );
     expect(await workspace.parkCurrentPractice(), isTrue);
-    harness.practice.endFailures = 1;
+    harness.practiceClient.endFailures = 1;
 
     final failed = await workspace.replaceCurrentPractice(
       'replace-operation-2',
     );
 
     expect(failed, isNull);
-    expect(harness.agent.threadId, homeThreadId);
+    expect(harness.conversation.threadId, homeThreadId);
     expect(workspace.hasResumable, isTrue);
     expect(workspace.errorMessage, contains('进度仍已保留'));
 
@@ -709,7 +754,7 @@ void main() {
       'replace-operation-2',
     );
     expect(retried, isNotNull);
-    expect(harness.practice.endedSessionIds, ['practice-session-1']);
+    expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
   });
 
   test(
@@ -718,15 +763,16 @@ void main() {
       final store = _InspectableRecordStore(deleteFailures: 1);
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -742,14 +788,14 @@ void main() {
       );
 
       expect(replacement, isNull);
-      expect(harness.practice.endedSessionIds, ['practice-session-1']);
-      expect(harness.agent.threadId, homeThreadId);
+      expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
+      expect(harness.conversation.threadId, homeThreadId);
       expect(workspace.hasResumable, isFalse);
       expect(workspace.errorMessage, contains('本机记录清理失败'));
 
       final retried = await workspace.acquireThread('replace-operation-2');
       expect(retried, isNotNull);
-      expect(harness.agent.threadId, retried?.practiceThreadId);
+      expect(harness.conversation.threadId, retried?.practiceThreadId);
       expect(retried?.returnThreadId, homeThreadId);
     },
   );
@@ -758,12 +804,13 @@ void main() {
     final store = _InspectableRecordStore();
     final harness = await _createHarness();
     final workspace = PracticeWorkspaceController(
-      agentController: harness.agent,
+      conversationController: harness.conversation,
+      practiceController: harness.practiceController,
       recordStore: store,
     );
     addTearDown(() {
       workspace.dispose();
-      harness.agent.dispose();
+      harness.dispose();
     });
     await workspace.activateAccount('account-1');
     final launched = await _launchPractice(
@@ -774,15 +821,17 @@ void main() {
       sceneTitle: '招聘初筛',
       sessionId: 'practice-session-1',
     );
-    harness.practice.holdNextTextSubmission();
-    final submission = harness.agent.submitPracticeText('A pending answer.');
+    harness.practiceClient.holdNextTextSubmission();
+    final submission = harness.practiceController.submitPracticeText(
+      'A pending answer.',
+    );
     await Future<void>.delayed(Duration.zero);
 
     expect(await workspace.parkCurrentPractice(), isFalse);
 
-    expect(harness.agent.threadId, launched.lease.practiceThreadId);
+    expect(harness.conversation.threadId, launched.lease.practiceThreadId);
     expect(workspace.errorMessage, contains('正在提交'));
-    harness.practice.failPendingTextSubmission();
+    harness.practiceClient.failPendingTextSubmission();
     expect(await submission, isFalse);
   });
 
@@ -790,15 +839,16 @@ void main() {
     final store = _InspectableRecordStore();
     final harness = await _createHarness();
     final workspace = PracticeWorkspaceController(
-      agentController: harness.agent,
+      conversationController: harness.conversation,
+      practiceController: harness.practiceController,
       recordStore: store,
     );
     addTearDown(() {
       workspace.dispose();
-      harness.agent.dispose();
+      harness.dispose();
     });
     await workspace.activateAccount('account-1');
-    final homeThreadId = harness.agent.threadId;
+    final homeThreadId = harness.conversation.threadId;
     final launched = await _launchPractice(
       harness: harness,
       workspace: workspace,
@@ -808,21 +858,21 @@ void main() {
       sessionId: 'practice-session-1',
     );
     expect(await workspace.parkCurrentPractice(), isTrue);
-    harness.practice.complete(launched.lease.practiceThreadId);
+    harness.practiceClient.complete(launched.lease.practiceThreadId);
     expect(
-      await harness.agent.selectThread(launched.lease.practiceThreadId),
+      await harness.conversation.selectThread(launched.lease.practiceThreadId),
       isTrue,
     );
-    await harness.agent.restoreCreatedPractice(
+    await harness.practiceController.restoreCreatedPractice(
       sessionId: 'practice-session-1',
       scene: launched.scene,
     );
-    expect(harness.agent.practiceSessionId, 'practice-session-1');
-    expect(harness.agent.hasActivePractice, isFalse);
+    expect(harness.practiceController.practiceSessionId, 'practice-session-1');
+    expect(harness.practiceController.hasActivePractice, isFalse);
 
     expect(await workspace.parkCurrentPractice(), isTrue);
 
-    expect(harness.agent.threadId, homeThreadId);
+    expect(harness.conversation.threadId, homeThreadId);
     expect(workspace.hasResumable, isFalse);
     expect(workspace.currentLease, isNull);
     expect(await store.read('account-1'), isNull);
@@ -834,15 +884,16 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
-      final homeThreadId = harness.agent.threadId;
+      final homeThreadId = harness.conversation.threadId;
       final launched = await _launchPractice(
         harness: harness,
         workspace: workspace,
@@ -853,23 +904,28 @@ void main() {
         sceneFamily: 'INTERVIEW',
       );
       expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practice.complete(launched.lease.practiceThreadId);
+      harness.practiceClient.complete(launched.lease.practiceThreadId);
       expect(
-        await harness.agent.selectThread(launched.lease.practiceThreadId),
+        await harness.conversation.selectThread(
+          launched.lease.practiceThreadId,
+        ),
         isTrue,
       );
-      await harness.agent.restoreCreatedPractice(
+      await harness.practiceController.restoreCreatedPractice(
         sessionId: 'practice-session-1',
         scene: launched.scene,
       );
-      expect(harness.agent.recordingState, PracticeRecordingState.completed);
+      expect(
+        harness.practiceController.recordingState,
+        PracticeRecordingState.completed,
+      );
 
       expect(await workspace.completeAndContinueWithAgent(), isTrue);
 
-      expect(harness.agent.threadId, homeThreadId);
+      expect(harness.conversation.threadId, homeThreadId);
       expect(workspace.hasResumable, isFalse);
       expect(
-        harness.agent.messages.any(
+        harness.conversation.messages.any(
           (message) =>
               message.role == AgentMessageRole.user &&
               message.text.contains('招聘初筛') &&
@@ -889,12 +945,13 @@ void main() {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
       await workspace.activateAccount('account-1');
       await _launchPractice(
@@ -931,12 +988,13 @@ void main() {
       );
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
 
       final firstActivation = workspace.activateAccount('account-1');
@@ -957,12 +1015,13 @@ void main() {
       final store = _InspectableRecordStore(readFailures: 1);
       final harness = await _createHarness();
       final workspace = PracticeWorkspaceController(
-        agentController: harness.agent,
+        conversationController: harness.conversation,
+        practiceController: harness.practiceController,
         recordStore: store,
       );
       addTearDown(() {
         workspace.dispose();
-        harness.agent.dispose();
+        harness.dispose();
       });
 
       await workspace.activateAccount('account-1');
@@ -981,15 +1040,28 @@ void main() {
 }
 
 Future<_Harness> _createHarness({AgentClient? client}) async {
-  final practice = _WorkspacePracticeClient();
-  final resolvedClient = client ?? FakeAgentClient();
-  final agent = AgentController(
+  final practiceClient = _WorkspacePracticeClient();
+  final resolvedClient = client ?? GoalAwareAgentClient();
+  if (resolvedClient is! GoalActivationClient) {
+    throw ArgumentError('Workspace test Agent must support Goal activation.');
+  }
+  final goalClient = resolvedClient as GoalActivationClient;
+  final conversation = ConversationController(
     client: resolvedClient,
-    practiceClient: practice,
     clientIdFactory: (scope) => '$scope-client-operation',
   );
-  await agent.initialize();
-  return _Harness(agent: agent, client: resolvedClient, practice: practice);
+  final practiceController = PracticeController(
+    client: practiceClient,
+    clientIdFactory: (scope) => '$scope-practice-operation',
+  );
+  await conversation.initialize();
+  return _Harness(
+    conversation: conversation,
+    client: resolvedClient,
+    goalClient: goalClient,
+    practiceController: practiceController,
+    practiceClient: practiceClient,
+  );
 }
 
 Future<_LaunchedPractice> _launchPractice({
@@ -1031,7 +1103,9 @@ Future<_LaunchedPractice> _launchPractice({
       suggestedDurationSeconds: 600,
     ),
   );
-  final goal = await harness.agent.activateGoalForScene(
+  final goal = await activateTestGoal(
+    goalClient: harness.goalClient,
+    conversationController: harness.conversation,
     threadId: lease!.practiceThreadId,
     scene: scene,
     clientOperationId: 'goal-$operationId',
@@ -1045,14 +1119,13 @@ Future<_LaunchedPractice> _launchPractice({
     ),
     isTrue,
   );
-  harness.practice.armStart(
+  harness.practiceClient.armStart(
     threadId: lease.practiceThreadId,
     sessionId: sessionId,
     planId: 'practice-plan-$sessionId',
     scene: scene,
   );
-  await harness.agent.activateCreatedPractice(
-    threadId: lease.practiceThreadId,
+  await harness.practiceController.activateCreatedPractice(
     scene: scene,
     sessionId: sessionId,
     planId: 'practice-plan-$sessionId',
@@ -1064,19 +1137,28 @@ Future<_LaunchedPractice> _launchPractice({
 
 final class _Harness {
   const _Harness({
-    required this.agent,
+    required this.conversation,
     required this.client,
-    required this.practice,
+    required this.goalClient,
+    required this.practiceController,
+    required this.practiceClient,
   });
 
-  final AgentController agent;
+  final ConversationController conversation;
   final AgentClient client;
-  final _WorkspacePracticeClient practice;
+  final GoalActivationClient goalClient;
+  final PracticeController practiceController;
+  final _WorkspacePracticeClient practiceClient;
+
+  void dispose() {
+    practiceController.dispose();
+    conversation.dispose();
+  }
 }
 
 final class _FailingFocusAgentClient
-    implements AgentClient, AgentThreadHistoryClient {
-  final FakeAgentClient _delegate = FakeAgentClient();
+    implements AgentClient, GoalActivationClient {
+  final GoalAwareAgentClient _delegate = GoalAwareAgentClient();
 
   String? failSetFocusedThreadId;
   bool failClearFocusedThread = false;
@@ -1085,9 +1167,6 @@ final class _FailingFocusAgentClient
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
 
   @override
   Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) =>
@@ -1130,6 +1209,10 @@ final class _FailingFocusAgentClient
   }
 
   @override
+  Future<void> deleteThread({required String threadId}) =>
+      _delegate.deleteThread(threadId: threadId);
+
+  @override
   Future<AgentMessagePage> listMessages({
     required String threadId,
     int pageSize = 50,
@@ -1152,14 +1235,22 @@ final class _FailingFocusAgentClient
   );
 
   @override
+  Future<Goal> selectExistingGoal({
+    required String threadId,
+    required String goalId,
+  }) => _delegate.selectExistingGoal(threadId: threadId, goalId: goalId);
+
+  @override
   Future<AgentExchange> sendText({
     required String threadId,
     required String text,
     required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
   }) => _delegate.sendText(
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
+    imageAssetIds: imageAssetIds,
   );
 }
 
@@ -1353,9 +1444,9 @@ final class _WorkspacePracticeClient
         sessionId: sessionId,
         questionId: questionId,
         candidateId: 'text-candidate-$completedTurns',
-        answer: AgentMessage(
+        answer: PracticeMessage(
           id: 'answer-$completedTurns',
-          role: AgentMessageRole.user,
+          role: PracticeMessageRole.user,
           text: answerText,
         ),
         completedTurns: completedTurns,

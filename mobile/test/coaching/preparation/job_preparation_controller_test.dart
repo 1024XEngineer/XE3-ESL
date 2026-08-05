@@ -3,8 +3,7 @@ import '../../support/scene_fixtures.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_client.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
@@ -15,7 +14,10 @@ import 'package:speakup/features/coaching/preparation/practice_launch_record_sto
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+
+import 'preparation_test_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -302,8 +304,8 @@ void main() {
         clearHomeFocus: true,
       );
       addTearDown(harness.dispose);
-      expect(harness.agentController.threadId, isNull);
-      final originalThreadCount = harness.agentController.threads.length;
+      expect(harness.conversationController.threadId, isNull);
+      final originalThreadCount = harness.conversationController.threads.length;
 
       await _prepareJobPreview(harness.controller);
 
@@ -316,27 +318,27 @@ void main() {
         practiceThreadId,
       );
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
-      expect(harness.agentController.threadId, isNull);
+      expect(harness.conversationController.threadId, isNull);
 
       expect(await harness.controller.startPractice(), isTrue);
-      final sessionId = harness.agentController.practiceSessionId;
-      final goalId = harness.agentController.activeGoal?.id;
+      final sessionId = harness.practiceController.practiceSessionId;
+      final goalId = harness.conversationController.activeGoalId;
       expect(sessionId, _sessionId);
       expect(harness.controller.hasResumablePractice, isTrue);
       expect(harness.controller.resumablePracticeTitle, _scene.name);
       expect(harness.workspaceController.currentSessionId, sessionId);
 
       expect(await harness.controller.parkCurrentPractice(), isTrue);
-      expect(harness.agentController.threadId, isNull);
-      expect(harness.agentController.hasActivePractice, isFalse);
+      expect(harness.conversationController.threadId, isNull);
+      expect(harness.practiceController.hasActivePractice, isFalse);
 
       expect(await harness.controller.resumeCurrentPractice(), isTrue);
-      expect(harness.agentController.threadId, practiceThreadId);
-      expect(harness.agentController.practiceSessionId, sessionId);
-      expect(harness.agentController.activeGoal?.id, goalId);
+      expect(harness.conversationController.threadId, practiceThreadId);
+      expect(harness.practiceController.practiceSessionId, sessionId);
+      expect(harness.conversationController.activeGoalId, goalId);
     },
   );
 
@@ -346,8 +348,8 @@ void main() {
       final client = _FakeJobPreparationClient(failFirstProfile: true);
       final harness = await _createWorkspaceHarness(client);
       addTearDown(harness.dispose);
-      final homeThreadId = harness.agentController.threadId;
-      final originalThreadCount = harness.agentController.threads.length;
+      final homeThreadId = harness.conversationController.threadId;
+      final originalThreadCount = harness.conversationController.threads.length;
       harness.controller.updateInput(_input);
       await harness.controller.analyze();
       await harness.controller.confirm();
@@ -355,22 +357,22 @@ void main() {
       expect(await harness.controller.createPreview(), isFalse);
       final firstLease = harness.workspaceController.currentLease;
       expect(firstLease, isNotNull);
-      expect(harness.agentController.threadId, homeThreadId);
+      expect(harness.conversationController.threadId, homeThreadId);
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
 
       expect(await harness.controller.retry(), isTrue);
 
       expect(harness.workspaceController.currentLease, firstLease);
-      expect(harness.agentController.threadId, homeThreadId);
+      expect(harness.conversationController.threadId, homeThreadId);
       expect(
         harness.controller.plan?.sourceThreadId,
         firstLease?.practiceThreadId,
       );
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
       expect(harness.goalKeys, hasLength(2));
@@ -389,14 +391,14 @@ void main() {
         failFirstVoice: true,
       );
       addTearDown(harness.dispose);
-      final homeThreadId = harness.agentController.threadId;
+      final homeThreadId = harness.conversationController.threadId;
       await _prepareJobPreview(harness.controller);
       final lease = harness.workspaceController.currentLease;
       final practiceThreadId = lease?.practiceThreadId;
-      expect(harness.agentController.threadId, homeThreadId);
+      expect(harness.conversationController.threadId, homeThreadId);
 
       expect(await harness.controller.startPractice(), isFalse);
-      expect(harness.agentController.threadId, homeThreadId);
+      expect(harness.conversationController.threadId, homeThreadId);
       expect(harness.workspaceController.currentLease, lease);
       expect(harness.workspaceController.currentSessionId, _sessionId);
       expect(harness.controller.bootstrap, same(_bootstrap));
@@ -407,8 +409,8 @@ void main() {
       expect(harness.voiceKeys, hasLength(2));
       expect(harness.voiceKeys.toSet(), hasLength(1));
       expect(harness.workspaceController.currentLease, lease);
-      expect(harness.agentController.threadId, practiceThreadId);
-      expect(harness.agentController.practiceSessionId, _sessionId);
+      expect(harness.conversationController.threadId, practiceThreadId);
+      expect(harness.practiceController.practiceSessionId, _sessionId);
     },
   );
 
@@ -417,20 +419,22 @@ void main() {
     () async {
       final first = await _createWorkspaceHarness(_FakeJobPreparationClient());
       addTearDown(first.dispose);
-      final homeThreadId = first.agentController.threadId;
+      final homeThreadId = first.conversationController.threadId;
       await _prepareJobPreview(first.controller);
       expect(await first.controller.startPractice(), isTrue);
-      final firstPracticeThreadId = first.agentController.threadId!;
-      final firstSessionId = first.agentController.practiceSessionId!;
+      final firstPracticeThreadId = first.conversationController.threadId!;
+      final firstSessionId = first.practiceController.practiceSessionId!;
       expect(await first.controller.parkCurrentPractice(), isTrue);
-      expect(first.agentController.threadId, homeThreadId);
+      expect(first.conversationController.threadId, homeThreadId);
 
       final replacementClient = _FakeJobPreparationClient(
         sessionResult: _replacementBootstrap,
       );
       final replacement = _workspaceJobController(
         client: replacementClient,
-        agentController: first.agentController,
+        conversationController: first.conversationController,
+        goalClient: first.goalClient,
+        practiceController: first.practiceController,
         practiceClient: first.practiceClient,
         workspaceController: first.workspaceController,
         goalKeys: first.goalKeys,
@@ -453,11 +457,11 @@ void main() {
       expect(replacementThreadId, isNot(homeThreadId));
       expect(replacement.plan?.sourceThreadId, replacementThreadId);
       expect(first.workspaceController.hasResumable, isFalse);
-      expect(first.agentController.threads, hasLength(3));
-      expect(first.agentController.threadId, homeThreadId);
+      expect(first.conversationController.threads, hasLength(3));
+      expect(first.conversationController.threadId, homeThreadId);
 
       expect(await replacement.startPractice(), isTrue);
-      expect(first.agentController.practiceSessionId, _replacementSessionId);
+      expect(first.practiceController.practiceSessionId, _replacementSessionId);
       expect(first.workspaceController.currentSessionId, _replacementSessionId);
       expect(replacement.hasResumablePractice, isTrue);
     },
@@ -473,16 +477,16 @@ void main() {
       await _prepareJobPreview(harness.controller);
       final practiceThreadId =
           harness.workspaceController.currentPracticeThreadId;
-      final originalHomeThreadId = harness.agentController.threadId;
+      final originalHomeThreadId = harness.conversationController.threadId;
 
-      expect(await harness.agentController.createThread(), isTrue);
-      final latestHomeThreadId = harness.agentController.threadId;
+      expect(await harness.conversationController.createThread(), isTrue);
+      final latestHomeThreadId = harness.conversationController.threadId;
       expect(latestHomeThreadId, isNot(originalHomeThreadId));
 
       expect(await harness.controller.startPractice(), isTrue);
-      expect(harness.agentController.threadId, practiceThreadId);
+      expect(harness.conversationController.threadId, practiceThreadId);
       expect(await harness.controller.parkCurrentPractice(), isTrue);
-      expect(harness.agentController.threadId, latestHomeThreadId);
+      expect(harness.conversationController.threadId, latestHomeThreadId);
     },
   );
 
@@ -520,19 +524,23 @@ Future<_WorkspaceHarness> _createWorkspaceHarness(
   bool clearHomeFocus = false,
   bool failFirstVoice = false,
 }) async {
-  final agentClient = FakeAgentClient();
+  final agentClient = GoalAwareAgentClient();
   final practiceClient = _WorkspacePracticeClient();
-  final agentController = AgentController(
+  final conversationController = ConversationController(
     client: agentClient,
-    practiceClient: practiceClient,
     clientIdFactory: (scope) => '$scope-workspace-stable-key',
   );
-  await agentController.initialize();
+  final practiceController = PracticeController(
+    client: practiceClient,
+    clientIdFactory: (scope) => '$scope-workspace-practice-key',
+  );
+  await conversationController.initialize();
   if (clearHomeFocus) {
-    await agentController.clearFocusedThread();
+    await conversationController.clearFocusedThread();
   }
   final workspaceController = PracticeWorkspaceController(
-    agentController: agentController,
+    conversationController: conversationController,
+    practiceController: practiceController,
     recordStore: MemoryPracticeLaunchRecordStore(),
   );
   final goalKeys = <String>[];
@@ -540,7 +548,9 @@ Future<_WorkspaceHarness> _createWorkspaceHarness(
   var voiceCalls = 0;
   final controller = _workspaceJobController(
     client: client,
-    agentController: agentController,
+    conversationController: conversationController,
+    goalClient: agentClient,
+    practiceController: practiceController,
     practiceClient: practiceClient,
     workspaceController: workspaceController,
     goalKeys: goalKeys,
@@ -551,7 +561,9 @@ Future<_WorkspaceHarness> _createWorkspaceHarness(
   await controller.activateAccount(_userId);
   return _WorkspaceHarness(
     controller: controller,
-    agentController: agentController,
+    conversationController: conversationController,
+    goalClient: agentClient,
+    practiceController: practiceController,
     practiceClient: practiceClient,
     workspaceController: workspaceController,
     goalKeys: goalKeys,
@@ -561,7 +573,9 @@ Future<_WorkspaceHarness> _createWorkspaceHarness(
 
 JobPreparationController _workspaceJobController({
   required _FakeJobPreparationClient client,
-  required AgentController agentController,
+  required ConversationController conversationController,
+  required GoalAwareAgentClient goalClient,
+  required PracticeController practiceController,
   required _WorkspacePracticeClient practiceClient,
   required PracticeWorkspaceController workspaceController,
   required List<String> goalKeys,
@@ -572,7 +586,7 @@ JobPreparationController _workspaceJobController({
   return JobPreparationController(
     client: client,
     workspaceController: workspaceController,
-    threadIdProvider: () => agentController.threadId,
+    threadIdProvider: () => conversationController.threadId,
     goalActivator:
         ({
           required threadId,
@@ -580,7 +594,9 @@ JobPreparationController _workspaceJobController({
           required clientOperationId,
         }) async {
           goalKeys.add(clientOperationId);
-          final goal = await agentController.activateGoalForScene(
+          final goal = await activateTestGoal(
+            goalClient: goalClient,
+            conversationController: conversationController,
             threadId: threadId,
             scene: _scene,
             clientOperationId: clientOperationId,
@@ -604,8 +620,7 @@ JobPreparationController _workspaceJobController({
             planId: bootstrap.session.planId,
             turnLimit: bootstrap.maxEffectiveTurns,
           );
-          await agentController.activateCreatedPractice(
-            threadId: context.threadId,
+          await practiceController.activateCreatedPractice(
             scene: scene,
             sessionId: bootstrap.session.id,
             planId: bootstrap.session.planId,
@@ -622,7 +637,9 @@ JobPreparationController _workspaceJobController({
 final class _WorkspaceHarness {
   const _WorkspaceHarness({
     required this.controller,
-    required this.agentController,
+    required this.conversationController,
+    required this.goalClient,
+    required this.practiceController,
     required this.practiceClient,
     required this.workspaceController,
     required this.goalKeys,
@@ -630,7 +647,9 @@ final class _WorkspaceHarness {
   });
 
   final JobPreparationController controller;
-  final AgentController agentController;
+  final ConversationController conversationController;
+  final GoalAwareAgentClient goalClient;
+  final PracticeController practiceController;
   final _WorkspacePracticeClient practiceClient;
   final PracticeWorkspaceController workspaceController;
   final List<String> goalKeys;
@@ -639,7 +658,8 @@ final class _WorkspaceHarness {
   void dispose() {
     controller.dispose();
     workspaceController.dispose();
-    agentController.dispose();
+    practiceController.dispose();
+    conversationController.dispose();
   }
 }
 

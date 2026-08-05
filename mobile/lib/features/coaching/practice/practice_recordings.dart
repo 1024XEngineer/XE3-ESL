@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
 class PracticeRecordingsCard extends StatelessWidget {
@@ -9,7 +9,7 @@ class PracticeRecordingsCard extends StatelessWidget {
     super.key,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final String title;
 
   @override
@@ -57,7 +57,7 @@ class _RecordingRow extends StatelessWidget {
     required this.effectiveTurn,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final String audioAssetId;
   final int effectiveTurn;
 

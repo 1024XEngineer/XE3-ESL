@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/agent_voice_models.dart';
-import 'package:speakup/agent/wire_agent_voice_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 

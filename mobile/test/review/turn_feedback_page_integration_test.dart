@@ -3,15 +3,15 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -28,7 +28,11 @@ void main() {
         pollInterval: Duration.zero,
         maximumPollAttempts: 1,
       );
+      final presenter = AgentConversationFeedbackPresenter(
+        controller: controller,
+      );
       addTearDown(controller.dispose);
+      addTearDown(presenter.dispose);
       var voiceStarts = 0;
 
       await tester.pumpWidget(
@@ -55,7 +59,7 @@ void main() {
             onStartVoice: () async {
               voiceStarts++;
             },
-            speechFeedbackController: controller,
+            feedbackPresenter: presenter,
           ),
         ),
       );
@@ -96,10 +100,7 @@ void main() {
       );
       final snapshot = _practiceSnapshot(feedback.statusUrl);
       final practiceClient = _PracticeClient(snapshot);
-      final practiceController = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practiceClient,
-      );
+      final practiceController = PracticeController(client: practiceClient);
       addTearDown(feedbackController.dispose);
       addTearDown(practiceController.dispose);
       await _restorePractice(practiceController, snapshot);
@@ -107,7 +108,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: practiceController,
+            practiceController: practiceController,
             speechFeedbackController: feedbackController,
           ),
         ),
@@ -173,9 +174,8 @@ void main() {
       sceneModel: SceneModel.ieltsSpeakingPart2,
       turnLimit: 6,
     );
-    final practiceController = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: _PracticeClient(snapshot),
+    final practiceController = PracticeController(
+      client: _PracticeClient(snapshot),
     );
     addTearDown(feedbackController.dispose);
     addTearDown(practiceController.dispose);
@@ -184,7 +184,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: practiceController,
+          practiceController: practiceController,
           speechFeedbackController: feedbackController,
           ieltsMockProgressStore: _MemoryIeltsProgressStore(),
         ),
@@ -233,9 +233,8 @@ void main() {
       sceneModel: SceneModel.ieltsSpeakingPart2,
       turnLimit: 6,
     );
-    final practiceController = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: _PracticeClient(
+    final practiceController = PracticeController(
+      client: _PracticeClient(
         PracticeSessionSnapshot(
           sessionId: snapshot.sessionId,
           planId: snapshot.planId,
@@ -274,7 +273,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: practiceController,
+          practiceController: practiceController,
           speechFeedbackController: feedbackController,
           ieltsMockProgressStore: _MemoryIeltsProgressStore(),
         ),
@@ -310,7 +309,11 @@ void main() {
         pollInterval: Duration.zero,
         maximumPollAttempts: 1,
       );
+      final presenter = AgentConversationFeedbackPresenter(
+        controller: controller,
+      );
       addTearDown(controller.dispose);
+      addTearDown(presenter.dispose);
       final navigatorKey = GlobalKey<NavigatorState>();
       late StateSetter updateConversation;
       var messages = <AgentMessage>[];
@@ -324,7 +327,7 @@ void main() {
               return ConversationPage(
                 threadId: 'thread_001',
                 messages: messages,
-                speechFeedbackController: controller,
+                feedbackPresenter: presenter,
               );
             },
           ),
@@ -539,12 +542,10 @@ PracticeSessionSnapshot _practiceSnapshot(
 }
 
 Future<void> _restorePractice(
-  AgentController controller,
+  PracticeController controller,
   PracticeSessionSnapshot snapshot,
 ) async {
   final scene = _practiceScene(snapshot.sceneFamily, snapshot.sceneModel);
-  await controller.initialize();
-  await controller.selectScene(scene);
   await controller.restoreCreatedPractice(
     sessionId: snapshot.sessionId,
     scene: scene,

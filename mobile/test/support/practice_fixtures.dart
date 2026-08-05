@@ -1,4 +1,4 @@
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 
@@ -38,19 +38,12 @@ PracticeSessionSnapshot testPracticeSnapshot({
 }
 
 Future<void> activateTestPractice({
-  required AgentController controller,
+  required PracticeController controller,
   required SceneDefinition scene,
   String sessionId = 'session-test',
   String clientOperationId = 'activate-test-session',
 }) async {
-  await controller.selectScene(scene);
-  final threadId = controller.threadId;
-  final goal = controller.activeGoal;
-  if (threadId == null || goal == null) {
-    throw StateError('The test Agent did not activate the requested Goal.');
-  }
   await controller.activateCreatedPractice(
-    threadId: threadId,
     scene: scene,
     sessionId: sessionId,
     planId: testPracticePlanId(sessionId),

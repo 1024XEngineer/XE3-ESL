@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -41,7 +41,10 @@ void main() {
     runApp(
       SpeakUpApp(
         authController: dependencies.authController,
-        agentController: dependencies.agentController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
@@ -107,10 +110,11 @@ void main() {
 
     await _completeRealVoicePractice(
       tester,
-      controller: dependencies.agentController,
+      controller: dependencies.practiceController,
       validateAudioMedia: validateAudioMedia,
     );
-    final completedSessionId = dependencies.agentController.practiceSessionId;
+    final completedSessionId =
+        dependencies.practiceController.practiceSessionId;
     if (completedSessionId == null) {
       fail('The completed Practice did not retain its Session identity.');
     }
@@ -184,7 +188,10 @@ void main() {
     runApp(
       SpeakUpApp(
         authController: dependencies.authController,
-        agentController: dependencies.agentController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
@@ -381,7 +388,7 @@ Future<void> _tapAuthSubmit(WidgetTester tester, String label) async {
 
 Future<void> _completeRealVoicePractice(
   WidgetTester tester, {
-  required AgentController controller,
+  required PracticeController controller,
   required bool validateAudioMedia,
 }) async {
   FocusManager.instance.primaryFocus?.unfocus();
@@ -678,7 +685,7 @@ String _visibleText(WidgetTester tester, Finder root) {
   return values.toSet().join(' ');
 }
 
-Future<void> _validateQuestionTts(AgentController controller) async {
+Future<void> _validateQuestionTts(PracticeController controller) async {
   expect(controller.canPlayQuestionAudio, isTrue);
   await controller.toggleQuestionAudio();
   expect(controller.isQuestionAudioLoading, isFalse);
@@ -688,7 +695,7 @@ Future<void> _validateQuestionTts(AgentController controller) async {
 }
 
 Future<void> _validateRecordingPlayback(
-  AgentController controller,
+  PracticeController controller,
   String audioAssetId,
 ) async {
   expect(audioAssetId, isNotEmpty);
