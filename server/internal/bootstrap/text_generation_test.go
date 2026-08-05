@@ -31,14 +31,30 @@ func TestNewAgentAndPreparationGeneratorsRegisterConfiguredQianwen(
 	if jobTargetGenerator == nil {
 		t.Fatal("Preparation model provider is nil")
 	}
-	resumeConfiguration := configuration
-	resumeConfiguration.MaxOutputTokens = 1
-	resumeGenerator, err := NewResumeFieldGenerator(resumeConfiguration)
+	resumeGenerator, err := NewResumeFieldGenerator(configuration)
 	if err != nil {
-		t.Fatalf("register Resume model provider with independent budget: %v", err)
+		t.Fatalf("register Resume model provider: %v", err)
 	}
 	if resumeGenerator == nil {
 		t.Fatal("Resume model provider is nil")
+	}
+}
+
+func TestNewResumeFieldGeneratorRejectsInsufficientBudget(t *testing.T) {
+	setBootstrapTextGenerationEnvironment(t, "server-only-test-key")
+
+	configuration, err := config.LoadTextGeneration()
+	if err != nil {
+		t.Fatalf("load text generation configuration: %v", err)
+	}
+	configuration.MaxOutputTokens = 1
+	generator, err := NewResumeFieldGenerator(configuration)
+	if err == nil || generator != nil {
+		t.Fatalf(
+			"insufficient Resume budget returned generator=%T error=%v",
+			generator,
+			err,
+		)
 	}
 }
 

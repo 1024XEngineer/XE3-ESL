@@ -85,12 +85,11 @@ func NewResumeFieldGenerator(
 	if err != nil {
 		return nil, err
 	}
-	if providerConfig.MaxOutputTokens <
-		fieldextractor.MinimumGenerationOutputTokens {
-		providerConfig.MaxOutputTokens =
-			fieldextractor.MinimumGenerationOutputTokens
+	generator, err := qianwen.NewResumeFieldGenerator(providerConfig, apiKey)
+	if err != nil {
+		return nil, err
 	}
-	return qianwen.NewResumeFieldGenerator(providerConfig, apiKey)
+	return generator, nil
 }
 
 func qianwenTextProvider(

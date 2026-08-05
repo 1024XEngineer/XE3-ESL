@@ -337,7 +337,7 @@ func buildIdentityAgentComposition(
 	voiceRunProcessor := agentvoice.PendingRunProcessor(runService)
 	if len(voiceConfigurations) == 1 &&
 		voiceConfigurations[0].AgentVoiceInputEnabled {
-		voiceRunProcessor, err = newDeferredAgentVoiceRunProcessor(
+		voiceRunProcessor, err = agentvoice.NewDeferredRunProcessor(
 			ctx,
 			runService,
 			slog.Default(),

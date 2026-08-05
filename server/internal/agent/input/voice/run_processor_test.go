@@ -1,4 +1,4 @@
-package bootstrap
+package voice
 
 import (
 	"context"
@@ -7,29 +7,29 @@ import (
 	"testing"
 	"time"
 
-	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestDeferredAgentVoiceRunReturnsPendingBeforeModelCompletes(t *testing.T) {
+func TestDeferredRunProcessorReturnsPendingBeforeModelCompletes(t *testing.T) {
 	lifecycle, stop := context.WithCancel(context.Background())
 	defer stop()
-	delegate := &blockingAgentVoiceRunProcessor{
+	delegate := &blockingRunProcessor{
 		started:   make(chan struct{}),
 		release:   make(chan struct{}),
 		completed: make(chan struct{}),
 	}
-	processor, err := newDeferredAgentVoiceRunProcessor(
+	processor, err := NewDeferredRunProcessor(
 		lifecycle,
 		delegate,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
-		t.Fatalf("newDeferredAgentVoiceRunProcessor() error = %v", err)
+		t.Fatalf("NewDeferredRunProcessor() error = %v", err)
 	}
-	run := agentrun.Run{
+	pendingRun := run.Run{
 		ID:       "30000000-0000-4000-8000-000000000001",
-		Status:   agentrun.StatusPending,
+		Status:   run.StatusPending,
 		OwnerID:  "10000000-0000-4000-8000-000000000001",
 		ThreadID: "20000000-0000-4000-8000-000000000001",
 	}
@@ -37,15 +37,15 @@ func TestDeferredAgentVoiceRunReturnsPendingBeforeModelCompletes(t *testing.T) {
 	returned, err := processor.ProcessPending(
 		requestContext,
 		requestcontext.Actor{
-			UserID:    run.OwnerID,
+			UserID:    pendingRun.OwnerID,
 			SessionID: "40000000-0000-4000-8000-000000000001",
 		},
-		run,
+		pendingRun,
 	)
 	if err != nil {
 		t.Fatalf("ProcessPending() error = %v", err)
 	}
-	if returned.Status != agentrun.StatusPending {
+	if returned.Status != run.StatusPending {
 		t.Fatalf("ProcessPending() returned %#v, want pending", returned)
 	}
 	cancelRequest()
@@ -63,24 +63,24 @@ func TestDeferredAgentVoiceRunReturnsPendingBeforeModelCompletes(t *testing.T) {
 	}
 }
 
-type blockingAgentVoiceRunProcessor struct {
+type blockingRunProcessor struct {
 	started   chan struct{}
 	release   chan struct{}
 	completed chan struct{}
 }
 
-func (processor *blockingAgentVoiceRunProcessor) ProcessPending(
+func (processor *blockingRunProcessor) ProcessPending(
 	ctx context.Context,
 	_ requestcontext.Actor,
-	run agentrun.Run,
-) (agentrun.Run, error) {
+	pendingRun run.Run,
+) (run.Run, error) {
 	close(processor.started)
 	select {
 	case <-ctx.Done():
-		return agentrun.Run{}, ctx.Err()
+		return run.Run{}, ctx.Err()
 	case <-processor.release:
 	}
-	run.Status = agentrun.StatusCompleted
+	pendingRun.Status = run.StatusCompleted
 	close(processor.completed)
-	return run, nil
+	return pendingRun, nil
 }

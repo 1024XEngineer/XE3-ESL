@@ -96,7 +96,6 @@ func NewSpeechFeedbackComposition(
 	}
 	retryPractice, err := practice.NewRetryTurnApplication(
 		practiceRepository,
-		"speakup.user",
 	)
 	if err != nil {
 		return nil, err

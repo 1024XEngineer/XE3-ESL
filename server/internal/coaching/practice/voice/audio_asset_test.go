@@ -1857,6 +1857,30 @@ func TestNewAudioAssetServiceRejectsNilDependencies(t *testing.T) {
 	}
 }
 
+func TestAudioAssetServiceProductionPolicyIsOwnedByPracticeVoice(t *testing.T) {
+	fixture := newAudioAssetFixture()
+	service, err := NewProductionAudioAssetService(
+		fixture.repository,
+		fixture.store,
+		fixture.ids,
+		fixture.clock,
+		fixture.turns,
+	)
+	if err != nil || service.stagedTTL != defaultStagedTTL {
+		t.Fatalf("NewProductionAudioAssetService() = %#v, %v", service, err)
+	}
+	if service, err = NewAudioAssetService(
+		fixture.repository,
+		fixture.store,
+		fixture.ids,
+		fixture.clock,
+		fixture.turns,
+		0,
+	); service != nil || !errors.Is(err, ErrAudioAssetInvalid) {
+		t.Fatalf("NewAudioAssetService(zero TTL) = %#v, %v", service, err)
+	}
+}
+
 type audioAssetFixture struct {
 	ctx        context.Context
 	repository *memoryAudioAssetRepository

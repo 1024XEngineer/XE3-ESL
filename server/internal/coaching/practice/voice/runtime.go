@@ -86,7 +86,6 @@ func NewRuntimeApplications(
 	}
 	retryPracticeApplication, err := practice.NewRetryTurnApplication(
 		configuration.Repository,
-		"speakup.user",
 	)
 	if err != nil {
 		return nil, nil, err
