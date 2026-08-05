@@ -536,7 +536,7 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 			Runtime: scoring.IELTSSpeakingShadowReadState{
 				ModuleStatus: scoring.IELTSSpeakingShadowRuntimeFailed,
 				Failure: &scoring.IELTSSpeakingShadowFailure{
-					Code:      "authentication",
+					Code:      "provider_timeout",
 					Retryable: true,
 				},
 			},
@@ -545,8 +545,8 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 	if err != nil ||
 		ieltsResource.StableFailure == nil ||
 		ieltsResource.StableFailure.ReasonCode !=
-			ReasonInternalNonRetryable ||
-		ieltsResource.StableFailure.Retryable {
+			ReasonInternalRetryable ||
+		!ieltsResource.StableFailure.Retryable {
 		t.Fatalf(
 			"IELTS failed report resource = %#v, %v",
 			ieltsResource,

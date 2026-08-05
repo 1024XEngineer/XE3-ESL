@@ -332,6 +332,64 @@ func TestPostgresIELTSSpeakingStaleFenceCannotComplete(t *testing.T) {
 	}
 }
 
+func TestPostgresIELTSSpeakingFailureExhaustionDoesNotPublishReport(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	configuration.MaxAttempts = 1
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	status, err := repository.FailIELTSSpeakingShadow(
+		context.Background(),
+		claim,
+		scoring.IELTSSpeakingShadowFailure{
+			Code:      "provider_timeout",
+			Retryable: true,
+		},
+		configuration,
+	)
+	if err != nil || status != scoring.IELTSSpeakingShadowRuntimeFailed {
+		t.Fatalf("FailIELTSSpeakingShadow = %q, %v", status, err)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		context.Background(),
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil {
+		t.Fatalf("failed IELTS report state: %v", err)
+	}
+	if state.Evaluation.Revision.Status != evaluationcore.StatusFailed ||
+		state.Runtime.ModuleStatus !=
+			scoring.IELTSSpeakingShadowRuntimeFailed ||
+		state.Runtime.Result != nil ||
+		state.Runtime.Failure == nil ||
+		state.Runtime.Failure.Code != "provider_timeout" ||
+		state.Snapshot != nil {
+		t.Fatalf("failed IELTS report state = %#v", state)
+	}
+	var resultCount int
+	var reportCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*)
+			 FROM evaluation_ielts_speaking_scene_results
+			 WHERE evaluation_revision_id = $1),
+			(SELECT count(*)
+			 FROM evaluation_formal_reports
+			 WHERE evaluation_revision_id = $1)
+	`, value.Revision.ID).Scan(&resultCount, &reportCount); err != nil {
+		t.Fatalf("count failed IELTS artifacts: %v", err)
+	}
+	if resultCount != 0 || reportCount != 0 {
+		t.Fatalf(
+			"failed IELTS artifacts results=%d reports=%d",
+			resultCount,
+			reportCount,
+		)
+	}
+}
+
 func TestIELTSSpeakingShadowRuntimeMigrationRoundTrip(t *testing.T) {
 	pool := evaluationDatabase(t)
 	ctx := context.Background()
