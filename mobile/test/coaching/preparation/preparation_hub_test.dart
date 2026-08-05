@@ -201,10 +201,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('ielts-source-evergreen')));
-    await tester.pumpAndSettle();
-    expect(find.text('共 0 道专项题'), findsOneWidget);
-    expect(find.text('没有找到符合条件的题目'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-source-evergreen')), findsNothing);
   });
 
   testWidgets('keeps IELTS browser filters when returning to the catalog', (
