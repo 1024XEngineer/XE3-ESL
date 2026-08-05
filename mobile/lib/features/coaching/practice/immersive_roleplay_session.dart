@@ -6,7 +6,6 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
 typedef AvatarControllerFactory = AvatarController Function();
@@ -20,7 +19,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   const ImmersiveRoleplaySession({
     required this.practiceController,
     required this.avatarControllerFactory,
-    this.interviewReportController,
+    this.onOpenInterviewReport,
     this.speechFeedbackController,
     this.onExitRequested,
     this.onContinueWithAgent,
@@ -29,7 +28,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
 
   final PracticeController practiceController;
   final AvatarControllerFactory avatarControllerFactory;
-  final InterviewReportController? interviewReportController;
+  final OpenInterviewPracticeReport? onOpenInterviewReport;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
   final Future<bool> Function()? onContinueWithAgent;
@@ -570,7 +569,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
           widget.practiceController.currentQuestion?.speechPath == null
           ? null
           : _replayQuestion,
-      interviewReportController: widget.interviewReportController,
+      onOpenInterviewReport: widget.onOpenInterviewReport,
       speechFeedbackController: widget.speechFeedbackController,
       replayLoading: _replayLoading,
       replayPlaying: _isAvatarSpeaking,

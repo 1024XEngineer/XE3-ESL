@@ -17,6 +17,7 @@ import 'package:speakup/features/coaching/preparation/practice_plan_handoff_cont
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
@@ -29,6 +30,7 @@ import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -306,6 +308,29 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     super.dispose();
   }
 
+  Future<CompletedPracticeRouteResult?> _openInterviewReport(
+    InterviewPracticeCompletion completion,
+  ) {
+    final navigator = _navigatorKey.currentState;
+    final reportController = widget.interviewReportController;
+    if (navigator == null || reportController == null) {
+      throw StateError('Interview report route is not configured.');
+    }
+    return navigator.push<CompletedPracticeRouteResult>(
+      MaterialPageRoute<CompletedPracticeRouteResult>(
+        builder: (_) => InterviewReportPage(
+          practiceSessionId: completion.practiceSessionId,
+          controller: reportController,
+          title: completion.title,
+          speechFeedbackController: widget.speechFeedbackController,
+          speechFeedbackSourceKeys: completion.speechFeedbackSourceKeys,
+          onContinueWithAgent:
+              widget.preparationLaunchController?.completeAndContinueWithAgent,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Navigator(
@@ -404,7 +429,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         return ImmersiveRoleplaySession(
           practiceController: _practiceController,
           avatarControllerFactory: factory,
-          interviewReportController: widget.interviewReportController,
+          onOpenInterviewReport: widget.interviewReportController == null
+              ? null
+              : _openInterviewReport,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
           onContinueWithAgent: launchController?.completeAndContinueWithAgent,
@@ -413,7 +440,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       return ImmersiveRoleplayPage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
-        interviewReportController: widget.interviewReportController,
+        onOpenInterviewReport: widget.interviewReportController == null
+            ? null
+            : _openInterviewReport,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
         onContinueWithAgent: launchController?.completeAndContinueWithAgent,
@@ -423,7 +452,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       previewMode: widget.allowFakePreview,
       practiceController: _practiceController,
       preparationController: widget.preparationController,
-      interviewReportController: widget.interviewReportController,
+      onOpenInterviewReport: widget.interviewReportController == null
+          ? null
+          : _openInterviewReport,
       ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,

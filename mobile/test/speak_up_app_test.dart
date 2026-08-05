@@ -12,7 +12,11 @@ import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/review/interview_report.dart';
+import 'package:speakup/features/coaching/review/interview_report_client.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
@@ -766,6 +770,40 @@ void main() {
     );
   });
 
+  testWidgets('opens an interview report from the App route boundary', (
+    tester,
+  ) async {
+    final reportController = InterviewReportController(
+      client: _PendingInterviewReportClient(),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(reportController.dispose);
+    await tester.pumpWidget(
+      SpeakUpApp.preview(interviewReportController: reportController),
+    );
+    final shellContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(shellContext).pushNamed(AppRoutes.practice);
+    await tester.pumpAndSettle();
+
+    final practicePage = tester.widget<PracticePage>(find.byType(PracticePage));
+    unawaited(
+      practicePage.onOpenInterviewReport!(
+        const InterviewPracticeCompletion(
+          practiceSessionId: 'practice-session-report-route',
+          title: '模拟面试 · 复盘',
+          speechFeedbackSourceKeys: <String>[],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('interview-report-page')), findsOneWidget);
+    expect(find.text('模拟面试 · 复盘'), findsOneWidget);
+    expect(reportController.practiceSessionId, 'practice-session-report-route');
+  });
+
   testWidgets('keeps the named conversation route escapable on every tab', (
     tester,
   ) async {
@@ -958,6 +996,17 @@ const _primaryTabKeys = [
 Future<void> _openAgentTextInput(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('agent-show-text-composer')));
   await tester.pump();
+}
+
+final class _PendingInterviewReportClient implements InterviewReportClient {
+  final _pending = Completer<InterviewReportEnvelope>();
+
+  @override
+  Future<InterviewReportEnvelope> getReport(String practiceSessionId) =>
+      _pending.future;
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 Future<void> _tapPrimaryDestination(

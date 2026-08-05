@@ -10,10 +10,8 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
-import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
@@ -34,7 +32,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
-    this.interviewReportController,
+    this.onOpenInterviewReport,
     this.speechFeedbackController,
     this.replayLoading = false,
     this.replayPlaying = false,
@@ -50,7 +48,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final ImmersiveAsyncAction? onBeforeSubmitText;
   final ImmersiveAsyncAction? onReplayQuestion;
-  final InterviewReportController? interviewReportController;
+  final OpenInterviewPracticeReport? onOpenInterviewReport;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
   final bool replayPlaying;
@@ -310,7 +308,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   void _scheduleInterviewReportIfNeeded() {
     final controller = widget.practiceController;
     final sessionId = controller.practiceSessionId;
-    if (widget.interviewReportController == null ||
+    if (widget.onOpenInterviewReport == null ||
         sessionId == null ||
         controller.recordingState != PracticeRecordingState.completed ||
         !isInterviewPracticeScene(
@@ -340,10 +338,10 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   }
 
   Future<void> _openInterviewReport() async {
-    final reportController = widget.interviewReportController;
+    final openReport = widget.onOpenInterviewReport;
     final practiceController = widget.practiceController;
     final sessionId = practiceController.practiceSessionId;
-    if (reportController == null ||
+    if (openReport == null ||
         sessionId == null ||
         practiceController.recordingState != PracticeRecordingState.completed ||
         _interviewReportRouteActive ||
@@ -355,17 +353,12 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     }
     _interviewReportRouteActive = true;
     try {
-      final result = await Navigator.of(context).push<Object?>(
-        MaterialPageRoute<Object?>(
-          builder: (_) => InterviewReportPage(
-            practiceSessionId: sessionId,
-            controller: reportController,
-            title: '${widget.practiceController.scene?.name ?? '面试'} · 复盘',
-            speechFeedbackController: widget.speechFeedbackController,
-            speechFeedbackSourceKeys: List<String>.unmodifiable(
-              _feedbackSources.keys,
-            ),
-            onContinueWithAgent: widget.onContinueWithAgent,
+      final result = await openReport(
+        InterviewPracticeCompletion(
+          practiceSessionId: sessionId,
+          title: '${widget.practiceController.scene?.name ?? '面试'} · 复盘',
+          speechFeedbackSourceKeys: List<String>.unmodifiable(
+            _feedbackSources.keys,
           ),
         ),
       );

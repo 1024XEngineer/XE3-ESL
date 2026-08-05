@@ -11,9 +11,6 @@ import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/features/coaching/review/interview_report.dart';
-import 'package:speakup/features/coaching/review/interview_report_client.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -510,7 +507,7 @@ void main() {
     expect(find.text('查看报告'), findsOneWidget);
   });
 
-  testWidgets('opens report generation after the final interview turn', (
+  testWidgets('hands the completed interview to the report route', (
     tester,
   ) async {
     final controller = await _roleplayController(
@@ -527,29 +524,23 @@ void main() {
     }
     expect(controller.recordingState, PracticeRecordingState.completed);
 
-    final reportController = InterviewReportController(
-      client: _PendingInterviewReportClient(),
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    addTearDown(reportController.dispose);
+    InterviewPracticeCompletion? completion;
     await tester.pumpWidget(
       MaterialApp(
         home: ImmersiveRoleplayPage(
           practiceController: controller,
-          interviewReportController: reportController,
+          onOpenInterviewReport: (value) async {
+            completion = value;
+            return null;
+          },
         ),
       ),
     );
     await tester.pump();
     await tester.pump();
 
-    expect(find.byKey(const Key('interview-report-page')), findsOneWidget);
-    expect(
-      find.byKey(const Key('interview-report-generating')),
-      findsOneWidget,
-    );
-    expect(reportController.practiceSessionId, controller.practiceSessionId);
+    expect(completion?.practiceSessionId, controller.practiceSessionId);
+    expect(completion?.title, '${controller.scene?.name} · 复盘');
   });
 
   testWidgets('prefers the injected avatar replay action over audio playback', (
@@ -1158,17 +1149,6 @@ final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
 
   @override
   Future<SpeechFeedback> getFeedback(String statusUrl) => _pending.future;
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
-final class _PendingInterviewReportClient implements InterviewReportClient {
-  final _pending = Completer<InterviewReportEnvelope>();
-
-  @override
-  Future<InterviewReportEnvelope> getReport(String practiceSessionId) =>
-      _pending.future;
 
   @override
   Future<void> clearAccountState() async {}
