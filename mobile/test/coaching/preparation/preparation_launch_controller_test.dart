@@ -509,6 +509,8 @@ void main() {
       expect(harness.launchController.stage, PreparationLaunchStage.voice);
       expect(harness.launchController.canRetry, isTrue);
       expect(harness.launchController.hasResumablePractice, isTrue);
+      expect(harness.launchController.isSelectionLocked, isTrue);
+      expect(harness.launchController.isNavigationLocked, isFalse);
 
       expect(await harness.launchController.retry(), isTrue);
 
@@ -533,10 +535,59 @@ void main() {
       expect(harness.launchClient.sessionKeys.toSet(), hasLength(1));
     },
   );
+
+  test(
+    'safely parked pre-commit failure can return and discard its retry',
+    () async {
+      final harness = await _createWorkspaceLaunchHarness(
+        failFirstProfile: true,
+      );
+      addTearDown(harness.dispose);
+
+      expect(await harness.launchController.start(_selection), isFalse);
+
+      expect(harness.launchController.canRetry, isTrue);
+      expect(harness.launchController.isSelectionLocked, isTrue);
+      expect(harness.launchController.isNavigationLocked, isFalse);
+      expect(harness.conversationController.threadId, harness.homeThreadId);
+
+      expect(
+        harness.launchController.prepareFailedAttemptForNavigation(),
+        isTrue,
+      );
+
+      expect(harness.launchController.canRetry, isFalse);
+      expect(harness.launchController.isSelectionLocked, isFalse);
+      expect(harness.launchController.isNavigationLocked, isFalse);
+    },
+  );
+
+  test(
+    'leaving a parked voice failure keeps its committed practice resumable',
+    () async {
+      final harness = await _createWorkspaceLaunchHarness(failFirstVoice: true);
+      addTearDown(harness.dispose);
+
+      expect(await harness.launchController.start(_selection), isFalse);
+      expect(harness.launchController.hasResumablePractice, isTrue);
+      expect(harness.launchController.isNavigationLocked, isFalse);
+
+      expect(
+        harness.launchController.prepareFailedAttemptForNavigation(),
+        isTrue,
+      );
+
+      expect(harness.launchController.canRetry, isFalse);
+      expect(harness.launchController.isSelectionLocked, isFalse);
+      expect(harness.launchController.hasResumablePractice, isTrue);
+      expect(harness.conversationController.threadId, harness.homeThreadId);
+    },
+  );
 }
 
 Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
   bool failFirstVoice = false,
+  bool failFirstProfile = false,
 }) async {
   final agentClient = GoalAwareAgentClient();
   final practiceClient = _WorkspacePracticeClient();
@@ -557,7 +608,9 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
     recordStore: recordStore,
   );
   await workspaceController.activateAccount(_userId);
-  final launchClient = _WorkspaceLaunchClient();
+  final launchClient = _WorkspaceLaunchClient(
+    failFirstProfile: failFirstProfile,
+  );
   final goalKeys = <String>[];
   final voiceKeys = <String>[];
   var voiceCalls = 0;
@@ -665,6 +718,9 @@ final class _WorkspaceLaunchHarness {
 }
 
 final class _WorkspaceLaunchClient implements PreparationLaunchClient {
+  _WorkspaceLaunchClient({this.failFirstProfile = false});
+
+  final bool failFirstProfile;
   final profileKeys = <String>[];
   final snapshotKeys = <String>[];
   final planKeys = <String>[];
@@ -676,6 +732,13 @@ final class _WorkspaceLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     profileKeys.add(idempotencyKey);
+    if (failFirstProfile && profileKeys.length == 1) {
+      throw const PreparationLaunchException(
+        kind: PreparationLaunchFailureKind.server,
+        stage: PreparationLaunchStage.profile,
+        retryable: true,
+      );
+    }
     expect(input.backgroundSummary, _background);
     return _profile;
   }

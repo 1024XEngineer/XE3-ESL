@@ -56,6 +56,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   int _epoch = 0;
   bool _starting = false;
   bool _commitMayHaveSucceeded = false;
+  bool _failedAttemptSafelyParked = false;
   bool _disposed = false;
 
   String get backgroundSummary => _backgroundSummary;
@@ -69,6 +70,8 @@ final class PreparationLaunchController extends ChangeNotifier {
           (_bootstrap != null ||
               _commitMayHaveSucceeded ||
               (workspaceController != null && _retry!.threadId != null)));
+  bool get isNavigationLocked =>
+      isStarting || (isSelectionLocked && !_failedAttemptSafelyParked);
   bool get canRetry => _retry != null && !isStarting;
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
@@ -223,6 +226,22 @@ final class PreparationLaunchController extends ChangeNotifier {
     return _run(attempt);
   }
 
+  bool prepareFailedAttemptForNavigation() {
+    if (_disposed || isNavigationLocked) {
+      return false;
+    }
+    if (_retry == null) {
+      return true;
+    }
+    final retryCanBeReplaced =
+        !_commitMayHaveSucceeded &&
+        (_bootstrap == null || hasResumablePractice);
+    if (retryCanBeReplaced) {
+      _invalidateAttempt();
+    }
+    return true;
+  }
+
   Future<bool> _run(_LaunchAttempt attempt) async {
     final operationEpoch = _epoch;
     final workspace = workspaceController;
@@ -230,6 +249,7 @@ final class PreparationLaunchController extends ChangeNotifier {
     final preserveCommittedState =
         identical(_retry, attempt) && _hasCommittedOrAmbiguousCreate;
     _starting = true;
+    _failedAttemptSafelyParked = false;
     _errorMessage = null;
     if (!preserveCommittedState) {
       _bootstrap = null;
@@ -392,16 +412,21 @@ final class PreparationLaunchController extends ChangeNotifier {
       }
       return false;
     } finally {
+      var safelyParked = workspace == null;
       if (!launchSucceeded &&
           _isCurrent(operationEpoch) &&
           workspace != null &&
           workspace.currentLease?.operationId == attempt.workspaceOperationId) {
         final parked = await workspace.parkCurrentPractice();
+        safelyParked = parked;
         if (!parked && _isCurrent(operationEpoch)) {
           _errorMessage ??= workspace.errorMessage ?? '练习准备已暂停，但暂时无法返回首页。';
         }
+      } else if (!launchSucceeded && workspace != null) {
+        safelyParked = true;
       }
       if (_isCurrent(operationEpoch)) {
+        _failedAttemptSafelyParked = !launchSucceeded && safelyParked;
         _starting = false;
         notifyListeners();
       }
@@ -416,6 +441,7 @@ final class PreparationLaunchController extends ChangeNotifier {
     _bootstrap = null;
     _retry = null;
     _commitMayHaveSucceeded = false;
+    _failedAttemptSafelyParked = false;
     _starting = false;
     await Future.wait<void>([
       client.clearAccountState(),
@@ -434,6 +460,7 @@ final class PreparationLaunchController extends ChangeNotifier {
     _bootstrap = null;
     _retry = null;
     _commitMayHaveSucceeded = false;
+    _failedAttemptSafelyParked = false;
     _starting = false;
     notifyListeners();
   }
