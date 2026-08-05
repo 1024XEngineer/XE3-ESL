@@ -182,7 +182,7 @@ func TestParseWorkerFallsBackToOCRForTextlessPDFOnly(t *testing.T) {
 	}
 	processed, err := worker.ProcessNext(context.Background())
 	if err != nil || !processed || !parser.ocrCalled || files.signedURLCalls != 1 ||
-		repository.completedRevision.ParserVersion != "aliyun-recognize-pdf/v1+fields/v1" {
+		repository.completedRevision.ParserVersion != "paddleocr-vl-1.6/v1+fields/v1" {
 		t.Fatalf(
 			"processed=%v OCR=%v signed=%d revision=%#v error=%v",
 			processed,
@@ -351,7 +351,7 @@ func (parser *ocrFallbackParserFake) ParseURL(
 func (*ocrFallbackParserFake) Version() string { return "pdf-native-text/v1+fields/v1" }
 
 func (*ocrFallbackParserFake) OCRVersion() string {
-	return "aliyun-recognize-pdf/v1+fields/v1"
+	return "paddleocr-vl-1.6/v1+fields/v1"
 }
 
 // codedParseError 提供稳定 Worker 失败码。

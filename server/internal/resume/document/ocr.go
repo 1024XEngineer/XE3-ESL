@@ -12,7 +12,7 @@ import (
 	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/resume/ocr"
 )
 
-const ocrPDFParserVersion = "aliyun-recognize-pdf/v1"
+const ocrPDFParserVersion = "paddleocr-vl-1.6/v1"
 
 // URLParser parses a remotely readable private document URL.
 type URLParser interface {

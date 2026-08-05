@@ -1,4 +1,4 @@
-package aliyunocr
+package paddleocr
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 
 func TestLiveRecognizePDF(t *testing.T) {
 	if os.Getenv("RESUME_OCR_LIVE_TEST") != "1" {
-		t.Skip("set RESUME_OCR_LIVE_TEST=1 to run the paid RecognizePdf test")
+		t.Skip("set RESUME_OCR_LIVE_TEST=1 to run the PaddleOCR hosted API test")
 	}
 	path := os.Getenv("RESUME_OCR_LIVE_TEST_PDF")
 	if path == "" {
@@ -59,7 +59,7 @@ func TestLiveRecognizePDF(t *testing.T) {
 		storageConfiguration.ResumePrefix,
 		randomLiveID(t),
 	)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), ocrConfiguration.Timeout)
 	defer cancel()
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -82,13 +82,14 @@ func TestLiveRecognizePDF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign live OCR object: %v", err)
 	}
-	client, err := New(provider, Config{
-		Endpoint: ocrConfiguration.Endpoint,
-		Region:   ocrConfiguration.Region,
-		Timeout:  ocrConfiguration.Timeout,
+	client, err := New(Config{
+		AccessToken: ocrConfiguration.AccessToken,
+		BaseURL:     ocrConfiguration.BaseURL,
+		Model:       ocrConfiguration.Model,
+		Timeout:     ocrConfiguration.Timeout,
 	})
 	if err != nil {
-		t.Fatalf("create RecognizePdf client: %v", err)
+		t.Fatalf("create PaddleOCR client: %v", err)
 	}
 	parser, err := document.NewOCRPDFParser(client)
 	if err != nil {
@@ -96,12 +97,16 @@ func TestLiveRecognizePDF(t *testing.T) {
 	}
 	result, err := parser.ParseURL(ctx, signed.URL)
 	if err != nil {
-		t.Fatalf("RecognizePdf live call: %v", err)
+		t.Fatalf("PaddleOCR live call: %v", err)
 	}
 	if result.Markdown == "" || len(result.Pages) == 0 {
-		t.Fatal("RecognizePdf returned no usable text")
+		t.Fatal("PaddleOCR returned no usable text")
 	}
-	t.Logf("recognized_pages=%d recognized_characters=%d", len(result.Pages), len([]rune(result.Markdown)))
+	t.Logf(
+		"recognized_pages=%d recognized_characters=%d",
+		len(result.Pages),
+		len([]rune(result.Markdown)),
+	)
 }
 
 func randomLiveID(t *testing.T) string {

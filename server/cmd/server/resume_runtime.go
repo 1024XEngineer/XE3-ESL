@@ -11,7 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/aliyunocr"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/paddleocr"
 	resumeapp "github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
 	resumedocument "github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 	resumefieldextractor "github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
@@ -57,10 +57,11 @@ func buildResumeComposition(
 	}
 	var resumePipeline resumeapp.Parser
 	if ocrConfig.Enabled {
-		ocrClient, clientErr := aliyunocr.New(provider, aliyunocr.Config{
-			Endpoint: ocrConfig.Endpoint,
-			Region:   ocrConfig.Region,
-			Timeout:  ocrConfig.Timeout,
+		ocrClient, clientErr := paddleocr.New(paddleocr.Config{
+			AccessToken: ocrConfig.AccessToken,
+			BaseURL:     ocrConfig.BaseURL,
+			Model:       ocrConfig.Model,
+			Timeout:     ocrConfig.Timeout,
 		})
 		if clientErr != nil {
 			return nil, clientErr
