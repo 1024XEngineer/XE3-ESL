@@ -18,6 +18,8 @@ import (
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
+	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
@@ -60,13 +62,21 @@ func NewHandler(
 	if err != nil {
 		return nil, err
 	}
+	conversationGoals, err := goalagentconversation.New(goalService)
+	if err != nil {
+		return nil, err
+	}
+	contextGoals, err := goalagentcontext.New(goalService)
+	if err != nil {
+		return nil, err
+	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		return nil, err
 	}
 	conversationService, err := agentconversation.NewService(
 		conversationRepository,
-		goalService,
+		conversationGoals,
 	)
 	if err != nil {
 		return nil, err
@@ -77,7 +87,7 @@ func NewHandler(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		goalService,
+		contextGoals,
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		emptyMemorySearcher{},

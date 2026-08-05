@@ -8,7 +8,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	evaluationprofile "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/evaluationprofile"
 	contextmemorysource "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/memorysource"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -21,7 +20,6 @@ import (
 	agentimagehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/http"
 	imagepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/postgres"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	agentevaluationfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/evaluationfeedback"
 	agentvoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/http"
 	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
@@ -30,9 +28,13 @@ import (
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
+	evaluationagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcontext"
+	evaluationagentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentvoice"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
+	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
@@ -152,13 +154,21 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	conversationGoals, err := goalagentconversation.New(goalService)
+	if err != nil {
+		return nil, err
+	}
+	contextGoals, err := goalagentcontext.New(goalService)
+	if err != nil {
+		return nil, err
+	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		return nil, err
 	}
 	agentService, err := agentconversation.NewService(
 		conversationRepository,
-		goalService,
+		conversationGoals,
 	)
 	if err != nil {
 		return nil, err
@@ -172,7 +182,7 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	evaluationRepository := evaluationpostgres.NewPostgresRepository(database)
-	learningProfileReader, err := evaluationprofile.New(
+	learningProfileReader, err := evaluationagentcontext.NewLearningProfileReader(
 		evaluationRepository,
 	)
 	if err != nil {
@@ -247,7 +257,7 @@ func buildIdentityAgentComposition(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		goalService,
+		contextGoals,
 		learningProfileReader,
 		stableProfileReader,
 		contextMemorySearcher,
@@ -619,7 +629,7 @@ func buildAgentVoiceInputApplication(
 	}
 	feedbackPorts := make([]agentvoice.FeedbackPort, 0, 1)
 	if configuration.SpeechFeedbackCoordinator != nil {
-		feedback, feedbackErr := agentevaluationfeedback.New(
+		feedback, feedbackErr := evaluationagentvoice.NewFeedback(
 			configuration.SpeechFeedbackCoordinator,
 		)
 		if feedbackErr != nil {

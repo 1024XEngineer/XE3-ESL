@@ -1,4 +1,4 @@
-package evaluationprofile
+package agentcontext
 
 import (
 	"context"
@@ -6,15 +6,13 @@ import (
 	"testing"
 	"time"
 
-	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agentctx "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/learningprofile"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestReaderProjectsEvaluationLearningProfileForAgentContext(
-	t *testing.T,
-) {
+func TestLearningProfileReaderProjectsForAgentContext(t *testing.T) {
 	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
 	source := &learningProfileSourceStub{
 		dimensions: []learningprofile.Dimension{{
@@ -38,11 +36,11 @@ func TestReaderProjectsEvaluationLearningProfileForAgentContext(
 			UpdatedAt:       now,
 		}},
 	}
-	reader, err := New(source)
+	reader, err := NewLearningProfileReader(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agentcontext.LearningProfileReadRequest{
+	request := agentctx.LearningProfileReadRequest{
 		Actor: requestcontext.Actor{
 			UserID:    "30000000-0000-4000-8000-000000000003",
 			SessionID: "50000000-0000-4000-8000-000000000005",
@@ -55,19 +53,19 @@ func TestReaderProjectsEvaluationLearningProfileForAgentContext(
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []agentcontext.LearningProfileDimension{{
+	want := []agentctx.LearningProfileDimension{{
 		Key:            "interview.structure",
 		Scale:          "PERCENTAGE_100",
 		EstimatedValue: 82,
 		Confidence:     0.8,
 		Trend:          "IMPROVING",
-		RecurringIssues: []agentcontext.LearningProfileIssue{{
+		RecurringIssues: []agentctx.LearningProfileIssue{{
 			Key:      "issue:structure",
 			Label:    "回答结构需要更清楚",
 			Count:    2,
 			LastSeen: now,
 		}},
-		EvaluationSources: []agentcontext.LearningProfileEvaluationSource{{
+		EvaluationSources: []agentctx.LearningProfileEvaluationSource{{
 			EvaluationID:         "10000000-0000-4000-8000-000000000001",
 			EvaluationRevisionID: "20000000-0000-4000-8000-000000000002",
 			CreatedAt:            now,

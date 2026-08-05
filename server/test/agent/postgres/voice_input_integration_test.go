@@ -260,7 +260,10 @@ SELECT
 	if err != nil {
 		t.Fatalf("new restarted Agent repository: %v", err)
 	}
-	restartedData, err := conversation.NewService(restartedRepository, goalService)
+	restartedData, err := conversation.NewService(
+		restartedRepository,
+		agentConversationGoals(t, goalService),
+	)
 	if err != nil {
 		t.Fatalf("new restarted Agent data service: %v", err)
 	}

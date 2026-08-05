@@ -722,7 +722,10 @@ WHERE goal_id = $1 AND owner_user_id = $2`,
 			if err != nil {
 				t.Fatalf("new observed Agent repository: %v", err)
 			}
-			observedService, err := conversation.NewService(repository, goalService)
+			observedService, err := conversation.NewService(
+				repository,
+				agentConversationGoals(t, goalService),
+			)
 			if err != nil {
 				t.Fatalf("new observed Agent service: %v", err)
 			}
@@ -1216,7 +1219,10 @@ func newAgentDataServices(
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := conversation.NewService(repository, goalService)
+	service, err := conversation.NewService(
+		repository,
+		agentConversationGoals(t, goalService),
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
