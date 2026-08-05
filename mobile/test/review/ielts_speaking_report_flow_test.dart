@@ -144,8 +144,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('个人能力'), findsOneWidget);
-    expect(find.text('IELTS Speaking Profile'), findsOneWidget);
-    expect(find.text('基于最近一次完整模考的四项练习估分'), findsOneWidget);
+    expect(find.text('最近一次 IELTS 口语完整模考'), findsOneWidget);
     expect(find.byKey(const Key('review-ability-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-ability-empty')), findsNothing);
     expect(find.text('流利与连贯'), findsOneWidget);
