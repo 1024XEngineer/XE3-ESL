@@ -94,20 +94,24 @@ final class ResumeContent {
     'awards': awards,
   };
 
-  /// 复制内容并替换当前界面允许人工编辑的字段。
+  /// 复制内容并替换人工编辑后的结构化字段。
   ResumeContent copyWith({
     String? targetPosition,
     String? professionalSummary,
+    List<Map<String, Object?>>? workExperiences,
+    List<Map<String, Object?>>? projectExperiences,
+    List<Map<String, Object?>>? educationExperiences,
     List<String>? skills,
+    List<String>? awards,
   }) {
     return ResumeContent(
       targetPosition: targetPosition ?? this.targetPosition,
       professionalSummary: professionalSummary ?? this.professionalSummary,
-      workExperiences: workExperiences,
-      projectExperiences: projectExperiences,
-      educationExperiences: educationExperiences,
+      workExperiences: workExperiences ?? this.workExperiences,
+      projectExperiences: projectExperiences ?? this.projectExperiences,
+      educationExperiences: educationExperiences ?? this.educationExperiences,
       skills: skills ?? this.skills,
-      awards: awards,
+      awards: awards ?? this.awards,
     );
   }
 }
