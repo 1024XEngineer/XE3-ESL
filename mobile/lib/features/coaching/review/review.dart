@@ -42,7 +42,6 @@ class ReviewPage extends StatefulWidget {
 }
 
 class _ReviewPageState extends State<ReviewPage> {
-  bool _historyExpanded = false;
   String? _abilitySessionId;
 
   @override
@@ -205,27 +204,28 @@ class _ReviewPageState extends State<ReviewPage> {
     }());
   }
 
+  void _openHistory() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => _ReviewHistoryPage(
+            historyController: widget.historyController,
+            ieltsSpeakingReportIndexController:
+                widget.ieltsSpeakingReportIndexController,
+            practiceAvailable: widget.practiceAvailable,
+            previewMode: widget.previewMode,
+            onRefresh: _refresh,
+            onOpenDetail: _openDetail,
+            onOpenIeltsReport: _openIeltsReport,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final controller = widget.historyController;
-    final items = controller?.items ?? const <ReviewHistoryItem>[];
     final ieltsController = widget.ieltsSpeakingReportIndexController;
-    final reportItems =
-        ieltsController?.items ?? const <IeltsSpeakingReportIndexItem>[];
-    final interviewItems = reportItems
-        .where((item) => item.reportKind == IeltsSpeakingReportKind.interview)
-        .toList(growable: false);
-    final ieltsItems = reportItems
-        .where((item) => item.reportKind == IeltsSpeakingReportKind.fullMock)
-        .toList(growable: false);
-    final hasItems = items.isNotEmpty || reportItems.isNotEmpty;
-    final initialLoading =
-        !hasItems &&
-        ((controller?.isLoading ?? false) ||
-            (ieltsController?.isLoading ?? false));
-    final initialError = !hasItems
-        ? ieltsController?.errorMessage ?? controller?.errorMessage
-        : null;
     final abilityReport = _abilityReport();
     return Scaffold(
       key: const Key('review-page'),
@@ -247,17 +247,15 @@ class _ReviewPageState extends State<ReviewPage> {
         child: RefreshIndicator(
           onRefresh: _refresh,
           child: CustomScrollView(
-            key: const Key('review-history-list'),
+            key: const Key('review-overview-scroll'),
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
-                sliver: SliverToBoxAdapter(
-                  child: _ReviewHeader(previewMode: widget.previewMode),
-                ),
+                padding: const EdgeInsets.fromLTRB(8, 28, 8, 0),
+                sliver: SliverToBoxAdapter(child: const _ReviewHeader()),
               ),
               SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
                 sliver: SliverToBoxAdapter(
                   child: _AbilityOverview(
                     report: abilityReport,
@@ -270,85 +268,27 @@ class _ReviewPageState extends State<ReviewPage> {
                 ),
               ),
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                padding: const EdgeInsets.fromLTRB(8, 16, 8, 20),
                 sliver: SliverToBoxAdapter(
                   child: Semantics(
-                    expanded: _historyExpanded,
-                    child: OutlinedButton.icon(
-                      key: const Key('review-history-toggle'),
-                      onPressed: () =>
-                          setState(() => _historyExpanded = !_historyExpanded),
-                      icon: Icon(
-                        _historyExpanded
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
+                    button: true,
+                    label: '进入历史报告',
+                    child: OutlinedButton(
+                      key: const Key('review-history-entry'),
+                      onPressed: _openHistory,
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('历史报告'),
+                          SizedBox(width: 8),
+                          Icon(Icons.chevron_right_rounded),
+                        ],
                       ),
-                      label: const Text('历史报告'),
                     ),
                   ),
                 ),
               ),
-              if (_historyExpanded && initialLoading)
-                const SliverPadding(
-                  padding: EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverToBoxAdapter(child: _HistoryLoading()),
-                )
-              else if (_historyExpanded && initialError != null)
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverToBoxAdapter(
-                    child: _HistoryFailure(
-                      message: initialError,
-                      onRetry: _refresh,
-                    ),
-                  ),
-                )
-              else if (_historyExpanded && !hasItems)
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverToBoxAdapter(
-                    child: _EmptyReview(
-                      practiceAvailable: widget.practiceAvailable,
-                      previewMode: widget.previewMode,
-                    ),
-                  ),
-                )
-              else if (_historyExpanded) ...[
-                if (interviewItems.isNotEmpty)
-                  _IeltsReportSection(
-                    title: '面试练习报告',
-                    items: interviewItems,
-                    onOpen: _openIeltsReport,
-                  ),
-                if (ieltsItems.isNotEmpty)
-                  _IeltsReportSection(
-                    title: 'IELTS 模考报告',
-                    items: ieltsItems,
-                    onOpen: _openIeltsReport,
-                  ),
-                if (items.isNotEmpty)
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate((context, index) {
-                        if (index.isOdd) return const SizedBox(height: 10);
-                        final item = items[index ~/ 2];
-                        return _ReviewListCard(
-                          item: item,
-                          primary: index == 0,
-                          onTap: () => _openDetail(item),
-                        );
-                      }, childCount: items.length * 2 - 1),
-                    ),
-                  ),
-              ],
-              if (_historyExpanded && items.isNotEmpty && controller != null)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: _HistoryFooter(controller: controller),
-                  ),
-                ),
               const SliverToBoxAdapter(child: SizedBox(height: 140)),
             ],
           ),
@@ -381,6 +321,154 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 }
 
+class _ReviewHistoryPage extends StatelessWidget {
+  const _ReviewHistoryPage({
+    required this.historyController,
+    required this.ieltsSpeakingReportIndexController,
+    required this.practiceAvailable,
+    required this.previewMode,
+    required this.onRefresh,
+    required this.onOpenDetail,
+    required this.onOpenIeltsReport,
+  });
+
+  final ReviewHistoryController? historyController;
+  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
+  final bool practiceAvailable;
+  final bool previewMode;
+  final Future<void> Function() onRefresh;
+  final ValueChanged<ReviewHistoryItem> onOpenDetail;
+  final ValueChanged<IeltsSpeakingReportIndexItem> onOpenIeltsReport;
+
+  @override
+  Widget build(BuildContext context) {
+    final listenables = <Listenable>[
+      ?historyController,
+      ?ieltsSpeakingReportIndexController,
+    ];
+    return AnimatedBuilder(
+      animation: Listenable.merge(listenables),
+      builder: (context, _) {
+        final items = historyController?.items ?? const <ReviewHistoryItem>[];
+        final reportItems =
+            ieltsSpeakingReportIndexController?.items ??
+            const <IeltsSpeakingReportIndexItem>[];
+        final interviewItems = reportItems
+            .where(
+              (item) => item.reportKind == IeltsSpeakingReportKind.interview,
+            )
+            .toList(growable: false);
+        final ieltsItems = reportItems
+            .where(
+              (item) => item.reportKind == IeltsSpeakingReportKind.fullMock,
+            )
+            .toList(growable: false);
+        final hasItems = items.isNotEmpty || reportItems.isNotEmpty;
+        final initialLoading =
+            !hasItems &&
+            ((historyController?.isLoading ?? false) ||
+                (ieltsSpeakingReportIndexController?.isLoading ?? false));
+        final initialError = !hasItems
+            ? ieltsSpeakingReportIndexController?.errorMessage ??
+                  historyController?.errorMessage
+            : null;
+        return Scaffold(
+          key: const Key('review-history-page'),
+          appBar: AppBar(
+            leading: IconButton(
+              key: const Key('review-history-back'),
+              tooltip: '返回',
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
+            title: const Text('历史报告'),
+          ),
+          body: SafeArea(
+            bottom: false,
+            child: RefreshIndicator(
+              onRefresh: onRefresh,
+              child: CustomScrollView(
+                key: const Key('review-history-list'),
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                  if (initialLoading)
+                    const SliverPadding(
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverToBoxAdapter(child: _HistoryLoading()),
+                    )
+                  else if (initialError != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverToBoxAdapter(
+                        child: _HistoryFailure(
+                          message: initialError,
+                          onRetry: onRefresh,
+                        ),
+                      ),
+                    )
+                  else if (!hasItems)
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverToBoxAdapter(
+                        child: _EmptyReview(
+                          practiceAvailable: practiceAvailable,
+                          previewMode: previewMode,
+                        ),
+                      ),
+                    )
+                  else ...[
+                    if (interviewItems.isNotEmpty)
+                      _IeltsReportSection(
+                        title: '面试练习报告',
+                        items: interviewItems,
+                        onOpen: onOpenIeltsReport,
+                      ),
+                    if (ieltsItems.isNotEmpty)
+                      _IeltsReportSection(
+                        title: 'IELTS 模考报告',
+                        items: ieltsItems,
+                        onOpen: onOpenIeltsReport,
+                      ),
+                    if (items.isNotEmpty)
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate((
+                            context,
+                            index,
+                          ) {
+                            if (index.isOdd) {
+                              return const SizedBox(height: 10);
+                            }
+                            final item = items[index ~/ 2];
+                            return _ReviewListCard(
+                              item: item,
+                              primary: index == 0,
+                              onTap: () => onOpenDetail(item),
+                            );
+                          }, childCount: items.length * 2 - 1),
+                        ),
+                      ),
+                  ],
+                  if (items.isNotEmpty && historyController != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                      sliver: SliverToBoxAdapter(
+                        child: _HistoryFooter(controller: historyController!),
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 48)),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _AbilityOverview extends StatelessWidget {
   const _AbilityOverview({required this.report, required this.loading});
 
@@ -392,38 +480,26 @@ class _AbilityOverview extends StatelessWidget {
     if (report case final value?) {
       return IeltsSpeakingAbilityProfile(
         key: const Key('review-ability-card'),
-        criteria: value.criteria,
+        report: value,
         loading: false,
       );
     }
     return IeltsSpeakingAbilityProfile(
       key: const Key('review-ability-card'),
-      criteria: null,
+      report: null,
       loading: loading,
     );
   }
 }
 
 class _ReviewHeader extends StatelessWidget {
-  const _ReviewHeader({required this.previewMode});
-
-  final bool previewMode;
+  const _ReviewHeader();
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('复盘', style: SpeakUpDesign.pageTitle),
-          const SizedBox(height: 8),
-          Text(
-            previewMode ? '本地预览；结果不会写入正式服务。' : '查看练习结果，明确下一次要改进的重点。',
-            style: SpeakUpDesign.body,
-          ),
-        ],
-      ),
+      child: Text('复盘', style: SpeakUpDesign.pageTitle),
     );
   }
 }

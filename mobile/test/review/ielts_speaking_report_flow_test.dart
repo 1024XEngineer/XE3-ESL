@@ -144,13 +144,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('个人能力'), findsOneWidget);
-    expect(find.text('最近一次 IELTS 口语完整模考'), findsOneWidget);
     expect(find.byKey(const Key('review-ability-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-ability-empty')), findsNothing);
+    expect(find.byKey(const Key('review-ability-summary')), findsOneWidget);
+    expect(find.text('综合得分'), findsOneWidget);
+    expect(find.text('6.5'), findsOneWidget);
+    expect(find.text('四项等权平均后按 0.5 分取整。'), findsOneWidget);
     expect(find.text('流利与连贯'), findsOneWidget);
     expect(find.text('词汇'), findsOneWidget);
     expect(find.text('语法'), findsOneWidget);
     expect(find.text('发音'), findsOneWidget);
+    expect(find.text('7.0'), findsOneWidget);
+    expect(find.text('6.0'), findsNWidgets(3));
     expect(
       find.byKey(
         const Key('ielts-report-history-select-session_ielts_report_001'),
@@ -172,7 +177,8 @@ void main() {
       findsOneWidget,
     );
 
-    await _toggleHistory(tester);
+    await tester.tap(find.byKey(const Key('review-history-back')));
+    await tester.pumpAndSettle();
     expect(
       find.byKey(
         const Key('ielts-report-history-select-session_ielts_report_001'),
@@ -324,18 +330,19 @@ final class _IndexClient implements IeltsSpeakingReportIndexClient {
 }
 
 Future<void> _toggleHistory(WidgetTester tester) async {
-  final toggle = find.byKey(const Key('review-history-toggle'));
+  final entry = find.byKey(const Key('review-history-entry'));
   final scrollable = find
       .descendant(
-        of: find.byKey(const Key('review-history-list')),
+        of: find.byKey(const Key('review-overview-scroll')),
         matching: find.byType(Scrollable),
       )
       .first;
-  await tester.scrollUntilVisible(toggle, 200, scrollable: scrollable);
+  await tester.scrollUntilVisible(entry, 200, scrollable: scrollable);
   await tester.drag(scrollable, const Offset(0, -120));
   await tester.pumpAndSettle();
-  await tester.tap(toggle);
+  await tester.tap(entry);
   await tester.pumpAndSettle();
+  expect(find.byKey(const Key('review-history-page')), findsOneWidget);
 }
 
 Future<void> _scrollReviewTo(WidgetTester tester, Finder target) async {

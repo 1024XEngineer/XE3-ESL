@@ -469,12 +469,10 @@ void main() {
         find.byKey(const Key('review-history-initial-loading')),
         findsNothing,
       );
-      await tester.tap(find.byKey(const Key('review-history-toggle')));
+      await tester.tap(find.byKey(const Key('review-history-entry')));
       await tester.pump();
-      expect(
-        find.byKey(const Key('review-history-initial-loading')),
-        findsOneWidget,
-      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('review-history-page')), findsOneWidget);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
@@ -654,8 +652,9 @@ void main() {
       find.byKey(const Key('review-history-initial-loading')),
       findsNothing,
     );
-    await tester.tap(find.byKey(const Key('review-history-toggle')));
+    await tester.tap(find.byKey(const Key('review-history-entry')));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(
       find.byKey(const Key('review-history-initial-loading')),
       findsOneWidget,
@@ -1112,18 +1111,19 @@ void main() {
 }
 
 Future<void> _expandHistory(WidgetTester tester) async {
-  final toggle = find.byKey(const Key('review-history-toggle'));
+  final entry = find.byKey(const Key('review-history-entry'));
   final scrollable = find
       .descendant(
-        of: find.byKey(const Key('review-history-list')),
+        of: find.byKey(const Key('review-overview-scroll')),
         matching: find.byType(Scrollable),
       )
       .first;
-  await tester.scrollUntilVisible(toggle, 200, scrollable: scrollable);
+  await tester.scrollUntilVisible(entry, 200, scrollable: scrollable);
   await tester.drag(scrollable, const Offset(0, -120));
   await tester.pumpAndSettle();
-  await tester.tap(toggle);
+  await tester.tap(entry);
   await tester.pumpAndSettle();
+  expect(find.byKey(const Key('review-history-page')), findsOneWidget);
 }
 
 Future<void> _ensureHistoryVisible(WidgetTester tester, Finder target) async {
