@@ -22,6 +22,7 @@ const (
 	demoLearnerID           = "participant_learner_001"
 	demoPreparationProfile  = "profile_demo_001"
 	demoPreparationSnapshot = "preparation_snapshot_demo_001"
+	demoResumeID            = "50000000-0000-4000-8000-000000000001"
 	demoPracticePlan        = "plan_demo_001"
 	demoPracticeSession     = "session_demo_001"
 )
@@ -170,7 +171,8 @@ func (r *Runtime) createProfile() map[string]any {
 	return map[string]any{
 		"preparation_profile_id": demoPreparationProfile,
 		"user_id":                DemoUserID,
-		"resume_ref":             "resume_demo_backend_v1",
+		"resume_id":              demoResumeID,
+		"resume_revision":        int64(1),
 		"job_description_ref":    "jd_demo_backend_v1",
 		"background_summary":     "Backend engineer preparing for an English technical interview.",
 		"version":                1,
@@ -189,7 +191,7 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 		"preparation_snapshot_id":  demoPreparationSnapshot,
 		"source_profile_id":        demoPreparationProfile,
 		"source_version":           1,
-		"resume_snapshot":          "Go backend engineer; API reliability project.",
+		"resume_snapshot":          demoResumeSnapshot(),
 		"job_description_snapshot": "Build reliable APIs and explain engineering trade-offs.",
 		"background_snapshot":      "Backend engineer preparing for an English technical interview.",
 		"created_at":               r.timestamp(2),
@@ -201,10 +203,42 @@ func (r *Runtime) preparationSnapshotLocked() preparation.Snapshot {
 		ID:                     demoPreparationSnapshot,
 		SourceProfileID:        demoPreparationProfile,
 		SourceVersion:          1,
-		ResumeSnapshot:         "Go backend engineer; API reliability project.",
+		ResumeSnapshot:         demoPreparationResumeSnapshot(),
 		JobDescriptionSnapshot: "Build reliable APIs and explain engineering trade-offs.",
 		BackgroundSnapshot:     "Backend engineer preparing for an English technical interview.",
 		CreatedAt:              r.now.Add(2 * time.Second),
+	}
+}
+
+func demoResumeSnapshot() map[string]any {
+	return map[string]any{
+		"resume_id": demoResumeID,
+		"revision":  int64(1),
+		"material": map[string]any{
+			"target_position":       "Backend Engineer",
+			"professional_summary":  "Go backend engineer.",
+			"work_experiences":      []any{},
+			"project_experiences":   []any{},
+			"education_experiences": []any{},
+			"skills":                []any{"Go", "PostgreSQL"},
+			"awards":                []any{},
+		},
+	}
+}
+
+func demoPreparationResumeSnapshot() *preparation.ResumeRevisionSnapshot {
+	return &preparation.ResumeRevisionSnapshot{
+		ResumeID: demoResumeID,
+		Revision: 1,
+		Material: preparation.ResumeMaterial{
+			TargetPosition:       "Backend Engineer",
+			ProfessionalSummary:  "Go backend engineer.",
+			WorkExperiences:      []preparation.ResumeWorkExperience{},
+			ProjectExperiences:   []preparation.ResumeProjectExperience{},
+			EducationExperiences: []preparation.ResumeEducationExperience{},
+			Skills:               []string{"Go", "PostgreSQL"},
+			Awards:               []string{},
+		},
 	}
 }
 

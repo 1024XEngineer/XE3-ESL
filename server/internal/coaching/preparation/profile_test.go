@@ -23,11 +23,17 @@ func TestPersistenceServiceReplaysBeforeAllocatingResourceID(t *testing.T) {
 		SourceVersion:   1,
 	}
 	repository := &profileRepositoryReplayStub{
-		profile:  profile,
-		snapshot: snapshot,
+		profile:       profile,
+		profileFound:  true,
+		snapshot:      snapshot,
+		snapshotFound: true,
 	}
 	ids := &failingProfileIDGenerator{}
-	service, err := NewPersistenceService(repository, ids)
+	service, err := NewPersistenceService(
+		repository,
+		ids,
+		&profileResumeReaderStub{},
+	)
 	if err != nil {
 		t.Fatalf("NewPersistenceService: %v", err)
 	}
@@ -66,11 +72,79 @@ func TestPersistenceServiceReplaysBeforeAllocatingResourceID(t *testing.T) {
 	}
 }
 
+func TestPersistenceServiceResolvesExactResumeRevisionAfterReplayCheck(
+	t *testing.T,
+) {
+	actor := requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
+	request := CreateProfileRequest{
+		ResumeID:          "50000000-0000-4000-8000-000000000001",
+		ResumeRevision:    2,
+		BackgroundSummary: "Backend engineer.",
+	}
+	resolved := ResumeRevisionSnapshot{
+		ResumeID: request.ResumeID,
+		Revision: request.ResumeRevision,
+		Material: ResumeMaterial{
+			WorkExperiences:      []ResumeWorkExperience{},
+			ProjectExperiences:   []ResumeProjectExperience{},
+			EducationExperiences: []ResumeEducationExperience{},
+			Skills:               []string{"Go"},
+			Awards:               []string{},
+		},
+	}
+	repository := &profileRepositoryReplayStub{}
+	reader := &profileResumeReaderStub{read: func(
+		_ context.Context,
+		gotActor requestcontext.Actor,
+		resumeID string,
+		revision int64,
+	) (ResumeRevisionSnapshot, error) {
+		if gotActor != actor || resumeID != request.ResumeID ||
+			revision != request.ResumeRevision {
+			t.Fatalf(
+				"Resume read = (%+v, %q, %d)",
+				gotActor,
+				resumeID,
+				revision,
+			)
+		}
+		return resolved, nil
+	}}
+	service, err := NewPersistenceService(
+		repository,
+		profileFixedIDGenerator("profile-1"),
+		reader,
+	)
+	if err != nil {
+		t.Fatalf("NewPersistenceService: %v", err)
+	}
+
+	profile, replayed, err := service.CreateProfile(
+		context.Background(),
+		actor,
+		"profile-create-key",
+		request,
+	)
+	if err != nil || replayed || profile.ResumeID != request.ResumeID ||
+		profile.ResumeRevision != request.ResumeRevision {
+		t.Fatalf("CreateProfile = (%+v, %t, %v)", profile, replayed, err)
+	}
+	if repository.createdProfile.ResumeRevision == nil ||
+		!validResumeRevisionSnapshot(*repository.createdProfile.ResumeRevision) {
+		t.Fatalf("created command = %+v", repository.createdProfile)
+	}
+	resolved.Material.Skills[0] = "mutated"
+	if repository.createdProfile.ResumeRevision.Material.Skills[0] != "Go" {
+		t.Fatal("repository command retained mutable Reader material")
+	}
+}
+
 func TestCreateProfileRequestTextBoundaries(t *testing.T) {
 	referenceAtLimit := strings.Repeat("界", maxPreparationReferenceLength)
 	summaryAtLimit := strings.Repeat("语", maxPreparationSummaryLength)
 	if !validCreateProfileRequest(CreateProfileRequest{
-		ResumeRef:         referenceAtLimit,
+		ResumeID:          "50000000-0000-4000-8000-000000000001",
+		ResumeRevision:    1,
 		JobDescriptionRef: referenceAtLimit,
 		BackgroundSummary: summaryAtLimit,
 	}) {
@@ -78,7 +152,11 @@ func TestCreateProfileRequestTextBoundaries(t *testing.T) {
 	}
 	for _, request := range []CreateProfileRequest{
 		{
-			ResumeRef:         referenceAtLimit + "r",
+			ResumeID:          "50000000-0000-4000-8000-000000000001",
+			BackgroundSummary: "valid",
+		},
+		{
+			ResumeRevision:    1,
 			BackgroundSummary: "valid",
 		},
 		{
@@ -96,9 +174,35 @@ func TestCreateProfileRequestTextBoundaries(t *testing.T) {
 	}
 }
 
+type profileResumeReaderStub struct {
+	read func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		int64,
+	) (ResumeRevisionSnapshot, error)
+}
+
+func (stub *profileResumeReaderStub) ReadOwnedRevision(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	resumeID string,
+	revision int64,
+) (ResumeRevisionSnapshot, error) {
+	if stub.read == nil {
+		return ResumeRevisionSnapshot{}, errors.New(
+			"unexpected ReadOwnedRevision",
+		)
+	}
+	return stub.read(ctx, actor, resumeID, revision)
+}
+
 type profileRepositoryReplayStub struct {
-	profile  Profile
-	snapshot Snapshot
+	profile        Profile
+	profileFound   bool
+	snapshot       Snapshot
+	snapshotFound  bool
+	createdProfile CreateProfileCommand
 }
 
 func (stub *profileRepositoryReplayStub) ReplayProfile(
@@ -106,15 +210,22 @@ func (stub *profileRepositoryReplayStub) ReplayProfile(
 	requestcontext.Actor,
 	IdempotencyIntent,
 ) (Profile, bool, error) {
-	return stub.profile, true, nil
+	return stub.profile, stub.profileFound, nil
 }
 
-func (*profileRepositoryReplayStub) CreateProfile(
-	context.Context,
-	requestcontext.Actor,
-	CreateProfileCommand,
+func (stub *profileRepositoryReplayStub) CreateProfile(
+	_ context.Context,
+	actor requestcontext.Actor,
+	command CreateProfileCommand,
 ) (Profile, bool, error) {
-	return Profile{}, false, errors.New("unexpected CreateProfile")
+	stub.createdProfile = command
+	return Profile{
+		ID: command.ProfileID, UserID: actor.UserID,
+		ResumeID:          command.Request.ResumeID,
+		ResumeRevision:    command.Request.ResumeRevision,
+		BackgroundSummary: command.Request.BackgroundSummary,
+		Version:           1,
+	}, false, nil
 }
 
 func (stub *profileRepositoryReplayStub) ReplaySnapshot(
@@ -122,7 +233,7 @@ func (stub *profileRepositoryReplayStub) ReplaySnapshot(
 	requestcontext.Actor,
 	IdempotencyIntent,
 ) (Snapshot, bool, error) {
-	return stub.snapshot, true, nil
+	return stub.snapshot, stub.snapshotFound, nil
 }
 
 func (*profileRepositoryReplayStub) CreateSnapshot(
@@ -158,6 +269,12 @@ func (*profileRepositoryReplayStub) DeleteProfileData(
 
 type failingProfileIDGenerator struct {
 	calls int
+}
+
+type profileFixedIDGenerator string
+
+func (generator profileFixedIDGenerator) NewID() (string, error) {
+	return string(generator), nil
 }
 
 func (generator *failingProfileIDGenerator) NewID() (string, error) {

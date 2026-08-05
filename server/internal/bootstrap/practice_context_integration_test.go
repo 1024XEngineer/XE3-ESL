@@ -147,7 +147,6 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		http.MethodPost,
 		"/v1/preparation-profiles",
 		`{
-			"resume_ref":"resume-v1",
 			"job_description_ref":"job-v1",
 			"background_summary":"Go engineer preparing for a backend interview."
 		}`,

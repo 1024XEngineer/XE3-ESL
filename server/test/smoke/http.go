@@ -185,7 +185,8 @@ func (s *Server) createProfile(c *gin.Context) {
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
 		var request struct {
-			ResumeRef         *string `json:"resume_ref"`
+			ResumeID          *string `json:"resume_id"`
+			ResumeRevision    *int64  `json:"resume_revision"`
 			JobDescriptionRef *string `json:"job_description_ref"`
 			BackgroundSummary *string `json:"background_summary"`
 		}
@@ -193,13 +194,16 @@ func (s *Server) createProfile(c *gin.Context) {
 			return invalidRequest()
 		}
 		if request.BackgroundSummary == nil || strings.TrimSpace(*request.BackgroundSummary) == "" ||
-			(request.ResumeRef != nil && strings.TrimSpace(*request.ResumeRef) == "") ||
+			(request.ResumeID == nil) != (request.ResumeRevision == nil) ||
+			(request.ResumeID != nil && strings.TrimSpace(*request.ResumeID) == "") ||
+			(request.ResumeRevision != nil && *request.ResumeRevision < 1) ||
 			(request.JobDescriptionRef != nil && strings.TrimSpace(*request.JobDescriptionRef) == "") {
 			return invalidRequest()
 		}
 		input := preparation.CreateProfileRequest{BackgroundSummary: *request.BackgroundSummary}
-		if request.ResumeRef != nil {
-			input.ResumeRef = *request.ResumeRef
+		if request.ResumeID != nil {
+			input.ResumeID = *request.ResumeID
+			input.ResumeRevision = *request.ResumeRevision
 		}
 		if request.JobDescriptionRef != nil {
 			input.JobDescriptionRef = *request.JobDescriptionRef

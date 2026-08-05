@@ -94,10 +94,9 @@ func (r *PostgresJobTargetRepository) Create(
 			company,
 			seniority,
 			candidate_background,
-			resume_ref,
 			practice_focus
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`,
 		actor.UserID,
 		command.TargetID,
@@ -107,7 +106,6 @@ func (r *PostgresJobTargetRepository) Create(
 		nullablePreparationText(input.Company),
 		nullablePreparationText(input.Seniority),
 		nullablePreparationText(input.CandidateBackground),
-		nullablePreparationText(input.ResumeRef),
 		nullablePreparationText(input.PracticeFocus),
 	)
 	if err != nil {
@@ -267,14 +265,13 @@ func (r *PostgresJobTargetRepository) Update(
 			    company = $6,
 			    seniority = $7,
 			    candidate_background = $8,
-			    resume_ref = $9,
-			    practice_focus = $10,
+			    practice_focus = $9,
 			    input_version = input_version + 1,
 			    stage = 'draft',
 			    updated_at = transaction_timestamp()
 			WHERE owner_user_id = $1
 			  AND target_id = $2
-			  AND input_version = $11
+			  AND input_version = $10
 		`,
 			actor.UserID,
 			command.TargetID,
@@ -284,7 +281,6 @@ func (r *PostgresJobTargetRepository) Update(
 			nullablePreparationText(nextInput.Company),
 			nullablePreparationText(nextInput.Seniority),
 			nullablePreparationText(nextInput.CandidateBackground),
-			nullablePreparationText(nextInput.ResumeRef),
 			nullablePreparationText(nextInput.PracticeFocus),
 			command.Request.ExpectedInputVersion,
 		)
@@ -1119,7 +1115,6 @@ const jobTargetSelect = `
 		coalesce(target.company, ''),
 		coalesce(target.seniority, ''),
 		coalesce(target.candidate_background, ''),
-		coalesce(target.resume_ref, ''),
 		coalesce(target.practice_focus, ''),
 		target.input_version,
 		target.stage,
@@ -1195,7 +1190,6 @@ func scanJobTarget(row jobTargetRowScanner) (JobTarget, error) {
 		&target.Input.Company,
 		&target.Input.Seniority,
 		&target.Input.CandidateBackground,
-		&target.Input.ResumeRef,
 		&target.Input.PracticeFocus,
 		&target.InputVersion,
 		&stage,
@@ -1375,7 +1369,6 @@ func lockJobTarget(
 			coalesce(target.company, ''),
 			coalesce(target.seniority, ''),
 			coalesce(target.candidate_background, ''),
-			coalesce(target.resume_ref, ''),
 			coalesce(target.practice_focus, ''),
 			target.input_version,
 			target.stage,
@@ -1394,7 +1387,6 @@ func lockJobTarget(
 		&target.Input.Company,
 		&target.Input.Seniority,
 		&target.Input.CandidateBackground,
-		&target.Input.ResumeRef,
 		&target.Input.PracticeFocus,
 		&target.InputVersion,
 		&stage,

@@ -113,7 +113,8 @@ paths:
         actor may be supplied only by an explicit Mock or Test adapter. When
         supplied, `job_target_id` and `job_target_confirmation_version` bind
         the profile to one exact server-confirmed JobTarget version; the pair
-        must be supplied together.
+        must be supplied together. `resume_id` and `resume_revision` likewise
+        bind one exact, parsed Resume Revision owned by the actor.
       operationId: createPreparationProfile
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -124,7 +125,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreatePreparationProfileRequest'
             example:
-              resume_ref: resume_demo_backend_v1
+              resume_id: 50000000-0000-4000-8000-000000000001
+              resume_revision: 1
               job_description_ref: jd_demo_backend_v1
               background_summary: |-
                 Backend engineer with three years of Go experience, responsible
@@ -139,7 +141,8 @@ paths:
               example:
                 preparation_profile_id: prep_demo_backend
                 user_id: user_demo
-                resume_ref: resume_demo_backend_v1
+                resume_id: 50000000-0000-4000-8000-000000000001
+                resume_revision: 1
                 job_description_ref: jd_demo_backend_v1
                 background_summary: |
                   Backend engineer with three years of Go experience, responsible
@@ -182,7 +185,17 @@ paths:
                 preparation_snapshot_id: psnap_demo_backend_v1
                 source_profile_id: prep_demo_backend
                 source_version: 1
-                resume_snapshot: Go backend engineer; API reliability project.
+                resume_snapshot:
+                  resume_id: 50000000-0000-4000-8000-000000000001
+                  revision: 1
+                  material:
+                    target_position: Backend Engineer
+                    professional_summary: Go backend engineer.
+                    work_experiences: []
+                    project_experiences: []
+                    education_experiences: []
+                    skills: [Go, PostgreSQL]
+                    awards: []
                 job_description_snapshot: Build reliable APIs and explain engineering trade-offs.
                 background_snapshot: |
                   Backend engineer with three years of Go experience, responsible
@@ -722,11 +735,13 @@ components:
       required:
         - background_summary
       properties:
-        resume_ref:
+        resume_id:
           type: string
-          minLength: 1
-          maxLength: 16384
-          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
+          format: uuid
+        resume_revision:
+          type: integer
+          format: int64
+          minimum: 1
         job_description_ref:
           type: string
           minLength: 1
@@ -742,6 +757,10 @@ components:
         job_target_confirmation_version:
           $ref: '#/components/schemas/Version'
       dependentRequired:
+        resume_id:
+          - resume_revision
+        resume_revision:
+          - resume_id
         job_target_id:
           - job_target_confirmation_version
         job_target_confirmation_version:
@@ -760,9 +779,13 @@ components:
           $ref: '#/components/schemas/ResourceId'
         user_id:
           $ref: '#/components/schemas/ResourceId'
-        resume_ref:
+        resume_id:
           type: string
-          minLength: 1
+          format: uuid
+        resume_revision:
+          type: integer
+          format: int64
+          minimum: 1
         job_description_ref:
           type: string
           minLength: 1
@@ -779,6 +802,10 @@ components:
           type: string
           format: date-time
       dependentRequired:
+        resume_id:
+          - resume_revision
+        resume_revision:
+          - resume_id
         job_target_id:
           - job_target_confirmation_version
         job_target_confirmation_version:
@@ -816,8 +843,7 @@ components:
         job_target_candidate_snapshot:
           $ref: '#/components/schemas/JobTargetCandidate'
         resume_snapshot:
-          type: string
-          minLength: 1
+          $ref: '#/components/schemas/PreparationResumeRevisionSnapshot'
         job_description_snapshot:
           type: string
           minLength: 1
@@ -844,6 +870,162 @@ components:
           - source_job_target_id
           - source_job_target_confirmation_version
           - job_target_input_snapshot
+    PreparationResumeRevisionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - resume_id
+        - revision
+        - material
+      properties:
+        resume_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        material:
+          $ref: '#/components/schemas/PreparationResumeMaterial'
+    PreparationResumeMaterial:
+      type: object
+      additionalProperties: false
+      required:
+        - target_position
+        - professional_summary
+        - work_experiences
+        - project_experiences
+        - education_experiences
+        - skills
+        - awards
+      properties:
+        target_position:
+          type: string
+          maxLength: 200
+        professional_summary:
+          type: string
+          maxLength: 4000
+        work_experiences:
+          type: array
+          maxItems: 30
+          items:
+            $ref: '#/components/schemas/PreparationResumeWorkExperience'
+        project_experiences:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/PreparationResumeProjectExperience'
+        education_experiences:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/PreparationResumeEducationExperience'
+        skills:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        awards:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 300
+    PreparationResumeWorkExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - company
+        - position
+        - duties
+        - achievements
+      properties:
+        company:
+          type: string
+          maxLength: 200
+        position:
+          type: string
+          maxLength: 200
+        start_date:
+          type: string
+          maxLength: 32
+        end_date:
+          type: string
+          maxLength: 32
+        duties:
+          $ref: '#/components/schemas/PreparationResumeBulletItems'
+        achievements:
+          $ref: '#/components/schemas/PreparationResumeBulletItems'
+    PreparationResumeProjectExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - project_name
+        - role
+        - description
+        - technologies
+        - duties
+        - achievements
+      properties:
+        project_name:
+          type: string
+          maxLength: 200
+        role:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 4000
+        technologies:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        duties:
+          $ref: '#/components/schemas/PreparationResumeBulletItems'
+        achievements:
+          $ref: '#/components/schemas/PreparationResumeBulletItems'
+    PreparationResumeEducationExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - school
+        - major
+        - degree
+      properties:
+        school:
+          type: string
+          maxLength: 200
+        major:
+          type: string
+          maxLength: 200
+        degree:
+          type: string
+          maxLength: 100
+        gpa:
+          type: string
+          maxLength: 64
+        start_date:
+          type: string
+          maxLength: 32
+        end_date:
+          type: string
+          maxLength: 32
+    PreparationResumeBulletItems:
+      type: array
+      maxItems: 100
+      items:
+        type: string
+        minLength: 1
+        maxLength: 1000
     JobTargetSource:
       type: string
       enum:
@@ -874,10 +1056,6 @@ components:
           minLength: 1
           maxLength: 256
         candidate_background:
-          type: string
-          minLength: 1
-          maxLength: 16384
-        resume_ref:
           type: string
           minLength: 1
           maxLength: 16384
@@ -929,10 +1107,6 @@ components:
           minLength: 1
           maxLength: 256
         candidate_background:
-          type: string
-          minLength: 1
-          maxLength: 16384
-        resume_ref:
           type: string
           minLength: 1
           maxLength: 16384

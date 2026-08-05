@@ -1190,10 +1190,9 @@ func createVoiceInterviewFormalContext(
 		http.MethodPost,
 		"/v1/preparation-profiles",
 		fmt.Sprintf(`{
-			"resume_ref":"resume-%s",
 			"job_description_ref":"job-%s",
 			"background_summary":"Interview follow-up context %s."
-		}`, key, key, key),
+		}`, key, key),
 		"voice-"+key+"-profile",
 		http.StatusCreated,
 	)
@@ -1273,10 +1272,9 @@ func createVoiceFormalContext(
 		http.MethodPost,
 		"/v1/preparation-profiles",
 		fmt.Sprintf(`{
-			"resume_ref":"resume-%s",
 			"job_description_ref":"job-%s",
 			"background_summary":"Voice integration context %s."
-		}`, key, key, key),
+		}`, key, key),
 		"voice-"+key+"-profile",
 		http.StatusCreated,
 	)

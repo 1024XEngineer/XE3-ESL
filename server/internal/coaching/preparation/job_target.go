@@ -56,7 +56,6 @@ const (
 	maxJobTargetCompanyBytes     = 512
 	maxJobTargetSeniorityBytes   = 256
 	maxJobTargetBackgroundBytes  = 16 * 1024
-	maxJobTargetResumeRefBytes   = 16 * 1024
 	maxJobTargetFocusBytes       = 8 * 1024
 
 	maxJobTargetCandidateItemCharacters = 2048
@@ -77,7 +76,6 @@ type JobTargetInput struct {
 	Company             string          `json:"company,omitempty"`
 	Seniority           string          `json:"seniority,omitempty"`
 	CandidateBackground string          `json:"candidate_background,omitempty"`
-	ResumeRef           string          `json:"resume_ref,omitempty"`
 	PracticeFocus       string          `json:"practice_focus,omitempty"`
 }
 
@@ -143,7 +141,6 @@ type CreateJobTargetRequest struct {
 	Company             string          `json:"company,omitempty"`
 	Seniority           string          `json:"seniority,omitempty"`
 	CandidateBackground string          `json:"candidate_background,omitempty"`
-	ResumeRef           string          `json:"resume_ref,omitempty"`
 	PracticeFocus       string          `json:"practice_focus,omitempty"`
 }
 
@@ -155,7 +152,6 @@ type UpdateJobTargetRequest struct {
 	Company              string          `json:"company,omitempty"`
 	Seniority            string          `json:"seniority,omitempty"`
 	CandidateBackground  string          `json:"candidate_background,omitempty"`
-	ResumeRef            string          `json:"resume_ref,omitempty"`
 	PracticeFocus        string          `json:"practice_focus,omitempty"`
 }
 
@@ -536,7 +532,6 @@ func (r CreateJobTargetRequest) input() JobTargetInput {
 		Company:             r.Company,
 		Seniority:           r.Seniority,
 		CandidateBackground: r.CandidateBackground,
-		ResumeRef:           r.ResumeRef,
 		PracticeFocus:       r.PracticeFocus,
 	}
 }
@@ -549,7 +544,6 @@ func (r UpdateJobTargetRequest) input() JobTargetInput {
 		Company:             r.Company,
 		Seniority:           r.Seniority,
 		CandidateBackground: r.CandidateBackground,
-		ResumeRef:           r.ResumeRef,
 		PracticeFocus:       r.PracticeFocus,
 	}
 }
@@ -617,11 +611,6 @@ func validJobTargetInput(input JobTargetInput) bool {
 		validJobTargetText(
 			input.CandidateBackground,
 			maxJobTargetBackgroundBytes,
-			false,
-		) &&
-		validJobTargetText(
-			input.ResumeRef,
-			maxJobTargetResumeRefBytes,
 			false,
 		) &&
 		validJobTargetText(

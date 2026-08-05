@@ -73,6 +73,7 @@ func (r *PostgresProfileRepository) CreateProfile(
 		!validPreparationActor(actor) ||
 		!validResourceIdentifier(command.ProfileID) ||
 		!validCreateProfileRequest(command.Request) ||
+		!validCreateProfileResume(command) ||
 		!validPreparationIntent(
 			command.Intent,
 			"/v1/preparation-profiles",
@@ -133,29 +134,38 @@ func (r *PostgresProfileRepository) CreateProfile(
 	profile := Profile{
 		ID:                           command.ProfileID,
 		UserID:                       actor.UserID,
-		ResumeRef:                    command.Request.ResumeRef,
+		ResumeID:                     command.Request.ResumeID,
+		ResumeRevision:               command.Request.ResumeRevision,
 		JobDescriptionRef:            command.Request.JobDescriptionRef,
 		BackgroundSummary:            command.Request.BackgroundSummary,
 		JobTargetID:                  command.Request.JobTargetID,
 		JobTargetConfirmationVersion: command.Request.JobTargetConfirmationVersion,
 		Version:                      1,
 	}
+	resumeMaterial, err := encodeResumeMaterial(command.ResumeRevision)
+	if err != nil {
+		return Profile{}, false, err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO preparation_profiles (
 			owner_user_id,
 			profile_id,
-				resume_ref,
+				resume_id,
+				resume_revision,
+				resume_material,
 				job_description_ref,
 				background_summary,
 				job_target_id,
 				job_target_confirmation_version
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING version, updated_at
 	`,
 		actor.UserID,
 		profile.ID,
-		nullablePreparationText(profile.ResumeRef),
+		nullablePreparationText(profile.ResumeID),
+		nullablePreparationRevision(profile.ResumeRevision),
+		resumeMaterial,
 		nullablePreparationText(profile.JobDescriptionRef),
 		profile.BackgroundSummary,
 		nullablePreparationText(profile.JobTargetID),
@@ -293,10 +303,14 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		SourceVersion:   command.Request.SourceVersion,
 	}
 	var sourceVersion int
-	var targetInput, targetCandidate []byte
+	var resumeID string
+	var resumeRevision int64
+	var resumeMaterial, targetInput, targetCandidate []byte
 	err = tx.QueryRow(ctx, `
 		SELECT
-			COALESCE(profile.resume_ref, ''),
+			COALESCE(profile.resume_id::text, ''),
+			COALESCE(profile.resume_revision, 0),
+			profile.resume_material,
 			COALESCE(profile.job_description_ref, ''),
 			profile.background_summary,
 			profile.version,
@@ -314,7 +328,9 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		  AND profile.profile_id = $2
 		FOR SHARE OF profile
 	`, actor.UserID, command.ProfileID).Scan(
-		&snapshot.ResumeSnapshot,
+		&resumeID,
+		&resumeRevision,
+		&resumeMaterial,
 		&snapshot.JobDescriptionSnapshot,
 		&snapshot.BackgroundSnapshot,
 		&sourceVersion,
@@ -334,6 +350,26 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 	if sourceVersion != command.Request.SourceVersion {
 		return Snapshot{}, false, ErrProfileConflict
 	}
+	if resumeID != "" {
+		var material ResumeMaterial
+		if len(resumeMaterial) == 0 ||
+			json.Unmarshal(resumeMaterial, &material) != nil {
+			return Snapshot{}, false, profileDatabaseFailure(
+				"decode profile Resume material",
+			)
+		}
+		resumeSnapshot := ResumeRevisionSnapshot{
+			ResumeID: resumeID,
+			Revision: resumeRevision,
+			Material: material,
+		}
+		if !validResumeRevisionSnapshot(resumeSnapshot) {
+			return Snapshot{}, false, profileDatabaseFailure(
+				"validate profile Resume material",
+			)
+		}
+		snapshot.ResumeSnapshot = &resumeSnapshot
+	}
 	if snapshot.SourceJobTargetID != "" {
 		if len(targetInput) == 0 || len(targetCandidate) == 0 {
 			return Snapshot{}, false, ErrProfileConflict
@@ -352,6 +388,11 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		snapshot.JobTargetCandidateSnapshot = &candidate
 	}
 
+	resumeSnapshotID, resumeSnapshotRevision, encodedResumeMaterial, err :=
+		encodeSnapshotResume(snapshot.ResumeSnapshot)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
 	encodedTargetInput, encodedTargetCandidate, err :=
 		encodeSnapshotJobTarget(snapshot)
 	if err != nil {
@@ -363,7 +404,9 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 			snapshot_id,
 			source_profile_id,
 			source_version,
-				resume_snapshot,
+				resume_id,
+				resume_revision,
+				resume_material,
 				job_description_snapshot,
 				background_snapshot,
 				source_job_target_id,
@@ -372,7 +415,8 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 				job_target_candidate_snapshot
 			)
 			VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+				$12, $13
 			)
 		RETURNING created_at
 	`,
@@ -380,7 +424,9 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		snapshot.ID,
 		snapshot.SourceProfileID,
 		snapshot.SourceVersion,
-		nullablePreparationText(snapshot.ResumeSnapshot),
+		resumeSnapshotID,
+		resumeSnapshotRevision,
+		encodedResumeMaterial,
 		nullablePreparationText(snapshot.JobDescriptionSnapshot),
 		snapshot.BackgroundSnapshot,
 		nullablePreparationText(snapshot.SourceJobTargetID),
@@ -429,7 +475,8 @@ func (r *PostgresProfileRepository) ReadProfile(
 		SELECT
 			profile.profile_id,
 			profile.owner_user_id::text,
-			COALESCE(profile.resume_ref, ''),
+			COALESCE(profile.resume_id::text, ''),
+			COALESCE(profile.resume_revision, 0),
 				COALESCE(profile.job_description_ref, ''),
 				profile.background_summary,
 				COALESCE(profile.job_target_id, ''),
@@ -471,7 +518,9 @@ func (r *PostgresProfileRepository) ReadSnapshot(
 			snapshot.snapshot_id,
 			snapshot.source_profile_id,
 			snapshot.source_version,
-			COALESCE(snapshot.resume_snapshot, ''),
+			COALESCE(snapshot.resume_id::text, ''),
+			COALESCE(snapshot.resume_revision, 0),
+			snapshot.resume_material,
 				COALESCE(snapshot.job_description_snapshot, ''),
 				snapshot.background_snapshot,
 				COALESCE(snapshot.source_job_target_id, ''),
@@ -635,7 +684,8 @@ func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 	err := row.Scan(
 		&profile.ID,
 		&profile.UserID,
-		&profile.ResumeRef,
+		&profile.ResumeID,
+		&profile.ResumeRevision,
 		&profile.JobDescriptionRef,
 		&profile.BackgroundSummary,
 		&profile.JobTargetID,
@@ -649,12 +699,16 @@ func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 
 func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 	var snapshot Snapshot
-	var targetInput, targetCandidate []byte
+	var resumeID string
+	var resumeRevision int64
+	var resumeMaterial, targetInput, targetCandidate []byte
 	err := row.Scan(
 		&snapshot.ID,
 		&snapshot.SourceProfileID,
 		&snapshot.SourceVersion,
-		&snapshot.ResumeSnapshot,
+		&resumeID,
+		&resumeRevision,
+		&resumeMaterial,
 		&snapshot.JobDescriptionSnapshot,
 		&snapshot.BackgroundSnapshot,
 		&snapshot.SourceJobTargetID,
@@ -663,6 +717,21 @@ func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 		&targetCandidate,
 		&snapshot.CreatedAt,
 	)
+	if err == nil && resumeID != "" {
+		var material ResumeMaterial
+		if len(resumeMaterial) == 0 ||
+			json.Unmarshal(resumeMaterial, &material) != nil {
+			return Snapshot{}, ErrProfileRepository
+		}
+		snapshot.ResumeSnapshot = &ResumeRevisionSnapshot{
+			ResumeID: resumeID,
+			Revision: resumeRevision,
+			Material: material,
+		}
+		if !validResumeRevisionSnapshot(*snapshot.ResumeSnapshot) {
+			return Snapshot{}, ErrProfileRepository
+		}
+	}
 	if err == nil && snapshot.SourceJobTargetID != "" {
 		var input JobTargetInput
 		var candidate JobTargetCandidate
@@ -699,6 +768,7 @@ func replayProfile(
 		profile.ID != resourceID ||
 		profile.UserID != userID ||
 		!validResourceIdentifier(profile.ID) ||
+		((profile.ResumeID == "") != (profile.ResumeRevision == 0)) ||
 		((profile.JobTargetID == "") !=
 			(profile.JobTargetConfirmationVersion == 0)) {
 		return Profile{}, false, profileDatabaseFailure(
@@ -731,6 +801,8 @@ func replaySnapshot(
 		!validResourceIdentifier(snapshot.ID) ||
 		!validResourceIdentifier(snapshot.SourceProfileID) ||
 		snapshot.SourceVersion < 1 ||
+		(snapshot.ResumeSnapshot != nil &&
+			!validResumeRevisionSnapshot(*snapshot.ResumeSnapshot)) ||
 		((snapshot.SourceJobTargetID == "") !=
 			(snapshot.SourceJobTargetConfirmationVersion == 0)) {
 		return Snapshot{}, false, profileDatabaseFailure(
@@ -964,6 +1036,54 @@ func nullablePreparationVersion(value int) any {
 		return nil
 	}
 	return value
+}
+
+func nullablePreparationRevision(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func validCreateProfileResume(command CreateProfileCommand) bool {
+	if command.Request.ResumeID == "" {
+		return command.Request.ResumeRevision == 0 &&
+			command.ResumeRevision == nil
+	}
+	return command.ResumeRevision != nil &&
+		command.ResumeRevision.ResumeID == command.Request.ResumeID &&
+		command.ResumeRevision.Revision == command.Request.ResumeRevision &&
+		validResumeRevisionSnapshot(*command.ResumeRevision)
+}
+
+func encodeResumeMaterial(snapshot *ResumeRevisionSnapshot) (any, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	if !validResumeRevisionSnapshot(*snapshot) {
+		return nil, ErrProfileInvalid
+	}
+	encoded, err := json.Marshal(snapshot.Material)
+	if err != nil {
+		return nil, ErrProfileRepository
+	}
+	return encoded, nil
+}
+
+func encodeSnapshotResume(
+	snapshot *ResumeRevisionSnapshot,
+) (any, any, any, error) {
+	if snapshot == nil {
+		return nil, nil, nil, nil
+	}
+	if !validResumeRevisionSnapshot(*snapshot) {
+		return nil, nil, nil, ErrProfileConflict
+	}
+	encoded, err := json.Marshal(snapshot.Material)
+	if err != nil {
+		return nil, nil, nil, ErrProfileRepository
+	}
+	return snapshot.ResumeID, snapshot.Revision, encoded, nil
 }
 
 func encodeSnapshotJobTarget(snapshot Snapshot) (any, any, error) {
