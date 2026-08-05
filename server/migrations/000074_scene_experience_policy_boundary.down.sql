@@ -1791,7 +1791,6 @@ BEGIN
 END;
 $$;
 
-+
 CREATE FUNCTION preparation_plan_ielts_assignment_is_valid_v2(
     scene_selection jsonb,
     payload jsonb
