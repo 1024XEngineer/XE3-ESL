@@ -19,14 +19,7 @@ func TestContractValues(t *testing.T) {
 		"session paused":            string(practice.SessionPaused),
 		"session completed":         string(practice.SessionCompleted),
 		"session ended early":       string(practice.SessionEndedEarly),
-		"coverage covered":          string(practice.CoverageCovered),
-		"coverage partial":          string(practice.CoveragePartial),
-		"coverage uncovered":        string(practice.CoverageUncovered),
 		"coverage after checkpoint": string(preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint),
-		"coverage end reason":       practice.EndReasonCoverageSatisfiedAtCheckpoint,
-		"follow up current":         string(practice.NextActionFollowUpCurrent),
-		"move to next objective":    string(practice.NextActionMoveToNextObjective),
-		"complete session":          string(practice.NextActionCompleteSession),
 	}
 	want := map[string]string{
 		"scene interview":           "INTERVIEW",
@@ -37,14 +30,7 @@ func TestContractValues(t *testing.T) {
 		"session paused":            "paused",
 		"session completed":         "completed",
 		"session ended early":       "ended_early",
-		"coverage covered":          "covered",
-		"coverage partial":          "partial",
-		"coverage uncovered":        "uncovered",
 		"coverage after checkpoint": "COVERAGE_SATISFIED_AFTER_CHECKPOINT",
-		"coverage end reason":       "COVERAGE_SATISFIED_AT_CHECKPOINT",
-		"follow up current":         "FOLLOW_UP_CURRENT",
-		"move to next objective":    "MOVE_TO_NEXT_OBJECTIVE",
-		"complete session":          "COMPLETE_SESSION",
 	}
 	for name, value := range tests {
 		if value != want[name] {
@@ -81,19 +67,14 @@ func TestCrossModuleContractsExposeRequiredFields(t *testing.T) {
 			SubjectRef:       practice.SubjectRef{Namespace: "user", SubjectID: "user-1"},
 			RoleDefinitionID: "role-1",
 		},
-		practice.TurnOutcome{
-			TurnID:      "turn-1",
-			SessionID:   "session-1",
-			AnswerValid: true,
-		},
 		practice.SessionSnapshot{
 			ID:        "snapshot-1",
 			SessionID: "session-1",
 			CreatedAt: createdAt,
 		},
 	}
-	if len(contracts) != 5 {
-		t.Fatalf("contracts = %d, want 5", len(contracts))
+	if len(contracts) != 4 {
+		t.Fatalf("contracts = %d, want 4", len(contracts))
 	}
 }
 

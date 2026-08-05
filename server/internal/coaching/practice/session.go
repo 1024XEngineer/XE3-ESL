@@ -4,9 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 type IdempotencyIntent struct {
@@ -27,45 +24,45 @@ const (
 )
 
 type Session struct {
-	ID                  string            `json:"practice_session_id"`
-	PlanID              string            `json:"practice_plan_id"`
-	PlanRevision        int               `json:"plan_revision"`
-	SceneFamily         scene.SceneFamily `json:"scene_family"`
-	SceneModel          scene.SceneModel  `json:"scene_model"`
-	EvaluationPolicyRef string            `json:"evaluation_policy_ref"`
-	SnapshotID          string            `json:"snapshot_id"`
-	Status              SessionStatus     `json:"practice_session_status"`
-	Version             int               `json:"session_version"`
-	EffectiveTurns      int               `json:"-"`
-	StartedAt           *time.Time        `json:"started_at,omitempty"`
-	EndedAt             *time.Time        `json:"ended_at,omitempty"`
-	EndReason           string            `json:"end_reason,omitempty"`
-	CreatedAt           time.Time         `json:"created_at"`
+	ID                  string        `json:"practice_session_id"`
+	PlanID              string        `json:"practice_plan_id"`
+	PlanRevision        int           `json:"plan_revision"`
+	SceneFamily         SceneFamily   `json:"scene_family"`
+	SceneModel          SceneModel    `json:"scene_model"`
+	EvaluationPolicyRef string        `json:"evaluation_policy_ref"`
+	SnapshotID          string        `json:"snapshot_id"`
+	Status              SessionStatus `json:"practice_session_status"`
+	Version             int           `json:"session_version"`
+	EffectiveTurns      int           `json:"-"`
+	StartedAt           *time.Time    `json:"started_at,omitempty"`
+	EndedAt             *time.Time    `json:"ended_at,omitempty"`
+	EndReason           string        `json:"end_reason,omitempty"`
+	CreatedAt           time.Time     `json:"created_at"`
 }
 
 type Participant struct {
-	ID               string                `json:"practice_participant_id"`
-	SessionID        string                `json:"practice_session_id"`
-	Role             string                `json:"participant_role"`
-	SubjectRef       SubjectRef            `json:"subject_ref"`
-	RoleDefinitionID string                `json:"role_definition_id,omitempty"`
-	RoleSnapshot     *scene.RoleDefinition `json:"role_snapshot,omitempty"`
-	Order            int                   `json:"participant_order"`
+	ID               string          `json:"practice_participant_id"`
+	SessionID        string          `json:"practice_session_id"`
+	Role             string          `json:"participant_role"`
+	SubjectRef       SubjectRef      `json:"subject_ref"`
+	RoleDefinitionID string          `json:"role_definition_id,omitempty"`
+	RoleSnapshot     *RoleDefinition `json:"role_snapshot,omitempty"`
+	Order            int             `json:"participant_order"`
 }
 
 type SessionSnapshot struct {
-	ID                 string                               `json:"snapshot_id"`
-	SessionID          string                               `json:"practice_session_id"`
-	PlanRevision       int                                  `json:"plan_revision"`
-	SceneFamily        scene.SceneFamily                    `json:"scene_family"`
-	SceneModel         scene.SceneModel                     `json:"scene_model"`
-	SceneSelection     scene.SelectionSnapshot              `json:"scene_selection"`
-	Preparation        preparation.Snapshot                 `json:"preparation_snapshot"`
-	Participants       []Participant                        `json:"participants"`
-	SessionPolicy      preparation.SessionPolicy            `json:"session_policy"`
-	PracticeObjectives []preparation.PracticeObjective      `json:"practice_objectives"`
-	IELTSAssignment    *preparation.IELTSAssignmentSnapshot `json:"ielts_assignment,omitempty"`
-	CreatedAt          time.Time                            `json:"created_at"`
+	ID                 string              `json:"snapshot_id"`
+	SessionID          string              `json:"practice_session_id"`
+	PlanRevision       int                 `json:"plan_revision"`
+	SceneFamily        SceneFamily         `json:"scene_family"`
+	SceneModel         SceneModel          `json:"scene_model"`
+	SceneSelection     SceneSelection      `json:"scene_selection"`
+	Preparation        PreparationSnapshot `json:"preparation_snapshot"`
+	Participants       []Participant       `json:"participants"`
+	SessionPolicy      SessionPolicy       `json:"session_policy"`
+	PracticeObjectives []PracticeObjective `json:"practice_objectives"`
+	IELTSAssignment    *IELTSAssignment    `json:"ielts_assignment,omitempty"`
+	CreatedAt          time.Time           `json:"created_at"`
 }
 
 type SessionBootstrap struct {

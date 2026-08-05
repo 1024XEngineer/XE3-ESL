@@ -134,6 +134,20 @@ func (r *Repository) advanceTurnInTransaction(
 		effectiveTurns < 0 || effectiveTurns > turnLimit {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil || !practice.ValidSessionPolicy(
+		snapshot.SceneSelection.Scene.SessionPolicyRef,
+		option.Type,
+		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+		snapshot.SessionPolicy,
+	) {
+		return practice.TurnResult{}, practice.ErrConflict
+	}
+	if _, err := practice.ResolveTurnPolicy(
+		snapshot.SceneSelection.Scene.TurnPolicyRef,
+	); err != nil {
+		return practice.TurnResult{}, practice.ErrConflict
+	}
 	switch status {
 	case practice.SessionStarting:
 		if effectiveTurns != 0 {

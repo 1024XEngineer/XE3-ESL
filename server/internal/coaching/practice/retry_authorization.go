@@ -3,8 +3,6 @@ package practice
 import (
 	"context"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 type RetryTurnAuthorization struct {
@@ -12,8 +10,8 @@ type RetryTurnAuthorization struct {
 	PracticeSessionID            string
 	OriginalTurnID               string
 	QuestionID                   string
-	SceneFamily                  scene.SceneFamily
-	SceneModel                   scene.SceneModel
+	SceneFamily                  SceneFamily
+	SceneModel                   SceneModel
 	SessionStatusAtAuthorization SessionStatus
 	CountsTowardEffectiveLimit   bool
 	CreatedAt                    time.Time

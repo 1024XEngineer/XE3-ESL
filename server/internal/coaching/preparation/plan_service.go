@@ -747,19 +747,13 @@ func buildPlanExecution(
 	if err != nil || !validSelectedPlanOption(selection, roles, option) {
 		return SessionPolicy{}, nil, ErrPlanInvalid
 	}
-	policy, err := policies.ResolveSessionPolicy(selection.Scene, option)
+	policy, err := policies.ResolveSessionPolicy(
+		selection.Scene,
+		option,
+		maxEffectiveTurns,
+	)
 	if err != nil {
 		return SessionPolicy{}, nil, err
-	}
-	if maxEffectiveTurns > 0 {
-		if maxEffectiveTurns < policy.MinEffectiveTurns ||
-			maxEffectiveTurns > policy.MaxEffectiveTurns {
-			return SessionPolicy{}, nil, ErrPlanInvalid
-		}
-		policy.MaxEffectiveTurns = maxEffectiveTurns
-		if policy.CoverageCheckpointTurn > maxEffectiveTurns {
-			policy.CoverageCheckpointTurn = maxEffectiveTurns
-		}
 	}
 	objectives, err := practiceObjectives(roles)
 	if err != nil {

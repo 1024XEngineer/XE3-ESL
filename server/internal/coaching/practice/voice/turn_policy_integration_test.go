@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 )
@@ -42,7 +43,7 @@ func TestPostgresSceneCatalogReferencesRegisteredTurnPolicies(t *testing.T) {
 			continue
 		}
 		checked[reference] = struct{}{}
-		if _, err := resolveTurnPolicy(reference); err != nil {
+		if _, err := practice.ResolveTurnPolicy(reference); err != nil {
 			t.Errorf(
 				"Scene %q references unsupported turn policy %q: %v",
 				definition.ID,

@@ -11,8 +11,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -475,13 +473,13 @@ func TestEvidenceSourceComposeMapsCrossOwnerAndDeletionToNotFound(
 }
 
 func TestEvidenceSceneMatchesAllSupportedIELTSPracticeModels(t *testing.T) {
-	for _, model := range []scene.SceneModel{
-		scene.SceneModelExamBasicDialogue,
-		scene.SceneModelIELTSSpeakingPart2,
-		scene.SceneModelIELTSSpeakingFullMock,
+	for _, model := range []practice.SceneModel{
+		practice.SceneModelExamBasicDialogue,
+		practice.SceneModelIELTSSpeakingPart2,
+		practice.SceneModelIELTSSpeakingFullMock,
 	} {
 		if !evidenceSceneMatches(
-			scene.SceneFamilyExam,
+			practice.SceneFamilyExam,
 			model,
 			evaluation.SceneIELTSSpeaking,
 		) {
@@ -504,7 +502,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	started := now.Add(-5 * time.Minute)
 	ended := now
-	roleObjectives := []scene.PracticeObjectiveDefinition{
+	roleObjectives := []practice.PracticeObjectiveDefinition{
 		{ID: "complete_check_in", Description: "Complete check-in accurately."},
 		{ID: "clear_request", Description: "Make a clear request."},
 		{
@@ -520,8 +518,8 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 		session: practice.Session{
 			ID:                  "session-1",
 			PlanID:              "plan-1",
-			SceneFamily:         scene.SceneFamilyDaily,
-			SceneModel:          scene.SceneModelHotelCheckinAndIssueHandling,
+			SceneFamily:         practice.SceneFamilyDaily,
+			SceneModel:          practice.SceneModelHotelCheckinAndIssueHandling,
 			EvaluationPolicyRef: "daily.general.evaluation.v1",
 			SnapshotID:          "snapshot-1",
 			Status:              practice.SessionCompleted,
@@ -536,20 +534,20 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			ID:           "snapshot-1",
 			SessionID:    "session-1",
 			PlanRevision: 2,
-			SceneFamily:  scene.SceneFamilyDaily,
-			SceneModel:   scene.SceneModelHotelCheckinAndIssueHandling,
-			SceneSelection: scene.SelectionSnapshot{
-				Scene: scene.SceneDefinition{
+			SceneFamily:  practice.SceneFamilyDaily,
+			SceneModel:   practice.SceneModelHotelCheckinAndIssueHandling,
+			SceneSelection: practice.SceneSelection{
+				Scene: practice.SceneDefinition{
 					ID:                  "scene-daily-1",
-					Family:              scene.SceneFamilyDaily,
-					Model:               scene.SceneModelHotelCheckinAndIssueHandling,
+					Family:              practice.SceneFamilyDaily,
+					Model:               practice.SceneModelHotelCheckinAndIssueHandling,
 					Name:                "Hotel check-in",
 					Version:             4,
-					Status:              scene.SceneStatusActive,
+					Status:              practice.SceneStatusActive,
 					TurnPolicyRef:       "daily.hotel_checkin_issue.turn.v1",
 					SessionPolicyRef:    "daily.hotel_checkin_issue.session.v1",
 					EvaluationPolicyRef: "daily.general.evaluation.v1",
-					Prompt: scene.ScenePrompt{
+					Prompt: practice.ScenePrompt{
 						PublicSceneBrief: "You are checking in at a hotel.",
 						PracticeGoal:     "check in and resolve a room issue",
 						UserRole:         "guest",
@@ -566,7 +564,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 						},
 						SuggestedDurationSeconds: 300,
 					},
-					Roles: []scene.RoleDefinition{
+					Roles: []practice.RoleDefinition{
 						{
 							ID:               "role-receptionist",
 							SceneID:          "scene-daily-1",
@@ -575,46 +573,43 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 							Responsibilities: "Help the guest check in.",
 							Style:            "professional",
 							PracticeObjectives: append(
-								[]scene.PracticeObjectiveDefinition(nil),
+								[]practice.PracticeObjectiveDefinition(nil),
 								roleObjectives...,
 							),
-							DisplayOrder: 1,
 						},
 					},
-					PracticeOptions: []scene.PracticeOption{
+					PracticeOptions: []practice.PracticeOption{
 						{
-							ID:           "option-full",
-							SceneID:      "scene-daily-1",
-							Type:         scene.PracticeOptionFullSimulation,
-							DisplayName:  "Full simulation",
-							DisplayOrder: 1,
+							ID:          "option-full",
+							SceneID:     "scene-daily-1",
+							Type:        practice.PracticeOptionFullSimulation,
+							DisplayName: "Full simulation",
 						},
 					},
-					DisplayOrder: 1,
 				},
 				SelectedRoleIDs:  []string{"role-receptionist"},
 				PracticeOptionID: "option-full",
 			},
-			Preparation: preparation.Snapshot{
+			Preparation: practice.PreparationSnapshot{
 				ID:                                 "preparation-snapshot-1",
 				SourceProfileID:                    "profile-1",
 				SourceVersion:                      4,
 				SourceJobTargetID:                  "job-target-1",
 				SourceJobTargetConfirmationVersion: 2,
-				JobTargetInputSnapshot: &preparation.JobTargetInput{
-					Source:              preparation.JobTargetSourceJobDescription,
+				JobTargetInputSnapshot: &practice.JobTargetInput{
+					Source:              "JOB_DESCRIPTION",
 					JobTitle:            "Guest",
 					JobDescription:      "Resolve a hotel room issue.",
 					CandidateBackground: "Needs a quiet room.",
 					PracticeFocus:       "Make a clear request.",
 				},
-				ResumeSnapshot: &preparation.ResumeRevisionSnapshot{
+				ResumeSnapshot: &practice.ResumeRevisionSnapshot{
 					ResumeID: "50000000-0000-4000-8000-000000000001",
 					Revision: 1,
-					Material: preparation.ResumeMaterial{
-						WorkExperiences:      []preparation.ResumeWorkExperience{},
-						ProjectExperiences:   []preparation.ResumeProjectExperience{},
-						EducationExperiences: []preparation.ResumeEducationExperience{},
+					Material: practice.ResumeMaterial{
+						WorkExperiences:      []practice.ResumeWorkExperience{},
+						ProjectExperiences:   []practice.ResumeProjectExperience{},
+						EducationExperiences: []practice.ResumeEducationExperience{},
 						Skills:               []string{"Go"},
 						Awards:               []string{},
 					},
@@ -632,7 +627,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 						SubjectID: "receptionist",
 					},
 					RoleDefinitionID: "role-receptionist",
-					RoleSnapshot: &scene.RoleDefinition{
+					RoleSnapshot: &practice.RoleDefinition{
 						ID:               "role-receptionist",
 						SceneID:          "scene-daily-1",
 						Type:             "HOTEL_RECEPTIONIST",
@@ -640,10 +635,9 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 						Responsibilities: "Help the guest check in.",
 						Style:            "professional",
 						PracticeObjectives: append(
-							[]scene.PracticeObjectiveDefinition(nil),
+							[]practice.PracticeObjectiveDefinition(nil),
 							roleObjectives...,
 						),
-						DisplayOrder: 1,
 					},
 					Order: 1,
 				},
@@ -658,16 +652,17 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 					Order: 2,
 				},
 			},
-			SessionPolicy: preparation.SessionPolicy{
+			SessionPolicy: practice.SessionPolicy{
 				SuggestedDurationSeconds: 300,
 				MinEffectiveTurns:        1,
 				MaxEffectiveTurns:        3,
 				CoverageCheckpointTurn:   1,
 				MaxFollowUpsPerQuestion:  1,
-				EarlyCompletionRule: preparation.
+				EarlyCompletionRule: practice.
 					EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+				RetryAllowed: true,
 			},
-			PracticeObjectives: []preparation.PracticeObjective{
+			PracticeObjectives: []practice.PracticeObjective{
 				{ID: "complete_check_in", Description: "Complete check-in accurately."},
 				{ID: "clear_request", Description: "Make a clear request."},
 				{

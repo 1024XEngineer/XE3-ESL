@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -87,22 +88,13 @@ func (b preparationBackend) CreatePracticePlan(
 	if err != nil {
 		return preparation.PracticePlan{}, ErrInvalidSelection
 	}
-	policy, err := preparation.NewPolicyCatalog().ResolveSessionPolicy(
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
 		selection.Scene,
 		option,
+		request.MaxEffectiveTurns,
 	)
 	if err != nil {
 		return preparation.PracticePlan{}, ErrInvalidSelection
-	}
-	if request.MaxEffectiveTurns > 0 {
-		if request.MaxEffectiveTurns < policy.MinEffectiveTurns ||
-			request.MaxEffectiveTurns > policy.MaxEffectiveTurns {
-			return preparation.PracticePlan{}, ErrInvalidSelection
-		}
-		policy.MaxEffectiveTurns = request.MaxEffectiveTurns
-		if policy.CoverageCheckpointTurn > policy.MaxEffectiveTurns {
-			policy.CoverageCheckpointTurn = policy.MaxEffectiveTurns
-		}
 	}
 	return b.runtime.createPlan(request, selection, policy)
 }
@@ -129,7 +121,20 @@ type practiceTurnDecision struct {
 	NextQuestionNumber int
 	SessionVersion     int
 	EndReason          string
-	NextAction         practice.NextAction
+	NextAction         practiceNextAction
+}
+
+type practiceNextAction string
+
+const (
+	practiceNextActionMoveToNextObjective practiceNextAction = "MOVE_TO_NEXT_OBJECTIVE"
+	practiceNextActionCompleteSession     practiceNextAction = "COMPLETE_SESSION"
+)
+
+type practiceTurnOutcome struct {
+	TurnID    string
+	SessionID string
+	IsRetry   bool
 }
 
 func (b practiceBackend) CreatePracticeSession() (
@@ -207,7 +212,7 @@ func (b practiceBackend) AuthorizePracticeTurn(
 }
 
 func (b practiceBackend) ApplyTurnOutcome(
-	outcome practice.TurnOutcome,
+	outcome practiceTurnOutcome,
 ) (practiceTurnDecision, error) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
@@ -236,7 +241,7 @@ func (b practiceBackend) ApplyTurnOutcome(
 		EffectiveTurns:     b.runtime.effectiveTurns,
 		NextQuestionNumber: b.runtime.effectiveTurns + 1,
 		SessionVersion:     b.runtime.sessionVersion,
-		NextAction:         practice.NextActionMoveToNextObjective,
+		NextAction:         practiceNextActionMoveToNextObjective,
 	}
 	if b.runtime.effectiveTurns == 4 {
 		b.runtime.sessionStatus = practice.SessionCompleted
@@ -244,8 +249,8 @@ func (b practiceBackend) ApplyTurnOutcome(
 		decision.Completed = true
 		decision.NextQuestionNumber = 0
 		decision.SessionVersion = 6
-		decision.EndReason = practice.EndReasonCoverageSatisfiedAtCheckpoint
-		decision.NextAction = practice.NextActionCompleteSession
+		decision.EndReason = coverageSatisfiedAtCheckpointEndReason
+		decision.NextAction = practiceNextActionCompleteSession
 	}
 	b.runtime.turnDecisions[outcome.TurnID] = decision
 	return decision, nil

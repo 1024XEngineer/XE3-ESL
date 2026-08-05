@@ -563,6 +563,8 @@ components:
         - coverage_checkpoint_turn
         - max_follow_ups_per_question
         - early_completion_rule
+        - retry_allowed
+        - question_translation_allowed
       properties:
         suggested_duration_seconds:
           type: integer
@@ -584,6 +586,10 @@ components:
           type: string
           enum:
             - COVERAGE_SATISFIED_AFTER_CHECKPOINT
+        retry_allowed:
+          type: boolean
+        question_translation_allowed:
+          type: boolean
     IELTSPracticeSelection:
       type: object
       additionalProperties: false

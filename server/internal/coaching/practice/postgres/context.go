@@ -13,8 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 func (r *Repository) ReplaySession(
@@ -968,22 +966,11 @@ func validContextSnapshot(
 		!validEvaluationPolicyRef(
 			snapshot.SceneSelection.Scene.EvaluationPolicyRef,
 		) ||
-		snapshot.SceneSelection.Scene.Status != scene.SceneStatusActive ||
+		snapshot.SceneSelection.Scene.Status != practice.SceneStatusActive ||
 		!validContextResourceID(snapshot.Preparation.ID) ||
 		!validContextResourceID(snapshot.Preparation.SourceProfileID) ||
 		snapshot.Preparation.SourceVersion < 1 ||
 		snapshot.Preparation.CreatedAt.IsZero() ||
-		snapshot.SessionPolicy.SuggestedDurationSeconds < 1 ||
-		snapshot.SessionPolicy.MinEffectiveTurns < 1 ||
-		snapshot.SessionPolicy.MaxEffectiveTurns <
-			snapshot.SessionPolicy.MinEffectiveTurns ||
-		snapshot.SessionPolicy.MaxEffectiveTurns > 14 ||
-		snapshot.SessionPolicy.CoverageCheckpointTurn < 1 ||
-		snapshot.SessionPolicy.CoverageCheckpointTurn >
-			snapshot.SessionPolicy.MaxEffectiveTurns ||
-		snapshot.SessionPolicy.MaxFollowUpsPerQuestion < 0 ||
-		snapshot.SessionPolicy.EarlyCompletionRule !=
-			preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint ||
 		!validContextObjectives(snapshot.PracticeObjectives) {
 		return false
 	}
@@ -991,7 +978,18 @@ func validContextSnapshot(
 	if err != nil || len(roles) == 0 {
 		return false
 	}
-	if _, err := snapshot.SceneSelection.PracticeOption(); err != nil {
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil || !practice.ValidSessionPolicy(
+		snapshot.SceneSelection.Scene.SessionPolicyRef,
+		option.Type,
+		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+		snapshot.SessionPolicy,
+	) {
+		return false
+	}
+	if _, err := practice.ResolveTurnPolicy(
+		snapshot.SceneSelection.Scene.TurnPolicyRef,
+	); err != nil {
 		return false
 	}
 	if len(snapshot.Participants) != len(roles)+1 {
@@ -1050,12 +1048,17 @@ func validContextSnapshot(
 func validCreatedIELTSAssignment(
 	snapshot practice.SessionSnapshot,
 ) bool {
-	expectedMode, isIELTS := ieltsModeForScene(snapshot.SceneSelection.Scene)
-	if !isIELTS {
+	turnPolicy, err := practice.ResolveTurnPolicy(
+		snapshot.SceneSelection.Scene.TurnPolicyRef,
+	)
+	if err != nil {
+		return false
+	}
+	if turnPolicy.Kind != practice.TurnPolicyFrozenIELTS {
 		return snapshot.IELTSAssignment == nil
 	}
 	assignment := snapshot.IELTSAssignment
-	if assignment == nil || assignment.Mode != expectedMode ||
+	if assignment == nil || assignment.Mode != turnPolicy.IELTSMode ||
 		!validContextResourceID(assignment.BankID) ||
 		strings.TrimSpace(assignment.Season) == "" ||
 		len(assignment.TurnBlueprints) == 0 ||
@@ -1065,22 +1068,22 @@ func validCreatedIELTSAssignment(
 		) {
 		return false
 	}
-	switch expectedMode {
-	case scene.IELTSPracticeModeFullMock:
+	switch turnPolicy.IELTSMode {
+	case practice.IELTSPracticeModeFullMock:
 		return validContextResourceID(assignment.Part1SetID) &&
 			validContextResourceID(assignment.TopicGroupID) &&
 			assignment.Part1Questions == 8 && assignment.Part2Questions == 1 &&
 			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
-	case scene.IELTSPracticeModePart1:
+	case practice.IELTSPracticeModePart1:
 		return validContextResourceID(assignment.Part1SetID) &&
 			assignment.TopicGroupID == "" && assignment.Part1Questions == 8 &&
 			assignment.Part2Questions == 0 && assignment.Part3Questions == 0
-	case scene.IELTSPracticeModePart2:
+	case practice.IELTSPracticeModePart2:
 		return assignment.Part1SetID == "" &&
 			validContextResourceID(assignment.TopicGroupID) &&
 			assignment.Part1Questions == 0 && assignment.Part2Questions == 1 &&
 			assignment.Part3Questions >= 1 && assignment.Part3Questions <= 5
-	case scene.IELTSPracticeModePart3:
+	case practice.IELTSPracticeModePart3:
 		return assignment.Part1SetID == "" &&
 			validContextResourceID(assignment.TopicGroupID) &&
 			assignment.Part1Questions == 0 && assignment.Part2Questions == 0 &&
@@ -1090,7 +1093,7 @@ func validCreatedIELTSAssignment(
 	}
 }
 
-func validContextObjectives(values []preparation.PracticeObjective) bool {
+func validContextObjectives(values []practice.PracticeObjective) bool {
 	if len(values) == 0 {
 		return false
 	}
@@ -1212,26 +1215,6 @@ func isEffectiveSessionStatus(status practice.SessionStatus) bool {
 	return status == practice.SessionStarting ||
 		status == practice.SessionInProgress ||
 		status == practice.SessionPaused
-}
-
-func ieltsModeForScene(
-	definition scene.SceneDefinition,
-) (scene.IELTSPracticeMode, bool) {
-	if definition.Family != scene.SceneFamilyExam {
-		return "", false
-	}
-	switch definition.Model {
-	case scene.SceneModelIELTSSpeakingFullMock:
-		return scene.IELTSPracticeModeFullMock, true
-	case scene.SceneModelIELTSSpeakingPart1:
-		return scene.IELTSPracticeModePart1, true
-	case scene.SceneModelIELTSSpeakingPart2:
-		return scene.IELTSPracticeModePart2, true
-	case scene.SceneModelIELTSSpeakingPart3:
-		return scene.IELTSPracticeModePart3, true
-	default:
-		return "", false
-	}
 }
 
 func equalContextStrings(left, right []string) bool {

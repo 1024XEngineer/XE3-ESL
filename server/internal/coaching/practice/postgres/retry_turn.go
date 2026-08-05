@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 var _ practice.RetryTurnRepository = (*Repository)(nil)
@@ -65,8 +64,8 @@ func (r *Repository) AuthorizeRetryTurn(
 	}
 
 	var (
-		scenarioType  scene.SceneFamily
-		scenarioModel scene.SceneModel
+		scenarioType  practice.SceneFamily
+		scenarioModel practice.SceneModel
 		sessionStatus practice.SessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
@@ -110,7 +109,7 @@ func (r *Repository) AuthorizeRetryTurn(
 		return practice.RetryTurnAuthorization{},
 			practice.ErrConflict
 	}
-	if !eligibleRetryScenario(scenarioType, scenarioModel) ||
+	if !validRetryExecutionPolicy(snapshot) ||
 		(sessionStatus != practice.SessionInProgress &&
 			sessionStatus != practice.SessionCompleted) {
 		return practice.RetryTurnAuthorization{},
@@ -173,8 +172,8 @@ func (r *Repository) ResolveRetryParticipant(
 	}
 	var (
 		sessionID     string
-		scenarioType  scene.SceneFamily
-		scenarioModel scene.SceneModel
+		scenarioType  practice.SceneFamily
+		scenarioModel practice.SceneModel
 		sessionStatus practice.SessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
@@ -223,7 +222,7 @@ func (r *Repository) ResolveRetryParticipant(
 		snapshot.SceneFamily != scenarioType ||
 		snapshot.SceneModel != scenarioModel ||
 		countsToward ||
-		!eligibleRetryScenario(scenarioType, scenarioModel) ||
+		!validRetryExecutionPolicy(snapshot) ||
 		(sessionStatus != practice.SessionInProgress &&
 			sessionStatus != practice.SessionCompleted) {
 		return "", practice.ErrConflict
@@ -287,22 +286,23 @@ func getRetryTurnAuthorization(
 	return authorization, nil
 }
 
-func eligibleRetryScenario(
-	scenarioType scene.SceneFamily,
-	scenarioModel scene.SceneModel,
-) bool {
-	switch scenarioType {
-	case scene.SceneFamilyWorkplace:
-		return scenarioModel == scene.SceneModelProgressAndRiskUpdate ||
-			scenarioModel ==
-				scene.SceneModelWorkplaceBasicDialogue
-	case scene.SceneFamilyDaily:
-		return scenarioModel ==
-			scene.SceneModelHotelCheckinAndIssueHandling ||
-			scenarioModel == scene.SceneModelDailyBasicDialogue
-	default:
+func validRetryExecutionPolicy(snapshot practice.SessionSnapshot) bool {
+	if !snapshot.SessionPolicy.RetryAllowed {
 		return false
 	}
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil || !practice.ValidSessionPolicy(
+		snapshot.SceneSelection.Scene.SessionPolicyRef,
+		option.Type,
+		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
+		snapshot.SessionPolicy,
+	) {
+		return false
+	}
+	_, err = practice.ResolveTurnPolicy(
+		snapshot.SceneSelection.Scene.TurnPolicyRef,
+	)
+	return err == nil
 }
 
 func retryActorParticipant(

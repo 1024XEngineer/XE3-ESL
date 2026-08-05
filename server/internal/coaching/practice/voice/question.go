@@ -49,9 +49,9 @@ func (adapter *questionAdapter) EnsureQuestion(
 	session Session,
 	sequence int,
 ) (practice.Question, error) {
-	policy, err := resolveTurnPolicy(session.TurnPolicyRef)
+	policy, err := practice.ResolveTurnPolicy(session.TurnPolicyRef)
 	if err != nil {
-		return practice.Question{}, err
+		return practice.Question{}, ErrInvalidContext
 	}
 	questionID := fmt.Sprintf(
 		"%s_%d",
@@ -74,7 +74,7 @@ func (adapter *questionAdapter) EnsureQuestion(
 	var generationErr error
 	parentQuestionID := ""
 	followUpAllowed := false
-	interviewDecision := policy == turnPolicyInterview &&
+	interviewDecision := policy.Kind == practice.TurnPolicyInterview &&
 		session.MaxFollowUpsPerQuestion > 0 && sequence > 1
 	if interviewDecision {
 		questions, listErr := adapter.repository.ListSessionQuestions(
@@ -94,7 +94,7 @@ func (adapter *questionAdapter) EnsureQuestion(
 			sequence,
 			followUpAllowed,
 		)
-	} else if policy != turnPolicyFrozenIELTS {
+	} else if policy.Kind != practice.TurnPolicyFrozenIELTS {
 		request, generationErr = questionGenerationRequest(session, sequence)
 	}
 	if generationErr != nil {
@@ -102,7 +102,7 @@ func (adapter *questionAdapter) EnsureQuestion(
 	}
 	content := ""
 	questionType := "PRIMARY"
-	if policy == turnPolicyFrozenIELTS {
+	if policy.Kind == practice.TurnPolicyFrozenIELTS {
 		content, generationErr = frozenIELTSQuestion(session, sequence)
 	} else {
 		content, generationErr = adapter.generator.GenerateQuestion(ctx, request)

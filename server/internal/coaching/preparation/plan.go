@@ -40,12 +40,14 @@ type GoalSnapshot struct {
 // revision. Objectives are held once on PracticePlan rather than duplicated
 // inside this value.
 type SessionPolicy struct {
-	SuggestedDurationSeconds int                 `json:"suggested_duration_seconds"`
-	MinEffectiveTurns        int                 `json:"min_effective_turns"`
-	MaxEffectiveTurns        int                 `json:"max_effective_turns"`
-	CoverageCheckpointTurn   int                 `json:"coverage_checkpoint_turn"`
-	MaxFollowUpsPerQuestion  int                 `json:"max_follow_ups_per_question"`
-	EarlyCompletionRule      EarlyCompletionRule `json:"early_completion_rule"`
+	SuggestedDurationSeconds   int                 `json:"suggested_duration_seconds"`
+	MinEffectiveTurns          int                 `json:"min_effective_turns"`
+	MaxEffectiveTurns          int                 `json:"max_effective_turns"`
+	CoverageCheckpointTurn     int                 `json:"coverage_checkpoint_turn"`
+	MaxFollowUpsPerQuestion    int                 `json:"max_follow_ups_per_question"`
+	EarlyCompletionRule        EarlyCompletionRule `json:"early_completion_rule"`
+	RetryAllowed               bool                `json:"retry_allowed"`
+	QuestionTranslationAllowed bool                `json:"question_translation_allowed"`
 }
 
 type PracticeObjective struct {
@@ -205,5 +207,6 @@ type PolicyResolver interface {
 	ResolveSessionPolicy(
 		scene.SceneDefinition,
 		scene.PracticeOption,
+		int,
 	) (SessionPolicy, error)
 }

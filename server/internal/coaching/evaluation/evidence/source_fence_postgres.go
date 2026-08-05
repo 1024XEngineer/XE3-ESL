@@ -11,7 +11,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -116,8 +115,8 @@ func lockCurrentEvidenceSources(
 	}
 	sourceSession := practice.Session{
 		ID:             command.PracticeSessionID,
-		SceneFamily:    scene.SceneFamily(scenarioType),
-		SceneModel:     scene.SceneModel(scenarioModel),
+		SceneFamily:    practice.SceneFamily(scenarioType),
+		SceneModel:     practice.SceneModel(scenarioModel),
 		SnapshotID:     snapshotID,
 		Status:         practice.SessionStatus(status),
 		Version:        sessionVersion,

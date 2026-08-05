@@ -385,8 +385,8 @@ paths:
 
         For a `starting` Session, this operation idempotently creates the first
         Question and advances the Session to `in_progress`. After a normal Turn
-        completes, Practice itself applies TurnOutcome to Practice and
-        either creates the next Question or completes the Session. Clients use
+        completes, Practice advances the frozen Session policy and either
+        creates the next Question or completes the Session. Clients use
         this operation only to ensure/recover the current Question; repeating an
         intent never skips policy or creates a duplicate.
       operationId: ensureCurrentQuestion

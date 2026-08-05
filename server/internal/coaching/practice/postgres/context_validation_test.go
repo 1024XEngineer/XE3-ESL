@@ -6,8 +6,6 @@ import (
 	"time"
 
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 func TestValidCreateSessionCommandUsesCanonicalPlanSnapshot(t *testing.T) {
@@ -35,31 +33,62 @@ func TestValidContextSnapshotRejectsLegacyParticipantRoles(t *testing.T) {
 	}
 }
 
+func TestRetryExecutionPolicyIgnoresSceneFamilyAndModelMetadata(t *testing.T) {
+	t.Parallel()
+	snapshot := validSessionCommandFixture("user-1").Snapshot
+	snapshot.SceneSelection.Scene.SessionPolicyRef =
+		practice.DailyPracticeSessionPolicy
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := practice.ResolveSessionPolicy(
+		snapshot.SceneSelection.Scene.SessionPolicyRef,
+		snapshot.SceneSelection.Scene.Prompt,
+		option,
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.SessionPolicy = policy
+	snapshot.SceneFamily = practice.SceneFamilyExam
+	snapshot.SceneModel = practice.SceneModelIELTSSpeakingFullMock
+	snapshot.SceneSelection.Scene.Family = practice.SceneFamilyExam
+	snapshot.SceneSelection.Scene.Model =
+		practice.SceneModelIELTSSpeakingFullMock
+	if !validRetryExecutionPolicy(snapshot) {
+		t.Fatal("retry behavior changed with Family/Model metadata")
+	}
+}
+
 func validSessionCommandFixture(
 	actorUserID string,
 ) practice.CreateSessionCommand {
 	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
-	definition := scene.SceneDefinition{
+	definition := practice.SceneDefinition{
 		ID:                  "scene-1",
-		Family:              scene.SceneFamilyInterview,
-		Model:               scene.SceneModelInterviewBasicDialogue,
+		Family:              practice.SceneFamilyInterview,
+		Model:               practice.SceneModelInterviewBasicDialogue,
 		Version:             1,
-		Status:              scene.SceneStatusActive,
+		Status:              practice.SceneStatusActive,
+		TurnPolicyRef:       practice.GenericPracticeTurnPolicy,
+		SessionPolicyRef:    practice.GenericPracticeSessionPolicy,
 		EvaluationPolicyRef: "interview.shadow.evaluation.v1",
-		Prompt: scene.ScenePrompt{
+		Prompt: practice.ScenePrompt{
 			FocusAreas:               []string{"clarity"},
 			TurnBlueprints:           []string{"question"},
 			SuggestedDurationSeconds: 600,
 		},
-		Roles: []scene.RoleDefinition{{
+		Roles: []practice.RoleDefinition{{
 			ID: "role-1", SceneID: "scene-1",
-			PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+			PracticeObjectives: []practice.PracticeObjectiveDefinition{{
 				ID: "clarity", Description: "Explain the answer clearly.",
 			}},
 		}},
-		PracticeOptions: []scene.PracticeOption{{
+		PracticeOptions: []practice.PracticeOption{{
 			ID: "option-1", SceneID: "scene-1",
-			Type: scene.PracticeOptionFullSimulation,
+			Type: practice.PracticeOptionFullSimulation,
 		}},
 	}
 	snapshot := practice.SessionSnapshot{
@@ -68,11 +97,11 @@ func validSessionCommandFixture(
 		PlanRevision: 1,
 		SceneFamily:  definition.Family,
 		SceneModel:   definition.Model,
-		SceneSelection: scene.SelectionSnapshot{
+		SceneSelection: practice.SceneSelection{
 			Scene: definition, SelectedRoleIDs: []string{"role-1"},
 			PracticeOptionID: "option-1",
 		},
-		Preparation: preparation.Snapshot{
+		Preparation: practice.PreparationSnapshot{
 			ID: "preparation-1", SourceProfileID: "profile-1", SourceVersion: 1,
 			BackgroundSnapshot: "Backend engineer", CreatedAt: createdAt,
 		},
@@ -89,13 +118,13 @@ func validSessionCommandFixture(
 				Order:      2,
 			},
 		},
-		SessionPolicy: preparation.SessionPolicy{
-			SuggestedDurationSeconds: 600, MinEffectiveTurns: 1,
-			MaxEffectiveTurns: 3, CoverageCheckpointTurn: 1,
+		SessionPolicy: practice.SessionPolicy{
+			SuggestedDurationSeconds: 600, MinEffectiveTurns: 4,
+			MaxEffectiveTurns: 6, CoverageCheckpointTurn: 4,
 			MaxFollowUpsPerQuestion: 1,
-			EarlyCompletionRule:     preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+			EarlyCompletionRule:     practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		},
-		PracticeObjectives: []preparation.PracticeObjective{{ID: "clarity", Description: "clarity"}},
+		PracticeObjectives: []practice.PracticeObjective{{ID: "clarity", Description: "clarity"}},
 	}
 	return practice.CreateSessionCommand{
 		SessionID: "session-1", SnapshotID: "snapshot-1",
