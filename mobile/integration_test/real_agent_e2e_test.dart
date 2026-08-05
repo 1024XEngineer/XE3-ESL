@@ -11,6 +11,7 @@ import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/identity/session_store.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -280,6 +281,125 @@ void main() {
     await tester.pumpAndSettle();
     await _signOut(tester);
   });
+
+  testWidgets('real iOS IELTS Part 1 creates a Practice Session', (
+    tester,
+  ) async {
+    const apiBaseUrl = String.fromEnvironment(
+      'SPEAKUP_API_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+    final email =
+        'ielts-launch-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'IELTS launch e2e password 414';
+    final dependencies = app.createProductionAppDependencies(
+      baseUri: Uri.parse(apiBaseUrl),
+      sessionStore: _MemorySessionStore(),
+    );
+    runApp(
+      SpeakUpApp(
+        authController: dependencies.authController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        practiceController: dependencies.practiceController,
+        preparationController: dependencies.preparationController,
+        jobPreparationController: dependencies.jobPreparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
+        reviewHistoryController: dependencies.reviewHistoryController,
+      ),
+    );
+
+    await _registerOrSignIn(
+      tester,
+      email: email,
+      password: password,
+      requireFocusedConversation: false,
+    );
+    await _waitUntil(
+      tester,
+      () => !dependencies.conversationController.isBusy,
+      const Duration(seconds: 20),
+    );
+    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await tester.pump();
+
+    final interviewHub = find.byKey(const Key('practice-hub-interview'));
+    final examHub = find.byKey(const Key('practice-hub-exam'));
+    final roleplayHub = find.byKey(const Key('practice-hub-roleplay'));
+    await _waitForPreparationTarget(
+      tester,
+      target: interviewHub,
+      operation: 'load the three practice hubs',
+      timeout: const Duration(seconds: 30),
+    );
+    expect(examHub, findsOneWidget);
+    expect(roleplayHub, findsOneWidget);
+
+    await _scrollPreparationIntoView(tester, interviewHub);
+    await tester.tap(interviewHub);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('practice-hub-title-interview')),
+      operation: 'open the English interview hub',
+      timeout: const Duration(seconds: 10),
+    );
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+
+    await _scrollPreparationIntoView(tester, roleplayHub);
+    await tester.tap(roleplayHub);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('practice-hub-title-roleplay')),
+      operation: 'open the roleplay hub',
+      timeout: const Duration(seconds: 10),
+    );
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+
+    await _scrollPreparationIntoView(tester, examHub);
+    await tester.tap(examHub);
+    await tester.pump();
+
+    final part1 = find.byKey(
+      const Key('catalog-scene-scn_ielts_speaking_part_1'),
+    );
+    await _waitForPreparationTarget(
+      tester,
+      target: part1,
+      operation: 'load the IELTS Part 1 entry',
+      timeout: const Duration(seconds: 30),
+    );
+    await _scrollPreparationIntoView(tester, part1);
+    await tester.tap(part1);
+    await tester.pump();
+
+    final questionSet = find.byKey(const Key('ielts-part1-set-p1-001'));
+    await _waitForPreparationTarget(
+      tester,
+      target: questionSet,
+      operation: 'load the first IELTS Part 1 question set',
+      timeout: const Duration(seconds: 30),
+    );
+    await _scrollPreparationIntoView(tester, questionSet);
+    await tester.tap(questionSet);
+    await tester.pump();
+
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-page')),
+      operation: 'create and open the IELTS Part 1 Practice Session',
+      timeout: const Duration(seconds: 90),
+    );
+    expect(dependencies.practiceController.practiceSessionId, isNotNull);
+    expect(find.byKey(const Key('ielts-mock-part-1')), findsOneWidget);
+    await _expectRealUiScreenshot(
+      tester,
+      binding,
+      'ielts-part1-practice-started',
+    );
+  });
 }
 
 Future<void> _expectRealUiScreenshot(
@@ -297,6 +417,7 @@ Future<void> _registerOrSignIn(
   WidgetTester tester, {
   required String email,
   required String password,
+  bool requireFocusedConversation = true,
 }) async {
   await _waitUntil(
     tester,
@@ -346,7 +467,17 @@ Future<void> _registerOrSignIn(
   await tester.enterText(find.byType(TextFormField).at(0), email);
   await tester.enterText(find.byType(TextFormField).at(1), password);
   await _tapAuthSubmit(tester, '登录');
-  await _ensureFocusedConversation(tester);
+  if (requireFocusedConversation) {
+    await _ensureFocusedConversation(tester);
+  } else {
+    await _waitUntil(
+      tester,
+      () =>
+          find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
+          find.byKey(const Key('primary-tab-scenes')).evaluate().isNotEmpty,
+      const Duration(seconds: 20),
+    );
+  }
 }
 
 Future<void> _signIn(
@@ -844,6 +975,19 @@ List<int> _decodeVoiceFixture(String encoded) {
     fail('SPEAKUP_E2E_WAV_BASE64 must decode to a non-empty WAV file.');
   }
   return bytes;
+}
+
+final class _MemorySessionStore implements SessionStore {
+  String? _token;
+
+  @override
+  Future<void> deleteToken() async => _token = null;
+
+  @override
+  Future<String?> readToken() async => _token;
+
+  @override
+  Future<void> writeToken(String token) async => _token = token;
 }
 
 final class _FixturePracticeRecorder implements PracticeRecorder {

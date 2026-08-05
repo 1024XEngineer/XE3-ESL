@@ -8,19 +8,24 @@ server_dir="$repo_dir/server"
 mobile_source_dir="$repo_dir/mobile"
 server_port="${SPEAKUP_DEV_PORT:-18080}"
 base_url="http://127.0.0.1:$server_port"
-run_dir="$(mktemp -d "${TMPDIR:-/tmp}/xe3-ios-simulator-dev.XXXXXX")"
+run_dir="${SPEAKUP_SIMULATOR_WORK_DIR:-${TMPDIR:-/tmp}/xe3-ios-simulator-dev-cache}"
 mobile_dir="$run_dir/mobile"
 override_file="$mobile_dir/pubspec_overrides.yaml"
 server_binary="$run_dir/server"
 server_log="$run_dir/server.log"
 server_pid=""
+flutter_mode="run"
+
+if [[ "${1:-}" == "test" ]]; then
+  flutter_mode="test"
+  shift
+fi
 
 cleanup() {
   if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -rf "$run_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -61,7 +66,8 @@ if [[ -z "$device_id" ]]; then
 fi
 xcrun simctl bootstatus "$device_id" -b
 
-rsync -a \
+mkdir -p "$mobile_dir"
+rsync -a --delete \
   --exclude '/.dart_tool/' \
   --exclude '/build/' \
   --exclude '/ios/Pods/' \
@@ -109,9 +115,13 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
-print "启动 SpeakUp iOS Simulator；数字人已明确禁用，按 q 退出。"
+if [[ "$flutter_mode" == "test" ]]; then
+  print "在 iOS Simulator 运行 SpeakUp 集成测试；数字人已明确禁用。"
+else
+  print "启动 SpeakUp iOS Simulator；数字人已明确禁用，按 q 退出。"
+fi
 cd "$mobile_dir"
-flutter run \
+flutter "$flutter_mode" \
+  "$@" \
   -d "$device_id" \
-  --dart-define="SPEAKUP_API_BASE_URL=$base_url" \
-  "$@"
+  --dart-define="SPEAKUP_API_BASE_URL=$base_url"
