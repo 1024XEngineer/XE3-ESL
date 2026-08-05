@@ -69,6 +69,37 @@ func TestProjectConfirmedPlanCarriesOnlySelectedSceneValues(t *testing.T) {
 	}
 }
 
+func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
+	t.Parallel()
+	plan := confirmedPlanFixture()
+	option := &plan.SceneSelection.Scene.PracticeOptions[0]
+	option.Mode = scene.PracticeModeFocus
+	option.RoleDefinitionID = "role-selected"
+	option.SessionPolicyRef = practice.InterviewProjectDeepDiveSessionPolicy
+	plan.SessionPolicy = preparation.SessionPolicy{
+		SuggestedDurationSeconds:   600,
+		MinEffectiveTurns:          1,
+		MaxEffectiveTurns:          3,
+		CoverageCheckpointTurn:     1,
+		MaxFollowUpsPerQuestion:    3,
+		EarlyCompletionRule:        preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+		QuestionTranslationAllowed: true,
+		QuestionTipsAllowed:        true,
+		AvatarAllowed:              true,
+		SpeechFeedbackAllowed:      true,
+	}
+
+	projection, err := ProjectConfirmedPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected := projection.SceneSelection.Scene.PracticeOptions[0]
+	if projected.RoleDefinitionID != "role-selected" ||
+		projection.SessionPolicy.MaxEffectiveTurns != 3 {
+		t.Fatalf("focus projection = %#v", projection)
+	}
+}
+
 func TestProjectConfirmedPlanRejectsPolicyThatContradictsRegistry(
 	t *testing.T,
 ) {

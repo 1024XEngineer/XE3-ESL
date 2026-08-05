@@ -63,11 +63,7 @@ func ProjectConfirmedPlan(
 	selection := projectSceneSelection(plan.SceneSelection, roles, option)
 	policy, err := projectSessionPolicy(
 		plan.SessionPolicy,
-		practice.PracticeOption{
-			Mode:                     practice.PracticeMode(option.Mode),
-			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
-			SessionPolicyRef:         option.SessionPolicyRef,
-		},
+		projectPracticeOption(option),
 		selection.Scene.Prompt,
 	)
 	if err != nil {

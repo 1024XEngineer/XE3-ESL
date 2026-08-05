@@ -1572,17 +1572,27 @@ func ensureTestPracticeSession(
 	t.Helper()
 	snapshotID := sessionID + "-snapshot"
 	snapshot := fmt.Sprintf(`{
-		"snapshot_id":%q,
-		"practice_session_id":%q,
-		"scene_selection":{
-			"scene":{
-				"turn_policy_ref":"generic.practice.turn.v1",
-				"session_policy_ref":"generic.practice.session.v1",
-				"prompt":{"turn_blueprints":["Open the practice"]},
-				"practice_options":[{
-					"practice_option_id":"option-full",
-					"practice_option_type":"FULL_SIMULATION"
-				}]
+			"snapshot_id":%q,
+			"practice_session_id":%q,
+			"scene_selection":{
+				"scene":{
+					"scene_id":"scene-voice-integration",
+					"practice_experience":"INTERVIEW",
+					"scene_category":"INTERVIEW_PROFESSIONAL",
+					"name":"Voice integration",
+					"scene_version":1,
+					"status":"active",
+					"prompt":{"turn_blueprints":["Open the practice"]},
+					"practice_options":[{
+						"practice_option_id":"option-full",
+						"scene_id":"scene-voice-integration",
+						"practice_mode":"FULL_SIMULATION",
+						"display_name":"Full simulation",
+						"suggested_duration_seconds":600,
+						"turn_policy_ref":"generic.practice.turn.v1",
+						"session_policy_ref":"generic.practice.session.v1",
+						"evaluation_policy_ref":"interview.shadow.evaluation.v1"
+					}]
 			},
 			"practice_option_id":"option-full"
 		},
