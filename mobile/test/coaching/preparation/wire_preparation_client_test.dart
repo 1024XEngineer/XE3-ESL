@@ -27,6 +27,10 @@ void main() {
       expect(scenes.single.id, _sceneId);
       expect(scenes.single.name, 'English interview for technical roles');
       expect(
+        scenes.single.evaluationPolicyRef,
+        'interview.shadow.evaluation.v1',
+      );
+      expect(
         scenes.single.prompt.publicSceneBrief,
         'Discuss one backend project.',
       );
@@ -58,6 +62,30 @@ void main() {
     expect(
       scenes.single.prompt.publicSceneBrief,
       'Discuss one real backend project.',
+    );
+  });
+
+  test('rejects a scene without its evaluation policy reference', () async {
+    final scene = <String, Object?>{..._sceneJson}
+      ..remove('evaluation_policy_ref');
+    final client = WireSceneClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: _QueueTransport([
+        _response(<String, Object?>{
+          'scenes': [scene],
+        }),
+      ]),
+    );
+
+    await expectLater(
+      client.listScenes(),
+      throwsA(
+        isA<SceneClientException>().having(
+          (error) => error.kind,
+          'kind',
+          SceneClientFailureKind.invalidResponse,
+        ),
+      ),
     );
   });
 
@@ -436,6 +464,7 @@ const _sceneJson = <String, Object?>{
   'status': 'active',
   'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
   'session_policy_ref': 'interview.project_deep_dive.session.v1',
+  'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
   'prompt': {
     'public_scene_brief': 'Discuss one backend project.',
     'practice_goal': 'Explain decisions with evidence.',
@@ -472,6 +501,7 @@ Map<String, Object?> _sceneJsonFor({
     'status': 'active',
     'turn_policy_ref': 'turn-$id',
     'session_policy_ref': 'session-$id',
+    'evaluation_policy_ref': 'evaluation-$id',
     'prompt': <String, Object?>{
       'public_scene_brief': 'Practice $name.',
       'practice_goal': 'Complete this practice.',

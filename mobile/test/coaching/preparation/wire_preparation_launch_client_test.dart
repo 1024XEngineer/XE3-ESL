@@ -689,6 +689,7 @@ Map<String, Object?> _sceneJson(SceneDefinition scene) => <String, Object?>{
   'status': scene.status.name,
   'turn_policy_ref': scene.turnPolicyRef,
   'session_policy_ref': scene.sessionPolicyRef,
+  'evaluation_policy_ref': scene.evaluationPolicyRef,
   'prompt': <String, Object?>{
     'public_scene_brief': scene.prompt.publicSceneBrief,
     'practice_goal': scene.prompt.practiceGoal,
@@ -878,6 +879,7 @@ const _scene = SceneDefinition(
   status: SceneStatus.active,
   turnPolicyRef: 'interview.project_deep_dive.turn.v1',
   sessionPolicyRef: 'interview.project_deep_dive.session.v1',
+  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: 'Discuss one backend project.',
     practiceGoal: 'Explain decisions with evidence.',
@@ -943,6 +945,7 @@ const _ieltsScene = SceneDefinition(
   status: SceneStatus.active,
   turnPolicyRef: 'ielts.speaking.full.turn.v2',
   sessionPolicyRef: 'ielts.speaking.full.session.v2',
+  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
   prompt: ScenePrompt(
     publicSceneBrief: '按 Part 1、Part 2、Part 3 连续完成。',
     practiceGoal: 'Complete a full speaking mock.',

@@ -661,6 +661,7 @@ Map<String, Object?> _sceneJson() {
     'status': 'active',
     'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
     'session_policy_ref': 'interview.project_deep_dive.session.v1',
+    'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
     'prompt': <String, Object?>{
       'public_scene_brief': 'Discuss one backend project.',
       'practice_goal': 'Explain decisions with evidence.',

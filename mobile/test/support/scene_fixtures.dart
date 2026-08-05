@@ -22,6 +22,7 @@ const testScenes = <SceneDefinition>[
     status: SceneStatus.active,
     turnPolicyRef: 'turn-policy-interview',
     sessionPolicyRef: 'session-policy-interview',
+    evaluationPolicyRef: 'evaluation-policy-interview',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -57,6 +58,7 @@ const testScenes = <SceneDefinition>[
     status: SceneStatus.active,
     turnPolicyRef: 'turn-policy-interview',
     sessionPolicyRef: 'session-policy-interview',
+    evaluationPolicyRef: 'evaluation-policy-interview',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -92,6 +94,7 @@ const testScenes = <SceneDefinition>[
     status: SceneStatus.active,
     turnPolicyRef: 'turn-policy-project',
     sessionPolicyRef: 'session-policy-project',
+    evaluationPolicyRef: 'evaluation-policy-project',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -127,6 +130,7 @@ const testScenes = <SceneDefinition>[
     status: SceneStatus.active,
     turnPolicyRef: 'turn-policy-technical',
     sessionPolicyRef: 'session-policy-technical',
+    evaluationPolicyRef: 'evaluation-policy-technical',
     prompt: _prompt,
     roles: <RoleDefinition>[
       RoleDefinition(
@@ -164,6 +168,7 @@ SceneDefinition testScene({
   SceneStatus status = SceneStatus.active,
   String? turnPolicyRef,
   String? sessionPolicyRef,
+  String? evaluationPolicyRef,
   ScenePrompt? prompt,
   List<RoleDefinition>? roles,
   List<PracticeOption>? practiceOptions,
@@ -208,6 +213,7 @@ SceneDefinition testScene({
     status: status,
     turnPolicyRef: turnPolicyRef ?? 'turn-$id',
     sessionPolicyRef: sessionPolicyRef ?? 'session-$id',
+    evaluationPolicyRef: evaluationPolicyRef ?? 'evaluation-$id',
     prompt: resolvedPrompt,
     roles: List<RoleDefinition>.unmodifiable(completeRoles),
     practiceOptions: List<PracticeOption>.unmodifiable(completeOptions),

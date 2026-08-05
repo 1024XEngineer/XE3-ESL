@@ -503,6 +503,7 @@ bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
     left.status == right.status &&
     left.turnPolicyRef == right.turnPolicyRef &&
     left.sessionPolicyRef == right.sessionPolicyRef &&
+    left.evaluationPolicyRef == right.evaluationPolicyRef &&
     left.prompt.publicSceneBrief == right.prompt.publicSceneBrief &&
     left.prompt.practiceGoal == right.prompt.practiceGoal &&
     left.prompt.userRole == right.prompt.userRole &&
