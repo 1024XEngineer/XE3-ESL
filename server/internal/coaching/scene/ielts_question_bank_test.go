@@ -257,6 +257,99 @@ func TestResolveIELTSQuestionSetKeepsPart2AndPart3Bound(t *testing.T) {
 	}
 }
 
+func TestEveryPublishedIELTSCardAndFullMockCombinationResolves(t *testing.T) {
+	t.Parallel()
+
+	catalog := mustTestCatalog(t)
+	bank, err := catalog.IELTSQuestionBank()
+	if err != nil {
+		t.Fatalf("IELTSQuestionBank: %v", err)
+	}
+
+	for _, topic := range bank.Part1Topics {
+		topic := topic
+		t.Run("part1/"+topic.ID, func(t *testing.T) {
+			t.Parallel()
+			resolved, err := catalog.ResolveIELTSQuestionSet(
+				IELTSQuestionSetSelection{
+					Mode:       IELTSPracticeModePart1,
+					Part1SetID: topic.ID,
+				},
+			)
+			if err != nil {
+				t.Fatalf("resolve Part 1 card: %v", err)
+			}
+			if resolved.Part1Questions != len(topic.Questions) ||
+				len(resolved.TurnBlueprints) != len(topic.Questions) {
+				t.Fatalf("resolved Part 1 card = %#v", resolved)
+			}
+		})
+	}
+
+	for _, group := range bank.TopicGroups {
+		group := group
+		for _, mode := range []IELTSPracticeMode{
+			IELTSPracticeModePart2,
+			IELTSPracticeModePart3,
+		} {
+			mode := mode
+			t.Run(string(mode)+"/"+group.ID, func(t *testing.T) {
+				t.Parallel()
+				resolved, err := catalog.ResolveIELTSQuestionSet(
+					IELTSQuestionSetSelection{
+						Mode:         mode,
+						TopicGroupID: group.ID,
+					},
+				)
+				if err != nil {
+					t.Fatalf("resolve %s card: %v", mode, err)
+				}
+				wantTurns := len(group.Part3Questions)
+				if mode == IELTSPracticeModePart2 {
+					wantTurns++
+				}
+				if resolved.TopicGroupID != group.ID ||
+					len(resolved.TurnBlueprints) != wantTurns {
+					t.Fatalf("resolved %s card = %#v", mode, resolved)
+				}
+			})
+		}
+	}
+
+	for _, part1Set := range bank.Part1Sets {
+		for _, group := range bank.TopicGroups {
+			resolved, err := catalog.ResolveIELTSQuestionSet(
+				IELTSQuestionSetSelection{
+					Mode:         IELTSPracticeModeFullMock,
+					Part1SetID:   part1Set.ID,
+					TopicGroupID: group.ID,
+				},
+			)
+			if err != nil {
+				t.Fatalf(
+					"resolve full mock %s/%s: %v",
+					part1Set.ID,
+					group.ID,
+					err,
+				)
+			}
+			if resolved.Part1Questions != 8 ||
+				resolved.Part2Questions != 1 ||
+				resolved.Part3Questions < 1 ||
+				resolved.Part3Questions > 5 ||
+				len(resolved.TurnBlueprints) !=
+					9+resolved.Part3Questions {
+				t.Fatalf(
+					"invalid full mock %s/%s: %#v",
+					part1Set.ID,
+					group.ID,
+					resolved,
+				)
+			}
+		}
+	}
+}
+
 func TestResolveIELTSQuestionSetPreservesShortOriginalPart3(t *testing.T) {
 	t.Parallel()
 

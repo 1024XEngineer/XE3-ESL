@@ -244,6 +244,41 @@ void main() {
     );
   });
 
+  testWidgets('opens the specialty browser with its exit control visible', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    final specialty = find.byKey(const Key('ielts-mode-special'));
+    await tester.scrollUntilVisible(
+      specialty,
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(specialty);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('preparation-back-to-families')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-special-browser-title')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-browser-search')).hitTestable(),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('combines workplace and daily templates in AI roleplay', (
     tester,
   ) async {

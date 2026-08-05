@@ -577,8 +577,14 @@ class _PreparationPageState extends State<PreparationPage> {
 
   Widget _buildHub(PreparationController controller, _PracticeHub hub) {
     final scenes = _scenesForHub(controller.scenes, hub);
+    final routeKey = hub == _PracticeHub.ielts
+        ? (_ieltsBrowserOpen ? 'ielts-browser' : 'ielts-modes')
+        : hub.name;
     return ListView(
-      key: Key('preparation-hub-list-${hub.name}'),
+      // IELTS mode selection and the question browser are distinct screens.
+      // Give them distinct scroll state so the browser always opens with its
+      // exit control visible, even after scrolling to the specialty card.
+      key: Key('preparation-hub-list-$routeKey'),
       primary: false,
       padding: PreparationDesign.pagePadding(
         context,
