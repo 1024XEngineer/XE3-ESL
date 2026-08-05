@@ -71,3 +71,33 @@ func durationSince(startedAt time.Time) time.Duration {
 	}
 	return time.Since(startedAt)
 }
+
+func (service *Service) logAssistantEnrichmentSkipped(
+	run Run,
+	reason string,
+) {
+	if service == nil || service.logger == nil {
+		return
+	}
+	service.logger.Warn(
+		"agent.assistant.enrichment.skipped",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"reason", reason,
+	)
+}
+
+func (service *Service) logAssistantEnrichmentCompleted(
+	run Run,
+	memeCount int,
+) {
+	if service == nil || service.logger == nil {
+		return
+	}
+	service.logger.Info(
+		"agent.assistant.enrichment.completed",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"meme_count", memeCount,
+	)
+}

@@ -1914,13 +1914,16 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 	}
 	invalidResult := successfulTextResult()
 	invalidResult.Model = "other-model"
+	invalidResult.Content = "Must be rolled back with the failed state transition."
 	if _, err := repository.run.Complete(
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
 		claimed.WorkerLeaseToken,
-		"Must be rolled back with the failed state transition.",
-		invalidResult,
+		agentrun.Completion{
+			Content: invalidResult.Content,
+			Result:  invalidResult,
+		},
 	); !errors.Is(err, agentrun.ErrInvalidRequest) {
 		t.Fatalf("invalid completion error = %v, want invalid request", err)
 	}
@@ -2469,13 +2472,17 @@ WHERE id = $1 AND owner_user_id = $2`,
 	); err != nil {
 		t.Fatalf("expire worker lease: %v", err)
 	}
+	expiredResult := successfulTextResult()
+	expiredResult.Content = "Expired workers must not persist this result."
 	if _, err := recoveredRepository.run.Complete(
 		context.Background(),
 		actor.UserID,
 		running.Run.ID,
 		claimed.WorkerLeaseToken,
-		"Expired workers must not persist this result.",
-		successfulTextResult(),
+		agentrun.Completion{
+			Content: expiredResult.Content,
+			Result:  expiredResult,
+		},
 	); !errors.Is(err, agentrun.ErrConflict) {
 		t.Fatalf("expired worker completion error = %v, want conflict", err)
 	}
@@ -2502,13 +2509,17 @@ WHERE id = $1 AND owner_user_id = $2`,
 		!interrupted.FailureRetryable {
 		t.Fatalf("interrupted Run = %#v, %v", interrupted, err)
 	}
+	staleResult := successfulTextResult()
+	staleResult.Content = "Stale workers must not persist this result."
 	if _, err := recoveredRepository.run.Complete(
 		context.Background(),
 		actor.UserID,
 		running.Run.ID,
 		claimed.WorkerLeaseToken,
-		"Stale workers must not persist this result.",
-		successfulTextResult(),
+		agentrun.Completion{
+			Content: staleResult.Content,
+			Result:  staleResult,
+		},
 	); !errors.Is(err, agentrun.ErrConflict) {
 		t.Fatalf("stale worker completion error = %v, want conflict", err)
 	}
