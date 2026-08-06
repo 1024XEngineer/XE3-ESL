@@ -110,7 +110,7 @@ final class AgentMessageAudioController extends ChangeNotifier
         delta.isEmpty) {
       return;
     }
-    _appendLiveAssistantText(live, live.observedText + delta, finalText: false);
+    _appendLiveAssistantText(live, live.observedText + delta);
   }
 
   void completeLiveAssistantSpeech({
@@ -141,7 +141,7 @@ final class AgentMessageAudioController extends ChangeNotifier
       );
       return;
     }
-    _appendLiveAssistantText(live, message.text, finalText: true);
+    _appendLiveAssistantText(live, message.text);
     live.inputClosed = true;
     unawaited(live.segments.close());
   }
@@ -516,44 +516,34 @@ final class AgentMessageAudioController extends ChangeNotifier
         );
   }
 
-  void _appendLiveAssistantText(
-    _LiveAssistantSpeech live,
-    String text, {
-    required bool finalText,
-  }) {
+  void _appendLiveAssistantText(_LiveAssistantSpeech live, String text) {
     if (!identical(_liveAssistantSpeech, live) ||
         live.inputClosed ||
         !text.startsWith(live.observedText)) {
       return;
     }
+    final delta = text.substring(live.observedText.length);
     live.observedText = text;
-    final boundaries = _assistantSpeechBoundaries(
-      text,
-      live.consumedOffset,
-      finalText: finalText,
-    );
-    for (final boundary in boundaries) {
-      if (live.nextSequence > 64) {
-        _failLiveAssistantSpeech(
-          live,
-          StateError('Assistant speech segment limit exceeded.'),
-        );
-        return;
-      }
-      final spoken = _cleanAssistantSpeechText(
-        text.substring(live.consumedOffset, boundary),
-      );
-      live.consumedOffset = boundary;
-      if (spoken.isEmpty) {
-        continue;
-      }
-      live.segments.add(
-        AgentAssistantSpeechTextSegment(
-          sequence: live.nextSequence++,
-          text: spoken,
-        ),
-      );
+    if (delta.isEmpty) {
+      return;
     }
+    if (live.nextSequence > 1024) {
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Assistant speech text chunk limit exceeded.'),
+      );
+      return;
+    }
+    final spoken = _cleanAssistantSpeechDelta(delta);
+    if (spoken.trim().isEmpty) {
+      return;
+    }
+    live.segments.add(
+      AgentAssistantSpeechTextSegment(
+        sequence: live.nextSequence++,
+        text: spoken,
+      ),
+    );
   }
 
   void _handleLiveAssistantAudio(
@@ -798,7 +788,6 @@ final class _LiveAssistantSpeech {
       StreamController<AgentAssistantSpeechTextSegment>();
   StreamSubscription<AgentAssistantSpeechAudioSegment>? subscription;
   String observedText = '';
-  int consumedOffset = 0;
   int nextSequence = 1;
   int audioSequence = 0;
   int nextChunkIndex = 1;
@@ -809,36 +798,8 @@ final class _LiveAssistantSpeech {
   Future<void> playbackOperation = Future<void>.value();
 }
 
-List<int> _assistantSpeechBoundaries(
-  String text,
-  int start, {
-  required bool finalText,
-}) {
-  final boundaries = <int>[];
-  for (var index = start; index < text.length; index++) {
-    if (_assistantSpeechTerminators.contains(text[index])) {
-      boundaries.add(index + 1);
-    }
-  }
-  if (finalText && (boundaries.isEmpty || boundaries.last < text.length)) {
-    boundaries.add(text.length);
-  }
-  return boundaries;
-}
-
-String _cleanAssistantSpeechText(String value) {
+String _cleanAssistantSpeechDelta(String value) {
   return value
       .replaceAll(RegExp(r'[`*_#>]'), '')
-      .replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '')
-      .trim();
+      .replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '');
 }
-
-const _assistantSpeechTerminators = <String>{
-  '.',
-  '?',
-  '!',
-  '。',
-  '？',
-  '！',
-  '\n',
-};

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
@@ -49,27 +50,40 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	text string,
 	consume func([]byte) error,
 ) error {
-	session, err := synthesizer.openRealtimeSpeech(ctx)
+	session, err := synthesizer.openRealtimeSpeech(ctx, consume)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	return session.StreamSegment(text, consume)
+	if err := session.AppendText(text); err != nil {
+		return err
+	}
+	return session.Finish()
 }
 
 type speechRealtimeSession struct {
 	context    context.Context
 	cancel     context.CancelFunc
 	connection *websocket.Conn
-	model      string
-	voice      string
+	taskID     string
+	consume    func([]byte) error
+	result     chan error
+	done       chan struct{}
+	closeOnce  sync.Once
+	reading    bool
+	finished   bool
 }
 
 func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 	ctx context.Context,
+	consume func([]byte) error,
 ) (*speechRealtimeSession, error) {
-	if synthesizer == nil || ctx == nil {
+	if synthesizer == nil || ctx == nil || consume == nil {
 		return nil, errors.New("Qianwen realtime TTS is unavailable")
+	}
+	taskID, err := newRealtimeTaskID()
+	if err != nil {
+		return nil, err
 	}
 	callContext, cancel := context.WithTimeout(ctx, synthesizer.timeout)
 	header := make(http.Header)
@@ -95,17 +109,46 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 		_ = connection.SetReadDeadline(deadline)
 		_ = connection.SetWriteDeadline(deadline)
 	}
-	return &speechRealtimeSession{
+	session := &speechRealtimeSession{
 		context: callContext, cancel: cancel, connection: connection,
-		model: synthesizer.model, voice: synthesizer.voice,
-	}, nil
+		taskID: taskID, consume: consume,
+		result: make(chan error, 1), done: make(chan struct{}),
+	}
+	if err := connection.WriteJSON(map[string]any{
+		"header": map[string]any{
+			"action": "run-task", "task_id": taskID, "streaming": "duplex",
+		},
+		"payload": map[string]any{
+			"task_group": "audio", "task": "tts",
+			"function": "SpeechSynthesizer", "model": synthesizer.model,
+			"parameters": map[string]any{
+				"text_type": "PlainText", "voice": synthesizer.voice,
+				"format": "pcm", "sample_rate": agentconversation.AssistantSpeechSampleRate,
+				"volume": 50, "rate": 1, "pitch": 1, "enable_ssml": false,
+			},
+			"input": map[string]any{},
+		},
+	}); err != nil {
+		cancel()
+		_ = connection.Close()
+		return nil, err
+	}
+	if err := waitForSpeechRealtimeEvent(
+		connection,
+		taskID,
+		"task-started",
+	); err != nil {
+		cancel()
+		_ = connection.Close()
+		return nil, err
+	}
+	session.reading = true
+	go session.readAudio()
+	return session, nil
 }
 
-func (session *speechRealtimeSession) StreamSegment(
-	text string,
-	consume func([]byte) error,
-) error {
-	if session == nil || session.connection == nil || consume == nil {
+func (session *speechRealtimeSession) AppendText(text string) error {
+	if session == nil || session.connection == nil || session.finished {
 		return errors.New("Qianwen realtime TTS session is unavailable")
 	}
 	if err := protocol.ValidateSynthesisRequest(
@@ -113,86 +156,88 @@ func (session *speechRealtimeSession) StreamSegment(
 	); err != nil {
 		return err
 	}
-	taskID, err := newRealtimeTaskID()
-	if err != nil {
-		return err
-	}
 	if err := session.connection.WriteJSON(map[string]any{
 		"header": map[string]any{
-			"action": "run-task", "task_id": taskID, "streaming": "duplex",
+			"action": "continue-task", "task_id": session.taskID, "streaming": "duplex",
 		},
-		"payload": map[string]any{
-			"task_group": "audio", "task": "tts",
-			"function": "SpeechSynthesizer", "model": session.model,
-			"parameters": map[string]any{
-				"text_type": "PlainText", "voice": session.voice,
-				"format": "pcm", "sample_rate": agentconversation.AssistantSpeechSampleRate,
-				"volume": 50, "rate": 1, "pitch": 1, "enable_ssml": false,
-			},
-			"input": map[string]any{},
-		},
+		"payload": map[string]any{"input": map[string]any{"text": text}},
 	}); err != nil {
 		return err
 	}
-	if err := waitForSpeechRealtimeEvent(
-		session.connection,
-		taskID,
-		"task-started",
-	); err != nil {
-		return err
+	return nil
+}
+
+func (session *speechRealtimeSession) Finish() error {
+	if session == nil || session.connection == nil || session.finished {
+		return errors.New("Qianwen realtime TTS session is unavailable")
 	}
+	session.finished = true
 	if err := session.connection.WriteJSON(map[string]any{
 		"header": map[string]any{
-			"action": "continue-task", "task_id": taskID, "streaming": "duplex",
-		},
-		"payload": map[string]any{"input": map[string]any{"text": strings.TrimSpace(text)}},
-	}); err != nil {
-		return err
-	}
-	if err := session.connection.WriteJSON(map[string]any{
-		"header": map[string]any{
-			"action": "finish-task", "task_id": taskID, "streaming": "duplex",
+			"action": "finish-task", "task_id": session.taskID, "streaming": "duplex",
 		},
 		"payload": map[string]any{"input": map[string]any{}},
 	}); err != nil {
 		return err
 	}
+	select {
+	case err := <-session.result:
+		return err
+	case <-session.context.Done():
+		return speechTransportError(
+			protocol.SpeechOperationSynthesis,
+			session.context,
+			session.context.Err(),
+		)
+	}
+}
+
+func (session *speechRealtimeSession) readAudio() {
+	defer close(session.done)
 	var audioBytes int64
 	for {
 		messageType, payload, readErr := session.connection.ReadMessage()
 		if readErr != nil {
-			return speechTransportError(
+			session.result <- speechTransportError(
 				protocol.SpeechOperationSynthesis,
 				session.context,
 				readErr,
 			)
+			return
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
 			if len(payload) == 0 || audioBytes+int64(len(payload)) > platformmedia.MaxAudioBytes {
-				return errors.New("Qianwen realtime TTS audio exceeds the accepted size")
+				session.result <- errors.New("Qianwen realtime TTS audio exceeds the accepted size")
+				return
 			}
 			audioBytes += int64(len(payload))
-			if err := consume(payload); err != nil {
-				return err
+			if err := session.consume(payload); err != nil {
+				session.result <- err
+				return
 			}
 		case websocket.TextMessage:
-			event, eventErr := decodeSpeechRealtimeEvent(payload, taskID)
+			event, eventErr := decodeSpeechRealtimeEvent(payload, session.taskID)
 			if eventErr != nil {
-				return eventErr
+				session.result <- eventErr
+				return
 			}
 			switch event {
 			case "result-generated":
 			case "task-finished":
 				if audioBytes == 0 {
-					return errors.New("Qianwen realtime TTS returned no audio")
+					session.result <- errors.New("Qianwen realtime TTS returned no audio")
+					return
 				}
-				return nil
+				session.result <- nil
+				return
 			default:
-				return fmt.Errorf("Qianwen realtime TTS returned unexpected event %q", event)
+				session.result <- fmt.Errorf("Qianwen realtime TTS returned unexpected event %q", event)
+				return
 			}
 		default:
-			return errors.New("Qianwen realtime TTS returned an invalid frame")
+			session.result <- errors.New("Qianwen realtime TTS returned an invalid frame")
+			return
 		}
 	}
 }
@@ -201,15 +246,14 @@ func (session *speechRealtimeSession) Close() error {
 	if session == nil {
 		return nil
 	}
-	if session.cancel != nil {
+	var err error
+	session.closeOnce.Do(func() {
 		session.cancel()
-		session.cancel = nil
-	}
-	if session.connection == nil {
-		return nil
-	}
-	err := session.connection.Close()
-	session.connection = nil
+		err = session.connection.Close()
+		if session.reading {
+			<-session.done
+		}
+	})
 	return err
 }
 

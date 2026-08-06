@@ -385,42 +385,56 @@ final class WireAgentVoiceClient
       messages = StreamIterator<dynamic>(connection.socket);
       final ready = await _nextAssistantSpeechMessage(messages);
       _requireAssistantSpeechEvent(ready, 'stream.ready');
-      var expectedSequence = 1;
-      await for (final segment in segments) {
-        _requireGeneration(generation);
-        if (segment.sequence != expectedSequence ||
-            segment.text.trim().isEmpty ||
-            segment.text.runes.length > 800) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidRequest,
-          );
-        }
-        connection.socket.add(
-          jsonEncode(<String, Object>{
-            'type': 'segment',
-            'sequence': segment.sequence,
-            'text': segment.text,
-          }),
-        );
-        final started = await _nextAssistantSpeechMessage(messages);
-        _requireAssistantSpeechEvent(
-          started,
-          'segment.started',
-          sequence: expectedSequence,
-        );
-        var chunkIndex = 0;
-        var receivedBytes = 0;
+      final outgoing = StreamIterator<AgentAssistantSpeechTextSegment>(
+        segments,
+      );
+      Object? sendingError;
+      StackTrace? sendingStackTrace;
+      var stopSending = false;
+      final sending =
+          () async {
+            var expectedSequence = 1;
+            while (!stopSending && await outgoing.moveNext()) {
+              _requireGeneration(generation);
+              final segment = outgoing.current;
+              if (segment.sequence != expectedSequence ||
+                  segment.text.trim().isEmpty ||
+                  segment.text.runes.length > 800 ||
+                  expectedSequence > 1024) {
+                throw const AgentClientException(
+                  kind: AgentClientFailureKind.invalidRequest,
+                );
+              }
+              connection!.socket.add(
+                jsonEncode(<String, Object>{
+                  'type': 'segment',
+                  'sequence': segment.sequence,
+                  'text': segment.text,
+                }),
+              );
+              expectedSequence++;
+            }
+            if (!stopSending) {
+              connection!.socket.add(
+                jsonEncode(const <String, String>{'type': 'finish'}),
+              );
+            }
+          }().onError((Object error, StackTrace stackTrace) async {
+            sendingError = error;
+            sendingStackTrace = stackTrace;
+            await connection?.socket.close();
+          });
+      var chunkIndex = 0;
+      var receivedBytes = 0;
+      try {
         while (true) {
           final message = await _nextAssistantSpeechMessage(messages);
           if (message is String) {
-            _requireAssistantSpeechEvent(
-              message,
-              'segment.completed',
-              sequence: expectedSequence,
-            );
+            _requireAssistantSpeechEvent(message, 'stream.completed');
             if (chunkIndex == 0) {
               throw _invalidResponse();
             }
+            await sending;
             break;
           }
           if (message is! List<int> ||
@@ -433,18 +447,21 @@ final class WireAgentVoiceClient
             throw _invalidResponse();
           }
           yield AgentAssistantSpeechAudioSegment(
-            sequence: expectedSequence,
+            sequence: 1,
             chunkIndex: ++chunkIndex,
             audio: Uint8List.fromList(message),
           );
         }
-        expectedSequence++;
+      } catch (_) {
+        if (sendingError != null) {
+          Error.throwWithStackTrace(sendingError!, sendingStackTrace!);
+        }
+        rethrow;
+      } finally {
+        stopSending = true;
+        await outgoing.cancel();
+        await sending;
       }
-      connection.socket.add(
-        jsonEncode(const <String, String>{'type': 'finish'}),
-      );
-      final completed = await _nextAssistantSpeechMessage(messages);
-      _requireAssistantSpeechEvent(completed, 'stream.completed');
     } on AuthenticatedWebSocketException catch (error) {
       throw AgentClientException(
         kind: error.invalidatesAuthentication
@@ -2331,11 +2348,7 @@ Future<dynamic> _nextAssistantSpeechMessage(
   return messages.current;
 }
 
-void _requireAssistantSpeechEvent(
-  dynamic message,
-  String expected, {
-  int? sequence,
-}) {
+void _requireAssistantSpeechEvent(dynamic message, String expected) {
   if (message is! String) {
     throw _invalidResponse();
   }
@@ -2348,26 +2361,22 @@ void _requireAssistantSpeechEvent(
   final data = _strictObject(
     envelope['data'],
     allowed: switch (type) {
-      'segment.started' => const <String>{
-        'sequence',
+      'stream.ready' => const <String>{
         'content_type',
         'sample_rate',
         'channel_count',
         'bits_per_sample',
       },
-      'segment.completed' => const <String>{'sequence'},
       'stream.failed' => const <String>{'kind', 'retryable'},
       _ => const <String>{},
     },
     required: switch (type) {
-      'segment.started' => const <String>{
-        'sequence',
+      'stream.ready' => const <String>{
         'content_type',
         'sample_rate',
         'channel_count',
         'bits_per_sample',
       },
-      'segment.completed' => const <String>{'sequence'},
       'stream.failed' => const <String>{'kind', 'retryable'},
       _ => const <String>{},
     },
@@ -2382,11 +2391,7 @@ void _requireAssistantSpeechEvent(
   if (type != expected) {
     throw _invalidResponse();
   }
-  if (sequence != null &&
-      _strictInt(data['sequence'], min: 1, max: 64) != sequence) {
-    throw _invalidResponse();
-  }
-  if (type == 'segment.started') {
+  if (type == 'stream.ready') {
     if (_strictString(data['content_type'], min: 1, max: 32) != 'audio/pcm' ||
         _strictInt(data['sample_rate'], min: 8000, max: 48000) != 24000 ||
         _strictInt(data['channel_count'], min: 1, max: 2) != 1 ||

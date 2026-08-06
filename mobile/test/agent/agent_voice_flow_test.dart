@@ -155,8 +155,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(assistantTts.hitTestable(), findsOneWidget);
       expect(assistantSpeech.texts, <String>[
-        'That was clear.',
-        'Add one measurable result to make the answer stronger.',
+        'That was clear. Add one measurable result to make the answer stronger.',
       ]);
       expect(messageAudioController.playingMessageId, assistant.id);
       messagePlayer.complete();

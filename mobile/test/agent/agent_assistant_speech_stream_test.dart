@@ -10,7 +10,7 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 
 void main() {
-  testWidgets('voice reply speaks complete sentences before commit', (
+  testWidgets('voice reply forwards assistant deltas before commit', (
     tester,
   ) async {
     final conversation = ConversationController(client: FakeAgentClient());
@@ -72,7 +72,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(speech.texts, <String>['First sentence.']);
+    expect(speech.texts, <String>['First sentence. Second sentence']);
     expect(controller.playingMessageId, 'stream-run-a');
 
     const committed = AgentMessage(
@@ -86,7 +86,7 @@ void main() {
     );
     conversation.changeComposerStreamMessage('stream-run-a', committed);
     await tester.pump();
-    expect(speech.texts, <String>['First sentence.', 'Second sentence']);
+    expect(speech.texts, <String>['First sentence. Second sentence']);
     expect(controller.playingMessageId, 'assistant-a');
     player.complete();
     await tester.pump();
@@ -162,7 +162,7 @@ void main() {
 
     expect(speech.texts, <String>[
       'Actually.',
-      'Please say the complete sentence again.',
+      ' Please say the complete sentence again.',
     ]);
     expect(speech.cancelledBeforeRelease, isFalse);
   });

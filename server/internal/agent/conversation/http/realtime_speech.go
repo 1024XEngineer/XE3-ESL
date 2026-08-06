@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -15,7 +17,8 @@ import (
 
 const (
 	assistantSpeechWebSocketProtocol = "speakup.assistant-speech.v1"
-	maxAssistantSpeechSegments       = 64
+	maxAssistantSpeechSegments       = 1024
+	maxAssistantSpeechRunes          = 4096
 )
 
 type assistantSpeechFrame struct {
@@ -52,28 +55,59 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 	defer connection.Close()
 	connection.SetReadLimit(4096)
 	if err := connection.WriteJSON(gin.H{
-		"type": "stream.ready", "data": gin.H{},
+		"type": "stream.ready",
+		"data": gin.H{
+			"content_type":    agentconversation.AssistantSpeechContentTypePCM,
+			"sample_rate":     agentconversation.AssistantSpeechSampleRate,
+			"channel_count":   agentconversation.AssistantSpeechChannelCount,
+			"bits_per_sample": agentconversation.AssistantSpeechBitsPerSample,
+		},
 	}); err != nil {
 		return
 	}
-	speech, err := handler.assistantSpeech.OpenAssistantSpeech(c.Request.Context())
+	chunkCount := 0
+	audioBytes := 0
+	var firstAudio sync.Once
+	speech, err := handler.assistantSpeech.OpenAssistantSpeech(
+		c.Request.Context(),
+		func(audio []byte) error {
+			firstAudio.Do(func() {
+				slog.InfoContext(
+					c.Request.Context(),
+					"agent.assistant_speech.first_audio",
+				)
+			})
+			chunkCount++
+			audioBytes += len(audio)
+			return connection.WriteMessage(websocket.BinaryMessage, audio)
+		},
+	)
 	if err != nil {
+		slog.WarnContext(
+			c.Request.Context(),
+			"agent.assistant_speech.failed",
+			slog.String("stage", "open"),
+			slog.Any("error", err),
+		)
 		writeAssistantSpeechFailure(connection, "synthesis_failed", true)
 		return
 	}
 	defer speech.Close()
 	expectedSequence := 1
+	totalRunes := 0
 	for {
 		messageType, payload, readErr := connection.ReadMessage()
 		if readErr != nil {
 			return
 		}
 		if messageType != websocket.TextMessage {
+			_ = speech.Close()
 			writeAssistantSpeechFailure(connection, "invalid_request", false)
 			return
 		}
 		frame, frameErr := decodeAssistantSpeechFrame(payload)
 		if frameErr != nil {
+			_ = speech.Close()
 			writeAssistantSpeechFailure(connection, "invalid_request", false)
 			return
 		}
@@ -81,43 +115,67 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 		case "segment":
 			if frame.Sequence != expectedSequence ||
 				frame.Sequence > maxAssistantSpeechSegments {
+				_ = speech.Close()
 				writeAssistantSpeechFailure(connection, "invalid_sequence", false)
 				return
 			}
-			if err := connection.WriteJSON(gin.H{
-				"type": "segment.started",
-				"data": gin.H{
-					"sequence":        frame.Sequence,
-					"content_type":    agentconversation.AssistantSpeechContentTypePCM,
-					"sample_rate":     agentconversation.AssistantSpeechSampleRate,
-					"channel_count":   agentconversation.AssistantSpeechChannelCount,
-					"bits_per_sample": agentconversation.AssistantSpeechBitsPerSample,
-				},
-			}); err != nil {
+			totalRunes += utf8.RuneCountInString(frame.Text)
+			if totalRunes > maxAssistantSpeechRunes {
+				_ = speech.Close()
+				writeAssistantSpeechFailure(connection, "invalid_request", false)
 				return
 			}
-			chunkCount := 0
-			synthesisErr := speech.StreamSegment(
-				frame.Text,
-				func(audio []byte) error {
-					chunkCount++
-					return connection.WriteMessage(websocket.BinaryMessage, audio)
-				},
-			)
-			if synthesisErr != nil || chunkCount == 0 {
+			if err := speech.AppendText(frame.Text); err != nil {
+				_ = speech.Close()
+				slog.WarnContext(
+					c.Request.Context(),
+					"agent.assistant_speech.failed",
+					slog.String("stage", "append"),
+					slog.Int("text_chunks", expectedSequence-1),
+					slog.Any("error", err),
+				)
 				writeAssistantSpeechFailure(connection, "synthesis_failed", true)
-				return
-			}
-			if err := connection.WriteJSON(gin.H{
-				"type": "segment.completed",
-				"data": gin.H{
-					"sequence": frame.Sequence,
-				},
-			}); err != nil {
 				return
 			}
 			expectedSequence++
 		case "finish":
+			if expectedSequence == 1 {
+				_ = speech.Close()
+				writeAssistantSpeechFailure(connection, "invalid_request", false)
+				return
+			}
+			if err := speech.Finish(); err != nil {
+				slog.WarnContext(
+					c.Request.Context(),
+					"agent.assistant_speech.failed",
+					slog.String("stage", "finish"),
+					slog.Int("text_chunks", expectedSequence-1),
+					slog.Int("audio_chunks", chunkCount),
+					slog.Any("error", err),
+				)
+				writeAssistantSpeechFailure(connection, "synthesis_failed", true)
+				return
+			}
+			if chunkCount == 0 {
+				slog.WarnContext(
+					c.Request.Context(),
+					"agent.assistant_speech.failed",
+					slog.String("stage", "finish"),
+					slog.Int("text_chunks", expectedSequence-1),
+					slog.Int("audio_chunks", chunkCount),
+					slog.String("error", "no audio returned"),
+				)
+				writeAssistantSpeechFailure(connection, "synthesis_failed", true)
+				return
+			}
+			slog.InfoContext(
+				c.Request.Context(),
+				"agent.assistant_speech.completed",
+				slog.Int("text_chunks", expectedSequence-1),
+				slog.Int("text_runes", totalRunes),
+				slog.Int("audio_chunks", chunkCount),
+				slog.Int("audio_bytes", audioBytes),
+			)
 			_ = connection.WriteJSON(gin.H{
 				"type": "stream.completed", "data": gin.H{},
 			})
@@ -125,6 +183,7 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 		case "cancel":
 			return
 		default:
+			_ = speech.Close()
 			writeAssistantSpeechFailure(connection, "invalid_request", false)
 			return
 		}
@@ -146,7 +205,6 @@ func decodeAssistantSpeechFrame(payload []byte) (assistantSpeechFrame, error) {
 				agentconversation.MaxAssistantSpeechSegmentRunes {
 			return assistantSpeechFrame{}, errors.New("assistant speech segment is invalid")
 		}
-		frame.Text = trimmed
 	case "finish", "cancel":
 		if frame.Sequence != 0 || frame.Text != "" {
 			return assistantSpeechFrame{}, errors.New("assistant speech control frame is invalid")

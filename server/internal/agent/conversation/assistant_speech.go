@@ -11,10 +11,14 @@ const (
 )
 
 type AssistantSpeechSynthesizer interface {
-	OpenAssistantSpeech(context.Context) (AssistantSpeechSession, error)
+	OpenAssistantSpeech(
+		context.Context,
+		func([]byte) error,
+	) (AssistantSpeechSession, error)
 }
 
 type AssistantSpeechSession interface {
-	StreamSegment(string, func([]byte) error) error
+	AppendText(string) error
+	Finish() error
 	Close() error
 }

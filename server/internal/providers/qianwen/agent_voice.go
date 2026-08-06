@@ -15,13 +15,14 @@ type AgentVoiceRecognizer struct {
 
 func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 	ctx context.Context,
+	consume func([]byte) error,
 ) (agentconversation.AssistantSpeechSession, error) {
 	if synthesizer == nil || synthesizer.synthesizer == nil {
 		return nil, errors.New(
 			"qianwen: Agent assistant speech synthesizer is required",
 		)
 	}
-	return synthesizer.synthesizer.openRealtimeSpeech(ctx)
+	return synthesizer.synthesizer.openRealtimeSpeech(ctx, consume)
 }
 
 func NewAgentVoiceRecognizer(
