@@ -93,7 +93,7 @@ void main() {
     expect(controller.playingMessageId, isNull);
   });
 
-  testWidgets('voice reply keeps speaking after transient message commits', (
+  testWidgets('voice reply fills streamed suffix from committed message', (
     tester,
   ) async {
     final conversation = ConversationController(client: FakeAgentClient());
@@ -145,14 +145,10 @@ void main() {
     await tester.pump();
     expect(speech.texts, <String>['Actually.']);
 
-    controller.appendLiveAssistantSpeech(
-      transientMessageId: 'stream-run-b',
-      delta: ' Please say the complete sentence again.',
-    );
     const committed = AgentMessage(
       id: 'assistant-b',
       role: AgentMessageRole.assistant,
-      text: 'The authoritative message does not drive speech segmentation.',
+      text: 'Actually. Please say the complete sentence again.',
     );
     controller.completeLiveAssistantSpeech(
       transientMessageId: 'stream-run-b',

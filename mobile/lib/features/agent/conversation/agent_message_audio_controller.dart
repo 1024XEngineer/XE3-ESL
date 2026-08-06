@@ -134,7 +134,14 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (_loadingMessageId == transientMessageId) {
       _loadingMessageId = message.id;
     }
-    _appendLiveAssistantText(live, live.observedText, finalText: true);
+    if (!message.text.startsWith(live.observedText)) {
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Committed assistant text does not match streamed text.'),
+      );
+      return;
+    }
+    _appendLiveAssistantText(live, message.text, finalText: true);
     live.inputClosed = true;
     unawaited(live.segments.close());
   }
