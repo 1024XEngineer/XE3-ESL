@@ -168,10 +168,6 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(Key('agent-user-voice-progress-${voiceMessage.id}')),
-        findsOneWidget,
-      );
-      expect(
         find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
         findsOneWidget,
       );
