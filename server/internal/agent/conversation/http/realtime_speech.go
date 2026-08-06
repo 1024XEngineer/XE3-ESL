@@ -56,6 +56,12 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 	}); err != nil {
 		return
 	}
+	speech, err := handler.assistantSpeech.OpenAssistantSpeech(c.Request.Context())
+	if err != nil {
+		writeAssistantSpeechFailure(connection, "synthesis_failed", true)
+		return
+	}
+	defer speech.Close()
 	expectedSequence := 1
 	for {
 		messageType, payload, readErr := connection.ReadMessage()
@@ -91,8 +97,7 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 				return
 			}
 			chunkCount := 0
-			synthesisErr := handler.assistantSpeech.StreamAssistantSegment(
-				c.Request.Context(),
+			synthesisErr := speech.StreamSegment(
 				frame.Text,
 				func(audio []byte) error {
 					chunkCount++

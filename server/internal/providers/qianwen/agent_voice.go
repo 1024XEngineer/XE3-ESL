@@ -13,17 +13,15 @@ type AgentVoiceRecognizer struct {
 	recognizer *speechRecognizer
 }
 
-func (synthesizer *AgentVoiceSynthesizer) StreamAssistantSegment(
+func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 	ctx context.Context,
-	text string,
-	consume func([]byte) error,
-) error {
+) (agentconversation.AssistantSpeechSession, error) {
 	if synthesizer == nil || synthesizer.synthesizer == nil {
-		return errors.New(
+		return nil, errors.New(
 			"qianwen: Agent assistant speech synthesizer is required",
 		)
 	}
-	return synthesizer.synthesizer.streamRealtimePCM(ctx, text, consume)
+	return synthesizer.synthesizer.openRealtimeSpeech(ctx)
 }
 
 func NewAgentVoiceRecognizer(

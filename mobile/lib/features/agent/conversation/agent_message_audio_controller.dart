@@ -397,6 +397,7 @@ final class AgentMessageAudioController extends ChangeNotifier
         audioPlayer is! AgentPCMStreamPlayer) {
       return;
     }
+    final live = _liveAssistantSpeech;
     AgentMessage? streaming;
     for (var index = messages.length - 1; index >= 0; index--) {
       final candidate = messages[index];
@@ -415,30 +416,43 @@ final class AgentMessageAudioController extends ChangeNotifier
       }
       if (precedingUser?.modality == AgentMessageModality.voice) {
         streaming = candidate;
+        if (live == null || live.messageId != candidate.id) {
+          unawaited(
+            _startLiveAssistantSpeech(
+              threadId,
+              candidate,
+              precedingUserMessageId: precedingUser!.id,
+            ),
+          );
+          return;
+        }
       }
       break;
     }
-    final live = _liveAssistantSpeech;
-    if (streaming != null) {
-      if (live == null || live.messageId != streaming.id) {
-        unawaited(_startLiveAssistantSpeech(threadId, streaming));
-        return;
-      }
+    if (streaming != null && live != null) {
       _appendLiveAssistantText(live, streaming.text, finalText: false);
       return;
     }
     if (live == null || live.inputClosed) {
       return;
     }
+    final userIndex = messages.indexWhere(
+      (message) => message.id == live.precedingUserMessageId,
+    );
     AgentMessage? committed;
-    for (var index = messages.length - 1; index >= 0; index--) {
-      final candidate = messages[index];
-      if (candidate.role == AgentMessageRole.assistant &&
-          !candidate.isStreaming &&
-          !candidate.hasFailed &&
-          candidate.text == live.observedText) {
-        committed = candidate;
-        break;
+    if (userIndex >= 0) {
+      for (var index = userIndex + 1; index < messages.length; index++) {
+        final candidate = messages[index];
+        if (candidate.role == AgentMessageRole.user) {
+          break;
+        }
+        if (candidate.role == AgentMessageRole.assistant &&
+            !candidate.isStreaming &&
+            !candidate.hasFailed &&
+            candidate.text.startsWith(live.observedText)) {
+          committed = candidate;
+          break;
+        }
       }
     }
     if (committed == null) {
@@ -461,8 +475,9 @@ final class AgentMessageAudioController extends ChangeNotifier
 
   Future<void> _startLiveAssistantSpeech(
     String threadId,
-    AgentMessage message,
-  ) async {
+    AgentMessage message, {
+    required String precedingUserMessageId,
+  }) async {
     final startToken = Object();
     _liveSpeechStartToken = startToken;
     await _cancelLiveAssistantSpeech(preserveStartToken: true);
@@ -479,6 +494,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     final live = _LiveAssistantSpeech(
       threadId: threadId,
       messageId: message.id,
+      precedingUserMessageId: precedingUserMessageId,
     );
     _liveAssistantSpeech = live;
     _liveSpeechCommittedMessageId = null;
@@ -794,9 +810,14 @@ final class _MessageAudioFence {
 }
 
 final class _LiveAssistantSpeech {
-  _LiveAssistantSpeech({required this.threadId, required this.messageId});
+  _LiveAssistantSpeech({
+    required this.threadId,
+    required this.messageId,
+    required this.precedingUserMessageId,
+  });
 
   final String threadId;
+  final String precedingUserMessageId;
   String messageId;
   final StreamController<AgentAssistantSpeechTextSegment> segments =
       StreamController<AgentAssistantSpeechTextSegment>();

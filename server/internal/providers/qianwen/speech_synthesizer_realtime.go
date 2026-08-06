@@ -49,16 +49,29 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	text string,
 	consume func([]byte) error,
 ) error {
-	if synthesizer == nil || ctx == nil || consume == nil {
-		return errors.New("Qianwen realtime TTS is unavailable")
-	}
-	if err := protocol.ValidateSynthesisRequest(
-		protocol.SynthesisRequest{Text: text},
-	); err != nil {
+	session, err := synthesizer.openRealtimeSpeech(ctx)
+	if err != nil {
 		return err
 	}
+	defer session.Close()
+	return session.StreamSegment(text, consume)
+}
+
+type speechRealtimeSession struct {
+	context    context.Context
+	cancel     context.CancelFunc
+	connection *websocket.Conn
+	model      string
+	voice      string
+}
+
+func (synthesizer *speechSynthesizer) openRealtimeSpeech(
+	ctx context.Context,
+) (*speechRealtimeSession, error) {
+	if synthesizer == nil || ctx == nil {
+		return nil, errors.New("Qianwen realtime TTS is unavailable")
+	}
 	callContext, cancel := context.WithTimeout(ctx, synthesizer.timeout)
-	defer cancel()
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+synthesizer.apiKey.reveal())
 	header.Set("X-DashScope-DataInspection", "enable")
@@ -71,30 +84,48 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 		defer response.Body.Close()
 	}
 	if err != nil {
-		return speechTransportError(
+		cancel()
+		return nil, speechTransportError(
 			protocol.SpeechOperationSynthesis,
 			callContext,
 			err,
 		)
 	}
-	defer connection.Close()
 	if deadline, ok := callContext.Deadline(); ok {
 		_ = connection.SetReadDeadline(deadline)
 		_ = connection.SetWriteDeadline(deadline)
+	}
+	return &speechRealtimeSession{
+		context: callContext, cancel: cancel, connection: connection,
+		model: synthesizer.model, voice: synthesizer.voice,
+	}, nil
+}
+
+func (session *speechRealtimeSession) StreamSegment(
+	text string,
+	consume func([]byte) error,
+) error {
+	if session == nil || session.connection == nil || consume == nil {
+		return errors.New("Qianwen realtime TTS session is unavailable")
+	}
+	if err := protocol.ValidateSynthesisRequest(
+		protocol.SynthesisRequest{Text: text},
+	); err != nil {
+		return err
 	}
 	taskID, err := newRealtimeTaskID()
 	if err != nil {
 		return err
 	}
-	if err := connection.WriteJSON(map[string]any{
+	if err := session.connection.WriteJSON(map[string]any{
 		"header": map[string]any{
 			"action": "run-task", "task_id": taskID, "streaming": "duplex",
 		},
 		"payload": map[string]any{
 			"task_group": "audio", "task": "tts",
-			"function": "SpeechSynthesizer", "model": synthesizer.model,
+			"function": "SpeechSynthesizer", "model": session.model,
 			"parameters": map[string]any{
-				"text_type": "PlainText", "voice": synthesizer.voice,
+				"text_type": "PlainText", "voice": session.voice,
 				"format": "pcm", "sample_rate": agentconversation.AssistantSpeechSampleRate,
 				"volume": 50, "rate": 1, "pitch": 1, "enable_ssml": false,
 			},
@@ -103,10 +134,14 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	}); err != nil {
 		return err
 	}
-	if err := waitForSpeechRealtimeEvent(connection, taskID, "task-started"); err != nil {
+	if err := waitForSpeechRealtimeEvent(
+		session.connection,
+		taskID,
+		"task-started",
+	); err != nil {
 		return err
 	}
-	if err := connection.WriteJSON(map[string]any{
+	if err := session.connection.WriteJSON(map[string]any{
 		"header": map[string]any{
 			"action": "continue-task", "task_id": taskID, "streaming": "duplex",
 		},
@@ -114,7 +149,7 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	}); err != nil {
 		return err
 	}
-	if err := connection.WriteJSON(map[string]any{
+	if err := session.connection.WriteJSON(map[string]any{
 		"header": map[string]any{
 			"action": "finish-task", "task_id": taskID, "streaming": "duplex",
 		},
@@ -124,9 +159,13 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	}
 	var audioBytes int64
 	for {
-		messageType, payload, readErr := connection.ReadMessage()
+		messageType, payload, readErr := session.connection.ReadMessage()
 		if readErr != nil {
-			return readErr
+			return speechTransportError(
+				protocol.SpeechOperationSynthesis,
+				session.context,
+				readErr,
+			)
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
@@ -156,6 +195,22 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 			return errors.New("Qianwen realtime TTS returned an invalid frame")
 		}
 	}
+}
+
+func (session *speechRealtimeSession) Close() error {
+	if session == nil {
+		return nil
+	}
+	if session.cancel != nil {
+		session.cancel()
+		session.cancel = nil
+	}
+	if session.connection == nil {
+		return nil
+	}
+	err := session.connection.Close()
+	session.connection = nil
+	return err
 }
 
 func waitForSpeechRealtimeEvent(

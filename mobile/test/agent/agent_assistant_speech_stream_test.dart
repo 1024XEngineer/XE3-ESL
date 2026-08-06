@@ -83,6 +83,70 @@ void main() {
     await tester.pump();
     expect(controller.playingMessageId, isNull);
   });
+
+  testWidgets('voice reply keeps speaking after transient message commits', (
+    tester,
+  ) async {
+    final conversation = ConversationController(client: FakeAgentClient());
+    await conversation.initialize();
+    final speech = _BlockingAssistantSpeechClient();
+    final controller = AgentMessageAudioController(
+      conversationController: conversation,
+      client: _FakeMessageAudioClient(),
+      audioPlayer: FakeAgentAudioPlayer(),
+      assistantSpeechClient: speech,
+    );
+    addTearDown(() {
+      controller.dispose();
+      conversation.dispose();
+    });
+
+    conversation.commitComposerMessages(const <AgentMessage>[
+      AgentMessage(
+        id: 'voice-user',
+        role: AgentMessageRole.user,
+        text: 'Please correct me.',
+        modality: AgentMessageModality.voice,
+        audio: AgentMessageAudio(
+          id: 'voice-audio',
+          status: AgentMessageAudioStatus.readable,
+          contentType: 'audio/wav',
+          sizeBytes: 64,
+          duration: Duration(seconds: 2),
+          playbackPath: '/audio',
+        ),
+      ),
+    ]);
+    conversation.changeComposerStreamMessage(
+      null,
+      const AgentMessage(
+        id: 'stream-run-b',
+        role: AgentMessageRole.assistant,
+        text: 'Actually.',
+        isStreaming: true,
+      ),
+    );
+    await tester.pump();
+    expect(speech.texts, <String>['Actually.']);
+
+    conversation.changeComposerStreamMessage(
+      'stream-run-b',
+      const AgentMessage(
+        id: 'assistant-b',
+        role: AgentMessageRole.assistant,
+        text: 'Actually. Please say the complete sentence again.',
+      ),
+    );
+    await tester.pump();
+    speech.releaseFirstSegment();
+    await tester.pumpAndSettle();
+
+    expect(speech.texts, <String>[
+      'Actually.',
+      'Please say the complete sentence again.',
+    ]);
+    expect(speech.cancelledBeforeRelease, isFalse);
+  });
 }
 
 final class _FakeAssistantSpeechClient implements AgentAssistantSpeechClient {
@@ -101,6 +165,43 @@ final class _FakeAssistantSpeechClient implements AgentAssistantSpeechClient {
           chunkIndex: chunkIndex,
           audio: Uint8List.fromList(<int>[1, 2, 3, 4]),
         );
+      }
+    }
+  }
+}
+
+final class _BlockingAssistantSpeechClient
+    implements AgentAssistantSpeechClient {
+  final List<String> texts = <String>[];
+  final Completer<void> _firstSegmentRelease = Completer<void>();
+  bool _released = false;
+  bool cancelledBeforeRelease = false;
+
+  void releaseFirstSegment() {
+    _released = true;
+    _firstSegmentRelease.complete();
+  }
+
+  @override
+  Stream<AgentAssistantSpeechAudioSegment> streamAssistantSpeech({
+    required String threadId,
+    required Stream<AgentAssistantSpeechTextSegment> segments,
+  }) async* {
+    try {
+      await for (final segment in segments) {
+        texts.add(segment.text);
+        yield AgentAssistantSpeechAudioSegment(
+          sequence: segment.sequence,
+          chunkIndex: 1,
+          audio: Uint8List.fromList(<int>[1, 2, 3, 4]),
+        );
+        if (segment.sequence == 1) {
+          await _firstSegmentRelease.future;
+        }
+      }
+    } finally {
+      if (!_released) {
+        cancelledBeforeRelease = true;
       }
     }
   }
