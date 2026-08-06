@@ -119,6 +119,7 @@ jobs:
           TEXT_GENERATION_PROVIDER: qianwen
           QIANWEN_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           QIANWEN_MODEL: qwen-ci-readiness-not-invoked
+          QIANWEN_SPEECH_FEEDBACK_MODEL: qwen-ci-readiness-not-invoked
           EMBEDDING_PROVIDER: qianwen
           QIANWEN_EMBEDDING_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           QIANWEN_EMBEDDING_MODEL: text-embedding-v4

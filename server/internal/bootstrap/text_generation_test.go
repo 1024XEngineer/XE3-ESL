@@ -126,6 +126,7 @@ func setBootstrapTextGenerationEnvironment(t *testing.T, apiKey string) {
 		"https://dashscope.aliyuncs.com/compatible-mode/v1",
 	)
 	t.Setenv("QIANWEN_MODEL", "qwen3.5-flash")
+	t.Setenv("QIANWEN_SPEECH_FEEDBACK_MODEL", "qwen3.5-flash")
 	t.Setenv("QIANWEN_TIMEOUT", "")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
 	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")

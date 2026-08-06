@@ -16,7 +16,6 @@ import 'package:speakup/features/coaching/practice/practice_message_bubble.dart'
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 final class InterviewPracticeCompletion {
   const InterviewPracticeCompletion({
@@ -635,6 +634,10 @@ class _SceneConversationMessageList extends StatelessWidget {
             PracticeMessageBubble(
               key: ValueKey('practice-${message.role.name}-${message.id}'),
               message: message,
+              feedbackProjection: _feedbackProjection(message),
+              onFeedbackRepractice: controller.canStartSpeechFeedbackRetry
+                  ? onRepractice
+                  : null,
               actions:
                   message.role == PracticeMessageRole.assistant &&
                       message.id == controller.questionId &&
@@ -642,31 +645,6 @@ class _SceneConversationMessageList extends StatelessWidget {
                   ? _QuestionAudioAction(controller: controller)
                   : null,
             ),
-            if (_feedbackProjection(message) case final projection?) ...[
-              const SizedBox(height: SpeakUpDesign.space8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FractionallySizedBox(
-                  widthFactor: 0.78,
-                  child: SpeechFeedbackDisclosure(
-                    key: ValueKey(
-                      'practice-speech-feedback-${projection.sourceKey}',
-                    ),
-                    projection: projection,
-                    onRetry: projection.canRetry
-                        ? () => unawaited(
-                            speechFeedbackController!.retry(
-                              projection.sourceKey,
-                            ),
-                          )
-                        : null,
-                    onRepractice: controller.canStartSpeechFeedbackRetry
-                        ? onRepractice
-                        : null,
-                  ),
-                ),
-              ),
-            ],
             const SizedBox(height: 14),
           ],
           if (showThinking) ...[

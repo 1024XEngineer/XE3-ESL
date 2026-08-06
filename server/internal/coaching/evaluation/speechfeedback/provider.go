@@ -11,7 +11,7 @@ import (
 
 const (
 	maxSpeechFeedbackProviderPayload = 64 * 1024
-	maxSpeechFeedbackProviderItems   = 8
+	maxSpeechFeedbackProviderItems   = 2
 )
 
 type SpeechFeedbackProvider interface {
@@ -71,7 +71,17 @@ func (provider *TextSpeechFeedbackProvider) GenerateSpeechFeedback(
 		return SpeechFeedbackProviderResult{},
 			ErrInvalidSpeechFeedback
 	}
-	payload, err := json.Marshal(input)
+	englishText := speechFeedbackEnglishReferenceText(input.ConfirmedText)
+	if !validSpeechFeedbackText(englishText, 16*1024) {
+		return SpeechFeedbackProviderResult{}, ErrInvalidSpeechFeedback
+	}
+	payload, err := json.Marshal(struct {
+		SourceKind  SpeechFeedbackSourceKind `json:"source_kind"`
+		EnglishText string                   `json:"english_text"`
+	}{
+		SourceKind:  input.Source.SourceKind,
+		EnglishText: englishText,
+	})
 	if err != nil {
 		return SpeechFeedbackProviderResult{},
 			ErrInvalidSpeechFeedback
@@ -103,12 +113,15 @@ func (provider *TextSpeechFeedbackProvider) GenerateSpeechFeedback(
 }
 
 const speechFeedbackSystemPrompt = `You return cautious English-learning feedback for one confirmed transcript.
-Return one JSON object only: {"items":[...]}.
-Each item has exactly: kind, explanation, and suggested_text when required.
-kind is CORRECTION, STRENGTH, IMPROVEMENT, or RECOMMENDED_EXPRESSION.
-CORRECTION, IMPROVEMENT, and RECOMMENDED_EXPRESSION require non-empty suggested_text. STRENGTH must omit suggested_text.
-Use only the confirmed text. When Chinese and English are mixed, assess only the English spans; do not treat Chinese wording as an English error or rewrite it as if it were English evidence. Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in the transcript.
-Return at most 8 items and no unknown fields.`
+Return one JSON object only with this exact shape: {"items":[...]}.
+Every item must contain exactly three non-empty string fields: kind, explanation, suggested_text.
+The only allowed kinds are CORRECTION and RECOMMENDED_EXPRESSION.
+The user payload contains english_text that was deterministically extracted from the confirmed transcript. Use only english_text. Never reconstruct, translate, or infer omitted non-English text.
+Always return exactly one RECOMMENDED_EXPRESSION. Its suggested_text must contain the complete polished English expression, preserve the meaning, and add no new facts.
+If and only if english_text contains a clear grammar or word-choice error, also return exactly one CORRECTION before RECOMMENDED_EXPRESSION. CORRECTION fixes the error and explains it briefly. Never label a merely less-natural expression as CORRECTION.
+Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in english_text.
+When no correction is needed, follow this example shape exactly: {"items":[{"kind":"RECOMMENDED_EXPRESSION","explanation":"More natural wording.","suggested_text":"Complete polished English expression."}]}.
+Return at most 2 items and no unknown fields. Never omit suggested_text.`
 
 type SpeechFeedbackDraftItem struct {
 	Kind           SpeechFeedbackItemKind

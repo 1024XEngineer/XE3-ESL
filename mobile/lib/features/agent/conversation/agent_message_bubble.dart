@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/agent/handoff/practice_plan_handoff_card.dart';
@@ -17,7 +18,8 @@ final class AgentMessageBubble extends StatefulWidget {
     this.onHandoff,
     this.onRefreshImage,
     this.onRefreshMeme,
-    this.polishedText,
+    this.correction,
+    this.polish,
     super.key,
   });
 
@@ -28,7 +30,8 @@ final class AgentMessageBubble extends StatefulWidget {
   onRefreshImage;
   final FutureOr<void> Function(String messageId, String memeAttachmentId)?
   onRefreshMeme;
-  final String? polishedText;
+  final InlineLanguageSuggestion? correction;
+  final InlineLanguageSuggestion? polish;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -36,7 +39,6 @@ final class AgentMessageBubble extends StatefulWidget {
 
 class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   late _AgentMessageAudioSnapshot _audioSnapshot;
-  bool _polishExpanded = false;
 
   @override
   void initState() {
@@ -51,9 +53,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     if (oldWidget.messageAudioController != widget.messageAudioController) {
       oldWidget.messageAudioController?.removeListener(_handleAudioController);
       widget.messageAudioController?.addListener(_handleAudioController);
-    }
-    if (oldWidget.message.id != widget.message.id) {
-      _polishExpanded = false;
     }
     _audioSnapshot = _captureAudioSnapshot();
   }
@@ -314,7 +313,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final deleting =
         audioController?.deletingMessageId == message.id ||
         audio.status == AgentMessageAudioStatus.deleting;
-    final progress = audioController?.playbackProgressFor(message) ?? 0;
     final error = audioController?.errorMessageId == message.id
         ? audioController?.errorMessage
         : null;
@@ -326,114 +324,62 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           key: Key('agent-user-voice-transcript-${message.id}'),
           style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            _VoiceTextAction(
-              key: Key('agent-user-voice-play-${message.id}'),
-              icon: playing ? Icons.stop_rounded : Icons.volume_up_rounded,
-              loading: loading,
-              label: '原声',
-              onPressed: readable
-                  ? () => audioController.toggleMessagePlayback(message)
-                  : null,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              _formatDuration(audio.duration),
-              key: Key('agent-user-voice-duration-${message.id}'),
-              style: TextStyle(
-                color: SpeakUpDesign.secondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 4),
-            _VoiceTextAction(
-              key: Key('agent-user-voice-tts-${message.id}'),
-              icon: previewPlaying
-                  ? Icons.stop_rounded
-                  : Icons.record_voice_over_rounded,
-              loading: previewLoading,
-              label: 'TTS',
-              onPressed: audioController == null || widget.polishedText == null
-                  ? null
-                  : () => audioController.toggleSpeechPreview(
-                      message,
-                      widget.polishedText!,
-                    ),
-            ),
-            const SizedBox(width: 4),
-            _VoiceTextAction(
-              key: Key('agent-user-voice-polish-${message.id}'),
-              icon: Icons.auto_awesome_rounded,
-              loading: false,
-              label: '润色',
-              onPressed: widget.polishedText == null
-                  ? null
-                  : () => setState(() => _polishExpanded = !_polishExpanded),
-            ),
-            const Spacer(),
-            if (!audio.isReadable)
-              Text(
-                audio.status == AgentMessageAudioStatus.deleting
-                    ? '正在删除录音'
-                    : '录音已删除',
-                key: Key(
+        const SizedBox(height: 10),
+        InlineLanguageFeedback(
+          leading: _VoicePlaybackAction(
+            key: Key('agent-user-voice-play-${message.id}'),
+            durationKey: Key('agent-user-voice-duration-${message.id}'),
+            loading: loading,
+            playing: playing,
+            duration: audio.duration,
+            onPressed: readable
+                ? () => audioController.toggleMessagePlayback(message)
+                : null,
+          ),
+          correction: widget.correction,
+          polish: widget.polish,
+          suggestionLoading: previewLoading,
+          suggestionPlaying: previewPlaying,
+          onSpeakSuggestion: audioController == null
+              ? null
+              : (text) => audioController.toggleSpeechPreview(message, text),
+          trailing:
+              audio.status != AgentMessageAudioStatus.deleted &&
+                  audioController != null
+              ? IconButton(
+                  key: Key('agent-user-voice-delete-${message.id}'),
+                  tooltip: deleting ? '正在删除录音' : '删除录音',
+                  onPressed: deleting
+                      ? null
+                      : () => audioController.deleteMessageAudio(message),
+                  constraints: const BoxConstraints.tightFor(
+                    width: SpeakUpDesign.minTapTarget,
+                    height: SpeakUpDesign.minTapTarget,
+                  ),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  color: SpeakUpDesign.secondary,
+                  icon: deleting
+                      ? const SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline_rounded, size: 19),
+                )
+              : !audio.isReadable
+              ? Text(
                   audio.status == AgentMessageAudioStatus.deleting
-                      ? 'agent-user-voice-deleting-${message.id}'
-                      : 'agent-user-voice-deleted-${message.id}',
-                ),
-                style: SpeakUpDesign.meta,
-              ),
-            if (!audio.isReadable) const SizedBox(width: 2),
-            if (audio.status != AgentMessageAudioStatus.deleted &&
-                audioController != null)
-              IconButton(
-                key: Key('agent-user-voice-delete-${message.id}'),
-                tooltip: deleting ? '正在删除录音' : '删除录音',
-                onPressed: deleting
-                    ? null
-                    : () => audioController.deleteMessageAudio(message),
-                constraints: const BoxConstraints.tightFor(
-                  width: 36,
-                  height: 36,
-                ),
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-                color: SpeakUpDesign.secondary,
-                icon: deleting
-                    ? const SizedBox.square(
-                        dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.delete_outline_rounded, size: 19),
-              ),
-          ],
+                      ? '正在删除录音'
+                      : '录音已删除',
+                  key: Key(
+                    audio.status == AgentMessageAudioStatus.deleting
+                        ? 'agent-user-voice-deleting-${message.id}'
+                        : 'agent-user-voice-deleted-${message.id}',
+                  ),
+                  style: SpeakUpDesign.meta,
+                )
+              : null,
         ),
-        if (audio.isReadable) ...[
-          const SizedBox(height: 7),
-          LinearProgressIndicator(
-            key: Key('agent-user-voice-progress-${message.id}'),
-            value: playing ? progress : 0,
-            minHeight: 2,
-            borderRadius: BorderRadius.circular(1),
-            backgroundColor: SpeakUpDesign.border,
-            valueColor: const AlwaysStoppedAnimation<Color>(
-              SpeakUpDesign.primary,
-            ),
-          ),
-        ],
-        if (_polishExpanded && widget.polishedText != null) ...[
-          const SizedBox(height: 10),
-          const Divider(height: 1),
-          const SizedBox(height: 10),
-          Text(
-            widget.polishedText!,
-            key: Key('agent-user-voice-polish-text-${message.id}'),
-            style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
-          ),
-        ],
         if (error != null) ...[
           const SizedBox(height: 4),
           Text(
@@ -503,37 +449,71 @@ class _AssistantMeme extends StatelessWidget {
   }
 }
 
-class _VoiceTextAction extends StatelessWidget {
-  const _VoiceTextAction({
-    required this.icon,
+class _VoicePlaybackAction extends StatelessWidget {
+  const _VoicePlaybackAction({
+    required this.durationKey,
     required this.loading,
-    required this.label,
+    required this.playing,
+    required this.duration,
     required this.onPressed,
     super.key,
   });
 
-  final IconData icon;
+  final Key durationKey;
   final bool loading;
-  final String label;
+  final bool playing;
+  final Duration duration;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: onPressed,
-      style: TextButton.styleFrom(
-        foregroundColor: SpeakUpDesign.secondary,
-        minimumSize: const Size(0, 32),
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        visualDensity: VisualDensity.compact,
+    return Semantics(
+      button: true,
+      enabled: onPressed != null,
+      label: playing ? '停止播放原声' : '播放原声，${_formatDuration(duration)}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minWidth: SpeakUpDesign.minTapTarget,
+              minHeight: SpeakUpDesign.minTapTarget,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (loading)
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      playing ? Icons.pause_rounded : Icons.graphic_eq_rounded,
+                      size: 24,
+                      color: onPressed == null
+                          ? SpeakUpDesign.tertiary
+                          : SpeakUpDesign.primary,
+                    ),
+                  const SizedBox(width: 5),
+                  Text(
+                    _formatDuration(duration),
+                    key: durationKey,
+                    style: SpeakUpDesign.meta.copyWith(
+                      color: SpeakUpDesign.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
-      icon: loading
-          ? const SizedBox.square(
-              dimension: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(icon, size: 17),
-      label: Text(label, style: const TextStyle(fontSize: 12)),
     );
   }
 }

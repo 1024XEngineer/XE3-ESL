@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/composer/agent_composer.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
@@ -32,15 +33,9 @@ abstract interface class ConversationMessageFeedbackPresenter
 
   void clearMessages();
 
-  String? polishedTextFor(AgentMessage message);
+  InlineLanguageSuggestion? correctionFor(AgentMessage message);
 
-  bool polishLoadingFor(AgentMessage message);
-
-  Widget? buildFeedback(
-    BuildContext context,
-    AgentMessage message, {
-    VoidCallback? onSameThreadRepractice,
-  });
+  InlineLanguageSuggestion? polishFor(AgentMessage message);
 }
 
 class ConversationPage extends StatefulWidget {
@@ -932,48 +927,21 @@ class _MessageList extends StatelessWidget {
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
   final VoidCallback? onSameThreadRepractice;
 
-  Widget? _feedbackFor(BuildContext context, AgentMessage message) {
-    if (suppressLoadingFeedback &&
-        (feedbackPresenter?.polishLoadingFor(message) ?? false)) {
-      return null;
-    }
-    return feedbackPresenter?.buildFeedback(
-      context,
-      message,
-      onSameThreadRepractice: onSameThreadRepractice,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Column(
       key: const Key('agent-message-list'),
       children: [
-        for (final message in messages) ...[
-          if (_feedbackFor(context, message) case final feedback?) ...[
-            AgentMessageBubble(
-              message: message,
-              messageAudioController: messageAudioController,
-              onHandoff: onHandoff,
-              onRefreshImage: onRefreshImage,
-              onRefreshMeme: onRefreshMeme,
-              polishedText: feedbackPresenter?.polishedTextFor(message),
-            ),
-            const SizedBox(height: SpeakUpDesign.space8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FractionallySizedBox(widthFactor: 0.78, child: feedback),
-            ),
-          ] else
-            AgentMessageBubble(
-              message: message,
-              messageAudioController: messageAudioController,
-              onHandoff: onHandoff,
-              onRefreshImage: onRefreshImage,
-              onRefreshMeme: onRefreshMeme,
-              polishedText: feedbackPresenter?.polishedTextFor(message),
-            ),
-        ],
+        for (final message in messages)
+          AgentMessageBubble(
+            message: message,
+            messageAudioController: messageAudioController,
+            onHandoff: onHandoff,
+            onRefreshImage: onRefreshImage,
+            onRefreshMeme: onRefreshMeme,
+            correction: feedbackPresenter?.correctionFor(message),
+            polish: feedbackPresenter?.polishFor(message),
+          ),
       ],
     );
   }

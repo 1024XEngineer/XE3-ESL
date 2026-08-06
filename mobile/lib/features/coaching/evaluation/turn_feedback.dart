@@ -117,6 +117,34 @@ final class SpeechFeedbackItem {
   bool get canRepractice => repracticeMode != SpeechFeedbackRepracticeMode.none;
 }
 
+extension SpeechFeedbackItemsPresentation on Iterable<SpeechFeedbackItem> {
+  SpeechFeedbackItem? get correction {
+    for (final item in this) {
+      if (item.kind == SpeechFeedbackItemKind.correction &&
+          item.suggestedText != null) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  SpeechFeedbackItem? get polish {
+    for (final item in this) {
+      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
+          item.suggestedText != null) {
+        return item;
+      }
+    }
+    for (final item in this) {
+      if (item.kind == SpeechFeedbackItemKind.improvement &&
+          item.suggestedText != null) {
+        return item;
+      }
+    }
+    return null;
+  }
+}
+
 final class SpeechFeedbackAcousticAssessment {
   const SpeechFeedbackAcousticAssessment({
     required this.pronunciation,

@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 /// Adapts Coaching feedback to the narrow presentation port owned by Agent UI.
 final class AgentConversationFeedbackPresenter extends ChangeNotifier
@@ -60,51 +60,28 @@ final class AgentConversationFeedbackPresenter extends ChangeNotifier
   }
 
   @override
-  String? polishedTextFor(AgentMessage message) {
+  InlineLanguageSuggestion? correctionFor(AgentMessage message) {
     final items = _projection(message)?.feedback?.items;
-    if (items == null) {
+    final item = items?.correction;
+    if (item?.suggestedText == null) {
       return null;
     }
-    for (final item in items) {
-      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
-          item.suggestedText != null) {
-        return item.suggestedText;
-      }
-    }
-    return items
-        .where((item) => item.suggestedText != null)
-        .firstOrNull
-        ?.suggestedText;
+    return InlineLanguageSuggestion(
+      text: item!.suggestedText!,
+      explanation: item.explanation,
+    );
   }
 
   @override
-  bool polishLoadingFor(AgentMessage message) =>
-      _projection(message)?.isPolling ?? false;
-
-  @override
-  Widget? buildFeedback(
-    BuildContext context,
-    AgentMessage message, {
-    VoidCallback? onSameThreadRepractice,
-  }) {
-    final projection = _projection(message);
-    if (projection == null) {
+  InlineLanguageSuggestion? polishFor(AgentMessage message) {
+    final items = _projection(message)?.feedback?.items;
+    final item = items?.polish;
+    if (item?.suggestedText == null) {
       return null;
     }
-    return SpeechFeedbackDisclosure(
-      key: ValueKey('agent-speech-feedback-${projection.sourceKey}'),
-      projection: projection,
-      onRetry: projection.canRetry
-          ? () => unawaited(controller.retry(projection.sourceKey))
-          : null,
-      onRepractice: onSameThreadRepractice == null
-          ? null
-          : (item) {
-              if (item.repracticeMode ==
-                  SpeechFeedbackRepracticeMode.sameThread) {
-                onSameThreadRepractice();
-              }
-            },
+    return InlineLanguageSuggestion(
+      text: item!.suggestedText!,
+      explanation: item.explanation,
     );
   }
 

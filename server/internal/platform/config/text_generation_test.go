@@ -21,6 +21,7 @@ func TestLoadTextGeneration(t *testing.T) {
 	if cfg.Provider != TextProviderQianwen ||
 		cfg.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" ||
 		cfg.Model != "qwen-test-model" ||
+		cfg.SpeechFeedbackModel != "qwen-test-feedback-model" ||
 		cfg.Timeout != 45*time.Second ||
 		cfg.MaxOutputTokens != 768 ||
 		cfg.MaxContextChars != 24000 ||
@@ -68,6 +69,7 @@ func TestLoadTextGenerationRejectsUnsafeOrIncompleteConfiguration(t *testing.T) 
 		{name: "unsupported provider", key: "TEXT_GENERATION_PROVIDER", value: "fake"},
 		{name: "missing base URL", key: "QIANWEN_BASE_URL", value: ""},
 		{name: "missing model", key: "QIANWEN_MODEL", value: ""},
+		{name: "missing speech feedback model", key: "QIANWEN_SPEECH_FEEDBACK_MODEL", value: ""},
 		{name: "missing API key", key: "DASHSCOPE_API_KEY", value: ""},
 		{name: "API key whitespace", key: "DASHSCOPE_API_KEY", value: "secret value"},
 		{name: "invalid timeout", key: "QIANWEN_TIMEOUT", value: "soon"},
@@ -135,6 +137,7 @@ func setRequiredTextGenerationEnvironment(t *testing.T) {
 	t.Setenv("TEXT_GENERATION_PROVIDER", "qianwen")
 	t.Setenv("QIANWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 	t.Setenv("QIANWEN_MODEL", "qwen-test-model")
+	t.Setenv("QIANWEN_SPEECH_FEEDBACK_MODEL", "qwen-test-feedback-model")
 	t.Setenv("QIANWEN_TIMEOUT", "")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
 	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")

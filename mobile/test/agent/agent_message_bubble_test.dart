@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -141,6 +142,59 @@ void main() {
     await tester.tap(find.byIcon(Icons.broken_image_outlined));
     await tester.pump();
     expect(refreshCalls, 1);
+  });
+
+  testWidgets('expands correction and polish inside a voice bubble', (
+    tester,
+  ) async {
+    const message = AgentMessage(
+      id: 'user-voice-polish',
+      role: AgentMessageRole.user,
+      text: '我觉得 this plan is good.',
+      modality: AgentMessageModality.voice,
+      audio: AgentMessageAudio(
+        id: 'audio-polish',
+        status: AgentMessageAudioStatus.readable,
+        contentType: 'audio/mp4',
+        sizeBytes: 128,
+        duration: Duration(seconds: 3),
+        playbackPath: '/v1/agent-audio/audio-polish/playback',
+      ),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: message,
+            correction: InlineLanguageSuggestion(
+              text: 'This plan is good.',
+              explanation: 'Use a complete English sentence.',
+            ),
+            polish: InlineLanguageSuggestion(
+              text: 'This plan sounds good.',
+              explanation: 'Sounds more natural in conversation.',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('润色'), findsOneWidget);
+    expect(find.text('纠错'), findsOneWidget);
+    expect(find.text('This plan sounds good.'), findsNothing);
+
+    await tester.tap(find.text('润色'));
+    await tester.pump();
+
+    expect(find.text('This plan sounds good.'), findsOneWidget);
+    expect(find.text('This plan is good.'), findsNothing);
+
+    await tester.tap(find.text('纠错'));
+    await tester.pump();
+
+    expect(find.text('This plan sounds good.'), findsNothing);
+    expect(find.text('This plan is good.'), findsOneWidget);
+    expect(find.text('Use a complete English sentence.'), findsOneWidget);
   });
 
   testWidgets('renders and dispatches a practice plan handoff', (tester) async {
