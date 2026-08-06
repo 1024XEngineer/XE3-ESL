@@ -878,9 +878,11 @@ components:
     CreatePreparationProfileRequest:
       type: object
       additionalProperties: false
-      required:
-        - background_summary
       properties:
+        kind:
+          $ref: '#/components/schemas/PreparationKind'
+        scenario:
+          $ref: '#/components/schemas/ScenarioPreparationInput'
         resume_id:
           type: string
           format: uuid
@@ -911,6 +913,29 @@ components:
           - job_target_confirmation_version
         job_target_confirmation_version:
           - job_target_id
+      allOf:
+        - if:
+            properties:
+              kind:
+                const: scenario
+            required:
+              - kind
+          then:
+            required:
+              - scenario
+          else:
+            required:
+              - background_summary
+        - if:
+            properties:
+              kind:
+                const: interview
+            required:
+              - kind
+          then:
+            required:
+              - job_target_id
+              - job_target_confirmation_version
     PreparationProfile:
       type: object
       additionalProperties: false
@@ -925,6 +950,8 @@ components:
           $ref: '#/components/schemas/ResourceId'
         user_id:
           $ref: '#/components/schemas/ResourceId'
+        preparation_context:
+          $ref: '#/components/schemas/ResolvedPreparationContext'
         resume_id:
           type: string
           format: uuid
@@ -980,6 +1007,8 @@ components:
           $ref: '#/components/schemas/ResourceId'
         source_version:
           $ref: '#/components/schemas/Version'
+        preparation_context:
+          $ref: '#/components/schemas/ResolvedPreparationContext'
         source_job_target_id:
           $ref: '#/components/schemas/ResourceId'
         source_job_target_confirmation_version:
@@ -1016,6 +1045,98 @@ components:
           - source_job_target_id
           - source_job_target_confirmation_version
           - job_target_input_snapshot
+    PreparationKind:
+      type: string
+      enum:
+        - interview
+        - scenario
+    ScenarioPreparationInput:
+      type: object
+      additionalProperties: false
+      required:
+        - situation
+        - user_role
+        - counterpart_role
+        - goal
+        - counterpart_persona
+      properties:
+        situation:
+          $ref: '#/components/schemas/PreparationContextText'
+        user_role:
+          $ref: '#/components/schemas/PreparationContextText'
+        counterpart_role:
+          $ref: '#/components/schemas/PreparationContextText'
+        goal:
+          $ref: '#/components/schemas/PreparationContextText'
+        counterpart_persona:
+          $ref: '#/components/schemas/PreparationContextText'
+    PreparationContextText:
+      type: string
+      minLength: 1
+      maxLength: 16384
+      pattern: '^[^\u0000]*$'
+    ResolvedPreparationContext:
+      oneOf:
+        - $ref: '#/components/schemas/InterviewPreparationContext'
+        - $ref: '#/components/schemas/ScenarioPreparationContext'
+      discriminator:
+        propertyName: kind
+        mapping:
+          interview: '#/components/schemas/InterviewPreparationContext'
+          scenario: '#/components/schemas/ScenarioPreparationContext'
+    InterviewPreparationContext:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - interview
+      properties:
+        kind:
+          type: string
+          const: interview
+        interview:
+          type: object
+          additionalProperties: false
+          required:
+            - job_target
+          properties:
+            resume:
+              type: object
+              additionalProperties: false
+              required:
+                - resume_id
+                - revision
+              properties:
+                resume_id:
+                  type: string
+                  format: uuid
+                revision:
+                  type: integer
+                  format: int64
+                  minimum: 1
+            job_target:
+              type: object
+              additionalProperties: false
+              required:
+                - job_target_id
+                - confirmation_version
+              properties:
+                job_target_id:
+                  $ref: '#/components/schemas/ResourceId'
+                confirmation_version:
+                  $ref: '#/components/schemas/Version'
+    ScenarioPreparationContext:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - scenario
+      properties:
+        kind:
+          type: string
+          const: scenario
+        scenario:
+          $ref: '#/components/schemas/ScenarioPreparationInput'
     PreparationResumeRevisionSnapshot:
       type: object
       additionalProperties: false

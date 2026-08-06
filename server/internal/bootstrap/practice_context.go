@@ -16,6 +16,12 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
+	preparationinterviewintegration "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/integration/interview"
+	preparationrouter "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/router"
+	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
+	preparationinterview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/strategy/interview"
+	preparationscenario "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/strategy/scenario"
+	preparationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/transport/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -46,7 +52,7 @@ type IdentityAgentPracticeComposition struct {
 	summaryProcessor       agentsummary.Processor
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
-	preparationHTTP        *preparation.ProfileHTTPHandler
+	preparationHTTP        *preparationrouter.ProfileRouter
 	jobTargetApplication   *preparation.JobTargetService
 	jobTargetHTTP          *preparation.JobTargetHTTPHandler
 	planApplication        *preparation.PlanService
@@ -245,17 +251,45 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	preparationApplication, err := preparation.NewPersistenceService(
-		preparationRepository,
-		base.ids,
+	jobTargetRepository := preparation.NewPostgresJobTargetRepository(database)
+	interviewVerifier, err := preparationinterviewintegration.New(
 		resumeRevisionReader,
+		jobTargetRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
-	preparationHTTP, err := preparation.NewProfileHTTPHandler(
+	interviewStrategy, err := preparationinterview.New(interviewVerifier)
+	if err != nil {
+		return nil, err
+	}
+	strategyRegistry, err := preparationservice.NewStrategyRegistry(
+		interviewStrategy,
+		preparationscenario.New(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	contextService, err := preparationservice.NewContextService(strategyRegistry)
+	if err != nil {
+		return nil, err
+	}
+	preparationApplication, err := preparation.NewPersistenceServiceWithContext(
+		preparationRepository,
+		base.ids,
+		resumeRevisionReader,
+		contextService,
+	)
+	if err != nil {
+		return nil, err
+	}
+	preparationHandler, err := preparationhttp.NewProfileHTTPHandler(
 		preparationApplication,
 	)
+	if err != nil {
+		return nil, err
+	}
+	preparationHTTP, err := preparationrouter.NewProfile(preparationHandler)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +302,7 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 	jobTargetApplication, err := preparation.NewJobTargetService(
-		preparation.NewPostgresJobTargetRepository(database),
+		jobTargetRepository,
 		base.ids,
 		jobTargetParser,
 		catalog,

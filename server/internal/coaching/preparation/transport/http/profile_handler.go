@@ -1,4 +1,4 @@
-package preparation
+package http
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -24,15 +25,15 @@ type ProfileHTTPApplication interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
-		CreateProfileRequest,
-	) (Profile, bool, error)
+		preparation.CreateProfileRequest,
+	) (preparation.Profile, bool, error)
 	CreateSnapshot(
 		context.Context,
 		requestcontext.Actor,
 		string,
 		string,
-		CreateSnapshotRequest,
-	) (Snapshot, bool, error)
+		preparation.CreateSnapshotRequest,
+	) (preparation.Snapshot, bool, error)
 }
 
 // ProfileHTTPHandler exposes the authenticated Preparation write surface.
@@ -69,9 +70,9 @@ func (h *ProfileHTTPHandler) createProfile(c *gin.Context) {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	var request CreateProfileRequest
+	var request preparation.CreateProfileRequest
 	if !decodeProfileJSONObject(c, &request) ||
-		!validCreateProfileRequest(request) {
+		!preparation.ValidCreateProfileRequest(request) {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -101,11 +102,11 @@ func (h *ProfileHTTPHandler) createSnapshot(c *gin.Context) {
 		return
 	}
 	profileID := c.Param("preparation_profile_id")
-	if !utf8.ValidString(profileID) || !validResourceIdentifier(profileID) {
+	if !utf8.ValidString(profileID) || !preparation.ValidResourceIdentifier(profileID) {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	var request CreateSnapshotRequest
+	var request preparation.CreateSnapshotRequest
 	if !decodeProfileJSONObject(c, &request) ||
 		request.SourceVersion < 1 {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
@@ -174,7 +175,7 @@ func profileIdempotencyKey(c *gin.Context) (string, bool) {
 		return "", false
 	}
 	key := values[0]
-	return key, validIdempotencyKey(key) && utf8.ValidString(key)
+	return key, preparation.ValidIdempotencyKey(key) && utf8.ValidString(key)
 }
 
 func writeProfileAuthenticationRequired(c *gin.Context) {
@@ -184,22 +185,22 @@ func writeProfileAuthenticationRequired(c *gin.Context) {
 
 func writeProfileServiceError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrProfileInvalid):
+	case errors.Is(err, preparation.ErrProfileInvalid):
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
-	case errors.Is(err, ErrProfileNotFound):
+	case errors.Is(err, preparation.ErrProfileNotFound):
 		writeProfileHTTPError(
 			c,
 			http.StatusNotFound,
 			"preparation_profile_not_found",
 		)
-	case errors.Is(err, ErrProfileIdempotencyConflict):
+	case errors.Is(err, preparation.ErrProfileIdempotencyConflict):
 		writeProfileHTTPError(
 			c,
 			http.StatusConflict,
 			"idempotency_key_conflict",
 		)
-	case errors.Is(err, ErrProfileConflict),
-		errors.Is(err, ErrProfileDeletionGeneration):
+	case errors.Is(err, preparation.ErrProfileConflict),
+		errors.Is(err, preparation.ErrProfileDeletionGeneration):
 		writeProfileHTTPError(
 			c,
 			http.StatusConflict,
@@ -224,9 +225,9 @@ func writeProfileHTTPError(c *gin.Context, status int, code string) {
 			"code":           code,
 			"message":        messages[code],
 			"retryable":      false,
-			"correlation_id": newPreparationCorrelationID(),
+			"correlation_id": preparation.NewCorrelationID(),
 		},
 	})
 }
 
-var _ ProfileHTTPApplication = (*PersistenceService)(nil)
+var _ ProfileHTTPApplication = (*preparation.PersistenceService)(nil)

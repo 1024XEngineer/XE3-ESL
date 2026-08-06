@@ -12,3 +12,9 @@ func newPreparationCorrelationID() string {
 	}
 	return "corr_" + hex.EncodeToString(value[:])
 }
+
+// NewCorrelationID supplies opaque error correlation IDs to transport
+// adapters without exposing generator details.
+func NewCorrelationID() string {
+	return newPreparationCorrelationID()
+}

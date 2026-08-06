@@ -222,6 +222,18 @@ func projectPreparation(
 		BackgroundSnapshot:                 snapshot.BackgroundSnapshot,
 		CreatedAt:                          snapshot.CreatedAt,
 	}
+	if snapshot.Context != nil {
+		result.Kind = string(snapshot.Context.Kind)
+		if scenario := snapshot.Context.Scenario; scenario != nil {
+			result.ScenarioContext = &practice.ScenarioPreparationContext{
+				Situation:          scenario.Situation,
+				UserRole:           scenario.UserRole,
+				CounterpartRole:    scenario.CounterpartRole,
+				Goal:               scenario.Goal,
+				CounterpartPersona: scenario.CounterpartPersona,
+			}
+		}
+	}
 	if input := snapshot.JobTargetInputSnapshot; input != nil {
 		result.JobTargetInputSnapshot = &practice.JobTargetInput{
 			Source:              string(input.Source),

@@ -1,4 +1,4 @@
-package preparation
+package http
 
 import (
 	"context"
@@ -11,8 +11,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
+)
+
+type CreateProfileRequest = preparation.CreateProfileRequest
+type CreateSnapshotRequest = preparation.CreateSnapshotRequest
+type Profile = preparation.Profile
+type Snapshot = preparation.Snapshot
+type ResumeRevisionSnapshot = preparation.ResumeRevisionSnapshot
+type ResumeMaterial = preparation.ResumeMaterial
+type ResumeWorkExperience = preparation.ResumeWorkExperience
+type ResumeProjectExperience = preparation.ResumeProjectExperience
+type ResumeEducationExperience = preparation.ResumeEducationExperience
+
+var (
+	ErrProfileConflict            = preparation.ErrProfileConflict
+	ErrProfileIdempotencyConflict = preparation.ErrProfileIdempotencyConflict
+	ErrProfileInvalid             = preparation.ErrProfileInvalid
+	ErrProfileNotFound            = preparation.ErrProfileNotFound
 )
 
 type profileHTTPApplicationStub struct {
