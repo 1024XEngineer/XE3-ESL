@@ -40,6 +40,8 @@ final class ComposerController extends ChangeNotifier {
         recorder: voiceRecorder ?? FakeAgentVoiceRecorder(),
         audioPlayer: draftAudioPlayer ?? FakeAgentAudioPlayer(),
         onMessagesCommitted: conversationController.commitComposerMessages,
+        onStreamMessageChanged:
+            conversationController.changeComposerStreamMessage,
         onAssistantCommitted: onAssistantCommitted,
         idFactory: _newId,
       )..addListener(_relayVoiceState);

@@ -176,6 +176,48 @@ final class AgentVoiceConfirmation {
   final AgentMessage? assistantMessage;
 }
 
+sealed class AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceConfirmationStreamEvent();
+}
+
+final class AgentVoiceInputCommitted extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceInputCommitted(this.confirmation);
+
+  final AgentVoiceConfirmation confirmation;
+}
+
+final class AgentVoiceAssistantStarted
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantStarted({required this.runId});
+
+  final String runId;
+}
+
+final class AgentVoiceAssistantDelta extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantDelta({required this.runId, required this.delta});
+
+  final String runId;
+  final String delta;
+}
+
+final class AgentVoiceRunCompleted extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceRunCompleted(this.run);
+
+  final AgentVoiceRun run;
+}
+
+final class AgentVoiceRunFailed extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceRunFailed({
+    required this.runId,
+    required this.kind,
+    required this.retryable,
+  });
+
+  final String runId;
+  final String kind;
+  final bool retryable;
+}
+
 enum AgentVoiceComposerState {
   idle,
   starting,

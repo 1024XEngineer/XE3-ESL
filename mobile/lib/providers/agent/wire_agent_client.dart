@@ -273,6 +273,9 @@ final class WireAgentClient implements AgentClient, AgentStreamingTextClient {
       return const _RestoredTextRun();
     }
     final userMessage = messages.last;
+    if (userMessage.modality == AgentMessageModality.voice) {
+      return const _RestoredTextRun();
+    }
     final imageAssetIds = <String>[
       for (final image in userMessage.images) image.id,
     ];

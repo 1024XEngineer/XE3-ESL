@@ -44,6 +44,21 @@ type PendingRunProcessor interface {
 	) (run.Run, error)
 }
 
+type streamingPendingRunProcessor interface {
+	ProcessPendingStream(
+		context.Context,
+		requestcontext.Actor,
+		run.Run,
+		run.StreamObserver,
+	) (run.Run, error)
+}
+
+type ConfirmationStreamObserver interface {
+	OnConfirmationCommitted(context.Context, Confirmation) error
+	OnAssistantStarted(context.Context, run.Run) error
+	OnAssistantDelta(context.Context, string) error
+}
+
 type FeedbackReference struct {
 	StatusURL string
 }
@@ -99,6 +114,12 @@ type Application interface {
 		context.Context,
 		requestcontext.Actor,
 		ConfirmCandidateCommand,
+	) (Confirmation, error)
+	ConfirmStream(
+		context.Context,
+		requestcontext.Actor,
+		ConfirmCandidateCommand,
+		ConfirmationStreamObserver,
 	) (Confirmation, error)
 	Playback(
 		context.Context,
@@ -490,6 +511,30 @@ func (service *Service) Confirm(
 	actor requestcontext.Actor,
 	command ConfirmCandidateCommand,
 ) (Confirmation, error) {
+	return service.confirm(ctx, actor, command, nil)
+}
+
+func (service *Service) ConfirmStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command ConfirmCandidateCommand,
+	observer ConfirmationStreamObserver,
+) (Confirmation, error) {
+	if observer == nil {
+		return Confirmation{}, ErrInvalidRequest
+	}
+	if _, ok := service.runs.(streamingPendingRunProcessor); !ok {
+		return Confirmation{}, ErrInvalidRequest
+	}
+	return service.confirm(ctx, actor, command, observer)
+}
+
+func (service *Service) confirm(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command ConfirmCandidateCommand,
+	observer ConfirmationStreamObserver,
+) (Confirmation, error) {
 	if ctx == nil || !actor.Valid() || !ValidUUID(command.CandidateID) ||
 		command.CandidateVersion < 1 ||
 		!ValidClientMessageID(command.ClientMessageID) ||
@@ -521,17 +566,56 @@ func (service *Service) Confirm(
 				reference.StatusURL
 		}
 	}
-	if confirmation.Run.Status == run.StatusPending {
-		confirmation.Run, err = service.runs.ProcessPending(
-			ctx,
-			actor,
-			confirmation.Run,
-		)
-		if err != nil {
+	if observer != nil {
+		if err := observer.OnConfirmationCommitted(ctx, confirmation); err != nil {
 			return Confirmation{}, err
 		}
 	}
+	if confirmation.Run.Status == run.StatusPending {
+		if observer == nil {
+			confirmation.Run, err = service.runs.ProcessPending(
+				ctx,
+				actor,
+				confirmation.Run,
+			)
+		} else {
+			confirmation.Run, err = service.runs.(streamingPendingRunProcessor).ProcessPendingStream(
+				ctx,
+				actor,
+				confirmation.Run,
+				confirmationRunObserver{delegate: observer},
+			)
+		}
+		if err != nil {
+			return confirmation, err
+		}
+	}
 	return confirmation, nil
+}
+
+type confirmationRunObserver struct {
+	delegate ConfirmationStreamObserver
+}
+
+func (confirmationRunObserver) OnInputCommitted(
+	context.Context,
+	run.Submission,
+) error {
+	return nil
+}
+
+func (observer confirmationRunObserver) OnAssistantStarted(
+	ctx context.Context,
+	pending run.Run,
+) error {
+	return observer.delegate.OnAssistantStarted(ctx, pending)
+}
+
+func (observer confirmationRunObserver) OnAssistantDelta(
+	ctx context.Context,
+	delta string,
+) error {
+	return observer.delegate.OnAssistantDelta(ctx, delta)
 }
 
 func (service *Service) Playback(

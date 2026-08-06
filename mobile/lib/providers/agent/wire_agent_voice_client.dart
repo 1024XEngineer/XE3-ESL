@@ -69,7 +69,10 @@ typedef AgentVoiceWireTransportFactory = AgentVoiceWireTransport Function();
 typedef AgentVoiceNow = DateTime Function();
 
 final class WireAgentVoiceClient
-    implements AgentVoiceClient, AgentMessageAudioClient {
+    implements
+        AgentVoiceClient,
+        AgentVoiceStreamingClient,
+        AgentMessageAudioClient {
   factory WireAgentVoiceClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -390,6 +393,53 @@ final class WireAgentVoiceClient
         _zero(response.body);
       }
     });
+  }
+
+  @override
+  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
+    required String candidateId,
+    required int candidateVersion,
+    required String clientMessageId,
+    required String confirmedText,
+  }) async* {
+    _requireUuid(candidateId);
+    _requireClientIdentity(clientMessageId);
+    _requireContent(confirmedText);
+    if (candidateVersion < 1) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidRequest,
+      );
+    }
+    final cleanup = _cleanupFuture;
+    if (cleanup != null) {
+      await cleanup;
+    }
+    final generation = _accountGeneration;
+    final response = await _openApiStream(
+      generation: generation,
+      method: 'POST',
+      path:
+          '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}/confirmations/stream',
+      accept: 'text/event-stream',
+      maximumResponseBytes: _maximumJsonBytes,
+      contentType: ContentType.json.mimeType,
+      headers: const <String, String>{},
+      body: Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'candidate_version': candidateVersion,
+            'client_message_id': clientMessageId,
+            'confirmed_text': confirmedText,
+          }),
+        ),
+      ),
+    );
+    yield* _decodeConfirmationEvents(
+      response,
+      expectedCandidateId: candidateId,
+      expectedCandidateVersion: candidateVersion,
+      expectedText: confirmedText,
+    );
   }
 
   @override
@@ -873,6 +923,152 @@ final class WireAgentVoiceClient
         eventName.isNotEmpty ||
         eventData.isNotEmpty) {
       throw _invalidResponse();
+    }
+  }
+
+  Stream<AgentVoiceConfirmationStreamEvent> _decodeConfirmationEvents(
+    AgentVoiceWireStreamResponse response, {
+    required String expectedCandidateId,
+    required int expectedCandidateVersion,
+    required String expectedText,
+  }) async* {
+    var responseBytes = 0;
+    var eventName = '';
+    var eventData = '';
+    var phase = 0;
+    String? runId;
+    try {
+      final lines = response.body
+          .map((chunk) {
+            responseBytes += chunk.length;
+            if (responseBytes > _maximumJsonBytes) {
+              throw _invalidResponse();
+            }
+            return chunk;
+          })
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      await for (final line in lines.timeout(_requestTimeout)) {
+        if (line.isEmpty) {
+          if (eventName.isEmpty && eventData.isEmpty) {
+            continue;
+          }
+          final event = _decodeConfirmationEvent(
+            eventName,
+            eventData,
+            expectedCandidateId: expectedCandidateId,
+            expectedCandidateVersion: expectedCandidateVersion,
+            expectedText: expectedText,
+            expectedRunId: runId,
+          );
+          switch (event) {
+            case AgentVoiceInputCommitted(:final confirmation) when phase == 0:
+              phase = 1;
+              runId = confirmation.run.id;
+            case AgentVoiceAssistantStarted() when phase == 1:
+              phase = 2;
+            case AgentVoiceAssistantDelta() when phase == 2:
+              phase = 2;
+            case AgentVoiceRunCompleted() when phase == 1 || phase == 2:
+              phase = 3;
+            case AgentVoiceRunFailed() when phase == 1 || phase == 2:
+              phase = 3;
+            default:
+              throw const _InvalidVoiceResponse();
+          }
+          yield event;
+          eventName = '';
+          eventData = '';
+          continue;
+        }
+        if (line.startsWith(':')) {
+          continue;
+        }
+        if (line.startsWith('event: ') && eventName.isEmpty) {
+          eventName = line.substring(7);
+          continue;
+        }
+        if (line.startsWith('data: ') && eventData.isEmpty) {
+          eventData = line.substring(6);
+          continue;
+        }
+        throw const _InvalidVoiceResponse();
+      }
+    } on _InvalidVoiceResponse {
+      throw _invalidResponse();
+    }
+    if (phase != 3 || eventName.isNotEmpty || eventData.isNotEmpty) {
+      throw _invalidResponse();
+    }
+  }
+
+  AgentVoiceConfirmationStreamEvent _decodeConfirmationEvent(
+    String event,
+    String data, {
+    required String expectedCandidateId,
+    required int expectedCandidateVersion,
+    required String expectedText,
+    required String? expectedRunId,
+  }) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(data);
+    } catch (_) {
+      throw const _InvalidVoiceResponse();
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const _InvalidVoiceResponse();
+    }
+    final object = Map<String, Object?>.from(decoded);
+    switch (event) {
+      case 'input.committed':
+        final confirmation = _decodeConfirmationObject(object);
+        if (confirmation.candidate.id != expectedCandidateId ||
+            confirmation.candidate.version != expectedCandidateVersion ||
+            confirmation.message.text != expectedText ||
+            confirmation.run.inputMessageId != confirmation.message.id) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceInputCommitted(confirmation);
+      case 'assistant.started':
+        final runId = _strictString(object['run_id'], min: 1, max: 128);
+        if (object.length != 1 || runId != expectedRunId) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceAssistantStarted(runId: runId);
+      case 'assistant.delta':
+        final runId = _strictString(object['run_id'], min: 1, max: 128);
+        final delta = _strictContent(object['delta']);
+        if (object.length != 2 || runId != expectedRunId) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceAssistantDelta(runId: runId, delta: delta);
+      case 'run.completed':
+        final run = _decodeRunObject(object['run']);
+        if (object.length != 1 ||
+            run.id != expectedRunId ||
+            run.status != AgentVoiceRunStatus.completed) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceRunCompleted(run);
+      case 'run.failed':
+        final run = object['run'];
+        final runId = run == null
+            ? _strictString(object['run_id'], min: 1, max: 128)
+            : _decodeRunObject(run).id;
+        final kind = _strictString(object['kind'], min: 1, max: 64);
+        final retryable = _strictBool(object['retryable']);
+        if (runId != expectedRunId) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceRunFailed(
+          runId: runId,
+          kind: kind,
+          retryable: retryable,
+        );
+      default:
+        throw const _InvalidVoiceResponse();
     }
   }
 
@@ -1689,7 +1885,6 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
-      'memes',
       'handoffs',
       'speech_feedback_status_url',
       'created_at',
@@ -1734,14 +1929,10 @@ AgentMessage _decodeMessageObject(
   final handoffs = object['handoffs'] == null
       ? const <AgentHandoff>[]
       : decodeAgentHandoffs(object['handoffs']);
-  final memes = object['memes'] == null
-      ? const <AgentMessageMeme>[]
-      : _decodeVoiceMessageMemes(object['memes']);
   if ((role == AgentMessageRole.user &&
           (clientId == null || producedBy != null || handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
-      (role != AgentMessageRole.assistant && memes.isNotEmpty) ||
       (modality == AgentMessageModality.voice &&
           (role != AgentMessageRole.user || audio == null)) ||
       (modality == AgentMessageModality.text && audio != null) ||
@@ -1759,74 +1950,8 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
-    memes: memes,
     handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
-  );
-}
-
-List<AgentMessageMeme> _decodeVoiceMessageMemes(Object? value) {
-  final values = _strictList(value, max: 4);
-  if (values.isEmpty) {
-    throw const _InvalidVoiceResponse();
-  }
-  final ids = <String>{};
-  return List<AgentMessageMeme>.unmodifiable(
-    values.map((item) {
-      final object = _strictObject(
-        item,
-        allowed: const <String>{
-          'meme_attachment_id',
-          'meme_id',
-          'category',
-          'content_type',
-          'size_bytes',
-          'width',
-          'height',
-          'content_path',
-        },
-        required: const <String>{
-          'meme_attachment_id',
-          'meme_id',
-          'category',
-          'content_type',
-          'size_bytes',
-          'width',
-          'height',
-          'content_path',
-        },
-      );
-      final id = _strictUuid(object['meme_attachment_id']);
-      final contentType = _strictString(
-        object['content_type'],
-        min: 1,
-        max: 32,
-      );
-      final contentPath = _strictString(
-        object['content_path'],
-        min: 1,
-        max: 200,
-      );
-      if (!ids.add(id) ||
-          !_memeContentTypes.contains(contentType) ||
-          contentPath != '/v1/agent-message-memes/$id/content') {
-        throw const _InvalidVoiceResponse();
-      }
-      return AgentMessageMeme(
-        id: id,
-        memeId: _strictPattern(object['meme_id'], _stableMemeIdPattern, 128),
-        category: _strictPattern(object['category'], _stableMemeIdPattern, 128),
-        contentType: contentType,
-        sizeBytes: _strictInt(
-          object['size_bytes'],
-          min: 1,
-          max: 20 * 1024 * 1024,
-        ),
-        width: _strictInt(object['width'], min: 1, max: 16384),
-        height: _strictInt(object['height'], min: 1, max: 16384),
-        contentPath: contentPath,
-      );
-    }),
   );
 }
 
@@ -2173,15 +2298,6 @@ final RegExp _uuidPattern = RegExp(
 final RegExp _clientIdentityPattern = RegExp(
   r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
 );
-final RegExp _stableMemeIdPattern = RegExp(
-  r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
-);
-const _memeContentTypes = <String>{
-  'image/gif',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-};
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failurePattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
 final RegExp _playbackPathPattern = RegExp(

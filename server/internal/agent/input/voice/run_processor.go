@@ -74,6 +74,26 @@ func (processor *deferredRunProcessor) ProcessPending(
 	}
 }
 
+func (processor *deferredRunProcessor) ProcessPendingStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	pendingRun run.Run,
+	observer run.StreamObserver,
+) (run.Run, error) {
+	delegate, ok := processor.delegate.(streamingPendingRunProcessor)
+	if !ok {
+		return run.Run{}, errors.New(
+			"agent voice input: streaming Run processor is required",
+		)
+	}
+	return delegate.ProcessPendingStream(
+		ctx,
+		actor,
+		pendingRun,
+		observer,
+	)
+}
+
 func (processor *deferredRunProcessor) run() {
 	for {
 		select {

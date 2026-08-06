@@ -109,6 +109,49 @@ void main() {
       transport.expectDone();
     });
 
+    test('does not replay a voice Message through the text Run API', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: 'Let us practice this sentence.',
+                clientMessageId: 'voice_message_restore',
+                modality: 'voice',
+                audio: {
+                  'audio_id': '50000000-0000-4000-8000-000000000001',
+                  'status': 'readable',
+                  'content_type': 'audio/wav',
+                  'size_bytes': 3244,
+                  'duration_ms': 100,
+                  'playback_path':
+                      '/v1/agent-message-audios/50000000-0000-4000-8000-000000000001/playback',
+                },
+              ),
+            ],
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = (await harness.client.getFocusedThread())!;
+
+      expect(snapshot.messages, hasLength(1));
+      expect(snapshot.messages.single.modality, AgentMessageModality.voice);
+      expect(snapshot.textRecovery, isNull);
+      transport.expectDone();
+    });
+
     test(
       'lists an empty account before explicitly creating one Thread',
       () async {
@@ -1709,6 +1752,7 @@ Map<String, Object?> _messageJson({
   String? producedByRunId,
   List<Object?>? handoffs,
   String? modality,
+  Map<String, Object?>? audio,
   List<Object?>? images,
   List<Object?>? memes,
 }) {
@@ -1721,6 +1765,7 @@ Map<String, Object?> _messageJson({
     'produced_by_run_id': ?producedByRunId,
     'handoffs': ?handoffs,
     'modality': ?modality,
+    'audio': ?audio,
     'images': ?images,
     'memes': ?memes,
     'content': content,

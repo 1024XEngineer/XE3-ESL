@@ -106,6 +106,69 @@ void main() {
     transport.expectDone();
   });
 
+  test('keeps a confirmation SSE stream open across assistant deltas', () async {
+    final completedRun = _runJson(status: 'completed')
+      ..['assistant_message_id'] = _assistantMessageId
+      ..['provider_completion_id'] = 'completion-voice-001'
+      ..['provider_model'] = 'qwen-plus'
+      ..['finish_reason'] = 'stop'
+      ..['usage'] = <String, Object?>{
+        'input_tokens': 10,
+        'output_tokens': 4,
+        'total_tokens': 14,
+      }
+      ..['started_at'] = _timestamp
+      ..['completed_at'] = _timestamp;
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path:
+            '/v1/agent-voice-message-candidates/$_candidateId/confirmations/stream',
+        response: _sseResponse(<(String, Object?)>[
+          (
+            'input.committed',
+            <String, Object?>{
+              'candidate': _candidateJson(status: 'confirmed', confirmed: true),
+              'message': _voiceMessageJson(
+                content: 'Edited confirmed transcript',
+              ),
+              'run': _runJson(status: 'pending'),
+            },
+          ),
+          ('assistant.started', <String, Object?>{'run_id': _runId}),
+          (
+            'assistant.delta',
+            <String, Object?>{'run_id': _runId, 'delta': 'Hello'},
+          ),
+          (
+            'assistant.delta',
+            <String, Object?>{'run_id': _runId, 'delta': ', how can I help?'},
+          ),
+          ('run.completed', <String, Object?>{'run': completedRun}),
+        ]),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final events = await client
+        .confirmCandidateStream(
+          candidateId: _candidateId,
+          candidateVersion: 1,
+          clientMessageId: 'voice_message_001',
+          confirmedText: 'Edited confirmed transcript',
+        )
+        .toList();
+
+    expect(events, hasLength(5));
+    expect(
+      events.whereType<AgentVoiceAssistantDelta>().map((event) => event.delta),
+      <String>['Hello', ', how can I help?'],
+    );
+    expect(events.last, isA<AgentVoiceRunCompleted>());
+    transport.expectDone();
+  });
+
   test(
     'decodes confirmation fields for confirmed deleting and deleted candidates',
     () async {

@@ -48,9 +48,21 @@ abstract interface class AgentVoiceClient {
   Future<void> dispose();
 }
 
+abstract interface class AgentVoiceStreamingClient {
+  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
+    required String candidateId,
+    required int candidateVersion,
+    required String clientMessageId,
+    required String confirmedText,
+  });
+}
+
 /// Explicit preview/test provider for voice drafts and committed Message audio.
 final class FakeAgentVoiceClient
-    implements AgentVoiceClient, AgentMessageAudioClient {
+    implements
+        AgentVoiceClient,
+        AgentVoiceStreamingClient,
+        AgentMessageAudioClient {
   FakeAgentVoiceClient({this.delay = Duration.zero});
 
   final Duration delay;
@@ -267,6 +279,30 @@ final class FakeAgentVoiceClient
     _messages[assistantMessage.id] = assistantMessage;
     _audioIds.add(audioId);
     return confirmation;
+  }
+
+  @override
+  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
+    required String candidateId,
+    required int candidateVersion,
+    required String clientMessageId,
+    required String confirmedText,
+  }) async* {
+    final confirmation = await confirmCandidate(
+      candidateId: candidateId,
+      candidateVersion: candidateVersion,
+      clientMessageId: clientMessageId,
+      confirmedText: confirmedText,
+    );
+    yield AgentVoiceInputCommitted(confirmation);
+    if (confirmation.assistantMessage case final assistant?) {
+      yield AgentVoiceAssistantStarted(runId: confirmation.run.id);
+      yield AgentVoiceAssistantDelta(
+        runId: confirmation.run.id,
+        delta: assistant.text,
+      );
+    }
+    yield AgentVoiceRunCompleted(confirmation.run);
   }
 
   @override

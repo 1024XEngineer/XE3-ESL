@@ -1243,6 +1243,28 @@ final class ConversationController extends ChangeNotifier {
     unawaited(_hydrateMessageMemeContents(fence));
   }
 
+  void changeComposerStreamMessage(
+    String? previousMessageId,
+    AgentMessage message,
+  ) {
+    if (_disposed || _threadId == null) {
+      return;
+    }
+    final messages = List<AgentMessage>.from(_messages);
+    final index = previousMessageId == null
+        ? -1
+        : messages.indexWhere((item) => item.id == previousMessageId);
+    if (index < 0) {
+      if (!messages.any((item) => item.id == message.id)) {
+        messages.add(message);
+      }
+    } else {
+      messages[index] = message;
+    }
+    _messages = messages;
+    notifyListeners();
+  }
+
   void markMessageAudioDeleted(
     String messageId,
     AgentMessageAudio deletedAudio,

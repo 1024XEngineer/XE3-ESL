@@ -11,6 +11,7 @@ import (
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentconversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
@@ -51,6 +52,15 @@ type Application interface {
 		agentvoice.ConfirmCandidateCommand,
 	) (agentvoice.Confirmation, error)
 	DeleteCandidate(context.Context, requestcontext.Actor, string) error
+}
+
+type streamingConfirmationApplication interface {
+	ConfirmStream(
+		context.Context,
+		requestcontext.Actor,
+		agentvoice.ConfirmCandidateCommand,
+		agentvoice.ConfirmationStreamObserver,
+	) (agentvoice.Confirmation, error)
 }
 
 type ThreadReader interface {
@@ -115,6 +125,10 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST(
 		"/v1/agent-voice-message-candidates/:candidate_id/confirmations",
 		handler.confirm,
+	)
+	routes.POST(
+		"/v1/agent-voice-message-candidates/:candidate_id/confirmations/stream",
+		handler.confirmStream,
 	)
 }
 
@@ -261,6 +275,80 @@ func (handler *Handler) delete(c *gin.Context) {
 }
 
 func (handler *Handler) confirm(c *gin.Context) {
+	actor, command, ok := handler.prepareConfirmation(c)
+	if !ok {
+		return
+	}
+	confirmation, err := handler.application.Confirm(
+		c.Request.Context(),
+		actor,
+		command,
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
+		return
+	}
+	confirmation.Message.Audio = &confirmation.Audio
+	c.JSON(
+		agentrunhttp.RunWriteStatus(confirmation.Run),
+		confirmationResponse(confirmation),
+	)
+}
+
+func (handler *Handler) confirmStream(c *gin.Context) {
+	application, ok := handler.application.(streamingConfirmationApplication)
+	if !ok {
+		handler.write(c, internalError(nil))
+		return
+	}
+	actor, command, ok := handler.prepareConfirmation(c)
+	if !ok {
+		return
+	}
+	stream := &confirmationSSEWriter{context: c}
+	confirmation, err := application.ConfirmStream(
+		c.Request.Context(),
+		actor,
+		command,
+		stream,
+	)
+	if err != nil {
+		if !stream.started {
+			handler.write(c, mapError(err))
+			return
+		}
+		_ = stream.write("run.failed", gin.H{
+			"run_id":    confirmation.Run.ID,
+			"kind":      "stream_interrupted",
+			"retryable": true,
+		})
+		return
+	}
+	switch confirmation.Run.Status {
+	case agentrun.StatusCompleted:
+		_ = stream.write("run.completed", gin.H{
+			"run": agentrunhttp.RunResponse(confirmation.Run),
+		})
+	case agentrun.StatusFailed:
+		_ = stream.write("run.failed", gin.H{
+			"run":       agentrunhttp.RunResponse(confirmation.Run),
+			"kind":      confirmation.Run.FailureKind,
+			"retryable": confirmation.Run.FailureRetryable,
+		})
+	default:
+		_ = stream.write("run.failed", gin.H{
+			"run":       agentrunhttp.RunResponse(confirmation.Run),
+			"kind":      "run_not_terminal",
+			"retryable": true,
+		})
+	}
+}
+
+func (handler *Handler) prepareConfirmation(c *gin.Context) (
+	requestcontext.Actor,
+	agentvoice.ConfirmCandidateCommand,
+	bool,
+) {
 	values, ok := httpinput.DecodeObject(
 		c,
 		[]string{"candidate_version", "client_message_id", "confirmed_text"},
@@ -270,41 +358,87 @@ func (handler *Handler) confirm(c *gin.Context) {
 	)
 	if !ok {
 		handler.write(c, invalidRequest(nil))
-		return
+		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
 	}
 	version, versionOK := httpinput.Int64(values["candidate_version"])
 	clientMessageID, clientOK := httpinput.String(values["client_message_id"])
 	confirmedText, textOK := httpinput.String(values["confirmed_text"])
 	if !versionOK || !clientOK || !textOK {
 		handler.write(c, invalidRequest(nil))
-		return
+		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
 	}
 	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
 	if !ok {
 		handler.write(c, authenticationRequired())
-		return
+		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
 	}
-	confirmation, err := handler.application.Confirm(
-		c.Request.Context(),
-		actor,
-		agentvoice.ConfirmCandidateCommand{
-			CandidateID: c.Param("candidate_id"), CandidateVersion: version,
-			ClientMessageID: clientMessageID, ConfirmedText: confirmedText,
-		},
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
+	return actor, agentvoice.ConfirmCandidateCommand{
+		CandidateID: c.Param("candidate_id"), CandidateVersion: version,
+		ClientMessageID: clientMessageID, ConfirmedText: confirmedText,
+	}, true
+}
+
+func confirmationResponse(confirmation agentvoice.Confirmation) gin.H {
+	return gin.H{
+		"candidate": CandidateResponse(confirmation.Candidate),
+		"message":   agentconversationhttp.MessageResponse(confirmation.Message),
+		"run":       agentrunhttp.RunResponse(confirmation.Run),
 	}
+}
+
+type confirmationSSEWriter struct {
+	context *gin.Context
+	started bool
+	runID   string
+}
+
+func (writer *confirmationSSEWriter) OnConfirmationCommitted(
+	_ context.Context,
+	confirmation agentvoice.Confirmation,
+) error {
+	writer.runID = confirmation.Run.ID
 	confirmation.Message.Audio = &confirmation.Audio
-	c.JSON(
-		agentrunhttp.RunWriteStatus(confirmation.Run),
-		gin.H{
-			"candidate": CandidateResponse(confirmation.Candidate),
-			"message":   agentconversationhttp.MessageResponse(confirmation.Message),
-			"run":       agentrunhttp.RunResponse(confirmation.Run),
-		},
-	)
+	return writer.write("input.committed", confirmationResponse(confirmation))
+}
+
+func (writer *confirmationSSEWriter) OnAssistantStarted(
+	_ context.Context,
+	pending agentrun.Run,
+) error {
+	writer.runID = pending.ID
+	return writer.write("assistant.started", gin.H{"run_id": pending.ID})
+}
+
+func (writer *confirmationSSEWriter) OnAssistantDelta(
+	_ context.Context,
+	delta string,
+) error {
+	return writer.write("assistant.delta", gin.H{
+		"run_id": writer.runID,
+		"delta":  delta,
+	})
+}
+
+func (writer *confirmationSSEWriter) write(event string, data any) error {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if !writer.started {
+		writer.context.Header("Content-Type", "text/event-stream; charset=utf-8")
+		writer.context.Header("Cache-Control", "no-cache, no-store")
+		writer.context.Header("X-Accel-Buffering", "no")
+		writer.context.Header("Connection", "keep-alive")
+		writer.context.Status(http.StatusOK)
+		writer.started = true
+	}
+	if _, err := writer.context.Writer.WriteString(
+		"event: " + event + "\ndata: " + string(encoded) + "\n\n",
+	); err != nil {
+		return err
+	}
+	writer.context.Writer.Flush()
+	return writer.context.Request.Context().Err()
 }
 
 type transcriptionSSEWriter struct {

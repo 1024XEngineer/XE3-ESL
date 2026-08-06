@@ -16,6 +16,8 @@ typedef AgentVoiceMessagesCommitted =
     void Function(Iterable<AgentMessage> messages);
 typedef AgentVoiceAssistantCommitted =
     FutureOr<void> Function(AgentMessage message);
+typedef AgentVoiceStreamMessageChanged =
+    void Function(String? previousMessageId, AgentMessage message);
 
 final class AgentVoiceController extends ChangeNotifier
     with WidgetsBindingObserver {
@@ -25,6 +27,7 @@ final class AgentVoiceController extends ChangeNotifier
     required this.audioPlayer,
     required this.onMessagesCommitted,
     this.onAssistantCommitted,
+    this.onStreamMessageChanged,
     required this.idFactory,
     this.clock = DateTime.now,
     this.pollInterval = const Duration(seconds: 1),
@@ -50,6 +53,7 @@ final class AgentVoiceController extends ChangeNotifier
   final AgentAudioPlayer audioPlayer;
   final AgentVoiceMessagesCommitted onMessagesCommitted;
   final AgentVoiceAssistantCommitted? onAssistantCommitted;
+  final AgentVoiceStreamMessageChanged? onStreamMessageChanged;
   final AgentVoiceIdFactory idFactory;
   final AgentVoiceControllerClock clock;
   final Duration pollInterval;
@@ -645,11 +649,180 @@ final class AgentVoiceController extends ChangeNotifier
       confirmedText: text,
     );
     _confirmationCommand = command;
+    if (client is AgentVoiceStreamingClient) {
+      return _startConfirmationStream(
+        client: client as AgentVoiceStreamingClient,
+        candidate: candidate,
+        command: command,
+      );
+    }
     return _startConfirmation(
       candidate: candidate,
       command: command,
       reconcileFirst: false,
     );
+  }
+
+  Future<void> _startConfirmationStream({
+    required AgentVoiceStreamingClient client,
+    required AgentVoiceCandidate candidate,
+    required _ConfirmationCommand command,
+  }) {
+    final fence = _captureWorkflowFence(
+      candidateId: candidate.id,
+      candidateVersion: candidate.version,
+    );
+    _state = AgentVoiceComposerState.confirming;
+    _errorMessage = null;
+    _retry = null;
+    notifyListeners();
+    late final Future<void> operation;
+    operation =
+        _confirmStream(
+          client: client,
+          fence: fence,
+          candidate: candidate,
+          command: command,
+        ).whenComplete(() {
+          if (identical(_workflowOperation, operation)) {
+            _workflowOperation = null;
+          }
+        });
+    _workflowOperation = operation;
+    return operation;
+  }
+
+  Future<void> _confirmStream({
+    required AgentVoiceStreamingClient client,
+    required _WorkflowFence fence,
+    required AgentVoiceCandidate candidate,
+    required _ConfirmationCommand command,
+  }) async {
+    var messageCommitted = false;
+    var assistantText = '';
+    String? transientAssistantId;
+    try {
+      await for (final event in client.confirmCandidateStream(
+        candidateId: command.candidateId,
+        candidateVersion: command.candidateVersion,
+        clientMessageId: command.clientMessageId,
+        confirmedText: command.confirmedText,
+      )) {
+        if (!_isWorkflowCurrent(fence)) {
+          return;
+        }
+        switch (event) {
+          case AgentVoiceInputCommitted(:final confirmation):
+            _validateConfirmation(
+              confirmation,
+              expectedCandidate: candidate,
+              confirmedText: command.confirmedText,
+            );
+            _candidate = confirmation.candidate;
+            _pendingRun = confirmation.run;
+            onMessagesCommitted(<AgentMessage>[confirmation.message]);
+            messageCommitted = true;
+            _editedTranscript = '';
+            _recording = null;
+            _uploadIdempotencyKey = null;
+            _confirmationCommand = null;
+            _state = AgentVoiceComposerState.awaitingAssistant;
+            notifyListeners();
+          case AgentVoiceAssistantStarted(:final runId):
+            transientAssistantId = 'stream-$runId';
+            _changeStreamMessage(
+              null,
+              AgentMessage(
+                id: transientAssistantId,
+                role: AgentMessageRole.assistant,
+                text: '',
+                isStreaming: true,
+              ),
+            );
+          case AgentVoiceAssistantDelta(:final delta):
+            final messageId = transientAssistantId;
+            if (messageId == null) {
+              throw StateError('Voice assistant delta started out of order.');
+            }
+            assistantText += delta;
+            _changeStreamMessage(
+              messageId,
+              AgentMessage(
+                id: messageId,
+                role: AgentMessageRole.assistant,
+                text: assistantText,
+                isStreaming: true,
+              ),
+            );
+          case AgentVoiceRunCompleted(:final run):
+            _pendingRun = run;
+            final messageId = run.assistantMessageId;
+            if (messageId == null) {
+              throw StateError('Completed voice Run has no assistant Message.');
+            }
+            final assistant = await this.client.getMessage(
+              threadId: fence.threadId,
+              messageId: messageId,
+            );
+            if (!_isWorkflowCurrent(fence)) {
+              return;
+            }
+            if (assistant == null ||
+                assistant.role != AgentMessageRole.assistant) {
+              throw StateError('Voice assistant Message is unavailable.');
+            }
+            final transientId = transientAssistantId;
+            if (transientId == null) {
+              onMessagesCommitted(<AgentMessage>[assistant]);
+            } else {
+              _changeStreamMessage(transientId, assistant);
+            }
+            _resetWorkflowPresentation();
+            notifyListeners();
+            _notifyAssistantCommitted(assistant);
+          case AgentVoiceRunFailed(:final kind, :final retryable):
+            throw AgentClientException(
+              kind: AgentClientFailureKind.runFailed,
+              errorCode: kind,
+              retryable: retryable,
+            );
+        }
+      }
+    } catch (error) {
+      if (_isWorkflowCurrent(fence)) {
+        if (transientAssistantId case final messageId?) {
+          _changeStreamMessage(
+            messageId,
+            AgentMessage(
+              id: messageId,
+              role: AgentMessageRole.assistant,
+              text: assistantText,
+              hasFailed: true,
+            ),
+          );
+        }
+        if (messageCommitted) {
+          _state = AgentVoiceComposerState.failed;
+          _retry = _VoiceRetry.run;
+          _errorMessage = '回复中断了，可以重试；你的语音消息已保留。';
+        } else {
+          _state = AgentVoiceComposerState.awaitingConfirmation;
+          _retry = null;
+          _errorMessage = _confirmationFailureMessage(error);
+        }
+        notifyListeners();
+        await _clearOnAuthenticationFailure(error);
+      }
+    }
+  }
+
+  void _changeStreamMessage(String? previousMessageId, AgentMessage message) {
+    final callback = onStreamMessageChanged;
+    if (callback == null) {
+      onMessagesCommitted(<AgentMessage>[message]);
+      return;
+    }
+    callback(previousMessageId, message);
   }
 
   Future<void> _retryConfirmation() {
