@@ -38,15 +38,16 @@ type TTSConfig struct {
 }
 
 type speechSynthesizer struct {
-	endpoint      string
-	model         string
-	voice         string
-	languageHint  string
-	timeout       time.Duration
-	tempDirectory string
-	apiKey        providerSecret
-	client        httpDoer
-	now           func() time.Time
+	endpoint         string
+	realtimeEndpoint string
+	model            string
+	voice            string
+	languageHint     string
+	timeout          time.Duration
+	tempDirectory    string
+	apiKey           providerSecret
+	client           httpDoer
+	now              func() time.Time
 }
 
 func (synthesizer *speechSynthesizer) String() string {
@@ -90,6 +91,10 @@ func newSynthesizerWithClient(
 			"Qwen-Audio-TTS is available only through a China (Beijing) endpoint",
 		)
 	}
+	realtimeEndpoint, err := realtimeTTSEndpoint(baseURL)
+	if err != nil {
+		return nil, err
+	}
 	model, err := normalizeTTSModel(config.Model)
 	if err != nil {
 		return nil, err
@@ -113,15 +118,16 @@ func newSynthesizerWithClient(
 		return nil, errors.New("Qianwen TTS HTTP client is required")
 	}
 	return &speechSynthesizer{
-		endpoint:      baseURL + ttsSpeechSynthesizerPath,
-		model:         model,
-		voice:         voice,
-		languageHint:  language,
-		timeout:       config.Timeout,
-		tempDirectory: strings.TrimSpace(config.TempDirectory),
-		apiKey:        newProviderSecret(apiKey),
-		client:        client,
-		now:           time.Now,
+		endpoint:         baseURL + ttsSpeechSynthesizerPath,
+		realtimeEndpoint: realtimeEndpoint,
+		model:            model,
+		voice:            voice,
+		languageHint:     language,
+		timeout:          config.Timeout,
+		tempDirectory:    strings.TrimSpace(config.TempDirectory),
+		apiKey:           newProviderSecret(apiKey),
+		client:           client,
+		now:              time.Now,
 	}, nil
 }
 

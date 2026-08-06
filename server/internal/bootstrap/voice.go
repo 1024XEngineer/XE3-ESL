@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
@@ -21,6 +22,7 @@ import (
 type VoiceConfiguration struct {
 	Recognizer                agentvoice.StreamingSpeechRecognizer
 	Synthesizer               agentvoice.SpeechSynthesizer
+	AssistantSpeech           agentconversation.AssistantSpeechSynthesizer
 	PracticeRecognizer        practicevoice.SpeechRecognizer
 	PracticeSynthesizer       practicevoice.SpeechSynthesizer
 	QuestionGenerator         practicevoice.QuestionGenerator
@@ -37,6 +39,11 @@ type VoiceConfiguration struct {
 	AudioReadTimeout          time.Duration
 	ReviewHistoryCursorKey    []byte
 	SpeechFeedbackCoordinator *speechfeedback.SpeechFeedbackCoordinator
+}
+
+type AgentSpeechSynthesizer interface {
+	agentvoice.SpeechSynthesizer
+	agentconversation.AssistantSpeechSynthesizer
 }
 
 type AgentImageConfiguration struct {
@@ -67,7 +74,7 @@ func NewAgentSpeechRecognizer(
 // NewAgentSpeechSynthesizer selects the Agent Voice TTS implementation.
 func NewAgentSpeechSynthesizer(
 	configuration config.SpeechSynthesisConfig,
-) (agentvoice.SpeechSynthesizer, error) {
+) (AgentSpeechSynthesizer, error) {
 	if configuration.Provider != config.SpeechProviderQianwen {
 		return nil, errors.New(
 			"bootstrap: speech synthesis provider is not registered",

@@ -4,12 +4,25 @@ import (
 	"context"
 	"errors"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 type AgentVoiceRecognizer struct {
 	recognizer *speechRecognizer
+}
+
+func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
+	ctx context.Context,
+	consume func([]byte) error,
+) (agentconversation.AssistantSpeechSession, error) {
+	if synthesizer == nil || synthesizer.synthesizer == nil {
+		return nil, errors.New(
+			"qianwen: Agent assistant speech synthesizer is required",
+		)
+	}
+	return synthesizer.synthesizer.openRealtimeSpeech(ctx, consume)
 }
 
 func NewAgentVoiceRecognizer(
@@ -221,6 +234,7 @@ func mapAgentVoiceErrorKind(kind protocol.ErrorKind) agentvoice.ErrorKind {
 }
 
 var (
-	_ agentvoice.StreamingSpeechRecognizer = (*AgentVoiceRecognizer)(nil)
-	_ agentvoice.SpeechSynthesizer         = (*AgentVoiceSynthesizer)(nil)
+	_ agentvoice.StreamingSpeechRecognizer         = (*AgentVoiceRecognizer)(nil)
+	_ agentvoice.SpeechSynthesizer                 = (*AgentVoiceSynthesizer)(nil)
+	_ agentconversation.AssistantSpeechSynthesizer = (*AgentVoiceSynthesizer)(nil)
 )

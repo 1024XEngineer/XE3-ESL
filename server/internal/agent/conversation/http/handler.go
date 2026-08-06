@@ -50,11 +50,24 @@ type SpeechFeedbackProjectionReader interface {
 }
 
 type Handler struct {
-	application    agentconversation.Application
-	toolCalls      ToolCallReader
-	images         MessageImageReader
-	speechFeedback SpeechFeedbackProjectionReader
-	errors         *httpresponse.Renderer
+	application     agentconversation.Application
+	toolCalls       ToolCallReader
+	images          MessageImageReader
+	speechFeedback  SpeechFeedbackProjectionReader
+	assistantSpeech agentconversation.AssistantSpeechSynthesizer
+	errors          *httpresponse.Renderer
+}
+
+func WithAssistantSpeech(
+	synthesizer agentconversation.AssistantSpeechSynthesizer,
+) Option {
+	return func(handler *Handler) error {
+		if synthesizer == nil {
+			return errors.New("agent conversation: assistant speech synthesizer is required")
+		}
+		handler.assistantSpeech = synthesizer
+		return nil
+	}
 }
 
 type Option func(*Handler) error
@@ -128,6 +141,12 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/agent-threads/:thread_id/messages",
 		handler.listMessages,
 	)
+	if handler.assistantSpeech != nil {
+		routes.GET(
+			"/v1/agent-threads/:thread_id/assistant-speech/realtime",
+			handler.streamAssistantSpeech,
+		)
+	}
 }
 
 func (handler *Handler) createThread(c *gin.Context) {

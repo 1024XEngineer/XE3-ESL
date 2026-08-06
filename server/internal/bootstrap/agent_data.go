@@ -416,6 +416,15 @@ func buildIdentityAgentComposition(
 			),
 		)
 	}
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AssistantSpeech != nil {
+		conversationHTTPOptions = append(
+			conversationHTTPOptions,
+			agentconversationhttp.WithAssistantSpeech(
+				voiceConfigurations[0].AssistantSpeech,
+			),
+		)
+	}
 	conversationHTTP, err := agentconversationhttp.NewHandler(
 		agentService,
 		errorRenderer,

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
@@ -13,6 +14,79 @@ import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
+  test('receives assistant PCM before text input stream completes', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final handled = Completer<void>();
+    server.listen((request) async {
+      expect(
+        request.uri.path,
+        '/v1/agent-threads/$_threadId/assistant-speech/realtime',
+      );
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (protocols) => 'speakup.assistant-speech.v1',
+      );
+      socket.add(
+        jsonEncode(<String, Object>{
+          'type': 'stream.ready',
+          'data': <String, Object>{
+            'content_type': 'audio/pcm',
+            'sample_rate': 24000,
+            'channel_count': 1,
+            'bits_per_sample': 16,
+          },
+        }),
+      );
+      var sentAudio = false;
+      await for (final message in socket) {
+        final frame = jsonDecode(message as String) as Map<String, dynamic>;
+        if (frame['type'] == 'segment' && !sentAudio) {
+          sentAudio = true;
+          socket.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
+        }
+        if (frame['type'] == 'finish') {
+          socket.add(
+            jsonEncode(const <String, Object>{
+              'type': 'stream.completed',
+              'data': <String, Object>{},
+            }),
+          );
+          await socket.close();
+          handled.complete();
+          break;
+        }
+      }
+    });
+    final client = WireAgentVoiceClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => _credential,
+      invalidateSession: _ignoreInvalidation,
+      apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+    );
+    addTearDown(client.dispose);
+    final text = StreamController<AgentAssistantSpeechTextSegment>();
+    addTearDown(text.close);
+    final audio = StreamIterator<AgentAssistantSpeechAudioSegment>(
+      client.streamAssistantSpeech(threadId: _threadId, segments: text.stream),
+    );
+    addTearDown(audio.cancel);
+
+    final firstAudio = audio.moveNext();
+    text.add(
+      const AgentAssistantSpeechTextSegment(
+        sequence: 1,
+        text: 'This arrives while the model is still streaming',
+      ),
+    );
+    expect(await firstAudio.timeout(const Duration(seconds: 2)), isTrue);
+    expect(audio.current.audio, <int>[1, 2, 3, 4]);
+    await text.close();
+    expect(await audio.moveNext(), isFalse);
+    await handled.future;
+  });
+
   test('streams PCM chunks over the authenticated voice WebSocket', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

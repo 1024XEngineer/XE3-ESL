@@ -377,6 +377,7 @@ func run() int {
 			bootstrap.VoiceConfiguration{
 				Recognizer:             recognizer,
 				Synthesizer:            synthesizer,
+				AssistantSpeech:        synthesizer,
 				PracticeRecognizer:     practiceRecognizer,
 				PracticeSynthesizer:    practiceSynthesizer,
 				QuestionGenerator:      practiceQuestions,
