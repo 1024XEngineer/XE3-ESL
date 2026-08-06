@@ -5,7 +5,6 @@ package meme
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -13,11 +12,6 @@ import (
 
 // Category is the stable machine name selected from a versioned meme pack.
 type Category string
-
-type CategoryDefinition struct {
-	Category    Category
-	Description string
-}
 
 // Config controls the future meme enrichment coordinator. It intentionally
 // contains no provider credentials or filesystem paths.
@@ -61,7 +55,6 @@ type ClassificationRequest struct {
 	InputMessageID   string
 	UserContent      string
 	AssistantContent string
-	Categories       []CategoryDefinition
 }
 
 // Classification is the validated output of the future forced meme.select
@@ -97,7 +90,6 @@ type Asset struct {
 // Catalog is the read-only pack boundary. Implementations may use an embedded
 // manifest or another immutable source without changing the coordinator.
 type Catalog interface {
-	Categories(context.Context, string, string) ([]CategoryDefinition, error)
 	Candidates(context.Context, string, string, Category) ([]Asset, error)
 }
 
@@ -123,29 +115,4 @@ type Selector interface {
 // selector. It never owns message history.
 type RecentReader interface {
 	RecentMemeIDs(context.Context, string, string, int) ([]string, error)
-}
-
-// Attachment is the durable projection attached to one Assistant Message.
-type Attachment struct {
-	ID        string
-	OwnerID   string
-	ThreadID  string
-	MessageID string
-	RunID     string
-	Asset
-	Position                    int
-	ClassificationPolicyVersion string
-	SelectionPolicyVersion      string
-	ClassifierProvider          string
-	ClassifierModel             string
-	CreatedAt                   time.Time
-}
-
-type AttachmentReader interface {
-	MessageAttachments(context.Context, string, string, string) ([]Attachment, error)
-	FindAttachment(context.Context, string, string) (Attachment, error)
-}
-
-type LocalAssetReader interface {
-	Open(string) (*os.File, Asset, error)
 }

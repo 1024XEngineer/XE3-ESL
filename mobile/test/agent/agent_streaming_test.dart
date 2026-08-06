@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
-import 'package:speakup/features/agent/conversation/agent_message_meme_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
@@ -126,61 +124,6 @@ void main() {
       expect(client.messagePageCalls, 1);
     },
   );
-
-  test('loads Meme content after the authoritative stream refresh', () async {
-    final client = _StreamingHistoryAgentClient();
-    final memeClient = _RecordingMemeClient();
-    final controller = ConversationController(
-      client: client,
-      messageMemeClient: memeClient,
-      clientIdFactory: (_) => 'stream-meme-message',
-    );
-    addTearDown(controller.dispose);
-    await controller.initialize();
-
-    expect(await controller.sendText('给我一个表情'), isTrue);
-    client.authoritativeMessages = const <AgentMessage>[
-      AgentMessage(
-        id: 'user-meme-1',
-        role: AgentMessageRole.user,
-        text: '给我一个表情',
-        sequence: 1,
-      ),
-      AgentMessage(
-        id: 'assistant-meme-1',
-        role: AgentMessageRole.assistant,
-        text: '当然可以。',
-        sequence: 2,
-        memes: <AgentMessageMeme>[_authoritativeMeme],
-      ),
-    ];
-    client.events
-      ..add(
-        const AgentInputCommitted(
-          runId: 'run-meme-1',
-          userMessage: AgentMessage(
-            id: 'user-meme-1',
-            role: AgentMessageRole.user,
-            text: '给我一个表情',
-            sequence: 1,
-          ),
-        ),
-      )
-      ..add(const AgentAssistantStarted(runId: 'run-meme-1'))
-      ..add(const AgentAssistantDelta(runId: 'run-meme-1', delta: '当然可以。'))
-      ..add(
-        const AgentRunCompleted(
-          runId: 'run-meme-1',
-          assistantMessageId: 'assistant-meme-1',
-        ),
-      );
-    await client.events.close();
-    await memeClient.requested.future;
-    await Future<void>.delayed(Duration.zero);
-
-    expect(memeClient.calls, 1);
-    expect(controller.messages.last.memes.single.bytes, <int>[1, 2, 3]);
-  });
 
   test('retries only the authoritative handoff Message refresh', () async {
     final client = _StreamingHistoryAgentClient(messageFailuresRemaining: 1);
@@ -495,39 +438,6 @@ final class _StreamingHistoryAgentClient
     imageAssetIds: imageAssetIds,
   );
 }
-
-final class _RecordingMemeClient implements AgentMessageMemeClient {
-  final Completer<void> requested = Completer<void>();
-  int calls = 0;
-
-  @override
-  Future<Uint8List> getMemeContent({
-    required String contentPath,
-    required int expectedSizeBytes,
-    required String expectedContentType,
-  }) async {
-    calls++;
-    expect(contentPath, _authoritativeMeme.contentPath);
-    expect(expectedSizeBytes, 3);
-    expect(expectedContentType, 'image/jpeg');
-    if (!requested.isCompleted) {
-      requested.complete();
-    }
-    return Uint8List.fromList(<int>[1, 2, 3]);
-  }
-}
-
-const _authoritativeMeme = AgentMessageMeme(
-  id: '20000000-0000-4000-8000-000000000003',
-  memeId: 'official-001:happy:01',
-  category: 'happy',
-  contentType: 'image/jpeg',
-  sizeBytes: 3,
-  width: 100,
-  height: 80,
-  contentPath:
-      '/v1/agent-message-memes/20000000-0000-4000-8000-000000000003/content',
-);
 
 const _practiceHandoff = ConfirmPracticePlanHandoff(
   label: '确认并开始练习',

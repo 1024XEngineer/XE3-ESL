@@ -52,11 +52,6 @@ func run() int {
 		logger.Error("text generation startup failed")
 		return 1
 	}
-	memeConfig, err := config.LoadMeme()
-	if err != nil {
-		logger.Error("Agent Meme configuration failed")
-		return 1
-	}
 	preparationJobTargets, err :=
 		bootstrap.NewPreparationJobTargetGenerator(textConfig)
 	if err != nil {
@@ -358,7 +353,7 @@ func run() int {
 	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsImagesAndMemes(
+		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -379,10 +374,6 @@ func run() int {
 				ThreadSummary:    threadSummaryWakeup,
 			},
 			agentImageConfig,
-			&bootstrap.AgentMemeConfiguration{
-				AssetRoot: memeConfig.AssetRoot,
-				Runtime:   memeConfig.Runtime,
-			},
 			bootstrap.VoiceConfiguration{
 				Recognizer:             recognizer,
 				Synthesizer:            synthesizer,

@@ -11,7 +11,6 @@ import (
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
-	agentmeme "github.com/1024XEngineer/XE3-ESL/server/internal/agent/meme"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
@@ -50,32 +49,12 @@ type SpeechFeedbackProjectionReader interface {
 	) (string, bool, error)
 }
 
-type MessageMemeReader interface {
-	MessageAttachments(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-	) ([]agentmeme.Attachment, error)
-}
-
 type Handler struct {
 	application    agentconversation.Application
 	toolCalls      ToolCallReader
 	images         MessageImageReader
-	memes          MessageMemeReader
 	speechFeedback SpeechFeedbackProjectionReader
 	errors         *httpresponse.Renderer
-}
-
-func WithMessageMemes(reader MessageMemeReader) Option {
-	return func(handler *Handler) error {
-		if reader == nil {
-			return errors.New("agent conversation: Meme reader is required")
-		}
-		handler.memes = reader
-		return nil
-	}
 }
 
 type Option func(*Handler) error
@@ -533,21 +512,6 @@ func (handler *Handler) messageResponseWithHandoffs(
 		}
 		response["images"] = images
 	}
-	if handler.memes != nil && message.Role == agentconversation.MessageRoleAssistant {
-		attachments, err := handler.memes.MessageAttachments(
-			ctx, trusted, message.ThreadID, message.ID,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if len(attachments) > 0 {
-			memes := make([]gin.H, 0, len(attachments))
-			for _, attachment := range attachments {
-				memes = append(memes, MemeAttachmentResponse(attachment))
-			}
-			response["memes"] = memes
-		}
-	}
 	if handler.toolCalls == nil ||
 		message.Role != agentconversation.MessageRoleAssistant ||
 		message.ProducedByRunID == "" {
@@ -567,19 +531,6 @@ func (handler *Handler) messageResponseWithHandoffs(
 		response["handoffs"] = handoffs
 	}
 	return response, nil
-}
-
-func MemeAttachmentResponse(attachment agentmeme.Attachment) gin.H {
-	return gin.H{
-		"meme_attachment_id": attachment.ID,
-		"meme_id":            attachment.MemeID,
-		"category":           attachment.Category,
-		"content_type":       attachment.ContentType,
-		"size_bytes":         attachment.SizeBytes,
-		"width":              attachment.Width,
-		"height":             attachment.Height,
-		"content_path":       "/v1/agent-message-memes/" + attachment.ID + "/content",
-	}
 }
 
 func ImageAssetResponse(asset agentimage.Asset) gin.H {
