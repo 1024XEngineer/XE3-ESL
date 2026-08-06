@@ -660,10 +660,12 @@ func decodeCompletionStream(
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return protocol.TextResult{}, errors.New("decode Qianwen stream event")
 		}
+		chunkID := sanitizeIdentifier(chunk.ID)
+		chunkModel, _ := normalizeModel(chunk.Model)
 		if completionID == "" {
-			completionID = sanitizeIdentifier(chunk.ID)
-			model, _ = normalizeModel(chunk.Model)
-		} else if chunk.ID != completionID || chunk.Model != model {
+			completionID = chunkID
+			model = chunkModel
+		} else if chunkID != completionID || chunkModel != model {
 			return protocol.TextResult{}, errors.New("Qianwen stream changed completion identity")
 		}
 		if completionID == "" || model == "" {
@@ -690,6 +692,12 @@ func decodeCompletionStream(
 				return protocol.TextResult{}, errors.New("Qianwen stream has invalid token usage")
 			}
 			sawUsage = true
+			continue
+		}
+		// Official OpenAI-compatible examples consume chunks by state: choice
+		// chunks carry deltas, while the final empty-choice chunk carries usage.
+		// Provider metadata-only chunks do not change the completion.
+		if len(chunk.Choices) == 0 {
 			continue
 		}
 		if sawUsage || len(chunk.Choices) != 1 {
@@ -759,7 +767,7 @@ func decodeCompletionStream(
 			}
 		}
 		if choice.FinishReason != nil {
-			if finishReason != "" {
+			if finishReason != "" && finishReason != *choice.FinishReason {
 				return protocol.TextResult{}, errors.New("Qianwen stream duplicated finish reason")
 			}
 			finishReason = *choice.FinishReason

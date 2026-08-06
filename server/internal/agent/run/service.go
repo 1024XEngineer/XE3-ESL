@@ -499,6 +499,38 @@ func (service *Service) ProcessPending(
 	return service.process(ctx, actor, run, nil)
 }
 
+// ProcessPendingStream resumes a Run created by another Agent input workflow
+// while forwarding model output to that workflow's live response.
+func (service *Service) ProcessPendingStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+	observer StreamObserver,
+) (Run, error) {
+	if ctx == nil || observer == nil || !actor.Valid() ||
+		run.OwnerID != actor.UserID ||
+		!ValidUUID(run.ID) ||
+		!ValidUUID(run.ThreadID) ||
+		!ValidUUID(run.InputMessageID) {
+		return Run{}, ErrInvalidRequest
+	}
+	if run.Status == StatusPending {
+		if err := observer.OnAssistantStarted(ctx, run); err != nil {
+			return Run{}, err
+		}
+	}
+	deltas := &countingDeltaObserver{delegate: observer}
+	processed, err := service.process(ctx, actor, run, deltas)
+	if err == nil {
+		processed, err = service.waitForTerminalRun(
+			ctx,
+			actor.UserID,
+			processed,
+		)
+	}
+	return processed, err
+}
+
 func (service *Service) process(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -574,6 +606,7 @@ func (service *Service) process(
 			retryable,
 		)
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
+		service.logGenerationFailureDetail(claimed, err)
 		return failed, failErr
 	}
 	request, err := textRequestFromContext(modelInput)
@@ -1280,6 +1313,22 @@ func (service *Service) logRunFailed(
 		"failure_category", kind,
 		"retryable", retryable,
 		"duration_ms", durationSince(startedAt).Milliseconds(),
+	)
+}
+
+func (service *Service) logGenerationFailureDetail(run Run, err error) {
+	if service.logger == nil || err == nil {
+		return
+	}
+	cause := err
+	for errors.Unwrap(cause) != nil {
+		cause = errors.Unwrap(cause)
+	}
+	service.logger.Error(
+		"agent.run.generation_failed",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"detail", cause.Error(),
 	)
 }
 

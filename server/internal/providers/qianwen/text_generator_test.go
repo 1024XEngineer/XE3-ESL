@@ -163,6 +163,38 @@ func TestGenerateStreamEmitsCanonicalVisibleText(t *testing.T) {
 	}
 }
 
+func TestGenerateStreamFollowsOfficialChunkStateFlow(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return streamResponse(
+			`data: {"id":"chatcmpl-official-flow","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","content":""}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-official-flow","model":"qwen3.5-flash","choices":[{"delta":{"content":"Let"}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-official-flow","model":"qwen3.5-flash","choices":[]}` + "\n\n" +
+				`data: {"id":"chatcmpl-official-flow","model":"qwen3.5-flash","choices":[{"delta":{"content":"'s practice."},"finish_reason":"stop"}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-official-flow","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}` + "\n\n" +
+				"data: [DONE]\n\n",
+		), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	var deltas []string
+	result, err := generator.GenerateStream(
+		context.Background(),
+		validRequest(),
+		protocol.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("generate stream: %v", err)
+	}
+	if got := strings.Join(deltas, ""); got != "Let's practice." ||
+		result.Content != got || result.Usage.TotalTokens != 14 {
+		t.Fatalf("result = %#v, deltas = %#v", result, deltas)
+	}
+}
+
 func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 	t.Parallel()
 

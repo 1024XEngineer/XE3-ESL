@@ -183,10 +183,6 @@ class _AgentComposerState extends State<AgentComposer> {
     if (!mounted || !voice.canConfirm) {
       return;
     }
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || !voice.canConfirm) {
-      return;
-    }
     await voice.confirm();
     if (!mounted || voice.editedTranscript.isNotEmpty) {
       return;
