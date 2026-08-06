@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
+import 'package:speakup/identity/network/authenticated_web_socket.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
@@ -72,6 +73,7 @@ final class WireAgentVoiceClient
     implements
         AgentVoiceClient,
         AgentVoiceStreamingClient,
+        AgentVoiceRealtimeInputClient,
         AgentMessageAudioClient {
   factory WireAgentVoiceClient({
     required Uri baseUri,
@@ -80,6 +82,7 @@ final class WireAgentVoiceClient
     AgentVoiceWireTransport? apiTransport,
     AgentVoiceWireTransport? signedAudioTransport,
     AgentVoiceWireTransportFactory? transportFactory,
+    AuthenticatedWebSocketConnector? realtimeConnector,
     AgentVoiceNow? now,
     Duration requestTimeout = const Duration(seconds: 75),
   }) {
@@ -103,6 +106,16 @@ final class WireAgentVoiceClient
       apiTransport == null,
       signedAudioTransport == null,
       createTransport,
+      SessionAuthenticatedWebSocketConnector(
+        connector:
+            realtimeConnector ??
+            IoAuthenticatedWebSocketConnector(
+              protocols: const <String>[_voiceInputWebSocketProtocol],
+            ),
+        credentialProvider: credentialProvider,
+        invalidateSession: invalidateSession,
+        trustedBaseUri: _webSocketBaseUri(baseUri),
+      ),
       requestTimeout,
       now ?? _utcNow,
     );
@@ -118,6 +131,7 @@ final class WireAgentVoiceClient
     this._ownsApiTransport,
     this._ownsSignedAudioTransport,
     this._transportFactory,
+    this._realtimeConnector,
     this._requestTimeout,
     this._now,
   );
@@ -126,6 +140,7 @@ final class WireAgentVoiceClient
   static const _maximumAudioBytes = 7400000;
   static const _maximumPlaybackLifetime = Duration(minutes: 2);
   static const _maximumLocalClockSkew = Duration(seconds: 30);
+  static const _voiceInputWebSocketProtocol = 'speakup.voice-input.v1';
 
   final Uri _baseUri;
   final TrustedIdentityHttpOrigin _trustedOrigin;
@@ -136,6 +151,7 @@ final class WireAgentVoiceClient
   final bool _ownsApiTransport;
   final bool _ownsSignedAudioTransport;
   final AgentVoiceWireTransportFactory _transportFactory;
+  final SessionAuthenticatedWebSocketConnector _realtimeConnector;
   final Duration _requestTimeout;
   final AgentVoiceNow _now;
 
@@ -215,20 +231,12 @@ final class WireAgentVoiceClient
             kind: AgentClientFailureKind.invalidRequest,
           );
         }
-        final response = await _openApiStream(
-          generation: generation,
-          method: 'POST',
-          path:
-              '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-message-candidates/stream',
-          accept: 'text/event-stream',
-          contentType: 'audio/wav',
-          headers: <String, String>{'Idempotency-Key': idempotencyKey},
-          body: bytes,
-          maximumResponseBytes: _maximumJsonBytes,
-        );
-        await for (final event in _decodeTranscriptionEvents(
-          response,
-          expectedThreadId: threadId,
+        await for (final event in createCandidateRealtime(
+          threadId: threadId,
+          audioChunks: Stream<Uint8List>.value(
+            Uint8List.sublistView(bytes, 44),
+          ),
+          idempotencyKey: idempotencyKey,
         )) {
           _requireGeneration(generation);
           yield event;
@@ -260,6 +268,86 @@ final class WireAgentVoiceClient
     } finally {
       _inFlight.remove(marker);
       completion.complete();
+    }
+  }
+
+  @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  }) async* {
+    _requireUuid(threadId);
+    _requireClientIdentity(idempotencyKey, minimumLength: 8);
+    final generation = _accountGeneration;
+    final uri = _webSocketBaseUri(_baseUri).resolve(
+      '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-message-candidates/realtime',
+    );
+    SessionAuthenticatedWebSocketConnection? connection;
+    try {
+      connection = await _realtimeConnector.connect(uri: uri);
+      _requireGeneration(generation);
+      connection.socket.add(
+        jsonEncode(<String, Object>{
+          'type': 'start',
+          'idempotency_key': idempotencyKey,
+          'sample_rate': 16000,
+        }),
+      );
+      await for (final chunk in audioChunks) {
+        _requireGeneration(generation);
+        if (chunk.isEmpty || chunk.lengthInBytes > _maximumAudioBytes) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidRequest,
+          );
+        }
+        connection.socket.add(chunk);
+      }
+      connection.socket.add(
+        jsonEncode(const <String, String>{'type': 'finish'}),
+      );
+      await for (final message in connection.socket) {
+        _requireGeneration(generation);
+        if (message is! String) {
+          throw _invalidResponse();
+        }
+        final envelope = _strictObject(
+          jsonDecode(message),
+          allowed: const <String>{'type', 'data'},
+          required: const <String>{'type', 'data'},
+        );
+        final event = _strictString(envelope['type'], min: 1, max: 64);
+        final decoded = _decodeTranscriptionEvent(
+          event,
+          jsonEncode(envelope['data']),
+          expectedThreadId: threadId,
+        );
+        if (decoded != null) {
+          yield decoded;
+        }
+        if (event == 'candidate.ready' || event == 'candidate.failed') {
+          return;
+        }
+      }
+      await connection.handleDisconnect(
+        closeCode: connection.socket.closeCode,
+        closeReason: connection.socket.closeReason,
+      );
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on AuthenticatedWebSocketException catch (error) {
+      throw AgentClientException(
+        kind: error.invalidatesAuthentication
+            ? AgentClientFailureKind.authenticationRequired
+            : AgentClientFailureKind.network,
+        retryable: !error.invalidatesAuthentication,
+      );
+    } on FormatException {
+      throw _invalidResponse();
+    } finally {
+      await connection?.socket.close();
     }
   }
 
@@ -841,88 +929,6 @@ final class WireAgentVoiceClient
         kind: AgentClientFailureKind.network,
         retryable: true,
       );
-    }
-  }
-
-  Stream<AgentVoiceTranscriptionEvent> _decodeTranscriptionEvents(
-    AgentVoiceWireStreamResponse response, {
-    required String expectedThreadId,
-  }) async* {
-    var responseBytes = 0;
-    var eventName = '';
-    var eventData = '';
-    var started = false;
-    var completed = false;
-    try {
-      final lines = response.body
-          .map((chunk) {
-            responseBytes += chunk.length;
-            if (responseBytes > _maximumJsonBytes) {
-              throw _invalidResponse();
-            }
-            return chunk;
-          })
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-      await for (final line in lines.timeout(_requestTimeout)) {
-        if (line.isEmpty) {
-          if (eventName.isEmpty && eventData.isEmpty) {
-            continue;
-          }
-          if (completed) {
-            throw _invalidResponse();
-          }
-          final decoded = _decodeTranscriptionEvent(
-            eventName,
-            eventData,
-            expectedThreadId: expectedThreadId,
-          );
-          if (eventName == 'transcription.started') {
-            if (started || decoded != null) {
-              throw _invalidResponse();
-            }
-            started = true;
-          } else {
-            if (!started || decoded == null) {
-              throw _invalidResponse();
-            }
-            if (decoded is AgentVoiceCandidateCompleted) {
-              completed = true;
-            }
-            yield decoded;
-          }
-          eventName = '';
-          eventData = '';
-          continue;
-        }
-        if (line.startsWith(':')) {
-          continue;
-        }
-        if (line.startsWith('event: ')) {
-          if (eventName.isNotEmpty) {
-            throw _invalidResponse();
-          }
-          eventName = line.substring(7);
-          continue;
-        }
-        if (line.startsWith('data: ')) {
-          if (eventData.isNotEmpty) {
-            throw _invalidResponse();
-          }
-          eventData = line.substring(6);
-          continue;
-        }
-        throw _invalidResponse();
-      }
-    } on _InvalidVoiceResponse {
-      throw _invalidResponse();
-    }
-    if (!started ||
-        !completed ||
-        eventName.isNotEmpty ||
-        eventData.isNotEmpty) {
-      throw _invalidResponse();
     }
   }
 
@@ -2291,6 +2297,15 @@ void _zero(Uint8List bytes) {
 }
 
 DateTime _utcNow() => DateTime.now().toUtc();
+
+Uri _webSocketBaseUri(Uri httpBaseUri) {
+  final scheme = switch (httpBaseUri.scheme) {
+    'https' => 'wss',
+    'http' => 'ws',
+    _ => throw ArgumentError('Agent voice base URI must use HTTP or HTTPS.'),
+  };
+  return httpBaseUri.replace(scheme: scheme);
+}
 
 final RegExp _uuidPattern = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',

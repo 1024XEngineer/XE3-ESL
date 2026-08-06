@@ -17,6 +17,26 @@ import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 
 void main() {
+  test('production-capable recorder uses realtime input before stop', () async {
+    final client = _ControlledVoiceClient();
+    final recorder = _StreamingVoiceRecorder();
+    final controller = _controller(
+      client,
+      <AgentMessage>[],
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+
+    await controller.startRecording();
+    expect(controller.state, AgentVoiceComposerState.recording);
+    await controller.stopRecording();
+
+    expect(client.realtimeCalls, 1);
+    expect(client.fileUploadCalls, 0);
+    expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
+    expect(controller.editedTranscript, 'Candidate text');
+  });
   test('late upload result cannot cross the Thread fence', () async {
     final client = _ControlledVoiceClient();
     final committed = <AgentMessage>[];
@@ -724,11 +744,54 @@ Future<void> _pumpVoiceOperation(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
+final class _StreamingVoiceRecorder
+    implements AgentVoiceRecorder, AgentVoiceStreamingRecorder {
+  StreamController<Uint8List>? _stream;
+
+  @override
+  Future<Stream<Uint8List>> startAudioStream() async {
+    final stream = StreamController<Uint8List>();
+    _stream = stream;
+    stream.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
+    return stream.stream;
+  }
+
+  @override
+  Future<AgentVoiceLocalRecording> stopAudioStream() async {
+    await _stream?.close();
+    _stream = null;
+    return const AgentVoiceLocalRecording(
+      path: '/tmp/realtime.wav',
+      contentType: 'audio/wav',
+      sizeBytes: 48,
+      duration: Duration(seconds: 1),
+    );
+  }
+
+  @override
+  Future<void> start() => throw UnimplementedError();
+
+  @override
+  Future<AgentVoiceLocalRecording> stop() => throw UnimplementedError();
+
+  @override
+  Future<void> discardCurrent() async {
+    await _stream?.close();
+    _stream = null;
+  }
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) async {}
+
+  @override
+  Future<void> clearAccountState() => discardCurrent();
+}
+
 AgentVoiceController _controller(
   _ControlledVoiceClient client,
   List<AgentMessage> committed, {
   FakeAgentAudioPlayer? player,
-  FakeAgentVoiceRecorder? recorder,
+  AgentVoiceRecorder? recorder,
   AgentVoiceControllerClock? clock,
   Duration recordingLimit = const Duration(seconds: 58),
 }) {
@@ -877,7 +940,10 @@ typedef _ConfirmationCall = ({
 typedef _RetryRunCall = ({String runId, String clientRetryId});
 
 final class _ControlledVoiceClient
-    implements AgentVoiceClient, AgentMessageAudioClient {
+    implements
+        AgentVoiceClient,
+        AgentVoiceRealtimeInputClient,
+        AgentMessageAudioClient {
   Completer<AgentVoiceCandidate>? createCompleter;
   Completer<AgentVoiceConfirmation>? confirmCompleter;
   Completer<Uint8List>? speechCompleter;
@@ -898,6 +964,8 @@ final class _ControlledVoiceClient
   final List<String> getRunCalls = <String>[];
   final List<String> getMessageCalls = <String>[];
   final List<String> deletedCandidateIds = <String>[];
+  int realtimeCalls = 0;
+  int fileUploadCalls = 0;
 
   @override
   Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
@@ -905,12 +973,28 @@ final class _ControlledVoiceClient
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   }) async* {
+    fileUploadCalls++;
     final candidate = await createCandidate(
       threadId: threadId,
       recording: recording,
       idempotencyKey: idempotencyKey,
     );
     yield AgentVoiceCandidateCompleted(candidate);
+  }
+
+  @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  }) async* {
+    realtimeCalls++;
+    await for (final _ in audioChunks) {}
+    yield const AgentVoiceTranscriptUpdated(
+      text: 'Realtime candidate text.',
+      finalResult: true,
+    );
+    yield AgentVoiceCandidateCompleted(_readyCandidate(threadId: threadId));
   }
 
   @override

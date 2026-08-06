@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:speakup/identity/auth_state.dart';
+import 'package:speakup/platform/network/web_socket_transport.dart';
 
 import 'bearer_authentication.dart';
 import 'transport_security.dart';
@@ -159,10 +160,21 @@ final class SessionAuthenticatedWebSocketConnector {
 
 final class IoAuthenticatedWebSocketConnector
     implements AuthenticatedWebSocketConnector {
-  IoAuthenticatedWebSocketConnector({WebSocketDialer? dialer})
-    : _dialer = dialer ?? WebSocket.connect;
+  IoAuthenticatedWebSocketConnector({
+    WebSocketDialer? dialer,
+    PlatformWebSocketTransport? transport,
+    Iterable<String> protocols = const <String>[identityWebSocketProtocol],
+  }) : _transport =
+           transport ??
+           IoPlatformWebSocketTransport(dialer: dialer ?? WebSocket.connect),
+       _protocols = List<String>.unmodifiable(protocols) {
+    if (_protocols.isEmpty || _protocols.any((value) => value.trim().isEmpty)) {
+      throw ArgumentError('At least one WebSocket protocol is required.');
+    }
+  }
 
-  final WebSocketDialer _dialer;
+  final PlatformWebSocketTransport _transport;
+  final List<String> _protocols;
 
   @override
   Future<WebSocket> connect({
@@ -172,14 +184,14 @@ final class IoAuthenticatedWebSocketConnector
     _validateUri(uri, sessionToken);
     final authorization = bearerAuthorizationValue(sessionToken);
     try {
-      return await _dialer(
-        uri.toString(),
-        protocols: const <String>[identityWebSocketProtocol],
+      return await _transport.connect(
+        uri: uri,
+        protocols: _protocols,
         headers: <String, dynamic>{
           HttpHeaders.authorizationHeader: authorization,
         },
       );
-    } on WebSocketException catch (error) {
+    } on PlatformWebSocketException catch (error) {
       throw AuthenticatedWebSocketException(
         error.httpStatusCode == HttpStatus.unauthorized
             ? WebSocketFailureKind.authenticationInvalid

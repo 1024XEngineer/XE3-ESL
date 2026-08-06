@@ -347,7 +347,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onOpenReview: () => _selectDestination(2),
         onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
         onStartVoice: widget.composerController.supportsAgentVoice
-            ? widget.composerController.startAgentVoiceRecording
+            ? () async {
+                await widget.messageAudioController?.stopPlayback();
+                await widget.composerController.startAgentVoiceRecording();
+              }
             : null,
         voiceController: widget.composerController.voiceController,
         messageAudioController: widget.messageAudioController,

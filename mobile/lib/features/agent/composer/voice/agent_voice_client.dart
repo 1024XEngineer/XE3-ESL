@@ -57,6 +57,14 @@ abstract interface class AgentVoiceStreamingClient {
   });
 }
 
+abstract interface class AgentVoiceRealtimeInputClient {
+  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  });
+}
+
 /// Explicit preview/test provider for voice drafts and committed Message audio.
 final class FakeAgentVoiceClient
     implements

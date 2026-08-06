@@ -75,6 +75,16 @@ final class AgentMessageAudioController extends ChangeNotifier
     return _toggleMessagePlayback(message);
   }
 
+  Future<void> stopPlayback() {
+    if (_disposed) {
+      return Future<void>.value();
+    }
+    _generation++;
+    _resetPlaybackPresentation();
+    notifyListeners();
+    return audioPlayer.stop();
+  }
+
   Future<void> _toggleMessagePlayback(
     AgentMessage message, {
     String? previewText,

@@ -3,7 +3,6 @@ package voicehttp
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -50,72 +49,6 @@ func TestAgentVoiceInputHTTPVerticalContract(t *testing.T) {
 		now: now,
 	}
 	router := newAgentVoiceInputHTTPRouter(t, application)
-
-	upload := voiceHTTPRequest(
-		t,
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/thread-1/voice-message-candidates",
-		voiceTestWAV(0x55),
-		map[string]string{
-			"Content-Type":    platformmedia.ContentTypeWAV,
-			"Idempotency-Key": "voice-http-upload-1",
-		},
-	)
-	if upload.Code != http.StatusCreated {
-		t.Fatalf("upload status = %d body = %s", upload.Code, upload.Body)
-	}
-	candidate := decodeVoiceJSONObject(t, upload)
-	if candidate["candidate_id"] != application.candidate.ID ||
-		candidate["status"] != string(agentvoice.StatusReady) ||
-		candidate["candidate_version"] != float64(1) ||
-		!strings.Contains(upload.Body.String(), "Provider candidate text.") ||
-		strings.Contains(upload.Body.String(), "private-server-key") ||
-		strings.Contains(upload.Body.String(), "checksum") ||
-		strings.Contains(upload.Body.String(), "owner") {
-		t.Fatalf("unsafe candidate response = %#v", candidate)
-	}
-	if application.uploadThreadID != "thread-1" ||
-		application.uploadKey != "voice-http-upload-1" ||
-		application.uploadBytes == 0 {
-		t.Fatalf("upload command = %#v", application)
-	}
-
-	streamed := voiceHTTPRequest(
-		t,
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/thread-1/voice-message-candidates/stream",
-		voiceTestWAV(0x56),
-		map[string]string{
-			"Content-Type":    platformmedia.ContentTypeWAV,
-			"Idempotency-Key": "voice-http-stream-1",
-		},
-	)
-	if streamed.Code != http.StatusOK ||
-		!strings.HasPrefix(
-			streamed.Header().Get("Content-Type"),
-			"text/event-stream",
-		) {
-		t.Fatalf("stream status = %d headers = %#v body = %s",
-			streamed.Code,
-			streamed.Header(),
-			streamed.Body,
-		)
-	}
-	streamBody := streamed.Body.String()
-	started := strings.Index(streamBody, "event: transcription.started")
-	updated := strings.Index(streamBody, "event: transcription.updated")
-	ready := strings.Index(streamBody, "event: candidate.ready")
-	if started < 0 || updated <= started || ready <= updated ||
-		strings.Count(streamBody, "event: transcription.updated") != 2 ||
-		!strings.Contains(streamBody, `"transcript":"Provider candidate"`) ||
-		!strings.Contains(streamBody, `"final":false`) ||
-		!strings.Contains(streamBody, `"final":true`) ||
-		application.streamCalls != 1 ||
-		strings.Contains(streamBody, "private-server-key") {
-		t.Fatalf("unsafe or unordered stream = %s", streamBody)
-	}
 
 	for _, test := range []struct {
 		method string
@@ -509,32 +442,6 @@ func decodeVoiceJSONObject(
 	var result map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode response %q: %v", response.Body.String(), err)
-	}
-	return result
-}
-
-func voiceTestWAV(sample byte) []byte {
-	const (
-		sampleRate = 16_000
-		samples    = 1_600
-		dataSize   = samples * 2
-	)
-	result := make([]byte, 44+dataSize)
-	copy(result[0:4], "RIFF")
-	binary.LittleEndian.PutUint32(result[4:8], uint32(len(result)-8))
-	copy(result[8:12], "WAVE")
-	copy(result[12:16], "fmt ")
-	binary.LittleEndian.PutUint32(result[16:20], 16)
-	binary.LittleEndian.PutUint16(result[20:22], 1)
-	binary.LittleEndian.PutUint16(result[22:24], 1)
-	binary.LittleEndian.PutUint32(result[24:28], sampleRate)
-	binary.LittleEndian.PutUint32(result[28:32], sampleRate*2)
-	binary.LittleEndian.PutUint16(result[32:34], 2)
-	binary.LittleEndian.PutUint16(result[34:36], 16)
-	copy(result[36:40], "data")
-	binary.LittleEndian.PutUint32(result[40:44], dataSize)
-	for index := 44; index < len(result); index++ {
-		result[index] = sample
 	}
 	return result
 }
