@@ -27,7 +27,8 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 		"owner",
 		"run",
 		"lease",
-		agentrun.Completion{},
+		"content",
+		agentrun.TextResult{},
 	); err != nil {
 		t.Fatalf("CompleteRun: %v", err)
 	}
@@ -43,7 +44,8 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 		"owner",
 		"run",
 		"lease",
-		agentrun.Completion{},
+		"content",
+		agentrun.TextResult{},
 	); err == nil {
 		t.Fatal("CompleteRun error = nil")
 	}
@@ -70,7 +72,8 @@ func TestRunCompletionNotifierFansOutPayloadFreeWakeups(t *testing.T) {
 		"owner",
 		"run",
 		"lease",
-		agentrun.Completion{},
+		"content",
+		agentrun.TextResult{},
 	); err != nil {
 		t.Fatalf("CompleteRun: %v", err)
 	}
@@ -93,7 +96,8 @@ func (repository *completionRepositoryStub) Complete(
 	string,
 	string,
 	string,
-	agentrun.Completion,
+	string,
+	agentrun.TextResult,
 ) (agentrun.Run, error) {
 	return repository.complete()
 }

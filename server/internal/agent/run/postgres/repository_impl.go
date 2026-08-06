@@ -564,16 +564,9 @@ func (r *Repository) Complete(
 	ownerID string,
 	runID string,
 	workerLeaseToken string,
-	completion agentrun.Completion,
+	content string,
+	result agentrun.TextResult,
 ) (agentrun.Run, error) {
-	// Persistence for structured assistant attachments is intentionally a
-	// later vertical slice. Reject non-empty projections instead of silently
-	// dropping a successful enrichment decision.
-	if !completion.Valid() || len(completion.Enrichment.Memes) != 0 {
-		return agentrun.Run{}, agentrun.ErrInvalidRequest
-	}
-	content := completion.Content
-	result := completion.Result
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return agentrun.Run{}, agentrun.ErrRepository

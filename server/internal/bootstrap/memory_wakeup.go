@@ -16,14 +16,16 @@ func (repository *runCompletionNotifyingRepository) Complete(
 	ownerID string,
 	runID string,
 	workerLeaseToken string,
-	completion agentrun.Completion,
+	content string,
+	result agentrun.TextResult,
 ) (agentrun.Run, error) {
 	run, err := repository.Repository.Complete(
 		ctx,
 		ownerID,
 		runID,
 		workerLeaseToken,
-		completion,
+		content,
+		result,
 	)
 	if err == nil && run.Status == agentrun.StatusCompleted {
 		for _, notifier := range repository.notifiers {
