@@ -26,6 +26,7 @@ tools/    本地开发、模拟器验证和专项检查脚本
 当前架构与发布：
 
 - [当前代码模块与协作主链](https://github.com/1024XEngineer/XE3-ESL/issues/456)
+- [代码归类、状态所有权与失败边界](https://github.com/1024XEngineer/XE3-ESL/issues/461)
 - [MS3：核心功能闭合](https://github.com/1024XEngineer/XE3-ESL/milestone/3)
 - [v0.1.0-alpha.1 首次预发布准备](https://github.com/1024XEngineer/XE3-ESL/issues/452)
 
