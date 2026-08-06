@@ -3,10 +3,10 @@ import 'package:speakup/features/coaching/preparation/preparation_catalog_compon
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
-enum _RoleplayFilter { recommended, workplace, travel, daily }
+enum _ScenarioFilter { recommended, workplace, travel, daily }
 
-class RoleplayCatalog extends StatefulWidget {
-  const RoleplayCatalog({
+class ScenarioCatalog extends StatefulWidget {
+  const ScenarioCatalog({
     required this.title,
     required this.description,
     required this.titleKey,
@@ -22,44 +22,44 @@ class RoleplayCatalog extends StatefulWidget {
   final ValueChanged<SceneDefinition> onScenePressed;
 
   @override
-  State<RoleplayCatalog> createState() => _RoleplayCatalogState();
+  State<ScenarioCatalog> createState() => _ScenarioCatalogState();
 }
 
-class _RoleplayCatalogState extends State<RoleplayCatalog> {
-  _RoleplayFilter _filter = _RoleplayFilter.recommended;
+class _ScenarioCatalogState extends State<ScenarioCatalog> {
+  _ScenarioFilter _filter = _ScenarioFilter.recommended;
 
-  List<_RoleplayFilter> get _availableFilters {
+  List<_ScenarioFilter> get _availableFilters {
     return [
-      _RoleplayFilter.recommended,
+      _ScenarioFilter.recommended,
       if (widget.scenes.any(
         (scene) => scene.category == SceneCategory.workplaceGeneral,
       ))
-        _RoleplayFilter.workplace,
+        _ScenarioFilter.workplace,
       if (widget.scenes.any(
         (scene) => scene.category == SceneCategory.lifeTravel,
       ))
-        _RoleplayFilter.travel,
+        _ScenarioFilter.travel,
       if (widget.scenes.any(
         (scene) => scene.category == SceneCategory.lifeDaily,
       ))
-        _RoleplayFilter.daily,
+        _ScenarioFilter.daily,
     ];
   }
 
   List<SceneDefinition> get _visibleScenes {
     final available = widget.scenes;
     switch (_filter) {
-      case _RoleplayFilter.recommended:
+      case _ScenarioFilter.recommended:
         return available.take(6).toList(growable: false);
-      case _RoleplayFilter.workplace:
+      case _ScenarioFilter.workplace:
         return available
             .where((scene) => scene.category == SceneCategory.workplaceGeneral)
             .toList(growable: false);
-      case _RoleplayFilter.travel:
+      case _ScenarioFilter.travel:
         return available
             .where((scene) => scene.category == SceneCategory.lifeTravel)
             .toList(growable: false);
-      case _RoleplayFilter.daily:
+      case _ScenarioFilter.daily:
         return available
             .where((scene) => scene.category == SceneCategory.lifeDaily)
             .toList(growable: false);
@@ -75,7 +75,7 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _RoleplayModuleHeader(
+        _ScenarioModuleHeader(
           title: widget.title,
           description: widget.description,
           titleKey: widget.titleKey,
@@ -88,8 +88,8 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
             children: [
               for (final filter in _availableFilters)
                 ChoiceChip(
-                  key: Key('roleplay-filter-${filter.name}'),
-                  label: Text(_roleplayFilterLabel(filter)),
+                  key: Key('scenario-filter-${filter.name}'),
+                  label: Text(_scenarioFilterLabel(filter)),
                   selected: _filter == filter,
                   onSelected: (_) => setState(() => _filter = filter),
                   showCheckmark: false,
@@ -97,10 +97,10 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   side: BorderSide(
                     color: _filter == filter
-                        ? PreparationDesign.roleplay
+                        ? PreparationDesign.scenario
                         : PreparationDesign.border,
                   ),
-                  selectedColor: PreparationDesign.roleplay,
+                  selectedColor: PreparationDesign.scenario,
                   backgroundColor: PreparationDesign.surface,
                   labelStyle: TextStyle(
                     color: _filter == filter
@@ -126,9 +126,9 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
             ),
           )
         else
-          _RoleplaySceneGrid(
+          _ScenarioSceneGrid(
             scenes: visibleScenes,
-            includeCustom: _filter == _RoleplayFilter.recommended,
+            includeCustom: _filter == _ScenarioFilter.recommended,
             onScenePressed: widget.onScenePressed,
           ),
       ],
@@ -136,8 +136,8 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
   }
 }
 
-class _RoleplayModuleHeader extends StatelessWidget {
-  const _RoleplayModuleHeader({
+class _ScenarioModuleHeader extends StatelessWidget {
+  const _ScenarioModuleHeader({
     required this.title,
     required this.description,
     required this.titleKey,
@@ -177,8 +177,8 @@ class _RoleplayModuleHeader extends StatelessWidget {
   }
 }
 
-class _RoleplaySceneGrid extends StatelessWidget {
-  const _RoleplaySceneGrid({
+class _ScenarioSceneGrid extends StatelessWidget {
+  const _ScenarioSceneGrid({
     required this.scenes,
     required this.includeCustom,
     required this.onScenePressed,
@@ -192,7 +192,7 @@ class _RoleplaySceneGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final children = <Widget>[
       for (final scene in scenes)
-        _RoleplaySceneCard(
+        _ScenarioSceneCard(
           scene: scene,
           onPressed: () => onScenePressed(scene),
         ),
@@ -232,15 +232,15 @@ class _RoleplaySceneGrid extends StatelessWidget {
   }
 }
 
-class _RoleplaySceneCard extends StatelessWidget {
-  const _RoleplaySceneCard({required this.scene, required this.onPressed});
+class _ScenarioSceneCard extends StatelessWidget {
+  const _ScenarioSceneCard({required this.scene, required this.onPressed});
 
   final SceneDefinition scene;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final style = _roleplayCardStyle(scene);
+    final style = _scenarioCardStyle(scene);
     return Material(
       key: Key('catalog-scene-${scene.id}'),
       color: PreparationDesign.surface,
@@ -345,7 +345,7 @@ class _ReservedSceneTile extends StatelessWidget {
       label: '自定义场景，即将开放',
       enabled: false,
       child: ClipRRect(
-        key: const Key('roleplay-custom-reserved'),
+        key: const Key('scenario-custom-reserved'),
         borderRadius: BorderRadius.circular(PreparationDesign.radiusMedia),
         child: DecoratedBox(
           decoration: BoxDecoration(
@@ -387,12 +387,12 @@ class _ReservedSceneTile extends StatelessWidget {
   }
 }
 
-String _roleplayFilterLabel(_RoleplayFilter filter) {
+String _scenarioFilterLabel(_ScenarioFilter filter) {
   return switch (filter) {
-    _RoleplayFilter.recommended => '推荐',
-    _RoleplayFilter.workplace => '职场',
-    _RoleplayFilter.travel => '旅行',
-    _RoleplayFilter.daily => '日常',
+    _ScenarioFilter.recommended => '推荐',
+    _ScenarioFilter.workplace => '职场',
+    _ScenarioFilter.travel => '旅行',
+    _ScenarioFilter.daily => '日常',
   };
 }
 
@@ -404,7 +404,7 @@ String _roleplayFilterLabel(_RoleplayFilter filter) {
   String? assetPath,
   Alignment imageAlignment,
 })
-_roleplayCardStyle(SceneDefinition scene) {
+_scenarioCardStyle(SceneDefinition scene) {
   return switch (scene.category) {
     SceneCategory.workplaceGeneral => (
       background: const Color(0xFFE8EBED),

@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
-import 'package:speakup/features/coaching/roleplay/roleplay_catalog.dart';
+import 'package:speakup/features/coaching/scenario/scenario_catalog.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
@@ -583,8 +583,8 @@ class _PreparationPageState extends State<PreparationPage> {
             title: '职场英语',
             description: '会议、协作与客户沟通',
             icon: Icons.business_center_outlined,
-            accentColor: PreparationDesign.roleplay,
-            tintColor: PreparationDesign.roleplayTint,
+            accentColor: PreparationDesign.scenario,
+            tintColor: PreparationDesign.scenarioTint,
             assetPath: 'assets/images/scenes/workplace-scene.jpg',
             onPressed: () =>
                 setState(() => _selectedHub = _PracticeHub.workplace),
@@ -595,8 +595,8 @@ class _PreparationPageState extends State<PreparationPage> {
             title: '生活与旅行',
             description: '日常交流与出行场景实战',
             icon: Icons.travel_explore_outlined,
-            accentColor: PreparationDesign.roleplay,
-            tintColor: PreparationDesign.roleplayTint,
+            accentColor: PreparationDesign.scenario,
+            tintColor: PreparationDesign.scenarioTint,
             assetPath: 'assets/images/scenes/travel-scene.jpg',
             onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
           ),
@@ -681,9 +681,9 @@ class _PreparationPageState extends State<PreparationPage> {
               ),
             )
         else
-          RoleplayCatalog(
+          ScenarioCatalog(
             title: _practiceHubLabel(hub),
-            description: _roleplayHubDescription(hub),
+            description: _scenarioHubDescription(hub),
             titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
             onScenePressed: (scene) =>
@@ -780,8 +780,8 @@ class _PreparationPageState extends State<PreparationPage> {
           title: '职场英语',
           description: '会议、协作与客户沟通',
           icon: Icons.business_center_outlined,
-          accentColor: PreparationDesign.roleplay,
-          tintColor: PreparationDesign.roleplayTint,
+          accentColor: PreparationDesign.scenario,
+          tintColor: PreparationDesign.scenarioTint,
           assetPath: 'assets/images/scenes/workplace-scene.jpg',
           onPressed: () =>
               setState(() => _selectedHub = _PracticeHub.workplace),
@@ -792,8 +792,8 @@ class _PreparationPageState extends State<PreparationPage> {
           title: '生活与旅行',
           description: '日常交流与出行场景实战',
           icon: Icons.travel_explore_outlined,
-          accentColor: PreparationDesign.roleplay,
-          tintColor: PreparationDesign.roleplayTint,
+          accentColor: PreparationDesign.scenario,
+          tintColor: PreparationDesign.scenarioTint,
           assetPath: 'assets/images/scenes/travel-scene.jpg',
           onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
         ),
@@ -1107,11 +1107,11 @@ String _practiceHubLabel(_PracticeHub hub) {
   };
 }
 
-String _roleplayHubDescription(_PracticeHub hub) {
+String _scenarioHubDescription(_PracticeHub hub) {
   return switch (hub) {
     _PracticeHub.workplace => '练习会议、协作、汇报与客户沟通。',
     _PracticeHub.life => '练习日常交流、旅行与生活问题处理。',
-    _ => throw StateError('Roleplay description requires a Roleplay hub.'),
+    _ => throw StateError('Scenario description requires a Scenario hub.'),
   };
 }
 

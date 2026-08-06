@@ -14,8 +14,8 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -451,14 +451,12 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         speechFeedbackController: widget.speechFeedbackController,
       );
     }
-    final presentationMode = launchController?.hasResumablePractice ?? false
-        ? launchController!.resumablePresentationMode
-        : _practiceController.scene?.presentationMode ??
-              ScenePresentationMode.standard;
-    if (presentationMode == ScenePresentationMode.immersiveRoleplay) {
+    final experience = _practiceController.practiceExperience;
+    if (experience == PracticeExperience.workplace ||
+        experience == PracticeExperience.lifeAndTravel) {
       final factory = widget.avatarControllerFactory;
       if (factory != null) {
-        return ImmersiveRoleplaySession(
+        return ScenarioPracticeSession(
           practiceController: _practiceController,
           avatarControllerFactory: factory,
           onPracticeCompleted: launchController?.completeAndContinueWithAgent,
@@ -466,13 +464,17 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           onExitRequested: launchController?.parkCurrentPractice,
         );
       }
-      return ImmersiveRoleplayPage(
+      return ScenarioPracticePage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
         onPracticeCompleted: launchController?.completeAndContinueWithAgent,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );
+    }
+    if (experience != PracticeExperience.interview &&
+        !(widget.allowFakePreview && experience == null)) {
+      throw StateError('Active practice is missing a supported Experience.');
     }
     return InterviewPracticePage(
       previewMode: widget.allowFakePreview,

@@ -34,8 +34,6 @@ enum SceneCategory {
       .firstOrNull;
 }
 
-enum ScenePresentationMode { standard, immersiveRoleplay }
-
 enum SceneStatus { active, inactive }
 
 final class ScenePrompt {
@@ -152,15 +150,6 @@ final class SceneDefinition {
   final ScenePrompt prompt;
   final List<RoleDefinition> roles;
   final List<PracticeOption> practiceOptions;
-}
-
-extension ScenePresentation on SceneDefinition {
-  ScenePresentationMode get presentationMode => switch (experience) {
-    PracticeExperience.interview ||
-    PracticeExperience.workplace ||
-    PracticeExperience.lifeAndTravel => ScenePresentationMode.immersiveRoleplay,
-    PracticeExperience.ieltsSpeaking => ScenePresentationMode.standard,
-  };
 }
 
 final class SceneSelectionSnapshot {

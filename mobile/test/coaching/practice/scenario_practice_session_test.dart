@@ -11,7 +11,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
@@ -26,7 +26,7 @@ void main() {
   testWidgets('owns one avatar connection and fences app lifecycle', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
@@ -44,7 +44,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: createAvatarController,
         ),
@@ -55,8 +55,8 @@ void main() {
     expect(tokenClient.requestedSessionIds, [
       practiceController.practiceSessionId,
     ]);
-    expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
-    expect(find.byKey(const Key('immersive-avatar-surface')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-avatar-surface')), findsOneWidget);
 
     // Selectable assistant messages register an AppLifecycleListener that
     // validates the full transition chain, so drive each state in order.
@@ -84,7 +84,7 @@ void main() {
   testWidgets('retries a transient session failure with a fresh renderer', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final failedTokenClient = FakeAvatarSessionTokenClient(
       error: const AvatarSessionTokenException(
@@ -99,7 +99,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
@@ -134,14 +134,14 @@ void main() {
   testWidgets('reconnects after a live renderer network failure', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
@@ -176,14 +176,14 @@ void main() {
   testWidgets('falls back when avatar preparation does not finish in time', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final prepareGate = Completer<void>();
     final renderer = FakeAvatarRenderer(prepareGate: prepareGate);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () => AvatarController(
             renderer: renderer,
@@ -251,7 +251,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer();
@@ -287,14 +287,14 @@ void main() {
   testWidgets('caps repeated surface connection failures at three attempts', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final tokenClient = FakeAvatarSessionTokenClient();
     final renderers = <FakeAvatarRenderer>[];
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () {
             final renderer = FakeAvatarRenderer(connectOnPrepare: false);
@@ -343,10 +343,10 @@ void main() {
     expect(tokenClient.requestedSessionIds, hasLength(3));
   });
 
-  testWidgets('routes an immersive scene through the avatar coordinator', (
+  testWidgets('routes an scenario scene through the avatar coordinator', (
     tester,
   ) async {
-    final practiceController = await _immersivePracticeController();
+    final practiceController = await _scenarioPracticeController();
     addTearDown(practiceController.dispose);
     final renderer = FakeAvatarRenderer();
     final tokenClient = FakeAvatarSessionTokenClient();
@@ -375,7 +375,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(factoryCalls, 1);
-    expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
 
@@ -421,7 +421,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplaySession(
+        home: ScenarioPracticeSession(
           practiceController: practiceController,
           avatarControllerFactory: () => avatarController,
         ),
@@ -447,7 +447,7 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
   fail('Condition was not reached.');
 }
 
-Future<PracticeController> _immersivePracticeController() async {
+Future<PracticeController> _scenarioPracticeController() async {
   final scene = _dailyTravelScene('daily-travel');
   const sessionId = 'session-daily-travel';
   final snapshot = PracticeSessionSnapshot(
