@@ -77,6 +77,75 @@ func TestPostgresPlanRepositoryPersistsTypedPreparationContext(t *testing.T) {
 	}
 }
 
+func TestPostgresPlanRepositoryPersistsTypedInterviewResume(t *testing.T) {
+	profileRepository, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	repository := preparationpostgres.NewPostgresPlanRepository(pool)
+	command := seedPlanCommand(
+		t,
+		pool,
+		profileRepository,
+		actor.UserID,
+		actor.SessionID,
+		"typed-interview-resume",
+	)
+	resumeID := "50000000-0000-4000-8000-000000000111"
+	command.PreparationSnapshot.Context = &preparationmodel.ResolvedContext{
+		Kind: preparationmodel.PreparationKindInterview,
+		Interview: &preparationmodel.InterviewContextSnapshot{
+			Resume: &preparationmodel.ResumeRevisionRef{
+				ResumeID: resumeID,
+				Revision: 2,
+			},
+			JobTarget: preparationmodel.ConfirmedJobTargetRef{
+				JobTargetID:         "job-target-interview",
+				ConfirmationVersion: 3,
+			},
+		},
+	}
+	command.PreparationSnapshot.ResumeSnapshot =
+		&preparation.ResumeRevisionSnapshot{
+			ResumeID: resumeID,
+			Revision: 2,
+			Material: preparation.ResumeMaterial{
+				WorkExperiences:      []preparation.ResumeWorkExperience{},
+				ProjectExperiences:   []preparation.ResumeProjectExperience{},
+				EducationExperiences: []preparation.ResumeEducationExperience{},
+				Skills:               []string{"Go"},
+				Awards:               []string{},
+			},
+		}
+
+	created, replayed, err := repository.CreatePlan(
+		context.Background(),
+		actor,
+		command,
+	)
+	if err != nil || replayed || created.PreparationSnapshot.Context == nil ||
+		created.PreparationSnapshot.ResumeSnapshot == nil {
+		t.Fatalf(
+			"CreatePlan typed interview Resume = (%#v, %t, %v)",
+			created,
+			replayed,
+			err,
+		)
+	}
+
+	read, err := repository.ReadCurrentPlan(
+		context.Background(),
+		actor,
+		created.ID,
+	)
+	if err != nil ||
+		!reflect.DeepEqual(
+			read.PreparationSnapshot,
+			command.PreparationSnapshot,
+		) {
+		t.Fatalf("ReadCurrentPlan typed interview Resume = (%#v, %v)", read, err)
+	}
+}
+
 func TestPostgresPlanRepositoryPersistsImmutableRevisionsAndExactReplays(
 	t *testing.T,
 ) {
