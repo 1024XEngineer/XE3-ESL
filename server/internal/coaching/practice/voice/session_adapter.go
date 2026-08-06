@@ -202,6 +202,14 @@ func mapPracticeSession(
 		len(selection.SelectedRoleIDs) == 0 {
 		return Session{}, ErrInvalidContext
 	}
+	interviewContext, err := projectInterviewConversationContext(
+		snapshot.Preparation,
+	)
+	if err != nil ||
+		(interviewContext != nil &&
+			snapshot.Experience != practice.PracticeExperienceInterview) {
+		return Session{}, ErrInvalidContext
+	}
 	result := Session{
 		ID:                         session.ID,
 		PlanID:                     session.PlanID,
@@ -213,6 +221,7 @@ func mapPracticeSession(
 		TurnPolicyRef:              option.TurnPolicyRef,
 		Prompt:                     cloneScenePrompt(selection.Scene.Prompt),
 		ScenarioContext:            cloneScenarioPreparationContext(snapshot.Preparation.ScenarioContext),
+		InterviewContext:           interviewContext,
 		IELTSAssignment:            cloneIELTSAssignment(snapshot.IELTSAssignment),
 		SessionVersion:             session.Version,
 		EffectiveTurns:             session.EffectiveTurns,
