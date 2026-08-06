@@ -445,6 +445,7 @@ IconData _practiceExperienceIcon(PracticeExperience experience) {
   return switch (experience) {
     PracticeExperience.interview => Icons.work_outline_rounded,
     PracticeExperience.ieltsSpeaking => Icons.school_outlined,
-    PracticeExperience.roleplay => Icons.forum_outlined,
+    PracticeExperience.workplace => Icons.business_center_outlined,
+    PracticeExperience.lifeAndTravel => Icons.travel_explore_outlined,
   };
 }

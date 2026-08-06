@@ -99,8 +99,8 @@ func prepareGeneralScenePostgresRuntime(
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluationcore.SceneOverseasWorkplace,
-		scene.PracticeExperienceRoleplay,
-		scene.SceneCategoryRoleplayWorkplace,
+		scene.PracticeExperienceWorkplace,
+		scene.SceneCategoryWorkplaceGeneral,
 		scene.PracticeModeFullSimulation,
 		transcript,
 	)

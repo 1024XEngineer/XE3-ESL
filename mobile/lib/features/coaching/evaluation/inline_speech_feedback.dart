@@ -39,6 +39,7 @@ class InlineSpeechFeedback extends StatelessWidget {
           ? null
           : InlineLanguageSuggestion(
               text: correction!.suggestedText!,
+              originalText: correction.anchor.originalExcerpt,
               explanation: correction.explanation,
             ),
       polish: polish?.suggestedText == null

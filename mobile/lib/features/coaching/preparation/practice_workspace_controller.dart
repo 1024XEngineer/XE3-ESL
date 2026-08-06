@@ -83,8 +83,6 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   String? get currentSceneId => _current?.scene?.id;
   String? get currentPracticeExperience =>
       _current?.scene?.experience.wireValue;
-  ScenePresentationMode get currentPresentationMode =>
-      _current?.scene?.presentationMode ?? ScenePresentationMode.standard;
 
   Future<void> activateAccount(String accountId) async {
     await _activeOperationDone?.future;

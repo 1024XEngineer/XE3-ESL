@@ -366,9 +366,8 @@ bool _validExperienceCategory(
   (PracticeExperience.interview, SceneCategory.interviewHiringManager) ||
   (PracticeExperience.interview, SceneCategory.interviewCustom) ||
   (PracticeExperience.ieltsSpeaking, SceneCategory.ieltsSpeaking) ||
-  (PracticeExperience.roleplay, SceneCategory.roleplayWorkplace) ||
-  (PracticeExperience.roleplay, SceneCategory.roleplayTravel) ||
-  (PracticeExperience.roleplay, SceneCategory.roleplayDaily) ||
-  (PracticeExperience.roleplay, SceneCategory.roleplayCustom) => true,
+  (PracticeExperience.workplace, SceneCategory.workplaceGeneral) ||
+  (PracticeExperience.lifeAndTravel, SceneCategory.lifeTravel) ||
+  (PracticeExperience.lifeAndTravel, SceneCategory.lifeDaily) => true,
   _ => false,
 };

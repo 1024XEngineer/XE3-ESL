@@ -371,7 +371,9 @@ void _validateAggregate({
                 PracticeMode.part3,
               }) &&
           detail.practiceOptions.length == 4,
-    PracticeExperience.interview || PracticeExperience.roleplay =>
+    PracticeExperience.interview ||
+    PracticeExperience.workplace ||
+    PracticeExperience.lifeAndTravel =>
       fullSimulationCount == 1 &&
           focusRoleIds.length == detail.roles.length &&
           focusRoleIds.containsAll(roleIds),
