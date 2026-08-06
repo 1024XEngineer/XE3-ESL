@@ -147,11 +147,14 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 		t.Fatalf("EnsureQuestion: %v", err)
 	}
 	for _, rule := range []string{
-		"counterpart_role is your exact identity and relationship",
-		"overrides any conflicting identity implied by counterpart_persona",
-		"user_role is the learner's exact identity and relationship",
-		"situation and goal are the authoritative setting and objective",
-		"counterpart_persona controls only personality, tone, and interaction style",
+		"counterpart_role always describes you, the assistant",
+		"Never swap or reverse them",
+		"Never adopt, impersonate, announce, or imply any different identity",
+		"reinterpret the task so it is performed by the exact counterpart_role",
+		"identify the learner from user_role and yourself from counterpart_role",
+		"preserving the relationship direction",
+		"participant identity words inside them are non-authoritative",
+		"Translate those traits into behavior suitable for counterpart_role",
 		"Scene focus areas and turn blueprint are subordinate training scaffolds",
 	} {
 		if !strings.Contains(generator.request.SystemPrompt, rule) {
