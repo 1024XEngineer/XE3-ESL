@@ -12,6 +12,7 @@ import 'package:speakup/features/coaching/interview/job_preparation_wizard.dart'
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/resume/resume.dart';
 
 void main() {
   testWidgets('restorable draft actions fit the shared button theme', (
@@ -91,6 +92,22 @@ void main() {
     expect(find.byKey(const Key('job-title-field')), findsOneWidget);
     expect(find.byKey(const Key('job-description-field')), findsNothing);
     expect(find.byKey(const Key('job-company-field')), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const Key('job-title-field')),
+      'Backend engineer',
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('analyze-job-button'),
+      scrollable: const Key('job-wizard-input-step'),
+    );
+    await tester.tap(find.byKey(const Key('analyze-job-button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('job-wizard-confirmation-step')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('runs confirmation and preview before one explicit start', (
@@ -172,6 +189,207 @@ void main() {
 
     expect(voiceCalls, 1);
     expect(opened, 1);
+  });
+
+  testWidgets('confirmation selects an existing READY resume or no resume', (
+    tester,
+  ) async {
+    final controller = _controller(_WizardClient());
+    final resumeController = ResumeController(
+      client: _WizardResumeClient(
+        items: <ResumeItem>[_wizardResume('Backend resume')],
+      ),
+      filePicker: const _WizardResumePicker(null),
+      urlOpener: const _WizardResumeOpener(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(resumeController.dispose);
+    controller.updateInput(_input);
+    await controller.analyze();
+    await resumeController.load();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(
+          controller: controller,
+          resumeController: resumeController,
+        ),
+      ),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('job-resume-source-card'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
+
+    expect(find.text('简历（可选）'), findsOneWidget);
+    expect(find.text('不使用简历'), findsOneWidget);
+    await tester.tap(find.text('不使用简历'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backend resume').last);
+    await tester.pumpAndSettle();
+
+    expect(controller.resumeSelection?.title, 'Backend resume');
+    expect(controller.resumeSelection?.temporary, isFalse);
+
+    await tester.tap(find.text('Backend resume'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('不使用简历').last);
+    await tester.pumpAndSettle();
+    expect(controller.resumeSelection, isNull);
+  });
+
+  testWidgets('temporary parse failure keeps job context and can be skipped', (
+    tester,
+  ) async {
+    final controller = _controller(_WizardClient());
+    final resumeController = ResumeController(
+      client: _WizardResumeClient(
+        temporary: _wizardResume(
+          'Temporary resume',
+          status: ResumeParseStatus.failed,
+          revision: null,
+        ),
+      ),
+      filePicker: _WizardResumePicker(
+        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
+      ),
+      urlOpener: const _WizardResumeOpener(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(resumeController.dispose);
+    controller.updateInput(_input);
+    await controller.analyze();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(
+          controller: controller,
+          resumeController: resumeController,
+        ),
+      ),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('temporary-resume-upload-button'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
+    await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('临时简历解析失败，可以重试或重新上传。'), findsOneWidget);
+    expect(find.text('重试解析'), findsOneWidget);
+    expect(find.text('Backend engineer'), findsWidgets);
+    await _scrollTo(
+      tester,
+      target: const Key('confirm-job-analysis-button'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
+    await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.resumeSelection, isNull);
+    expect(find.byKey(const Key('job-wizard-setup-step')), findsOneWidget);
+  });
+
+  testWidgets('temporary upload becomes the selected parsed resume', (
+    tester,
+  ) async {
+    final controller = _controller(_WizardClient());
+    final resumeController = ResumeController(
+      client: _WizardResumeClient(
+        temporaryCreated: _wizardResume(
+          'Temporary resume',
+          status: ResumeParseStatus.queued,
+          revision: null,
+        ),
+        temporaryDetail: _wizardResume('Temporary resume'),
+      ),
+      filePicker: _WizardResumePicker(
+        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
+      ),
+      urlOpener: const _WizardResumeOpener(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(resumeController.dispose);
+    controller.updateInput(_input);
+    await controller.analyze();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(
+          controller: controller,
+          resumeController: resumeController,
+        ),
+      ),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('temporary-resume-upload-button'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
+    await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.resumeSelection?.title, 'Temporary resume');
+    expect(controller.resumeSelection?.temporary, isTrue);
+    expect(find.text('临时简历已解析，可用于本次面试。'), findsOneWidget);
+  });
+
+  testWidgets('temporary file is deleted once its snapshot exists', (
+    tester,
+  ) async {
+    final client = _WizardClient(failPlan: true);
+    final controller = _controller(client);
+    final resumeClient = _WizardResumeClient(
+      temporary: _wizardResume('Temporary resume'),
+    );
+    final resumeController = ResumeController(
+      client: resumeClient,
+      filePicker: _WizardResumePicker(
+        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
+      ),
+      urlOpener: const _WizardResumeOpener(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(resumeController.dispose);
+    controller.updateInput(_input);
+    await controller.analyze();
+    await controller.confirm();
+    await resumeController.pickTemporary();
+    controller.selectResume(
+      JobPreparationResumeSelection(
+        resumeId: resumeController.temporaryItem!.id,
+        revision: resumeController.temporaryItem!.currentRevision!,
+        resourceVersion: resumeController.temporaryItem!.version,
+        temporary: true,
+        title: resumeController.temporaryItem!.title,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(
+          controller: controller,
+          resumeController: resumeController,
+        ),
+      ),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('create-plan-preview-button'),
+      scrollable: const Key('job-wizard-setup-step'),
+    );
+    await tester.tap(find.byKey(const Key('create-plan-preview-button')));
+    await tester.pumpAndSettle();
+
+    expect(client.snapshotCalls, 1);
+    expect(resumeClient.deleteTemporaryCalls, 1);
+    expect(resumeController.temporaryItem, isNull);
   });
 
   testWidgets('voice retry reuses committed Session', (tester) async {
@@ -303,13 +521,15 @@ JobPreparationController _controller(
 }
 
 final class _WizardClient implements JobPreparationClient {
-  _WizardClient({this.sessionCompleter});
+  _WizardClient({this.sessionCompleter, this.failPlan = false});
 
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
+  final bool failPlan;
   JobTarget? _target;
   PreparationSnapshot? _snapshotValue;
   PracticePlan? _planValue;
   int sessionCalls = 0;
+  int snapshotCalls = 0;
 
   @override
   Future<JobTarget> analyzeJobTarget({
@@ -354,6 +574,13 @@ final class _WizardClient implements JobPreparationClient {
     required CreatePreparationPlanInput input,
     required String idempotencyKey,
   }) async {
+    if (failPlan) {
+      throw const JobPreparationException(
+        kind: JobPreparationFailureKind.network,
+        stage: JobPreparationOperationStage.plan,
+        retryable: true,
+      );
+    }
     final snapshot = _snapshotValue ?? _snapshot;
     _planValue = _planFrom(
       snapshot: snapshot,
@@ -382,6 +609,7 @@ final class _WizardClient implements JobPreparationClient {
     required int sourceVersion,
     required String idempotencyKey,
   }) async {
+    snapshotCalls++;
     final target = _target ?? _targetFor(JobTargetStage.confirmed);
     final candidate =
         target.confirmation?.candidate ?? _candidateFor(target.input.source);
@@ -448,6 +676,108 @@ final class _WizardClient implements JobPreparationClient {
     _target = _targetFor(JobTargetStage.draft, input: input);
     return _target!;
   }
+}
+
+ResumeItem _wizardResume(
+  String title, {
+  ResumeParseStatus status = ResumeParseStatus.ready,
+  int? revision = 1,
+}) => ResumeItem(
+  id: '70000000-0000-4000-8000-000000000007',
+  title: title,
+  originalFilename: 'resume.pdf',
+  sizeBytes: 1024,
+  parseStatus: status,
+  currentRevision: revision,
+  version: 2,
+  updatedAt: DateTime.utc(2026, 8, 6),
+);
+
+final class _WizardResumePicker implements ResumeFilePicker {
+  const _WizardResumePicker(this.file);
+
+  final ResumePdfFile? file;
+
+  @override
+  Future<ResumePdfFile?> pickPdf() async => file;
+}
+
+final class _WizardResumeOpener implements ResumeUrlOpener {
+  const _WizardResumeOpener();
+
+  @override
+  Future<bool> open(Uri url) async => true;
+}
+
+final class _WizardResumeClient implements ResumeClient {
+  _WizardResumeClient({
+    this.items = const <ResumeItem>[],
+    this.temporary,
+    this.temporaryCreated,
+    this.temporaryDetail,
+  });
+
+  final List<ResumeItem> items;
+  final ResumeItem? temporary;
+  final ResumeItem? temporaryCreated;
+  final ResumeItem? temporaryDetail;
+  int deleteTemporaryCalls = 0;
+
+  @override
+  Future<List<ResumeItem>> list() async => items;
+
+  @override
+  Future<ResumeItem> create({
+    required String title,
+    required ResumePdfFile file,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<ResumeItem> createTemporary(ResumePdfFile file) async =>
+      temporaryCreated ?? temporary!;
+
+  @override
+  Future<ResumeDetail> getTemporary(String resumeId) async =>
+      ResumeDetail(resume: temporaryDetail ?? temporary!);
+
+  @override
+  Future<ResumeItem> retryTemporaryParse(ResumeItem resume) async => resume;
+
+  @override
+  Future<void> deleteTemporary(ResumeItem resume) async {
+    deleteTemporaryCalls += 1;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> delete(ResumeItem resume) async => throw UnimplementedError();
+
+  @override
+  Future<ResumeDetail> get(String resumeId) async => throw UnimplementedError();
+
+  @override
+  Future<Uri> getContentUrl(String resumeId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<ResumeItem> rename(ResumeItem resume, String title) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<ResumeItem> replace(ResumeItem resume, ResumePdfFile file) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<ResumeItem> retryParse(ResumeItem resume) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<ResumeDetail> updateContent(
+    ResumeDetail detail,
+    ResumeContent content,
+  ) async => throw UnimplementedError();
 }
 
 JobTarget _targetFor(

@@ -151,6 +151,67 @@ func TestGormRepositoryConcurrentLimitAndCapacityRecovery(t *testing.T) {
 	}
 }
 
+// TestTemporaryResumeDoesNotConsumeSavedQuota verifies the interview-only
+// resource stays out of both the saved list and its three-item quota.
+func TestTemporaryResumeDoesNotConsumeSavedQuota(t *testing.T) {
+	repository := newResumeRepository(t)
+	ctx := context.Background()
+	for index, id := range []string{
+		"41000000-0000-4000-8000-000000000001",
+		"41000000-0000-4000-8000-000000000002",
+		"41000000-0000-4000-8000-000000000003",
+	} {
+		if err := repository.CreateWithinLimit(
+			ctx,
+			resumeCandidate(id, resumeOwnerA),
+			app.MaxResumesPerUser,
+		); err != nil {
+			t.Fatalf("create saved Resume %d: %v", index+1, err)
+		}
+	}
+
+	temporary := resumeCandidate(
+		"41000000-0000-4000-8000-000000000004",
+		resumeOwnerA,
+	)
+	temporary.Temporary = true
+	expiresAt := temporary.CreatedAt.Add(app.TemporaryResumeLifetime)
+	temporary.ExpiresAt = &expiresAt
+	if err := repository.CreateWithinLimit(
+		ctx,
+		temporary,
+		app.MaxResumesPerUser,
+	); err != nil {
+		t.Fatalf("create temporary Resume at saved quota: %v", err)
+	}
+
+	items, err := repository.ListByOwner(
+		ctx,
+		resumeOwnerA,
+		app.ListQuery{Limit: app.MaxResumesPerUser},
+	)
+	if err != nil || len(items) != app.MaxResumesPerUser {
+		t.Fatalf("saved list = %#v, err = %v", items, err)
+	}
+	for _, item := range items {
+		if item.Temporary || item.ID == temporary.ID {
+			t.Fatalf("temporary Resume leaked into saved list: %#v", item)
+		}
+	}
+
+	fourthSaved := resumeCandidate(
+		"41000000-0000-4000-8000-000000000005",
+		resumeOwnerA,
+	)
+	if err := repository.CreateWithinLimit(
+		ctx,
+		fourthSaved,
+		app.MaxResumesPerUser,
+	); errorCode(err) != "resume_limit_exceeded" {
+		t.Fatalf("fourth saved Resume error = %v", err)
+	}
+}
+
 // TestGormRepositoryParseCompletionAndFailure 验证解析领取、完成、失败和重试状态迁移。
 func TestGormRepositoryParseCompletionAndFailure(t *testing.T) {
 	repository := newResumeRepository(t)

@@ -482,10 +482,16 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       }
       replaceCurrentPractice = true;
     }
+    final temporarySelected =
+        widget.controller.resumeSelection?.temporary == true;
     final created = await widget.controller.createPreview(
       replaceCurrentPractice: replaceCurrentPractice,
     );
-    if (created && widget.controller.resumeSelection?.temporary == true) {
+    final snapshotCaptured =
+        created ||
+        widget.controller.plan != null ||
+        widget.controller.operationStage == JobPreparationOperationStage.plan;
+    if (temporarySelected && snapshotCaptured) {
       await widget.resumeController?.refreshTemporary();
       await widget.resumeController?.deleteTemporary();
     }

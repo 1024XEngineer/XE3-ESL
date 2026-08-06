@@ -1,3 +1,5 @@
+BEGIN;
+
 ALTER TABLE resumes
     ADD COLUMN is_temporary BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN expires_at TIMESTAMPTZ;
@@ -11,3 +13,5 @@ ALTER TABLE resumes
 CREATE INDEX resumes_expired_temporary_idx
     ON resumes (expires_at, resume_id)
     WHERE is_temporary = TRUE AND deleted_at IS NULL;
+
+COMMIT;
