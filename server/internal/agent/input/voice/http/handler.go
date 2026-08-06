@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -16,7 +15,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
-	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
@@ -25,11 +23,6 @@ import (
 const defaultReadTimeout = 15 * time.Second
 
 type Application interface {
-	Upload(
-		context.Context,
-		requestcontext.Actor,
-		agentvoice.UploadRequest,
-	) (agentvoice.Candidate, error)
 	UploadStream(
 		context.Context,
 		requestcontext.Actor,
@@ -102,13 +95,9 @@ func NewHandler(
 }
 
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
-	routes.POST(
-		"/v1/agent-threads/:thread_id/voice-message-candidates",
-		handler.upload,
-	)
-	routes.POST(
-		"/v1/agent-threads/:thread_id/voice-message-candidates/stream",
-		handler.uploadStream,
+	routes.GET(
+		"/v1/agent-threads/:thread_id/voice-message-candidates/realtime",
+		handler.uploadRealtime,
 	)
 	routes.GET(
 		"/v1/agent-voice-message-candidates/:candidate_id",
@@ -130,93 +119,6 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/agent-voice-message-candidates/:candidate_id/confirmations/stream",
 		handler.confirmStream,
 	)
-}
-
-func (handler *Handler) upload(c *gin.Context) {
-	actor, request, cleanup, ok := handler.prepareUpload(c)
-	if !ok {
-		return
-	}
-	defer cleanup()
-	candidate, err := handler.application.Upload(
-		c.Request.Context(), actor, request,
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	c.JSON(http.StatusCreated, CandidateResponse(candidate))
-}
-
-func (handler *Handler) uploadStream(c *gin.Context) {
-	actor, request, cleanup, ok := handler.prepareUpload(c)
-	if !ok {
-		return
-	}
-	defer cleanup()
-	controller := http.NewResponseController(c.Writer)
-	if err := controller.EnableFullDuplex(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		handler.write(c, internalError(err))
-		return
-	}
-	stream := &transcriptionSSEWriter{context: c}
-	if err := stream.write("transcription.started", gin.H{}); err != nil {
-		return
-	}
-	candidate, err := handler.application.UploadStream(
-		c.Request.Context(), actor, request, stream,
-	)
-	if err != nil {
-		_ = stream.write("candidate.failed", gin.H{
-			"kind": "stream_interrupted", "retryable": true,
-		})
-		return
-	}
-	event := "candidate.ready"
-	if candidate.Status == agentvoice.StatusFailed {
-		event = "candidate.failed"
-	}
-	_ = stream.write(event, gin.H{"candidate": CandidateResponse(candidate)})
-}
-
-func (handler *Handler) prepareUpload(c *gin.Context) (
-	requestcontext.Actor,
-	agentvoice.UploadRequest,
-	func(),
-	bool,
-) {
-	key, ok := httpinput.IdempotencyKey(c.Request)
-	if !ok || c.Request.Body == nil ||
-		c.Request.ContentLength > platformmedia.MaxAudioBytes ||
-		!strings.EqualFold(
-			strings.TrimSpace(c.GetHeader("Content-Type")),
-			platformmedia.ContentTypeWAV,
-		) {
-		handler.write(c, invalidRequest(nil))
-		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
-	}
-	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
-	}
-	thread, err := handler.threads.GetThread(
-		c.Request.Context(), actor, c.Param("thread_id"),
-	)
-	if err != nil {
-		handler.write(c, mapThreadError(err))
-		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
-	}
-	controller := http.NewResponseController(c.Writer)
-	if err := controller.SetReadDeadline(time.Now().Add(handler.readTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		handler.write(c, internalError(err))
-		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
-	}
-	body := http.MaxBytesReader(c.Writer, c.Request.Body, platformmedia.MaxAudioBytes)
-	return actor, agentvoice.UploadRequest{
-		ThreadID: thread.ID, IdempotencyKey: key,
-		ContentType: platformmedia.ContentTypeWAV, Audio: body,
-	}, func() { _ = controller.SetReadDeadline(time.Time{}) }, true
 }
 
 func (handler *Handler) get(c *gin.Context) {
@@ -420,42 +322,6 @@ func (writer *confirmationSSEWriter) OnAssistantDelta(
 }
 
 func (writer *confirmationSSEWriter) write(event string, data any) error {
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	if !writer.started {
-		writer.context.Header("Content-Type", "text/event-stream; charset=utf-8")
-		writer.context.Header("Cache-Control", "no-cache, no-store")
-		writer.context.Header("X-Accel-Buffering", "no")
-		writer.context.Header("Connection", "keep-alive")
-		writer.context.Status(http.StatusOK)
-		writer.started = true
-	}
-	if _, err := writer.context.Writer.WriteString(
-		"event: " + event + "\ndata: " + string(encoded) + "\n\n",
-	); err != nil {
-		return err
-	}
-	writer.context.Writer.Flush()
-	return writer.context.Request.Context().Err()
-}
-
-type transcriptionSSEWriter struct {
-	context *gin.Context
-	started bool
-}
-
-func (writer *transcriptionSSEWriter) OnTranscriptionUpdate(
-	_ context.Context,
-	update agentvoice.TranscriptionUpdate,
-) error {
-	return writer.write("transcription.updated", gin.H{
-		"transcript": update.Transcript, "final": update.Final,
-	})
-}
-
-func (writer *transcriptionSSEWriter) write(event string, data any) error {
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return err

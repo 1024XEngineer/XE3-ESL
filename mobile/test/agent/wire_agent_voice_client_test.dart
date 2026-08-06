@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
@@ -12,62 +13,80 @@ import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
-  test('uploads raw WAV to the exact candidate route', () async {
-    final root = await Directory.systemTemp.createTemp(
-      'agent-voice-wire-test-',
-    );
-    addTearDown(() => root.delete(recursive: true));
-    final file = File('${root.path}/message.wav');
-    await file.writeAsBytes(_waveBytes);
-    final transport = _ScriptedVoiceTransport([
-      _Step(
-        method: 'POST',
-        path: '/v1/agent-threads/$_threadId/voice-message-candidates/stream',
-        verify: (request) {
-          expect(
-            request.headers[HttpHeaders.authorizationHeader],
-            'Bearer sess_voice',
+  test('streams PCM chunks over the authenticated voice WebSocket', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final received = <Object>[];
+    final handled = Completer<void>();
+    server.listen((request) async {
+      expect(
+        request.uri.path,
+        '/v1/agent-threads/$_threadId/voice-message-candidates/realtime',
+      );
+      expect(
+        request.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer sess_voice',
+      );
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (protocols) => 'speakup.voice-input.v1',
+      );
+      await for (final message in socket) {
+        received.add(message);
+        if (message is String &&
+            (jsonDecode(message) as Map<String, dynamic>)['type'] == 'finish') {
+          socket.add(
+            jsonEncode(<String, Object>{
+              'type': 'candidate.failed',
+              'data': <String, Object>{
+                'kind': 'test_complete',
+                'retryable': true,
+              },
+            }),
           );
-          expect(request.headers[HttpHeaders.contentTypeHeader], 'audio/wav');
-          expect(request.headers['Idempotency-Key'], 'voice_upload_001');
-          expect(request.body, _waveBytes);
-        },
-        response: _sseResponse(<(String, Object?)>[
-          ('transcription.started', <String, Object?>{}),
-          (
-            'transcription.updated',
-            <String, Object?>{
-              'transcript': 'Candidate transcript',
-              'final': false,
-            },
-          ),
-          (
-            'candidate.ready',
-            <String, Object?>{
-              'candidate': _candidateJson(status: 'candidate_ready'),
-            },
-          ),
-        ]),
-      ),
-    ]);
-    final client = _client(transport);
+          await socket.close();
+          if (!handled.isCompleted) {
+            handled.complete();
+          }
+          break;
+        }
+      }
+    });
+    final baseUri = Uri.parse(
+      'http://${server.address.address}:${server.port}',
+    );
+    final client = WireAgentVoiceClient(
+      baseUri: baseUri,
+      credentialProvider: () => _credential,
+      invalidateSession: _ignoreInvalidation,
+      apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+    );
     addTearDown(client.dispose);
 
-    final candidate = await client.createCandidate(
-      threadId: _threadId,
-      recording: AgentVoiceLocalRecording(
-        path: file.path,
-        contentType: 'audio/wav',
-        sizeBytes: _waveBytes.length,
-        duration: const Duration(seconds: 3),
+    await expectLater(
+      client.createCandidateRealtime(
+        threadId: _threadId,
+        audioChunks: Stream<Uint8List>.fromIterable(<Uint8List>[
+          Uint8List.fromList(<int>[1, 2]),
+          Uint8List.fromList(<int>[3, 4]),
+        ]),
+        idempotencyKey: 'voice_realtime_001',
       ),
-      idempotencyKey: 'voice_upload_001',
+      emitsError(isA<AgentClientException>()),
     );
+    await handled.future;
 
-    expect(candidate.id, _candidateId);
-    expect(candidate.transcript?.text, 'Candidate transcript');
-    expect(candidate.status, AgentVoiceCandidateStatus.candidateReady);
-    transport.expectDone();
+    expect(jsonDecode(received.first as String), <String, Object?>{
+      'type': 'start',
+      'idempotency_key': 'voice_realtime_001',
+      'sample_rate': 16000,
+    });
+    expect(received[1], <int>[1, 2]);
+    expect(received[2], <int>[3, 4]);
+    expect(jsonDecode(received.last as String), <String, Object?>{
+      'type': 'finish',
+    });
   });
 
   test('confirms one voice Message with exact strict JSON', () async {

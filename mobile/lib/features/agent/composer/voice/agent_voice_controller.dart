@@ -86,6 +86,7 @@ final class AgentVoiceController extends ChangeNotifier
   bool _backgrounded = false;
   int _lifecycleGeneration = 0;
   Future<void>? _workflowOperation;
+  Future<_RealtimeCandidateResult>? _realtimeCandidate;
   Future<void>? _cleanupFuture;
 
   bool _draftPlaying = false;
@@ -186,7 +187,22 @@ final class AgentVoiceController extends ChangeNotifier
       if (!_isWorkflowCurrent(fence)) {
         return;
       }
-      await recorder.start();
+      if (recorder case final AgentVoiceStreamingRecorder streamingRecorder
+          when client is AgentVoiceRealtimeInputClient) {
+        final idempotencyKey = _newId('voice-upload');
+        final chunks = await streamingRecorder.startAudioStream();
+        _uploadIdempotencyKey = idempotencyKey;
+        _realtimeCandidate = _collectRealtimeCandidate(
+          fence,
+          (client as AgentVoiceRealtimeInputClient).createCandidateRealtime(
+            threadId: fence.threadId,
+            audioChunks: chunks,
+            idempotencyKey: idempotencyKey,
+          ),
+        );
+      } else {
+        await recorder.start();
+      }
       if (!_isWorkflowCurrent(fence)) {
         await recorder.discardCurrent();
         return;
@@ -234,27 +250,89 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> _stopRecording(_WorkflowFence fence) async {
+    final usedRealtimeInput = _realtimeCandidate != null;
     try {
-      final recording = await recorder.stop();
+      final realtime = _realtimeCandidate;
+      final recording =
+          realtime != null && recorder is AgentVoiceStreamingRecorder
+          ? await (recorder as AgentVoiceStreamingRecorder).stopAudioStream()
+          : await recorder.stop();
       if (!_isWorkflowCurrent(fence)) {
         await recorder.discard(recording);
         return;
       }
       _recording = recording;
       _recordingElapsed = recording.duration;
-      _uploadIdempotencyKey = _newId('voice-upload');
-      _state = AgentVoiceComposerState.recorded;
+      if (realtime == null) {
+        _uploadIdempotencyKey = _newId('voice-upload');
+        _state = AgentVoiceComposerState.recorded;
+      } else {
+        _state = AgentVoiceComposerState.transcribing;
+        notifyListeners();
+        final result = await realtime;
+        _realtimeCandidate = null;
+        if (result.error case final error?) {
+          throw error;
+        }
+        final candidate = result.candidate;
+        if (candidate == null) {
+          throw StateError('Realtime voice stream ended without a candidate.');
+        }
+        _validateCandidate(candidate, expectedThreadId: fence.threadId);
+        _candidate = candidate;
+        _recording = null;
+        await _discardRecordingBestEffort(recording);
+        if (!_isWorkflowCurrent(fence)) {
+          await _deleteCandidateBestEffort(candidate.id);
+          return;
+        }
+        await _resolveCandidate(fence, candidate);
+        return;
+      }
       _errorMessage = null;
       _retry = null;
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
+        _realtimeCandidate = null;
         _state = AgentVoiceComposerState.failed;
-        _errorMessage = _recordingFailureMessage(error);
-        _retry = _VoiceRetry.start;
+        if (usedRealtimeInput && _recording != null) {
+          _errorMessage = _uploadFailureMessage(error);
+          _retry = _VoiceRetry.upload;
+        } else {
+          _errorMessage = _recordingFailureMessage(error);
+          _retry = _VoiceRetry.start;
+        }
       }
     }
     if (_isWorkflowCurrent(fence)) {
       notifyListeners();
+    }
+  }
+
+  Future<_RealtimeCandidateResult> _collectRealtimeCandidate(
+    _WorkflowFence fence,
+    Stream<AgentVoiceTranscriptionEvent> events,
+  ) async {
+    AgentVoiceCandidate? completed;
+    try {
+      await for (final event in events) {
+        if (!_isWorkflowCurrent(fence)) {
+          if (event case AgentVoiceCandidateCompleted(:final candidate)) {
+            await _deleteCandidateBestEffort(candidate.id);
+          }
+          continue;
+        }
+        switch (event) {
+          case AgentVoiceTranscriptUpdated(:final text):
+            _liveTranscript = text;
+            notifyListeners();
+          case AgentVoiceCandidateCompleted(:final candidate):
+            completed = candidate;
+        }
+      }
+      return _RealtimeCandidateResult(candidate: completed);
+    } catch (error) {
+      return _RealtimeCandidateResult(error: error);
     }
   }
 
@@ -265,6 +343,7 @@ final class AgentVoiceController extends ChangeNotifier
     _draftPlaybackGeneration++;
     _cancelRecordingTimers();
     _resetWorkflowPresentation();
+    _realtimeCandidate = null;
     _resetDraftPlayback();
     if (!_disposed) {
       notifyListeners();
@@ -1300,6 +1379,7 @@ final class AgentVoiceController extends ChangeNotifier
     _confirmationCommand = null;
     _runRetrySourceRunId = null;
     _runRetryId = null;
+    _realtimeCandidate = null;
     _recordingElapsed = Duration.zero;
   }
 
@@ -1583,6 +1663,13 @@ final class AgentVoiceController extends ChangeNotifier
     }
     return '确认尚未完成，文字与录音已保留，可以重试。';
   }
+}
+
+final class _RealtimeCandidateResult {
+  const _RealtimeCandidateResult({this.candidate, this.error});
+
+  final AgentVoiceCandidate? candidate;
+  final Object? error;
 }
 
 final class _AsrRetryCommand {

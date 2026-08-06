@@ -213,9 +213,9 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		path   string
 	}{
 		{
-			http.MethodPost,
+			http.MethodGet,
 			"/v1/agent-threads/" + resourceID +
-				"/voice-message-candidates",
+				"/voice-message-candidates/realtime",
 		},
 		{
 			http.MethodGet,
