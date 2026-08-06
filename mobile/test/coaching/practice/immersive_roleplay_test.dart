@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
@@ -87,6 +88,11 @@ void main() {
       Key('practice-message-${questionMessage.id}'),
     );
     expect(messageBubble, findsOneWidget);
+    expect(
+      (tester.widget<Container>(messageBubble).decoration! as BoxDecoration)
+          .color,
+      Colors.transparent,
+    );
     expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
     expect(tester.takeException(), isNull);
   });
@@ -226,6 +232,13 @@ void main() {
       find.byKey(const Key('immersive-text-answer')),
       answer,
     );
+    await tester.pump();
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('immersive-submit-text')))
+          .onPressed,
+      isNotNull,
+    );
     await tester.tap(find.byKey(const Key('immersive-submit-text')));
     await tester.pumpAndSettle();
 
@@ -264,6 +277,7 @@ void main() {
       find.byKey(const Key('immersive-text-answer')),
       'I led the API redesign for our checkout flow.',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const Key('immersive-submit-text')));
     await tester.pumpAndSettle();
 
@@ -363,10 +377,23 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 220));
     expect(find.textContaining('上滑取消'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const Key('immersive-stop-recording'))).height,
+      48,
+    );
+    expect(find.byKey(const Key('immersive-voice-targets')), findsNothing);
     await send.up();
     await tester.pumpAndSettle();
     expect(controller.completedTurns, 1);
     expect(controller.recordingState, PracticeRecordingState.idle);
+    final userMessage = controller.practiceMessages.lastWhere(
+      (message) => message.role == PracticeMessageRole.user,
+    );
+    final userBubble = find.byKey(Key('practice-message-${userMessage.id}'));
+    expect(
+      (tester.widget<Container>(userBubble).decoration! as BoxDecoration).color,
+      SpeakUpDesign.primaryMuted,
+    );
 
     final userTurnsAfterSend = controller.practiceMessages
         .where((message) => message.role == PracticeMessageRole.user)

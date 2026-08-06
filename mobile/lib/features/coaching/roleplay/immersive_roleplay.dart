@@ -1100,7 +1100,11 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
         child: switch (state) {
           PracticeRecordingState.idle =>
             widget.controller.hasPendingPracticeAudio
-                ? _PendingImmersiveAudio(controller: widget.controller)
+                ? PracticePendingAudioComposer(
+                    keyPrefix: 'immersive',
+                    onDelete: widget.controller.discardPendingPracticeAudio,
+                    onRetry: widget.controller.retryPracticeTranscription,
+                  )
                 : _IdleComposer(
                     textController: widget.textController,
                     textFocusNode: widget.textFocusNode,
@@ -1115,18 +1119,22 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
             seconds: widget.recordingSeconds,
             capture: capture,
           ),
-          PracticeRecordingState.transcribing => const _ComposerProgress(
+          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
             label: '正在识别你的回答…',
           ),
-          PracticeRecordingState.awaitingConfirmation => _TranscriptComposer(
-            controller: widget.controller,
-          ),
-          PracticeRecordingState.submitting => _ComposerProgress(
+          PracticeRecordingState.awaitingConfirmation =>
+            PracticeTranscriptComposer(
+              transcript: widget.controller.transcript ?? '',
+              keyPrefix: 'immersive',
+              onRerecord: widget.controller.rerecord,
+              onConfirm: widget.controller.confirmTranscript,
+            ),
+          PracticeRecordingState.submitting => PracticeLoadingComposer(
             label: widget.controller.isFinalSubmission
                 ? '正在提交最后一轮回答…'
                 : '回答已发送，Agent 正在回复…',
           ),
-          PracticeRecordingState.completed => _ComposerAction(
+          PracticeRecordingState.completed => PracticeComposerAction(
             label: '练习已完成，可以返回继续对话。',
             actionLabel: '完成并返回',
             onPressed: widget.onPracticeCompleted,
@@ -1187,136 +1195,6 @@ class _RecordingComposer extends StatelessWidget {
       keyPrefix: 'immersive',
       elapsed: Duration(seconds: seconds),
       upwardCancelOnly: true,
-    );
-  }
-}
-
-class _PendingImmersiveAudio extends StatelessWidget {
-  const _PendingImmersiveAudio({required this.controller});
-
-  final PracticeController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('immersive-pending-audio'),
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('这段录音已保留', style: SpeakUpDesign.cardTitle),
-        const SizedBox(height: 4),
-        const Text('刚才没有识别成功，可以重试转文字，或删除后重新录音。', style: SpeakUpDesign.body),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('immersive-delete-pending-audio'),
-                onPressed: controller.discardPendingPracticeAudio,
-                child: const Text('删除录音'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('immersive-retry-transcription'),
-                onPressed: controller.retryPracticeTranscription,
-                child: const Text('重试转文字'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _TranscriptComposer extends StatelessWidget {
-  const _TranscriptComposer({required this.controller});
-
-  final PracticeController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          controller.transcript ?? '',
-          key: const Key('immersive-transcript'),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: SpeakUpDesign.body,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('immersive-rerecord'),
-                onPressed: controller.rerecord,
-                child: const Text('重录'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton(
-                key: const Key('immersive-confirm-turn'),
-                onPressed: controller.confirmTranscript,
-                child: const Text('发送'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _ComposerProgress extends StatelessWidget {
-  const _ComposerProgress({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return PracticeLoadingComposer(label: label);
-  }
-}
-
-class _ComposerAction extends StatelessWidget {
-  const _ComposerAction({
-    required this.label,
-    required this.actionLabel,
-    required this.onPressed,
-  });
-
-  final String label;
-  final String actionLabel;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: SpeakUpDesign.body,
-          ),
-        ),
-        const SizedBox(width: 8),
-        FilledButton(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(0, SpeakUpDesign.minTapTarget),
-          ),
-          onPressed: onPressed,
-          child: Text(actionLabel),
-        ),
-      ],
     );
   }
 }

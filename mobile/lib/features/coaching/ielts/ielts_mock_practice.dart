@@ -9,6 +9,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/design/voice_composer_dock.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
@@ -1912,7 +1913,7 @@ class _ExamConversation extends StatelessWidget {
                       onPlay: () => onPlayQuestion(message.id, message.text),
                       onToggleTranscript: () => onToggleTranscript(message.id),
                     )
-                  : PracticeChatBubble(message: message, maxWidth: 340),
+                  : PracticeMessageBubble(message: message),
             ),
             if (projection != null)
               Align(
@@ -2172,72 +2173,20 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recording =
-        phase == VoiceCapturePhase.starting ||
-        phase == VoiceCapturePhase.recording;
-    if (!recording) {
-      if (!allowTextAnswer) {
-        return Row(
-          children: [
-            const SizedBox(width: 42),
-            Expanded(
-              child: capture.wrapTarget(
-                key: const Key('ielts-mock-record'),
-                semanticsLabel: '点击或长按说话',
-                child: const SizedBox(
-                  height: 48,
-                  child: Center(
-                    child: Text(
-                      '点击或长按说话',
-                      style: TextStyle(
-                        color: SpeakUpDesign.secondary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 42),
-          ],
-        );
-      }
-      return PracticeIdleComposer(
-        capture: capture,
-        textMode: false,
-        onToggleTextMode: onShowText,
-        onSubmitText: onShowText,
-        keyPrefix: 'ielts-mock',
-      );
-    }
-    if (!allowTextAnswer) {
-      final starting = phase == VoiceCapturePhase.starting;
-      return Row(
-        children: [
-          IconButton(
-            key: const Key('ielts-mock-buffered-cancel'),
-            tooltip: '取消录音',
-            onPressed: starting ? null : capture.cancelTapCapture,
-            icon: const Icon(Icons.close_rounded),
-          ),
-          Expanded(
-            child: FilledButton.icon(
-              key: const Key('ielts-mock-record'),
-              onPressed: starting ? null : capture.sendVoiceTapCapture,
-              icon: const Icon(Icons.graphic_eq_rounded),
-              label: Text(starting ? '正在打开麦克风…' : '点击发送语音'),
-            ),
-          ),
-          const SizedBox(width: 42),
-        ],
-      );
-    }
-    return PracticeRecordingComposer(
+    return VoiceComposerDock(
       capture: capture,
       phase: phase,
-      keyPrefix: 'ielts-mock',
+      elapsed: Duration.zero,
+      enabled: true,
+      recordKey: const Key('ielts-mock-record'),
+      stopRecordingKey: const Key('ielts-mock-stop-recording'),
+      stateLabelKey: const Key('ielts-mock-voice-state-label'),
+      durationKey: const Key('ielts-mock-voice-target-duration'),
       upwardCancelOnly: true,
+      showTextAction: allowTextAnswer,
+      directTapToSend: !allowTextAnswer,
+      showTextKey: const Key('ielts-mock-open-keyboard'),
+      onShowText: onShowText,
     );
   }
 }
@@ -2279,53 +2228,24 @@ class _IeltsConvertedAnswerDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return ConversationTextComposerDock(
       key: const Key('ielts-mock-converted-answer'),
-      children: [
-        IconButton.outlined(
-          key: const Key('ielts-mock-cancel-converted-answer'),
-          onPressed: submitting ? null : onCancel,
-          tooltip: 'Cancel text draft',
-          icon: const Icon(Icons.close_rounded),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            key: const Key('ielts-mock-converted-answer-field'),
-            controller: controller,
-            focusNode: focusNode,
-            enabled: !submitting,
-            minLines: 1,
-            maxLines: 3,
-            maxLength: 8000,
-            textInputAction: TextInputAction.newline,
-            decoration: const InputDecoration(
-              hintText: 'Edit the transcript before sending…',
-              counterText: '',
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: controller,
-          builder: (context, value, _) => IconButton.filled(
-            key: const Key('ielts-mock-submit-converted-answer'),
-            onPressed: submitting || value.text.trim().isEmpty
-                ? null
-                : () => onSubmit(),
-            tooltip: 'Send text answer',
-            icon: submitting
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.arrow_upward_rounded),
-          ),
-        ),
-      ],
+      controller: controller,
+      focusNode: focusNode,
+      enabled: !submitting,
+      canSubmit: !submitting,
+      submitting: submitting,
+      onReturn: onCancel,
+      onSubmit: onSubmit,
+      returnKey: const Key('ielts-mock-cancel-converted-answer'),
+      fieldKey: const Key('ielts-mock-converted-answer-field'),
+      submitKey: const Key('ielts-mock-submit-converted-answer'),
+      returnTooltip: 'Cancel text draft',
+      returnIcon: Icons.close_rounded,
+      hintText: 'Edit the transcript before sending…',
+      maxLines: 3,
+      maxLength: 8000,
+      textInputAction: TextInputAction.newline,
     );
   }
 }
