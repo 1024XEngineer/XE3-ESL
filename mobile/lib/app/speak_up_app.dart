@@ -472,9 +472,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         onExitRequested: launchController?.parkCurrentPractice,
       );
     }
-    if (experience != PracticeExperience.interview &&
-        !(widget.allowFakePreview && experience == null)) {
-      throw StateError('Active practice is missing a supported Experience.');
+    if (experience == null && !widget.allowFakePreview) {
+      return const _NoActivePracticePage();
     }
     return InterviewPracticePage(
       previewMode: widget.allowFakePreview,
@@ -485,6 +484,19 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
       onContinueWithAgent: launchController?.completeAndContinueWithAgent,
+    );
+  }
+}
+
+class _NoActivePracticePage extends StatelessWidget {
+  const _NoActivePracticePage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('practice-page'),
+      appBar: AppBar(title: const Text('练习')),
+      body: const SafeArea(child: Center(child: Text('当前没有进行中的练习。'))),
     );
   }
 }
