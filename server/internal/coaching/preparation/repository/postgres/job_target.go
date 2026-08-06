@@ -1,4 +1,4 @@
-package preparation
+package postgres
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -35,7 +36,7 @@ func (r *PostgresJobTargetRepository) Create(
 ) (JobTarget, bool, error) {
 	if !r.valid() || ctx == nil || !validPreparationActor(actor) ||
 		!validResourceIdentifier(command.TargetID) ||
-		!validJobTargetInput(command.Request.input()) ||
+		!validJobTargetInput(command.Request.Input()) ||
 		!validJobTargetOperationIntent(
 			command.Intent,
 			"POST",
@@ -83,7 +84,7 @@ func (r *PostgresJobTargetRepository) Create(
 		return replayed, true, nil
 	}
 
-	input := command.Request.input()
+	input := command.Request.Input()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO preparation_job_targets (
 			owner_user_id,
@@ -180,7 +181,7 @@ func (r *PostgresJobTargetRepository) Update(
 	if !r.valid() || ctx == nil || !validPreparationActor(actor) ||
 		!validResourceIdentifier(command.TargetID) ||
 		command.Request.ExpectedInputVersion < 1 ||
-		!validJobTargetInput(command.Request.input()) ||
+		!validJobTargetInput(command.Request.Input()) ||
 		!validJobTargetOperationIntent(
 			command.Intent,
 			"PUT",
@@ -242,7 +243,7 @@ func (r *PostgresJobTargetRepository) Update(
 	if current.Stage == JobTargetStageDiscarded {
 		return JobTarget{}, false, ErrJobTargetNotFound
 	}
-	nextInput := command.Request.input()
+	nextInput := command.Request.Input()
 	if current.Input != nextInput {
 		if _, err := tx.Exec(ctx, `
 			UPDATE preparation_job_target_analysis_attempts
@@ -693,7 +694,7 @@ func (r *PostgresJobTargetRepository) FailAnalysis(
 ) (JobTarget, error) {
 	category := strings.TrimSpace(stableErrorCategory)
 	if !r.valid() || ctx == nil || !validJobTargetAnalysisClaim(claim) ||
-		!stableJobTargetCategoryPattern.MatchString(category) {
+		!ValidStableJobTargetCategory(category) {
 		return JobTarget{}, ErrJobTargetInvalid
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})

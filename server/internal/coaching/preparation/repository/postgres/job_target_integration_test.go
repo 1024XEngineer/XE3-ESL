@@ -1,4 +1,4 @@
-package preparation_test
+package postgres_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
@@ -27,7 +28,7 @@ const (
 func TestPostgresJobTargetLifecycleRecoveryAndFencing(t *testing.T) {
 	_, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA, preparationUserB)
-	repository := preparation.NewPostgresJobTargetRepository(pool)
+	repository := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	ctx := context.Background()
 	actorA := preparationActor(preparationUserA, preparationSessionA)
 	actorB := preparationActor(preparationUserB, preparationSessionB)
@@ -422,7 +423,7 @@ func TestPostgresJobTargetLifecycleRecoveryAndFencing(t *testing.T) {
 		)
 	}
 
-	restarted := preparation.NewPostgresJobTargetRepository(pool)
+	restarted := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	afterRestart, err := restarted.Get(ctx, actorA, target.ID)
 	if err != nil ||
 		afterRestart.Stage !=
@@ -439,7 +440,7 @@ func TestPostgresJobTargetConfirmationRejectsMultiRoleInterview(
 ) {
 	_, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
-	repository := preparation.NewPostgresJobTargetRepository(pool)
+	repository := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	ctx := context.Background()
 	actor := preparationActor(preparationUserA, preparationSessionA)
 	createRequest := preparation.CreateJobTargetRequest{
@@ -556,7 +557,7 @@ func TestPostgresJobTargetConfirmationRejectsMultiRoleInterview(
 func TestPostgresJobTargetDraftDiscardIsActorScoped(t *testing.T) {
 	_, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA, preparationUserB)
-	repository := preparation.NewPostgresJobTargetRepository(pool)
+	repository := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	ctx := context.Background()
 	actorA := preparationActor(preparationUserA, preparationSessionA)
 	actorB := preparationActor(preparationUserB, preparationSessionB)
@@ -637,7 +638,7 @@ func TestPostgresJobTargetConcurrentConfirmationIsExactlyOnce(
 ) {
 	_, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
-	repository := preparation.NewPostgresJobTargetRepository(pool)
+	repository := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	ctx := context.Background()
 	actor := preparationActor(preparationUserA, preparationSessionA)
 	createRequest := preparation.CreateJobTargetRequest{

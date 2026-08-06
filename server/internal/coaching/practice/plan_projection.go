@@ -221,17 +221,27 @@ type JobTargetCandidate struct {
 }
 
 type PreparationSnapshot struct {
-	ID                                 string                  `json:"preparation_snapshot_id"`
-	SourceProfileID                    string                  `json:"source_profile_id"`
-	SourceVersion                      int                     `json:"source_version"`
-	SourceJobTargetID                  string                  `json:"source_job_target_id,omitempty"`
-	SourceJobTargetConfirmationVersion int                     `json:"source_job_target_confirmation_version,omitempty"`
-	JobTargetInputSnapshot             *JobTargetInput         `json:"job_target_input_snapshot,omitempty"`
-	JobTargetCandidateSnapshot         *JobTargetCandidate     `json:"job_target_candidate_snapshot,omitempty"`
-	ResumeSnapshot                     *ResumeRevisionSnapshot `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot             string                  `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot                 string                  `json:"background_snapshot"`
-	CreatedAt                          time.Time               `json:"created_at"`
+	ID                                 string                      `json:"preparation_snapshot_id"`
+	SourceProfileID                    string                      `json:"source_profile_id"`
+	SourceVersion                      int                         `json:"source_version"`
+	Kind                               string                      `json:"preparation_kind,omitempty"`
+	ScenarioContext                    *ScenarioPreparationContext `json:"scenario_context,omitempty"`
+	SourceJobTargetID                  string                      `json:"source_job_target_id,omitempty"`
+	SourceJobTargetConfirmationVersion int                         `json:"source_job_target_confirmation_version,omitempty"`
+	JobTargetInputSnapshot             *JobTargetInput             `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot         *JobTargetCandidate         `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeSnapshot                     *ResumeRevisionSnapshot     `json:"resume_snapshot,omitempty"`
+	JobDescriptionSnapshot             string                      `json:"job_description_snapshot,omitempty"`
+	BackgroundSnapshot                 string                      `json:"background_snapshot"`
+	CreatedAt                          time.Time                   `json:"created_at"`
+}
+
+type ScenarioPreparationContext struct {
+	Situation          string `json:"situation"`
+	UserRole           string `json:"user_role"`
+	CounterpartRole    string `json:"counterpart_role"`
+	Goal               string `json:"goal"`
+	CounterpartPersona string `json:"counterpart_persona"`
 }
 
 type EarlyCompletionRule string

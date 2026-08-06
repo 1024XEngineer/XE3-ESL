@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -28,33 +29,35 @@ const (
 
 // Profile is Preparation's production, actor-owned profile record.
 type Profile struct {
-	ID                           string    `json:"preparation_profile_id"`
-	UserID                       string    `json:"user_id"`
-	ResumeID                     string    `json:"resume_id,omitempty"`
-	ResumeRevision               int64     `json:"resume_revision,omitempty"`
-	JobDescriptionRef            string    `json:"job_description_ref,omitempty"`
-	BackgroundSummary            string    `json:"background_summary"`
-	JobTargetID                  string    `json:"job_target_id,omitempty"`
-	JobTargetConfirmationVersion int       `json:"job_target_confirmation_version,omitempty"`
-	Version                      int       `json:"version"`
-	UpdatedAt                    time.Time `json:"updated_at"`
+	ID                           string                            `json:"preparation_profile_id"`
+	UserID                       string                            `json:"user_id"`
+	Context                      *preparationmodel.ResolvedContext `json:"preparation_context,omitempty"`
+	ResumeID                     string                            `json:"resume_id,omitempty"`
+	ResumeRevision               int64                             `json:"resume_revision,omitempty"`
+	JobDescriptionRef            string                            `json:"job_description_ref,omitempty"`
+	BackgroundSummary            string                            `json:"background_summary"`
+	JobTargetID                  string                            `json:"job_target_id,omitempty"`
+	JobTargetConfirmationVersion int                               `json:"job_target_confirmation_version,omitempty"`
+	Version                      int                               `json:"version"`
+	UpdatedAt                    time.Time                         `json:"updated_at"`
 }
 
 // Snapshot is an immutable copy of the exact Profile version accepted by the
 // create request. Optional source references are copied as frozen values; no
 // later Profile or external reference change can reinterpret this record.
 type Snapshot struct {
-	ID                                 string                  `json:"preparation_snapshot_id"`
-	SourceProfileID                    string                  `json:"source_profile_id"`
-	SourceVersion                      int                     `json:"source_version"`
-	SourceJobTargetID                  string                  `json:"source_job_target_id,omitempty"`
-	SourceJobTargetConfirmationVersion int                     `json:"source_job_target_confirmation_version,omitempty"`
-	JobTargetInputSnapshot             *JobTargetInput         `json:"job_target_input_snapshot,omitempty"`
-	JobTargetCandidateSnapshot         *JobTargetCandidate     `json:"job_target_candidate_snapshot,omitempty"`
-	ResumeSnapshot                     *ResumeRevisionSnapshot `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot             string                  `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot                 string                  `json:"background_snapshot"`
-	CreatedAt                          time.Time               `json:"created_at"`
+	ID                                 string                            `json:"preparation_snapshot_id"`
+	SourceProfileID                    string                            `json:"source_profile_id"`
+	SourceVersion                      int                               `json:"source_version"`
+	Context                            *preparationmodel.ResolvedContext `json:"preparation_context,omitempty"`
+	SourceJobTargetID                  string                            `json:"source_job_target_id,omitempty"`
+	SourceJobTargetConfirmationVersion int                               `json:"source_job_target_confirmation_version,omitempty"`
+	JobTargetInputSnapshot             *JobTargetInput                   `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot         *JobTargetCandidate               `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeSnapshot                     *ResumeRevisionSnapshot           `json:"resume_snapshot,omitempty"`
+	JobDescriptionSnapshot             string                            `json:"job_description_snapshot,omitempty"`
+	BackgroundSnapshot                 string                            `json:"background_snapshot"`
+	CreatedAt                          time.Time                         `json:"created_at"`
 }
 
 // IdempotencyIntent is derived from trusted transport routing plus a canonical
@@ -71,6 +74,7 @@ type CreateProfileCommand struct {
 	ProfileID      string
 	Request        CreateProfileRequest
 	ResumeRevision *ResumeRevisionSnapshot
+	Context        *preparationmodel.ResolvedContext
 	Intent         IdempotencyIntent
 }
 
@@ -142,18 +146,48 @@ type ResourceIDGenerator interface {
 	NewID() (string, error)
 }
 
+type ContextResolver interface {
+	ResolveContext(
+		context.Context,
+		requestcontext.Actor,
+		preparationmodel.ContextInput,
+	) (preparationmodel.ResolvedContext, error)
+}
+
 // PersistenceService validates trusted actor input and canonicalizes create
 // intents before handing them to the transactional repository.
 type PersistenceService struct {
 	repository ProfileRepository
 	ids        ResourceIDGenerator
 	resumes    ResumeRevisionReader
+	contexts   ContextResolver
 }
 
 func NewPersistenceService(
 	repository ProfileRepository,
 	ids ResourceIDGenerator,
 	resumes ResumeRevisionReader,
+) (*PersistenceService, error) {
+	return newPersistenceService(repository, ids, resumes, nil)
+}
+
+func NewPersistenceServiceWithContext(
+	repository ProfileRepository,
+	ids ResourceIDGenerator,
+	resumes ResumeRevisionReader,
+	contexts ContextResolver,
+) (*PersistenceService, error) {
+	if contexts == nil {
+		return nil, errors.New("preparation: context resolver is required")
+	}
+	return newPersistenceService(repository, ids, resumes, contexts)
+}
+
+func newPersistenceService(
+	repository ProfileRepository,
+	ids ResourceIDGenerator,
+	resumes ResumeRevisionReader,
+	contexts ContextResolver,
 ) (*PersistenceService, error) {
 	if repository == nil || ids == nil || resumes == nil {
 		return nil, errors.New("preparation: persistence dependency is required")
@@ -162,6 +196,7 @@ func NewPersistenceService(
 		repository: repository,
 		ids:        ids,
 		resumes:    resumes,
+		contexts:   contexts,
 	}, nil
 }
 
@@ -194,6 +229,38 @@ func (s *PersistenceService) CreateProfile(
 	if found {
 		return replayedProfile, true, nil
 	}
+	var resolvedContext *preparationmodel.ResolvedContext
+	if request.Kind != "" {
+		if s.contexts == nil {
+			return Profile{}, false, ErrProfileInvalid
+		}
+		input := preparationmodel.ContextInput{Kind: request.Kind}
+		switch request.Kind {
+		case preparationmodel.PreparationKindInterview:
+			interview := &preparationmodel.InterviewContextInput{
+				JobTarget: preparationmodel.ConfirmedJobTargetRef{
+					JobTargetID:         request.JobTargetID,
+					ConfirmationVersion: request.JobTargetConfirmationVersion,
+				},
+			}
+			if request.ResumeID != "" {
+				interview.Resume = &preparationmodel.ResumeRevisionRef{
+					ResumeID: request.ResumeID,
+					Revision: request.ResumeRevision,
+				}
+			}
+			input.Interview = interview
+		case preparationmodel.PreparationKindScenario:
+			input.Scenario = request.Scenario
+		default:
+			return Profile{}, false, ErrProfileInvalid
+		}
+		resolved, err := s.contexts.ResolveContext(ctx, actor, input)
+		if err != nil {
+			return Profile{}, false, ErrProfileInvalid
+		}
+		resolvedContext = &resolved
+	}
 	var resumeRevision *ResumeRevisionSnapshot
 	if request.ResumeID != "" {
 		resolved, err := s.resumes.ReadOwnedRevision(
@@ -221,6 +288,7 @@ func (s *PersistenceService) CreateProfile(
 		ProfileID:      profileID,
 		Request:        request,
 		ResumeRevision: resumeRevision,
+		Context:        resolvedContext,
 		Intent:         intent,
 	})
 }
@@ -330,15 +398,35 @@ func validCreateProfileRequest(request CreateProfileRequest) bool {
 		request.JobTargetConfirmationVersion == 0) ||
 		(validResourceIdentifier(request.JobTargetID) &&
 			request.JobTargetConfirmationVersion > 0)
-	return resumePairValid && targetPairValid &&
+	kindShapeValid := false
+	switch request.Kind {
+	case "":
+		kindShapeValid = request.Scenario == nil
+	case preparationmodel.PreparationKindInterview:
+		kindShapeValid = request.Scenario == nil && request.JobTargetID != ""
+	case preparationmodel.PreparationKindScenario:
+		kindShapeValid = request.Scenario != nil && request.ResumeID == "" &&
+			request.JobTargetID == "" && request.JobDescriptionRef == ""
+	}
+	backgroundValid := validRequiredPreparationText(
+		request.BackgroundSummary,
+		maxPreparationSummaryLength,
+	)
+	if request.Kind == preparationmodel.PreparationKindScenario {
+		backgroundValid = request.BackgroundSummary == "" || backgroundValid
+	}
+	return kindShapeValid && resumePairValid && targetPairValid &&
 		validOptionalPreparationText(
 			request.JobDescriptionRef,
 			maxPreparationReferenceLength,
 		) &&
-		validRequiredPreparationText(
-			request.BackgroundSummary,
-			maxPreparationSummaryLength,
-		)
+		backgroundValid
+}
+
+// ValidCreateProfileRequest is exported only for Preparation transport
+// adapters. Domain callers should enter through PersistenceService.
+func ValidCreateProfileRequest(request CreateProfileRequest) bool {
+	return validCreateProfileRequest(request)
 }
 
 func targetedPreparationSnapshot(snapshot Snapshot) bool {
@@ -346,6 +434,10 @@ func targetedPreparationSnapshot(snapshot Snapshot) bool {
 		snapshot.SourceJobTargetConfirmationVersion > 0 &&
 		snapshot.JobTargetInputSnapshot != nil &&
 		snapshot.JobTargetCandidateSnapshot != nil
+}
+
+func TargetedPreparationSnapshot(snapshot Snapshot) bool {
+	return targetedPreparationSnapshot(snapshot)
 }
 
 func cloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
@@ -356,6 +448,10 @@ func cloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
 	return &result
 }
 
+func CloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
+	return cloneSnapshotJobTargetInput(input)
+}
+
 func cloneSnapshotJobTargetCandidate(
 	candidate *JobTargetCandidate,
 ) *JobTargetCandidate {
@@ -364,6 +460,12 @@ func cloneSnapshotJobTargetCandidate(
 	}
 	result := cloneJobTargetCandidate(*candidate)
 	return &result
+}
+
+func CloneSnapshotJobTargetCandidate(
+	candidate *JobTargetCandidate,
+) *JobTargetCandidate {
+	return cloneSnapshotJobTargetCandidate(candidate)
 }
 
 func validOptionalPreparationText(value string, maxLength int) bool {
@@ -385,6 +487,10 @@ func validResourceIdentifier(value string) bool {
 		strings.TrimSpace(value) == value
 }
 
+func ValidResourceIdentifier(value string) bool {
+	return validResourceIdentifier(value)
+}
+
 func validCanonicalPath(value string) bool {
 	return strings.HasPrefix(value, "/") &&
 		len(value) <= 1024 &&
@@ -392,11 +498,19 @@ func validCanonicalPath(value string) bool {
 		strings.TrimSpace(value) == value
 }
 
+func ValidCanonicalPath(value string) bool {
+	return validCanonicalPath(value)
+}
+
 func validIdempotencyKey(value string) bool {
 	return len(value) >= 8 &&
 		len(value) <= 128 &&
 		!strings.ContainsRune(value, '\x00') &&
 		strings.TrimSpace(value) == value
+}
+
+func ValidIdempotencyKey(value string) bool {
+	return validIdempotencyKey(value)
 }
 
 var _ ProfileSnapshotReader = (*PersistenceService)(nil)

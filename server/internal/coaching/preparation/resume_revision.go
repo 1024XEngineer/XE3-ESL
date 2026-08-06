@@ -93,6 +93,10 @@ func validResumeRevisionSnapshot(snapshot ResumeRevisionSnapshot) bool {
 	return err == nil && len(encoded) <= maxResumeMaterialBytes
 }
 
+func ValidResumeRevisionSnapshot(snapshot ResumeRevisionSnapshot) bool {
+	return validResumeRevisionSnapshot(snapshot)
+}
+
 func cloneResumeRevisionSnapshot(
 	snapshot ResumeRevisionSnapshot,
 ) ResumeRevisionSnapshot {

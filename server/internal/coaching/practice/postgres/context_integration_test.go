@@ -16,6 +16,7 @@ import (
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	preparationsource "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/preparationsource"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -25,7 +26,7 @@ func TestContextRepositoryRequiresCurrentReadyPlanRevision(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	owner := contextOwnerA()
 	seedContextOwner(t, pool, &owner)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	plan := createContextPlan(t, pool, planRepository, owner, "plan-current")
 
 	revised, _, err := planRepository.RevisePlan(
@@ -87,7 +88,7 @@ func TestContextRepositoryFreezesTurnPolicyReferenceAcrossRestart(t *testing.T) 
 	plan := createContextPlan(
 		t,
 		pool,
-		preparation.NewPostgresPlanRepository(pool),
+		preparationpostgres.NewPostgresPlanRepository(pool),
 		owner,
 		"plan-turn-policy",
 	)
@@ -206,7 +207,7 @@ func TestContextRepositoryRejectsArchivedPlanAndConflictsByPlan(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	owner := contextOwnerA()
 	seedContextOwner(t, pool, &owner)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	firstPlan := createContextPlan(t, pool, planRepository, owner, "plan-active")
 	first := contextSessionCommand(owner, firstPlan, "session-first", "snapshot-first", "session-first-key")
 	if _, _, err := repository.CreateSession(context.Background(), owner.Actor, first); err != nil {
@@ -246,7 +247,7 @@ func TestContextRepositoryPersistsCanonicalParticipantRoles(t *testing.T) {
 	plan := createContextPlan(
 		t,
 		pool,
-		preparation.NewPostgresPlanRepository(pool),
+		preparationpostgres.NewPostgresPlanRepository(pool),
 		owner,
 		"plan-roles",
 	)
@@ -268,7 +269,7 @@ func TestContextRepositoryDeletesSessionAuthorityOnly(t *testing.T) {
 	plan := createContextPlan(
 		t,
 		pool,
-		preparation.NewPostgresPlanRepository(pool),
+		preparationpostgres.NewPostgresPlanRepository(pool),
 		owner,
 		"plan-deletion",
 	)
@@ -419,7 +420,7 @@ func seedContextOwner(
 func createContextPlan(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	repository *preparation.PostgresPlanRepository,
+	repository *preparationpostgres.PostgresPlanRepository,
 	owner contextOwnerFixture,
 	planID string,
 ) preparation.PracticePlan {

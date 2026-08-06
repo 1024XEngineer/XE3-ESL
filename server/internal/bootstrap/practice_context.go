@@ -16,6 +16,13 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	preparationagentthread "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentthread"
+	preparationinterviewintegration "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/integration/interview"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
+	preparationrouter "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/router"
+	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
+	preparationinterview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/strategy/interview"
+	preparationscenario "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/strategy/scenario"
+	preparationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/transport/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -45,12 +52,10 @@ type IdentityAgentPracticeComposition struct {
 	memoryExtraction       memory.ExtractionProcessor
 	summaryProcessor       agentsummary.Processor
 	identityHTTP           *identity.HTTPHandler
-	preparationApplication *preparation.PersistenceService
-	preparationHTTP        *preparation.ProfileHTTPHandler
-	jobTargetApplication   *preparation.JobTargetService
-	jobTargetHTTP          *preparation.JobTargetHTTPHandler
-	planApplication        *preparation.PlanService
-	planHTTP               *preparation.PlanHTTPHandler
+	preparationApplication *preparationservice.ProfileService
+	preparationHTTP        *preparationrouter.Router
+	jobTargetApplication   *preparationservice.JobTargetApplication
+	planApplication        *preparationservice.PlanService
 	practiceApplication    *practice.SessionApplication
 	practiceHTTP           *practiceapi.Handler
 	productionTools        *capability.Registry
@@ -230,7 +235,7 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 
-	preparationRepository := preparation.NewPostgresProfileRepository(database)
+	preparationRepository := preparationpostgres.NewPostgresProfileRepository(database)
 	resumeRepository, err := resumepersistence.NewGormRepositoryFromPool(database)
 	if err != nil {
 		return nil, err
@@ -245,15 +250,39 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	preparationApplication, err := preparation.NewPersistenceService(
-		preparationRepository,
-		base.ids,
+	jobTargetRepository := preparationpostgres.NewPostgresJobTargetRepository(database)
+	interviewVerifier, err := preparationinterviewintegration.New(
 		resumeRevisionReader,
+		jobTargetRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
-	preparationHTTP, err := preparation.NewProfileHTTPHandler(
+	interviewStrategy, err := preparationinterview.New(interviewVerifier)
+	if err != nil {
+		return nil, err
+	}
+	strategyRegistry, err := preparationservice.NewStrategyRegistry(
+		interviewStrategy,
+		preparationscenario.New(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	contextService, err := preparationservice.NewContextService(strategyRegistry)
+	if err != nil {
+		return nil, err
+	}
+	preparationApplication, err := preparationservice.NewProfileService(
+		preparationRepository,
+		base.ids,
+		resumeRevisionReader,
+		contextService,
+	)
+	if err != nil {
+		return nil, err
+	}
+	preparationHandler, err := preparationhttp.NewProfileHTTPHandler(
 		preparationApplication,
 	)
 	if err != nil {
@@ -267,8 +296,8 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	jobTargetApplication, err := preparation.NewJobTargetService(
-		preparation.NewPostgresJobTargetRepository(database),
+	jobTargetApplication, err := preparationservice.NewJobTargetApplication(
+		jobTargetRepository,
 		base.ids,
 		jobTargetParser,
 		catalog,
@@ -276,7 +305,7 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	jobTargetHTTP, err := preparation.NewJobTargetHTTPHandler(
+	jobTargetHTTP, err := preparationhttp.NewJobTargetHTTPHandler(
 		jobTargetApplication,
 	)
 	if err != nil {
@@ -287,8 +316,8 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	planApplication, err := preparation.NewPlanService(
-		preparation.NewPostgresPlanRepository(database),
+	planApplication, err := preparationservice.NewPlanService(
+		preparationpostgres.NewPostgresPlanRepository(database),
 		base.ids,
 		preparationApplication,
 		base.goalService,
@@ -300,7 +329,15 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	planHTTP, err := preparation.NewPlanHTTPHandler(planApplication)
+	planHTTP, err := preparationhttp.NewPlanHTTPHandler(planApplication)
+	if err != nil {
+		return nil, err
+	}
+	preparationHTTP, err := preparationrouter.New(
+		preparationHandler,
+		jobTargetHTTP,
+		planHTTP,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -358,9 +395,7 @@ func newIdentityAgentAndPracticeComposition(
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
 		jobTargetApplication:   jobTargetApplication,
-		jobTargetHTTP:          jobTargetHTTP,
 		planApplication:        planApplication,
-		planHTTP:               planHTTP,
 		practiceApplication:    practiceApplication,
 		practiceHTTP:           practiceHTTP,
 		productionTools:        base.productionTools,
@@ -413,7 +448,7 @@ func (c *IdentityAgentPracticeComposition) ThreadSummaryProcessor() agentsummary
 	return c.summaryProcessor
 }
 
-func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation.PersistenceService {
+func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparationservice.ProfileService {
 	if c == nil {
 		return nil
 	}
@@ -427,7 +462,7 @@ func (c *IdentityAgentPracticeComposition) JobTargetApplication() *preparation.J
 	return c.jobTargetApplication
 }
 
-func (c *IdentityAgentPracticeComposition) PlanApplication() *preparation.PlanService {
+func (c *IdentityAgentPracticeComposition) PlanApplication() *preparationservice.PlanService {
 	if c == nil {
 		return nil
 	}
@@ -462,8 +497,6 @@ func (c *IdentityAgentPracticeComposition) ProtectedRoutes(
 	additional ...ProtectedRouteRegistrar,
 ) (RouteRegistrar, error) {
 	if c == nil || c.identityHTTP == nil || c.preparationHTTP == nil ||
-		c.jobTargetHTTP == nil ||
-		c.planHTTP == nil ||
 		c.practiceHTTP == nil {
 		return nil, errors.New(
 			"bootstrap: authenticated context routes are unavailable",
@@ -473,8 +506,6 @@ func (c *IdentityAgentPracticeComposition) ProtectedRoutes(
 	registrars = append(
 		registrars,
 		c.preparationHTTP,
-		c.jobTargetHTTP,
-		c.planHTTP,
 		c.practiceHTTP,
 	)
 	for _, registrar := range additional {

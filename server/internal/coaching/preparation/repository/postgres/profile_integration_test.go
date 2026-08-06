@@ -1,4 +1,4 @@
-package preparation_test
+package postgres_test
 
 import (
 	"context"
@@ -20,9 +20,72 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
+
+func TestPostgresProfileRepositoryFreezesScenarioContext(t *testing.T) {
+	repository, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	ctx := context.Background()
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	scenario := preparationmodel.ScenarioContextInput{
+		Situation:          "Return a damaged product",
+		UserRole:           "Customer",
+		CounterpartRole:    "Store manager",
+		Goal:               "Agree on a replacement",
+		CounterpartPersona: "Professional and cautious",
+	}
+	request := preparation.CreateProfileRequest{
+		Kind:     preparationmodel.PreparationKindScenario,
+		Scenario: &scenario,
+	}
+	resolved := &preparationmodel.ResolvedContext{
+		Kind: preparationmodel.PreparationKindScenario,
+		Scenario: &preparationmodel.ScenarioContextSnapshot{
+			Situation:          scenario.Situation,
+			UserRole:           scenario.UserRole,
+			CounterpartRole:    scenario.CounterpartRole,
+			Goal:               scenario.Goal,
+			CounterpartPersona: scenario.CounterpartPersona,
+		},
+	}
+	profile, replayed, err := repository.CreateProfile(
+		ctx,
+		actor,
+		preparation.CreateProfileCommand{
+			ProfileID: "profile-scenario",
+			Request:   request,
+			Context:   resolved,
+			Intent:    profileIntent("scenario-profile-key", request),
+		},
+	)
+	if err != nil || replayed || profile.Context == nil ||
+		profile.BackgroundSummary != scenario.Situation {
+		t.Fatalf("CreateProfile = (%#v, %t, %v)", profile, replayed, err)
+	}
+	snapshotRequest := preparation.CreateSnapshotRequest{SourceVersion: 1}
+	snapshot, replayed, err := repository.CreateSnapshot(
+		ctx,
+		actor,
+		preparation.CreateSnapshotCommand{
+			SnapshotID: "snapshot-scenario",
+			ProfileID:  profile.ID,
+			Request:    snapshotRequest,
+			Intent: snapshotIntent(
+				profile.ID,
+				"scenario-snapshot-key",
+				snapshotRequest,
+			),
+		},
+	)
+	if err != nil || replayed || snapshot.Context == nil ||
+		snapshot.Context.Scenario.Goal != scenario.Goal {
+		t.Fatalf("CreateSnapshot = (%#v, %t, %v)", snapshot, replayed, err)
+	}
+}
 
 const (
 	preparationUserA    = "10000000-0000-4000-8000-000000000111"
@@ -385,7 +448,7 @@ func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 		t.Fatal("restart isolated PostgreSQL pool")
 	}
 	t.Cleanup(restartedPool.Close)
-	repository = preparation.NewPostgresProfileRepository(restartedPool)
+	repository = preparationpostgres.NewPostgresProfileRepository(restartedPool)
 
 	restartedProfile, replayed, err := repository.CreateProfile(
 		ctx,
@@ -601,7 +664,7 @@ func TestPostgresProfileRepositoryDeletionFenceAndOrder(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
-	jobTargetRepository := preparation.NewPostgresJobTargetRepository(pool)
+	jobTargetRepository := preparationpostgres.NewPostgresJobTargetRepository(pool)
 	jobTargetRequest := preparation.CreateJobTargetRequest{
 		Source:   preparation.JobTargetSourceQuickStart,
 		JobTitle: "Backend engineer",
@@ -986,7 +1049,7 @@ var preparationSchemaCounter atomic.Uint64
 
 func newPreparationRepository(
 	t *testing.T,
-) (*preparation.PostgresProfileRepository, *pgxpool.Pool) {
+) (*preparationpostgres.PostgresProfileRepository, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL, cleanup := isolatedPreparationDatabaseURL(t)
 
@@ -1021,7 +1084,7 @@ func newPreparationRepository(
 		pool.Close()
 		cleanup()
 	})
-	return preparation.NewPostgresProfileRepository(pool), pool
+	return preparationpostgres.NewPostgresProfileRepository(pool), pool
 }
 
 func isolatedPreparationDatabaseURL(t *testing.T) (string, func()) {

@@ -63,4 +63,6 @@ import "embed"
 //go:embed 000075_remove_agent_message_memes.*.sql
 //go:embed 000076_temporary_resumes.*.sql
 //go:embed 000077_scene_four_experiences.*.sql
+//go:embed 000078_preparation_typed_contexts.*.sql
+//go:embed 000079_preparation_plan_typed_context.*.sql
 var Files embed.FS

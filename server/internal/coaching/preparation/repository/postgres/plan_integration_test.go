@@ -1,4 +1,4 @@
-package preparation_test
+package postgres_test
 
 import (
 	"context"
@@ -15,6 +15,8 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 )
@@ -24,12 +26,132 @@ const (
 	planGoalA   = "40000000-0000-4000-8000-000000000111"
 )
 
+func TestPostgresPlanRepositoryPersistsTypedPreparationContext(t *testing.T) {
+	profileRepository, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	repository := preparationpostgres.NewPostgresPlanRepository(pool)
+	command := seedPlanCommand(
+		t,
+		pool,
+		profileRepository,
+		actor.UserID,
+		actor.SessionID,
+		"typed-context",
+	)
+	command.PreparationSnapshot.Context = &preparationmodel.ResolvedContext{
+		Kind: preparationmodel.PreparationKindScenario,
+		Scenario: &preparationmodel.ScenarioContextSnapshot{
+			Situation:          "Resolve a delayed flight",
+			UserRole:           "Passenger",
+			CounterpartRole:    "Airline agent",
+			Goal:               "Arrange a suitable replacement flight",
+			CounterpartPersona: "Calm and policy-focused",
+		},
+	}
+
+	created, replayed, err := repository.CreatePlan(
+		context.Background(),
+		actor,
+		command,
+	)
+	if err != nil || replayed ||
+		!reflect.DeepEqual(
+			created.PreparationSnapshot.Context,
+			command.PreparationSnapshot.Context,
+		) {
+		t.Fatalf("CreatePlan typed context = (%#v, %t, %v)", created, replayed, err)
+	}
+
+	read, err := repository.ReadCurrentPlan(
+		context.Background(),
+		actor,
+		created.ID,
+	)
+	if err != nil ||
+		!reflect.DeepEqual(
+			read.PreparationSnapshot.Context,
+			command.PreparationSnapshot.Context,
+		) {
+		t.Fatalf("ReadCurrentPlan typed context = (%#v, %v)", read, err)
+	}
+}
+
+func TestPostgresPlanRepositoryPersistsTypedInterviewResume(t *testing.T) {
+	profileRepository, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	repository := preparationpostgres.NewPostgresPlanRepository(pool)
+	command := seedPlanCommand(
+		t,
+		pool,
+		profileRepository,
+		actor.UserID,
+		actor.SessionID,
+		"typed-interview-resume",
+	)
+	resumeID := "50000000-0000-4000-8000-000000000111"
+	command.PreparationSnapshot.Context = &preparationmodel.ResolvedContext{
+		Kind: preparationmodel.PreparationKindInterview,
+		Interview: &preparationmodel.InterviewContextSnapshot{
+			Resume: &preparationmodel.ResumeRevisionRef{
+				ResumeID: resumeID,
+				Revision: 2,
+			},
+			JobTarget: preparationmodel.ConfirmedJobTargetRef{
+				JobTargetID:         "job-target-interview",
+				ConfirmationVersion: 3,
+			},
+		},
+	}
+	command.PreparationSnapshot.ResumeSnapshot =
+		&preparation.ResumeRevisionSnapshot{
+			ResumeID: resumeID,
+			Revision: 2,
+			Material: preparation.ResumeMaterial{
+				WorkExperiences:      []preparation.ResumeWorkExperience{},
+				ProjectExperiences:   []preparation.ResumeProjectExperience{},
+				EducationExperiences: []preparation.ResumeEducationExperience{},
+				Skills:               []string{"Go"},
+				Awards:               []string{},
+			},
+		}
+
+	created, replayed, err := repository.CreatePlan(
+		context.Background(),
+		actor,
+		command,
+	)
+	if err != nil || replayed || created.PreparationSnapshot.Context == nil ||
+		created.PreparationSnapshot.ResumeSnapshot == nil {
+		t.Fatalf(
+			"CreatePlan typed interview Resume = (%#v, %t, %v)",
+			created,
+			replayed,
+			err,
+		)
+	}
+
+	read, err := repository.ReadCurrentPlan(
+		context.Background(),
+		actor,
+		created.ID,
+	)
+	if err != nil ||
+		!reflect.DeepEqual(
+			read.PreparationSnapshot,
+			command.PreparationSnapshot,
+		) {
+		t.Fatalf("ReadCurrentPlan typed interview Resume = (%#v, %v)", read, err)
+	}
+}
+
 func TestPostgresPlanRepositoryPersistsImmutableRevisionsAndExactReplays(
 	t *testing.T,
 ) {
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA, preparationUserB)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	actorA := preparationActor(preparationUserA, preparationSessionA)
 	actorB := preparationActor(preparationUserB, preparationSessionB)
 	createCommand := seedPlanCommand(
@@ -249,7 +371,7 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
 	actor := preparationActor(preparationUserA, preparationSessionA)
-	repository := preparation.NewPostgresPlanRepository(pool)
+	repository := preparationpostgres.NewPostgresPlanRepository(pool)
 	command := seedPlanCommand(
 		t,
 		pool,
@@ -537,7 +659,7 @@ func TestDeleteProfileDataStopsAtPracticeSessionPlanReference(t *testing.T) {
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
 	actor := preparationActor(preparationUserA, preparationSessionA)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	command := seedPlanCommand(
 		t,
 		pool,
@@ -629,7 +751,7 @@ func TestDeleteProfileDataStopsAtPracticeSessionPlanReference(t *testing.T) {
 func seedPlanCommand(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	profiles *preparation.PostgresProfileRepository,
+	profiles *preparationpostgres.PostgresProfileRepository,
 	userID string,
 	sessionID string,
 	suffix string,

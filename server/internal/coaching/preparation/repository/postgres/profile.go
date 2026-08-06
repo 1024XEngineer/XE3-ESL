@@ -1,4 +1,4 @@
-package preparation
+package postgres
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -73,6 +75,7 @@ func (r *PostgresProfileRepository) CreateProfile(
 		!validPreparationActor(actor) ||
 		!validResourceIdentifier(command.ProfileID) ||
 		!validCreateProfileRequest(command.Request) ||
+		!validCreateProfileContext(command) ||
 		!validCreateProfileResume(command) ||
 		!validPreparationIntent(
 			command.Intent,
@@ -140,9 +143,18 @@ func (r *PostgresProfileRepository) CreateProfile(
 		BackgroundSummary:            command.Request.BackgroundSummary,
 		JobTargetID:                  command.Request.JobTargetID,
 		JobTargetConfirmationVersion: command.Request.JobTargetConfirmationVersion,
+		Context:                      command.Context,
 		Version:                      1,
 	}
+	if profile.BackgroundSummary == "" && profile.Context != nil &&
+		profile.Context.Scenario != nil {
+		profile.BackgroundSummary = profile.Context.Scenario.Situation
+	}
 	resumeMaterial, err := encodeResumeMaterial(command.ResumeRevision)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	encodedContext, err := encodePreparationContext(profile.Context)
 	if err != nil {
 		return Profile{}, false, err
 	}
@@ -156,9 +168,11 @@ func (r *PostgresProfileRepository) CreateProfile(
 				job_description_ref,
 				background_summary,
 				job_target_id,
-				job_target_confirmation_version
+				job_target_confirmation_version,
+				preparation_kind,
+				preparation_context
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING version, updated_at
 	`,
 		actor.UserID,
@@ -172,6 +186,8 @@ func (r *PostgresProfileRepository) CreateProfile(
 		nullablePreparationVersion(
 			profile.JobTargetConfirmationVersion,
 		),
+		nullablePreparationKind(profile.Context),
+		encodedContext,
 	).Scan(&profile.Version, &profile.UpdatedAt)
 	if err != nil {
 		return Profile{}, false, classifyPreparationWriteError(err)
@@ -305,7 +321,7 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 	var sourceVersion int
 	var resumeID string
 	var resumeRevision int64
-	var resumeMaterial, targetInput, targetCandidate []byte
+	var resumeMaterial, targetInput, targetCandidate, preparationContext []byte
 	err = tx.QueryRow(ctx, `
 		SELECT
 			COALESCE(profile.resume_id::text, ''),
@@ -317,7 +333,8 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 			COALESCE(profile.job_target_id, ''),
 			COALESCE(profile.job_target_confirmation_version, 0),
 			confirmation.input_snapshot,
-			confirmation.candidate
+			confirmation.candidate,
+			profile.preparation_context
 		FROM preparation_profiles AS profile
 		LEFT JOIN preparation_job_target_confirmations AS confirmation
 		  ON confirmation.owner_user_id = profile.owner_user_id
@@ -338,6 +355,7 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		&snapshot.SourceJobTargetConfirmationVersion,
 		&targetInput,
 		&targetCandidate,
+		&preparationContext,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Snapshot{}, false, ErrProfileNotFound
@@ -349,6 +367,14 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 	}
 	if sourceVersion != command.Request.SourceVersion {
 		return Snapshot{}, false, ErrProfileConflict
+	}
+	if len(preparationContext) > 0 {
+		if json.Unmarshal(preparationContext, &snapshot.Context) != nil ||
+			snapshot.Context == nil || !snapshot.Context.ValidShape() {
+			return Snapshot{}, false, profileDatabaseFailure(
+				"decode profile Preparation context",
+			)
+		}
 	}
 	if resumeID != "" {
 		var material ResumeMaterial
@@ -398,6 +424,10 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 	if err != nil {
 		return Snapshot{}, false, err
 	}
+	encodedContext, err := encodePreparationContext(snapshot.Context)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO preparation_snapshots (
 			owner_user_id,
@@ -412,11 +442,13 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 				source_job_target_id,
 				source_job_target_confirmation_version,
 				job_target_input_snapshot,
-				job_target_candidate_snapshot
+				job_target_candidate_snapshot,
+				preparation_kind,
+				preparation_context
 			)
 			VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-				$12, $13
+				$12, $13, $14, $15
 			)
 		RETURNING created_at
 	`,
@@ -435,6 +467,8 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		),
 		encodedTargetInput,
 		encodedTargetCandidate,
+		nullablePreparationKind(snapshot.Context),
+		encodedContext,
 	).Scan(&snapshot.CreatedAt)
 	if err != nil {
 		return Snapshot{}, false, classifyPreparationWriteError(err)
@@ -482,7 +516,8 @@ func (r *PostgresProfileRepository) ReadProfile(
 				COALESCE(profile.job_target_id, ''),
 				COALESCE(profile.job_target_confirmation_version, 0),
 				profile.version,
-			profile.updated_at
+			profile.updated_at,
+			profile.preparation_context
 		FROM preparation_profiles AS profile
 		JOIN identity_users AS owner
 		  ON owner.id = profile.owner_user_id
@@ -530,7 +565,8 @@ func (r *PostgresProfileRepository) ReadSnapshot(
 				),
 				snapshot.job_target_input_snapshot,
 				snapshot.job_target_candidate_snapshot,
-				snapshot.created_at
+				snapshot.created_at,
+				snapshot.preparation_context
 		FROM preparation_snapshots AS snapshot
 		JOIN identity_users AS owner
 		  ON owner.id = snapshot.owner_user_id
@@ -681,6 +717,7 @@ type preparationQueryRow interface {
 
 func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 	var profile Profile
+	var preparationContext []byte
 	err := row.Scan(
 		&profile.ID,
 		&profile.UserID,
@@ -692,7 +729,14 @@ func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 		&profile.JobTargetConfirmationVersion,
 		&profile.Version,
 		&profile.UpdatedAt,
+		&preparationContext,
 	)
+	if err == nil && len(preparationContext) > 0 {
+		if json.Unmarshal(preparationContext, &profile.Context) != nil ||
+			profile.Context == nil || !profile.Context.ValidShape() {
+			return Profile{}, ErrProfileRepository
+		}
+	}
 	profile.UpdatedAt = profile.UpdatedAt.UTC()
 	return profile, err
 }
@@ -701,7 +745,7 @@ func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 	var snapshot Snapshot
 	var resumeID string
 	var resumeRevision int64
-	var resumeMaterial, targetInput, targetCandidate []byte
+	var resumeMaterial, targetInput, targetCandidate, preparationContext []byte
 	err := row.Scan(
 		&snapshot.ID,
 		&snapshot.SourceProfileID,
@@ -716,7 +760,14 @@ func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 		&targetInput,
 		&targetCandidate,
 		&snapshot.CreatedAt,
+		&preparationContext,
 	)
+	if err == nil && len(preparationContext) > 0 {
+		if json.Unmarshal(preparationContext, &snapshot.Context) != nil ||
+			snapshot.Context == nil || !snapshot.Context.ValidShape() {
+			return Snapshot{}, ErrProfileRepository
+		}
+	}
 	if err == nil && resumeID != "" {
 		var material ResumeMaterial
 		if len(resumeMaterial) == 0 ||
@@ -770,7 +821,8 @@ func replayProfile(
 		!validResourceIdentifier(profile.ID) ||
 		((profile.ResumeID == "") != (profile.ResumeRevision == 0)) ||
 		((profile.JobTargetID == "") !=
-			(profile.JobTargetConfirmationVersion == 0)) {
+			(profile.JobTargetConfirmationVersion == 0)) ||
+		(profile.Context != nil && !profile.Context.ValidShape()) {
 		return Profile{}, false, profileDatabaseFailure(
 			"decode profile replay",
 		)
@@ -804,7 +856,8 @@ func replaySnapshot(
 		(snapshot.ResumeSnapshot != nil &&
 			!validResumeRevisionSnapshot(*snapshot.ResumeSnapshot)) ||
 		((snapshot.SourceJobTargetID == "") !=
-			(snapshot.SourceJobTargetConfirmationVersion == 0)) {
+			(snapshot.SourceJobTargetConfirmationVersion == 0)) ||
+		(snapshot.Context != nil && !snapshot.Context.ValidShape()) {
 		return Snapshot{}, false, profileDatabaseFailure(
 			"decode snapshot replay",
 		)
@@ -1105,6 +1158,37 @@ func encodeSnapshotJobTarget(snapshot Snapshot) (any, any, error) {
 		return nil, nil, ErrProfileRepository
 	}
 	return input, candidate, nil
+}
+
+func encodePreparationContext(
+	context *preparationmodel.ResolvedContext,
+) ([]byte, error) {
+	if context == nil {
+		return nil, nil
+	}
+	if !context.ValidShape() {
+		return nil, ErrProfileInvalid
+	}
+	encoded, err := json.Marshal(context)
+	if err != nil {
+		return nil, ErrProfileRepository
+	}
+	return encoded, nil
+}
+
+func validCreateProfileContext(command CreateProfileCommand) bool {
+	if command.Request.Kind == "" {
+		return command.Context == nil
+	}
+	return command.Context != nil && command.Context.ValidShape() &&
+		command.Context.Kind == command.Request.Kind
+}
+
+func nullablePreparationKind(context *preparationmodel.ResolvedContext) any {
+	if context == nil || !context.ValidShape() {
+		return nil
+	}
+	return context.Kind
 }
 
 func rollbackPreparationTransaction(ctx context.Context, tx pgx.Tx) {

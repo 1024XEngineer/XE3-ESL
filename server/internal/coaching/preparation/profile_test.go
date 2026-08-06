@@ -6,8 +6,54 @@ import (
 	"strings"
 	"testing"
 
+	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
+
+func TestPersistenceServiceResolvesTypedScenarioContext(t *testing.T) {
+	actor := requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
+	request := CreateProfileRequest{
+		Kind: preparationmodel.PreparationKindScenario,
+		Scenario: &preparationmodel.ScenarioContextInput{
+			Situation:          "Return a damaged product",
+			UserRole:           "Customer",
+			CounterpartRole:    "Store manager",
+			Goal:               "Agree on a replacement",
+			CounterpartPersona: "Professional and cautious",
+		},
+	}
+	resolver := &profileContextResolverStub{}
+	repository := &profileRepositoryReplayStub{}
+	service, err := NewPersistenceServiceWithContext(
+		repository,
+		profileFixedIDGenerator("profile-1"),
+		&profileResumeReaderStub{},
+		resolver,
+	)
+	if err != nil {
+		t.Fatalf("NewPersistenceServiceWithContext: %v", err)
+	}
+
+	_, replayed, err := service.CreateProfile(
+		context.Background(),
+		actor,
+		"scenario-create-key",
+		request,
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateProfile = (%t, %v)", replayed, err)
+	}
+	if resolver.input.Scenario != request.Scenario ||
+		repository.createdProfile.Context == nil ||
+		repository.createdProfile.Context.Scenario.Situation !=
+			request.Scenario.Situation {
+		t.Fatalf(
+			"resolver command = %#v, create command = %#v",
+			resolver.input,
+			repository.createdProfile,
+		)
+	}
+}
 
 func TestPersistenceServiceReplaysBeforeAllocatingResourceID(t *testing.T) {
 	actor := requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
@@ -181,6 +227,34 @@ type profileResumeReaderStub struct {
 		string,
 		int64,
 	) (ResumeRevisionSnapshot, error)
+}
+
+type profileContextResolverStub struct {
+	actor requestcontext.Actor
+	input preparationmodel.ContextInput
+}
+
+func (stub *profileContextResolverStub) ResolveContext(
+	_ context.Context,
+	actor requestcontext.Actor,
+	input preparationmodel.ContextInput,
+) (preparationmodel.ResolvedContext, error) {
+	stub.actor = actor
+	stub.input = input
+	if input.Scenario == nil {
+		return preparationmodel.ResolvedContext{}, preparationmodel.ErrInvalidContext
+	}
+	scenarioInput := input.Scenario
+	return preparationmodel.ResolvedContext{
+		Kind: preparationmodel.PreparationKindScenario,
+		Scenario: &preparationmodel.ScenarioContextSnapshot{
+			Situation:          scenarioInput.Situation,
+			UserRole:           scenarioInput.UserRole,
+			CounterpartRole:    scenarioInput.CounterpartRole,
+			Goal:               scenarioInput.Goal,
+			CounterpartPersona: scenarioInput.CounterpartPersona,
+		},
+	}, nil
 }
 
 func (stub *profileResumeReaderStub) ReadOwnedRevision(
