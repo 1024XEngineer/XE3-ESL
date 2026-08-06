@@ -167,8 +167,33 @@ BEGIN
 
     IF payload ? 'resume_snapshot'
        AND (
-           jsonb_typeof(payload -> 'resume_snapshot') <> 'string'
-           OR payload ->> 'resume_snapshot' = ''
+           jsonb_typeof(payload -> 'resume_snapshot') <> 'object'
+           OR NOT (payload -> 'resume_snapshot') ?& ARRAY[
+               'resume_id',
+               'revision',
+               'material'
+           ]
+           OR (payload -> 'resume_snapshot') - ARRAY[
+               'resume_id',
+               'revision',
+               'material'
+           ] <> '{}'::jsonb
+           OR jsonb_typeof(
+               payload -> 'resume_snapshot' -> 'resume_id'
+           ) <> 'string'
+           OR payload -> 'resume_snapshot' ->> 'resume_id' !~
+               '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+           OR jsonb_typeof(
+               payload -> 'resume_snapshot' -> 'revision'
+           ) <> 'number'
+           OR payload -> 'resume_snapshot' ->> 'revision' !~
+               '^[1-9][0-9]{0,18}$'
+           OR jsonb_typeof(
+               payload -> 'resume_snapshot' -> 'material'
+           ) <> 'object'
+           OR octet_length(
+               (payload -> 'resume_snapshot' -> 'material')::text
+           ) > 524288
        ) THEN
         RETURN false;
     END IF;
