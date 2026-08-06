@@ -226,7 +226,9 @@ func (worker *SpeechFeedbackWorker) processClaim(
 			)
 		return SpeechFeedbackReady, true, err
 	}
-	if worker.acousticProvider != nil && claim.hasAcousticSource() {
+	if worker.acousticProvider != nil &&
+		claim.Source.SourceKind == SpeechFeedbackSourceConversationTurn &&
+		claim.hasAcousticSource() {
 		evidence, acousticErr :=
 			worker.acousticProvider.EvaluateSpeechFeedbackAcoustics(
 				ctx,

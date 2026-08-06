@@ -21,7 +21,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.da
 
 void main() {
   testWidgets(
-    'Agent voice bubble loads folded feedback and SAME_THREAD starts voice',
+    'Agent voice bubble loads correction and polish in the background',
     (tester) async {
       final feedback = _agentFeedback();
       final client = _Client(feedback);
@@ -35,8 +35,6 @@ void main() {
       );
       addTearDown(controller.dispose);
       addTearDown(presenter.dispose);
-      var voiceStarts = 0;
-
       await tester.pumpWidget(
         MaterialApp(
           home: ConversationPage(
@@ -58,9 +56,6 @@ void main() {
                 speechFeedbackStatusUrl: feedback.statusUrl,
               ),
             ],
-            onStartVoice: () async {
-              voiceStarts++;
-            },
             feedbackPresenter: presenter,
           ),
         ),
@@ -68,21 +63,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('评分与纠错'), findsOneWidget);
+      expect(find.textContaining('评分'), findsNothing);
       expect(find.text('I managed'), findsNothing);
 
-      await tester.tap(
-        find.byKey(const Key('speech-feedback-disclosure-toggle')),
-      );
-      await tester.pump();
+      await tester.tap(find.byKey(const Key('inline-language-correction')));
+      await tester.pumpAndSettle();
       expect(find.text('I managed'), findsOneWidget);
-      final action = find.byKey(
-        const Key('speech-feedback-repractice-item_agent_001'),
-      );
-      await tester.ensureVisible(action);
-      await tester.tap(action);
-      await tester.pump();
-      expect(voiceStarts, 1);
+
+      await tester.tap(find.byKey(const Key('inline-language-polish')));
+      await tester.pumpAndSettle();
+      expect(find.text('I handled the release successfully.'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -118,12 +108,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('评分与纠错'), findsOneWidget);
+      expect(find.text('纠错'), findsOneWidget);
       expect(find.text('I managed'), findsNothing);
 
-      await tester.tap(
-        find.byKey(const Key('speech-feedback-disclosure-toggle')),
-      );
+      await tester.tap(find.byKey(const Key('inline-language-correction')));
       await tester.pump();
 
       expect(find.text('I managed'), findsOneWidget);
@@ -430,6 +418,22 @@ SpeechFeedback _agentFeedback() {
         ),
         explanation: 'Use the past tense for the completed release.',
         suggestedText: 'I managed',
+        repracticeMode: SpeechFeedbackRepracticeMode.sameThread,
+        createdAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
+      ),
+      SpeechFeedbackItem(
+        feedbackItemId: 'item_agent_002',
+        speechFeedbackId: 'speech_feedback_agent_001',
+        kind: SpeechFeedbackItemKind.recommendedExpression,
+        anchor: const AgentTranscriptFeedbackAnchor(
+          transcriptEvidenceId: 'transcript_evidence_001',
+          messageId: 'message_001',
+          startUtf8Byte: 0,
+          endUtf8Byte: 8,
+          originalExcerpt: 'I manage',
+        ),
+        explanation: 'Use a more natural completed-action expression.',
+        suggestedText: 'I handled the release successfully.',
         repracticeMode: SpeechFeedbackRepracticeMode.sameThread,
         createdAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
       ),

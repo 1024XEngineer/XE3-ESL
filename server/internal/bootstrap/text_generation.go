@@ -75,6 +75,7 @@ func NewEvaluationSpeechFeedbackGenerator(
 	if err != nil {
 		return nil, err
 	}
+	providerConfig.Model = configuration.SpeechFeedbackModel
 	return qianwen.NewEvaluationSpeechFeedbackGenerator(providerConfig, apiKey)
 }
 

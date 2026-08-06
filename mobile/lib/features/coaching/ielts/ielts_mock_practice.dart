@@ -19,7 +19,6 @@ import 'package:speakup/features/coaching/practice/practice_message_bubble.dart'
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 const _part2IntroNarration =
     'You will have one minute to prepare and up to two minutes to speak. '
@@ -1913,31 +1912,11 @@ class _ExamConversation extends StatelessWidget {
                       onPlay: () => onPlayQuestion(message.id, message.text),
                       onToggleTranscript: () => onToggleTranscript(message.id),
                     )
-                  : PracticeMessageBubble(message: message),
-            ),
-            if (projection != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: FractionallySizedBox(
-                  widthFactor: 0.82,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: SpeechFeedbackDisclosure(
-                      key: ValueKey(
-                        'ielts-speech-feedback-${projection.sourceKey}',
-                      ),
-                      projection: projection,
-                      onRetry: projection.canRetry
-                          ? () => unawaited(
-                              speechFeedbackController!.retry(
-                                projection.sourceKey,
-                              ),
-                            )
-                          : null,
+                  : PracticeMessageBubble(
+                      message: message,
+                      feedbackProjection: projection,
                     ),
-                  ),
-                ),
-              ),
+            ),
           ],
         );
       },

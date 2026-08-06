@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/coaching/evaluation/inline_speech_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 final class PracticeMessageBubble extends StatefulWidget {
   const PracticeMessageBubble({
     required this.message,
-    this.polishedText,
-    this.polishLoading = false,
+    this.feedbackProjection,
+    this.onFeedbackRepractice,
     this.messageTextVisible = true,
     this.onTranslate,
     this.actions,
@@ -16,8 +19,8 @@ final class PracticeMessageBubble extends StatefulWidget {
   });
 
   final PracticeMessage message;
-  final String? polishedText;
-  final bool polishLoading;
+  final SpeechFeedbackProjection? feedbackProjection;
+  final ValueChanged<SpeechFeedbackItem>? onFeedbackRepractice;
   final bool messageTextVisible;
   final Future<String> Function(PracticeMessage message)? onTranslate;
   final Widget? actions;
@@ -164,18 +167,11 @@ final class _PracticeMessageBubbleState extends State<PracticeMessageBubble> {
               ),
             ),
           ],
-          if (widget.polishLoading) ...[
-            const SizedBox(height: 8),
-            const LinearProgressIndicator(minHeight: 2),
-          ] else if (widget.polishedText case final text?) ...[
-            const SizedBox(height: 8),
-            Text(
-              text,
-              style: TextStyle(
-                color: user ? SpeakUpDesign.secondary : SpeakUpDesign.secondary,
-                fontSize: 13,
-                height: 1.4,
-              ),
+          if (user && widget.feedbackProjection != null) ...[
+            const SizedBox(height: SpeakUpDesign.space4),
+            InlineSpeechFeedback(
+              projection: widget.feedbackProjection,
+              onRepractice: widget.onFeedbackRepractice,
             ),
           ],
           if (widget.actions != null) ...[

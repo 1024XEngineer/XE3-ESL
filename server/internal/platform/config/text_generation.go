@@ -23,13 +23,14 @@ const (
 )
 
 type TextGenerationConfig struct {
-	Provider        string
-	BaseURL         string
-	Model           string
-	Timeout         time.Duration
-	MaxOutputTokens int
-	MaxContextChars int
-	APIKey          Secret
+	Provider            string
+	BaseURL             string
+	Model               string
+	SpeechFeedbackModel string
+	Timeout             time.Duration
+	MaxOutputTokens     int
+	MaxContextChars     int
+	APIKey              Secret
 }
 
 // Secret deliberately redacts itself in common string and JSON formatting.
@@ -72,6 +73,14 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	model := strings.TrimSpace(os.Getenv("QIANWEN_MODEL"))
 	if model == "" {
 		return TextGenerationConfig{}, errors.New("QIANWEN_MODEL is required")
+	}
+	speechFeedbackModel := strings.TrimSpace(
+		os.Getenv("QIANWEN_SPEECH_FEEDBACK_MODEL"),
+	)
+	if speechFeedbackModel == "" {
+		return TextGenerationConfig{}, errors.New(
+			"QIANWEN_SPEECH_FEEDBACK_MODEL is required",
+		)
 	}
 	apiKey := strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
 	if apiKey == "" {
@@ -124,13 +133,14 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	}
 
 	return TextGenerationConfig{
-		Provider:        provider,
-		BaseURL:         baseURL,
-		Model:           model,
-		Timeout:         timeout,
-		MaxOutputTokens: maxOutputTokens,
-		MaxContextChars: maxContextChars,
-		APIKey:          Secret{value: apiKey},
+		Provider:            provider,
+		BaseURL:             baseURL,
+		Model:               model,
+		SpeechFeedbackModel: speechFeedbackModel,
+		Timeout:             timeout,
+		MaxOutputTokens:     maxOutputTokens,
+		MaxContextChars:     maxContextChars,
+		APIKey:              Secret{value: apiKey},
 	}, nil
 }
 

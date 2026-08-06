@@ -454,51 +454,45 @@ void main() {
     expect(find.byKey(const Key('immersive-record')), findsOneWidget);
   });
 
-  testWidgets('shows asynchronous scoring without breaking the composer row', (
-    tester,
-  ) async {
-    final controller = await _roleplayController(
-      practiceClient: _AsyncReviewPracticeClient(),
-    );
-    addTearDown(controller.dispose);
-    for (var turn = 0; turn < 3; turn++) {
-      await controller.startRecording();
-      await controller.stopRecording();
-      await controller.confirmTranscript();
-    }
-    expect(controller.recordingState, PracticeRecordingState.completed);
+  testWidgets(
+    'keeps pending feedback silent without breaking the composer row',
+    (tester) async {
+      final controller = await _roleplayController(
+        practiceClient: _AsyncReviewPracticeClient(),
+      );
+      addTearDown(controller.dispose);
+      for (var turn = 0; turn < 3; turn++) {
+        await controller.startRecording();
+        await controller.stopRecording();
+        await controller.confirmTranscript();
+      }
+      expect(controller.recordingState, PracticeRecordingState.completed);
 
-    final feedbackController = SpeechFeedbackController(
-      client: _PendingSpeechFeedbackClient(),
-    );
-    addTearDown(feedbackController.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: ImmersiveRoleplayPage(
-          practiceController: controller,
-          speechFeedbackController: feedbackController,
+      final feedbackController = SpeechFeedbackController(
+        client: _PendingSpeechFeedbackClient(),
+      );
+      addTearDown(feedbackController.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: SpeakUpTheme.light,
+          home: ImmersiveRoleplayPage(
+            practiceController: controller,
+            speechFeedbackController: feedbackController,
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(tester.takeException(), isNull);
-    expect(
-      find.byKey(const Key('speech-feedback-loading-indicator')),
-      findsWidgets,
-    );
-    expect(
-      tester
-          .widgetList<SpeechFeedbackDisclosure>(
-            find.byType(SpeechFeedbackDisclosure),
-          )
-          .every((disclosure) => disclosure.compact),
-      isTrue,
-    );
-    expect(find.text('正在生成评分与纠错…'), findsWidgets);
-    expect(find.text('完成并返回'), findsOneWidget);
-  });
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const Key('speech-feedback-loading-indicator')),
+        findsNothing,
+      );
+      expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
+      expect(find.text('正在生成评分与纠错…'), findsNothing);
+      expect(find.text('完成并返回'), findsOneWidget);
+    },
+  );
 
   testWidgets('hands completed roleplay to the generic completion callback', (
     tester,

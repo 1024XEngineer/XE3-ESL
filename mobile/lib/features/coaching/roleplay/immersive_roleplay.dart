@@ -13,7 +13,6 @@ import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 /// A vendor-neutral surface used by the immersive roleplay shell.
 ///
@@ -747,38 +746,13 @@ class _ConversationPanel extends StatelessWidget {
                           children: [
                             PracticeMessageBubble(
                               message: message,
-                              polishedText: _polishedText(projection),
-                              polishLoading: projection?.isPolling ?? false,
+                              feedbackProjection: projection,
                               messageTextVisible: true,
                               onTranslate:
                                   message.role == PracticeMessageRole.assistant
                                   ? onTranslateQuestion
                                   : null,
                             ),
-                            if (projection != null) ...[
-                              const SizedBox(height: SpeakUpDesign.space8),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: FractionallySizedBox(
-                                  widthFactor: 0.78,
-                                  child: SpeechFeedbackDisclosure(
-                                    key: ValueKey(
-                                      'immersive-speech-feedback-'
-                                      '${projection.sourceKey}',
-                                    ),
-                                    projection: projection,
-                                    compact: true,
-                                    onRetry: projection.canRetry
-                                        ? () => unawaited(
-                                            speechFeedbackController!.retry(
-                                              projection.sourceKey,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         );
                       }
@@ -852,25 +826,6 @@ class _ConversationPanel extends StatelessWidget {
       return null;
     }
     return projection;
-  }
-
-  String? _polishedText(SpeechFeedbackProjection? projection) {
-    final items = projection?.feedback?.items;
-    if (items == null) {
-      return null;
-    }
-    for (final item in items) {
-      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
-          item.suggestedText != null) {
-        return item.suggestedText;
-      }
-    }
-    for (final item in items) {
-      if (item.suggestedText != null) {
-        return item.suggestedText;
-      }
-    }
-    return null;
   }
 }
 

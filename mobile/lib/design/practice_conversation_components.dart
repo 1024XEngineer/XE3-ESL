@@ -5,6 +5,212 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/design/voice_composer_dock.dart';
 
+final class InlineLanguageSuggestion {
+  const InlineLanguageSuggestion({required this.text, this.explanation});
+
+  final String text;
+  final String? explanation;
+}
+
+enum _InlineLanguageFeedbackSection { correction, polish }
+
+/// Shared lightweight feedback used inside Agent and Scene message bubbles.
+class InlineLanguageFeedback extends StatefulWidget {
+  const InlineLanguageFeedback({
+    this.leading,
+    this.trailing,
+    this.correction,
+    this.polish,
+    this.correctionFooter,
+    this.polishFooter,
+    this.onSpeakSuggestion,
+    this.suggestionLoading = false,
+    this.suggestionPlaying = false,
+    this.foregroundColor = SpeakUpDesign.primary,
+    this.textColor = SpeakUpDesign.ink,
+    super.key,
+  });
+
+  final Widget? leading;
+  final Widget? trailing;
+  final InlineLanguageSuggestion? correction;
+  final InlineLanguageSuggestion? polish;
+  final Widget? correctionFooter;
+  final Widget? polishFooter;
+  final ValueChanged<String>? onSpeakSuggestion;
+  final bool suggestionLoading;
+  final bool suggestionPlaying;
+  final Color foregroundColor;
+  final Color textColor;
+
+  @override
+  State<InlineLanguageFeedback> createState() => _InlineLanguageFeedbackState();
+}
+
+class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
+  _InlineLanguageFeedbackSection? _expanded;
+
+  @override
+  void didUpdateWidget(covariant InlineLanguageFeedback oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_expanded == _InlineLanguageFeedbackSection.correction &&
+        widget.correction == null) {
+      _expanded = null;
+    }
+    if (_expanded == _InlineLanguageFeedbackSection.polish &&
+        widget.polish == null) {
+      _expanded = null;
+    }
+  }
+
+  void _toggle(_InlineLanguageFeedbackSection section) {
+    setState(() => _expanded = _expanded == section ? null : section);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final suggestion = switch (_expanded) {
+      _InlineLanguageFeedbackSection.correction => widget.correction,
+      _InlineLanguageFeedbackSection.polish => widget.polish,
+      null => null,
+    };
+    final footer = switch (_expanded) {
+      _InlineLanguageFeedbackSection.correction => widget.correctionFooter,
+      _InlineLanguageFeedbackSection.polish => widget.polishFooter,
+      null => null,
+    };
+    final actions = <Widget>[
+      if (widget.leading != null) widget.leading!,
+      if (widget.correction != null)
+        _InlineFeedbackAction(
+          key: const Key('inline-language-correction'),
+          icon: Icons.edit_outlined,
+          label: '纠错',
+          selected: _expanded == _InlineLanguageFeedbackSection.correction,
+          color: widget.foregroundColor,
+          onPressed: () => _toggle(_InlineLanguageFeedbackSection.correction),
+        ),
+      if (widget.polish != null)
+        _InlineFeedbackAction(
+          key: const Key('inline-language-polish'),
+          icon: Icons.auto_awesome_outlined,
+          label: '润色',
+          selected: _expanded == _InlineLanguageFeedbackSection.polish,
+          color: widget.foregroundColor,
+          onPressed: () => _toggle(_InlineLanguageFeedbackSection.polish),
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: SpeakUpDesign.space4,
+                runSpacing: SpeakUpDesign.space4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: actions,
+              ),
+            ),
+            if (widget.trailing != null) widget.trailing!,
+          ],
+        ),
+        if (suggestion != null) ...[
+          const SizedBox(height: SpeakUpDesign.space8),
+          Text(
+            _expanded == _InlineLanguageFeedbackSection.correction
+                ? '建议改为'
+                : '更自然的表达',
+            style: SpeakUpDesign.meta.copyWith(
+              color: widget.foregroundColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text(
+            suggestion.text,
+            key: const Key('inline-language-suggestion-text'),
+            style: SpeakUpDesign.body.copyWith(
+              color: widget.textColor,
+              height: 1.45,
+            ),
+          ),
+          if (suggestion.explanation case final explanation?
+              when explanation.trim().isNotEmpty) ...[
+            const SizedBox(height: SpeakUpDesign.space4),
+            Text(
+              explanation,
+              key: const Key('inline-language-suggestion-explanation'),
+              style: SpeakUpDesign.meta,
+            ),
+          ],
+          if (widget.onSpeakSuggestion != null) ...[
+            const SizedBox(height: SpeakUpDesign.space4),
+            _InlineFeedbackAction(
+              key: const Key('inline-language-suggestion-play'),
+              icon: widget.suggestionPlaying
+                  ? Icons.stop_rounded
+                  : Icons.volume_up_outlined,
+              label: widget.suggestionPlaying ? '停止朗读' : '朗读',
+              loading: widget.suggestionLoading,
+              color: widget.foregroundColor,
+              onPressed: widget.suggestionLoading
+                  ? null
+                  : () => widget.onSpeakSuggestion!(suggestion.text),
+            ),
+          ],
+          if (footer != null) ...[
+            const SizedBox(height: SpeakUpDesign.space4),
+            footer,
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+class _InlineFeedbackAction extends StatelessWidget {
+  const _InlineFeedbackAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onPressed,
+    this.selected = false,
+    this.loading = false,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onPressed;
+  final bool selected;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        minimumSize: const Size(0, SpeakUpDesign.minTapTarget),
+        padding: const EdgeInsets.symmetric(horizontal: SpeakUpDesign.space4),
+        visualDensity: VisualDensity.compact,
+        textStyle: SpeakUpDesign.label,
+      ),
+      icon: loading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(selected ? Icons.keyboard_arrow_up_rounded : icon, size: 19),
+      label: Text(label),
+    );
+  }
+}
+
 class PracticeIdleComposer extends StatelessWidget {
   const PracticeIdleComposer({
     required this.capture,

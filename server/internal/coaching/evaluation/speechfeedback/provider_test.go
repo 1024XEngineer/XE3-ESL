@@ -1,9 +1,74 @@
 package speechfeedback
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestTextSpeechFeedbackProviderProjectsMixedInputBeforeGeneration(
+	t *testing.T,
+) {
+	t.Parallel()
+	generator := &capturingSpeechFeedbackTextGenerator{
+		result: TextGenerationResult{
+			RequestID: "request-mixed-projection",
+			Content: `{"items":[{"kind":"RECOMMENDED_EXPRESSION",` +
+				`"explanation":"Use a natural introduction.",` +
+				`"suggested_text":"Hello, my name is Nai Long."}]}`,
+			Provider: "qianwen",
+			Model:    "qwen-flash",
+		},
+	}
+	provider, err := NewSpeechFeedbackTextProvider(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := SpeechFeedbackProviderInput{
+		SchemaVersion: SpeechFeedbackSchemaVersion,
+		PromptVersion: SpeechFeedbackPromptVersion,
+		Source: SpeechFeedbackSource{
+			SourceKind:           SpeechFeedbackSourceAgentVoiceMessage,
+			ThreadID:             "b8075bee-00bc-47ec-b28b-fccf5b57bd87",
+			MessageID:            "47d04075-2a5f-45b6-a580-6327717ce16a",
+			TranscriptEvidenceID: "acfd7c7e-11c7-42d5-a21a-54633cab2517",
+			CandidateVersion:     1,
+		},
+		ConfirmedText: "你好，Hello, my name is Nai Long. Can you help me?",
+	}
+	if _, err := provider.GenerateSpeechFeedback(context.Background(), input); err != nil {
+		t.Fatalf("generate mixed feedback: %v", err)
+	}
+	if strings.Contains(generator.request.UserPrompt, "你好") {
+		t.Fatalf("provider received Chinese text: %s", generator.request.UserPrompt)
+	}
+	var prompt struct {
+		SourceKind  SpeechFeedbackSourceKind `json:"source_kind"`
+		EnglishText string                   `json:"english_text"`
+	}
+	if err := json.Unmarshal([]byte(generator.request.UserPrompt), &prompt); err != nil {
+		t.Fatalf("decode provider prompt: %v", err)
+	}
+	if prompt.SourceKind != SpeechFeedbackSourceAgentVoiceMessage ||
+		prompt.EnglishText !=
+			"Hello, my name is Nai Long. Can you help me" {
+		t.Fatalf("provider prompt = %#v", prompt)
+	}
+}
+
+type capturingSpeechFeedbackTextGenerator struct {
+	request TextGenerationRequest
+	result  TextGenerationResult
+}
+
+func (generator *capturingSpeechFeedbackTextGenerator) Generate(
+	_ context.Context,
+	request TextGenerationRequest,
+) (TextGenerationResult, error) {
+	generator.request = request
+	return generator.result, nil
+}
 
 func TestNormalizeSpeechFeedbackProviderResultBuildsAgentAnchor(
 	t *testing.T,
