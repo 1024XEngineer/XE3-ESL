@@ -27,6 +27,7 @@ final class ResumeController extends ChangeNotifier {
   String? _busyResumeId;
   String? _errorMessage;
   String? _noticeMessage;
+  ResumeItem? _temporaryItem;
   int _epoch = 0;
 
   List<ResumeItem> get items => List<ResumeItem>.unmodifiable(_items);
@@ -35,6 +36,7 @@ final class ResumeController extends ChangeNotifier {
   String? get busyResumeId => _busyResumeId;
   String? get errorMessage => _errorMessage;
   String? get noticeMessage => _noticeMessage;
+  ResumeItem? get temporaryItem => _temporaryItem;
 
   /// 返回已缓存的详情，未加载时返回空。
   ResumeDetail? detailFor(String resumeId) => _details[resumeId];
@@ -81,6 +83,53 @@ final class ResumeController extends ChangeNotifier {
       final created = await client.create(title: title, file: file);
       _items = <ResumeItem>[created, ..._items];
       _setNotice('简历已上传，正在解析。', notify: false);
+    });
+  }
+
+  /// 上传仅供当前面试使用的简历，不进入已保存简历列表与额度。
+  Future<void> pickTemporary() async {
+    final file = await filePicker.pickPdf();
+    if (file == null) return;
+    final validation = _validatePdf(file);
+    if (validation != null) {
+      _setNotice(validation);
+      return;
+    }
+    await _runAction(null, () async {
+      final previous = _temporaryItem;
+      final created = await client.createTemporary(file);
+      _temporaryItem = created;
+      if (previous != null) {
+        await client.deleteTemporary(previous);
+      }
+      _setNotice('临时简历已上传，正在解析。', notify: false);
+    });
+  }
+
+  Future<void> refreshTemporary() async {
+    final current = _temporaryItem;
+    if (current == null) return;
+    await _runAction(current.id, () async {
+      final detail = await client.getTemporary(current.id);
+      _temporaryItem = detail.resume;
+    });
+  }
+
+  Future<void> retryTemporaryParse() async {
+    final current = _temporaryItem;
+    if (current == null) return;
+    await _runAction(current.id, () async {
+      _temporaryItem = await client.retryTemporaryParse(current);
+      _setNotice('已重新提交临时简历解析。', notify: false);
+    });
+  }
+
+  Future<void> deleteTemporary() async {
+    final current = _temporaryItem;
+    if (current == null) return;
+    await _runAction(current.id, () async {
+      await client.deleteTemporary(current);
+      _temporaryItem = null;
     });
   }
 
@@ -174,6 +223,7 @@ final class ResumeController extends ChangeNotifier {
     _busyResumeId = null;
     _errorMessage = null;
     _noticeMessage = null;
+    _temporaryItem = null;
     await client.clearAccountState();
     notifyListeners();
   }

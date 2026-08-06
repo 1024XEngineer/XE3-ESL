@@ -21,6 +21,8 @@ type resumeRecord struct {
 	ParseStatus      string         `gorm:"column:parse_status"`
 	ParseFailureCode *string        `gorm:"column:parse_failure_code"`
 	CurrentRevision  *int64         `gorm:"column:current_revision"`
+	Temporary        bool           `gorm:"column:is_temporary"`
+	ExpiresAt        *time.Time     `gorm:"column:expires_at"`
 	Version          int64          `gorm:"column:version"`
 	CreatedAt        time.Time      `gorm:"column:created_at"`
 	UpdatedAt        time.Time      `gorm:"column:updated_at"`

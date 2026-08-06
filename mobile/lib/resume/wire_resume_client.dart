@@ -88,6 +88,58 @@ final class WireResumeClient implements ResumeClient {
   }
 
   @override
+  Future<ResumeItem> createTemporary(ResumePdfFile file) async {
+    final multipart = _multipart(const <String, String>{}, file);
+    final response = await _send(
+      'POST',
+      '/v1/temporary-resumes',
+      headers: <String, String>{
+        'Idempotency-Key': _idempotencyKey(),
+        HttpHeaders.contentTypeHeader: multipart.contentType,
+      },
+      body: multipart.body,
+    );
+    _expect(response, HttpStatus.accepted);
+    return _decodeResume(response.body);
+  }
+
+  @override
+  Future<ResumeDetail> getTemporary(String resumeId) async {
+    final response = await _send(
+      'GET',
+      '/v1/temporary-resumes/${_segment(resumeId)}',
+    );
+    _expect(response, HttpStatus.ok);
+    try {
+      return ResumeDetail.fromJson(_decodeObject(response.body));
+    } on FormatException {
+      throw const ResumeException(ResumeFailureKind.invalidResponse);
+    }
+  }
+
+  @override
+  Future<ResumeItem> retryTemporaryParse(ResumeItem resume) async {
+    final response = await _send(
+      'POST',
+      '/v1/temporary-resumes/${_segment(resume.id)}/parse-retries',
+      headers: <String, String>{'Idempotency-Key': _idempotencyKey()},
+    );
+    _expect(response, HttpStatus.accepted);
+    return _decodeResume(response.body);
+  }
+
+  @override
+  Future<void> deleteTemporary(ResumeItem resume) async {
+    final response = await _send(
+      'DELETE',
+      '/v1/temporary-resumes/${_segment(resume.id)}'
+          '?expected_version=${resume.version}',
+      headers: <String, String>{'Idempotency-Key': _idempotencyKey()},
+    );
+    _expect(response, HttpStatus.noContent);
+  }
+
+  @override
   Future<ResumeDetail> get(String resumeId) async {
     final response = await _send('GET', '/v1/resumes/${_segment(resumeId)}');
     _expect(response, HttpStatus.ok);

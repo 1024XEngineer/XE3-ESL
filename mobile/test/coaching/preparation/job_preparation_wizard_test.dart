@@ -51,9 +51,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('starts with JD-first input and labels quick start honestly', (
-    tester,
-  ) async {
+  testWidgets('keeps one job input for either title or JD', (tester) async {
     final controller = JobPreparationController(
       client: _WizardClient(),
       threadIdProvider: () => 'thread-1',
@@ -83,12 +81,16 @@ void main() {
     expect(find.byKey(const Key('job-description-field')), findsOneWidget);
     expect(find.byKey(const Key('job-title-field')), findsNothing);
 
-    await tester.tap(find.text('岗位快速开始'));
+    expect(find.byKey(const Key('job-company-field')), findsNothing);
+    expect(find.byKey(const Key('job-background-field')), findsNothing);
+    expect(find.byKey(const Key('job-goal-field')), findsNothing);
+
+    await tester.tap(find.text('职位名称'));
     await tester.pump();
 
     expect(find.byKey(const Key('job-title-field')), findsOneWidget);
-    expect(find.text('快速开始不会基于真实 JD，只会提供通用岗位建议。'), findsOneWidget);
-    expect(find.text('你的相关背景（可选）'), findsOneWidget);
+    expect(find.byKey(const Key('job-description-field')), findsNothing);
+    expect(find.byKey(const Key('job-company-field')), findsNothing);
   });
 
   testWidgets('runs confirmation and preview before one explicit start', (
@@ -123,10 +125,6 @@ void main() {
     await tester.enterText(
       find.byKey(const Key('job-description-field')),
       'Build reliable Go APIs and explain system design trade-offs.',
-    );
-    await tester.enterText(
-      find.byKey(const Key('job-background-field')),
-      _background,
     );
     await _scrollTo(
       tester,
@@ -240,16 +238,13 @@ void main() {
         child: MaterialApp(home: JobPreparationWizard(controller: controller)),
       ),
     );
-    await tester.tap(find.text('岗位快速开始'));
+    await tester.tap(find.text('职位名称'));
     await tester.pump();
     await tester.tap(find.byKey(const Key('job-title-field')));
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    final semantics = tester.getSemantics(
-      find.byKey(const Key('quick-start-notice')),
-    );
-    expect(semantics.label, contains('快速开始不会基于真实 JD'));
+    expect(find.byKey(const Key('job-company-field')), findsNothing);
     await _scrollTo(
       tester,
       target: const Key('analyze-job-button'),

@@ -273,6 +273,7 @@ ResumeItem _resume(String id, ResumeParseStatus status) => ResumeItem(
   originalFilename: '$id.pdf',
   sizeBytes: 1024,
   parseStatus: status,
+  currentRevision: status == ResumeParseStatus.ready ? 1 : null,
   version: 1,
   updatedAt: DateTime.utc(2026, 8, 3),
 );
@@ -301,6 +302,17 @@ final class _PageClient implements ResumeClient {
     required String title,
     required ResumePdfFile file,
   }) => throw UnimplementedError();
+  @override
+  Future<ResumeItem> createTemporary(ResumePdfFile file) =>
+      throw UnimplementedError();
+  @override
+  Future<void> deleteTemporary(ResumeItem resume) => throw UnimplementedError();
+  @override
+  Future<ResumeDetail> getTemporary(String resumeId) =>
+      throw UnimplementedError();
+  @override
+  Future<ResumeItem> retryTemporaryParse(ResumeItem resume) =>
+      throw UnimplementedError();
   @override
   Future<void> delete(ResumeItem resume) => throw UnimplementedError();
   @override

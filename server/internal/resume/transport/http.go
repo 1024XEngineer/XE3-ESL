@@ -39,10 +39,12 @@ var (
 type Application interface {
 	// Create 创建当前用户的一份新简历。
 	Create(context.Context, requestcontext.Actor, app.CreateCommand) (resume.Resume, error)
+	CreateTemporary(context.Context, requestcontext.Actor, app.CreateCommand) (resume.Resume, error)
 	// List 列出当前用户拥有的活动简历。
 	List(context.Context, requestcontext.Actor, app.ListQuery) (app.ListResult, error)
 	// Get 获取当前用户指定简历的详情。
 	Get(context.Context, requestcontext.Actor, string) (app.Detail, error)
+	GetTemporary(context.Context, requestcontext.Actor, string) (app.Detail, error)
 	// UpdateMetadata 修改当前用户指定简历的元数据。
 	UpdateMetadata(context.Context, requestcontext.Actor, app.UpdateMetadataCommand) (resume.Resume, error)
 	// UpdateContent 保存当前用户指定简历的手动内容修订。
@@ -53,8 +55,10 @@ type Application interface {
 	GetContentURL(context.Context, requestcontext.Actor, string) (app.ContentURL, error)
 	// RetryParse 重新提交当前用户指定简历的解析任务。
 	RetryParse(context.Context, requestcontext.Actor, string) (resume.Resume, error)
+	RetryTemporaryParse(context.Context, requestcontext.Actor, string) (resume.Resume, error)
 	// Delete 删除当前用户指定的简历。
 	Delete(context.Context, requestcontext.Actor, app.DeleteCommand) error
+	DeleteTemporary(context.Context, requestcontext.Actor, app.DeleteCommand) error
 }
 
 // HTTPHandler 接收已通过 Identity 认证中间件的 Resume HTTP 请求。
@@ -80,6 +84,10 @@ func NewHTTPHandler(application Application, maximumFileBytes int64) (*HTTPHandl
 // RegisterRoutes 注册 Resume REST 路由；调用方必须挂载到 Identity 认证路由组。
 func (h *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST("/v1/resumes", h.create)
+	routes.POST("/v1/temporary-resumes", h.createTemporary)
+	routes.GET("/v1/temporary-resumes/:resume_id", h.getTemporary)
+	routes.POST("/v1/temporary-resumes/:resume_id/parse-retries", h.retryTemporaryParse)
+	routes.DELETE("/v1/temporary-resumes/:resume_id", h.deleteTemporary)
 	routes.GET("/v1/resumes", h.list)
 	routes.GET("/v1/resumes/:resume_id", h.get)
 	routes.PATCH("/v1/resumes/:resume_id", h.updateMetadata)
@@ -88,6 +96,103 @@ func (h *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/resumes/:resume_id/content-url", h.getContentURL)
 	routes.POST("/v1/resumes/:resume_id/parse-retries", h.retryParse)
 	routes.DELETE("/v1/resumes/:resume_id", h.delete)
+}
+
+func (h *HTTPHandler) createTemporary(c *gin.Context) {
+	actor, ok := h.actor(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := h.idempotencyKey(c)
+	if !ok {
+		return
+	}
+	upload, ok := h.multipartPDF(c, false, false)
+	if !ok {
+		return
+	}
+	title := strings.TrimSuffix(upload.filename, ".pdf")
+	if title == upload.filename {
+		title = strings.TrimSuffix(upload.filename, ".PDF")
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "Temporary resume"
+	}
+	if len([]rune(title)) > 120 {
+		title = string([]rune(title)[:120])
+	}
+	item, err := h.application.CreateTemporary(c.Request.Context(), actor, app.CreateCommand{
+		Title: title, Filename: upload.filename, ContentType: "application/pdf",
+		SizeBytes: int64(len(upload.body)), ChecksumSHA256: upload.checksum,
+		File: bytes.NewReader(upload.body), IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		h.errors.Write(c, err)
+		return
+	}
+	if !validTemporaryProjection(item, actor.UserID, "") {
+		h.writeProjectionError(c)
+		return
+	}
+	setPrivateHeaders(c)
+	c.JSON(http.StatusAccepted, newTemporaryResumeResponse(item))
+}
+
+func (h *HTTPHandler) getTemporary(c *gin.Context) {
+	actor, resumeID, ok := h.actorAndResumeID(c)
+	if !ok {
+		return
+	}
+	detail, err := h.application.GetTemporary(c.Request.Context(), actor, resumeID)
+	if err != nil {
+		h.errors.Write(c, err)
+		return
+	}
+	if !validTemporaryProjection(detail.Resume, actor.UserID, resumeID) ||
+		(detail.Revision != nil && detail.Revision.ResumeID != resumeID) {
+		h.writeProjectionError(c)
+		return
+	}
+	setPrivateHeaders(c)
+	c.JSON(http.StatusOK, newTemporaryDetailResponse(detail))
+}
+
+func (h *HTTPHandler) retryTemporaryParse(c *gin.Context) {
+	actor, resumeID, ok := h.actorAndResumeID(c)
+	if !ok || !h.requireIdempotencyKey(c) {
+		return
+	}
+	item, err := h.application.RetryTemporaryParse(c.Request.Context(), actor, resumeID)
+	if err != nil {
+		h.errors.Write(c, err)
+		return
+	}
+	if !validTemporaryProjection(item, actor.UserID, resumeID) {
+		h.writeProjectionError(c)
+		return
+	}
+	setPrivateHeaders(c)
+	c.JSON(http.StatusAccepted, newTemporaryResumeResponse(item))
+}
+
+func (h *HTTPHandler) deleteTemporary(c *gin.Context) {
+	actor, resumeID, ok := h.actorAndResumeID(c)
+	if !ok || !h.requireIdempotencyKey(c) {
+		return
+	}
+	expectedVersion, err := strconv.ParseInt(c.Query("expected_version"), 10, 64)
+	if err != nil || expectedVersion < 1 {
+		h.errors.Write(c, app.InvalidResumeError())
+		return
+	}
+	if err := h.application.DeleteTemporary(c.Request.Context(), actor, app.DeleteCommand{
+		ResumeID: resumeID, ExpectedVersion: expectedVersion,
+	}); err != nil {
+		h.errors.Write(c, err)
+		return
+	}
+	setPrivateHeaders(c)
+	c.Status(http.StatusNoContent)
 }
 
 // create 接收新简历 PDF 上传请求。
@@ -504,6 +609,11 @@ func validResumeProjection(item resume.Resume, ownerUserID string, expectedResum
 		item.Title != "" && item.OriginalFilename != "" && item.ContentType == "application/pdf" &&
 		item.SizeBytes > 0 && item.FileStatus != resume.FileDeleted &&
 		!item.CreatedAt.IsZero() && !item.UpdatedAt.IsZero()
+}
+
+func validTemporaryProjection(item resume.Resume, ownerUserID string, expectedResumeID string) bool {
+	return validResumeProjection(item, ownerUserID, expectedResumeID) && item.Temporary &&
+		item.ExpiresAt != nil && item.ExpiresAt.After(item.CreatedAt)
 }
 
 // writeProjectionError 返回不会暴露错误投影内容的内部错误。

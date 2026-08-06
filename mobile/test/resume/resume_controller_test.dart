@@ -64,6 +64,24 @@ void main() {
     expect(client.createCount, 0);
     expect(controller.noticeMessage, '请选择有效的 PDF 文件。');
   });
+
+  test('temporary upload stays outside the saved resume list', () async {
+    final client = _FakeResumeClient(items: <ResumeItem>[_resume('saved')]);
+    final controller = ResumeController(
+      client: client,
+      filePicker: _FakePicker(
+        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
+      ),
+      urlOpener: _FakeOpener(),
+    );
+
+    await controller.load();
+    await controller.pickTemporary();
+
+    expect(controller.items.single.id, 'saved');
+    expect(controller.temporaryItem?.id, 'temporary');
+    expect(controller.canUpload, isTrue);
+  });
 }
 
 ResumeItem _resume(String id, {String? title}) => ResumeItem(
@@ -72,6 +90,7 @@ ResumeItem _resume(String id, {String? title}) => ResumeItem(
   originalFilename: '$id.pdf',
   sizeBytes: 2048,
   parseStatus: ResumeParseStatus.ready,
+  currentRevision: 1,
   version: 1,
   updatedAt: DateTime.utc(2026, 8, 3),
 );
@@ -110,6 +129,17 @@ final class _FakeResumeClient implements ResumeClient {
     createdTitle = title;
     return _resume('created', title: title);
   }
+
+  @override
+  Future<ResumeItem> createTemporary(ResumePdfFile file) async =>
+      _resume('temporary');
+  @override
+  Future<void> deleteTemporary(ResumeItem resume) async {}
+  @override
+  Future<ResumeDetail> getTemporary(String resumeId) async =>
+      ResumeDetail(resume: _resume(resumeId));
+  @override
+  Future<ResumeItem> retryTemporaryParse(ResumeItem resume) async => resume;
 
   @override
   Future<void> clearAccountState() async {}

@@ -39,6 +39,23 @@ func TestServiceCreateIsDurableAndReplayable(t *testing.T) {
 	}
 }
 
+func TestServiceCreateTemporarySetsExpiryAndSkipsSavedCollection(t *testing.T) {
+	repository := &repositoryFake{}
+	service := newTestService(t, repository, newFileStorageFake())
+	fixedNow := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return fixedNow }
+
+	created, err := service.CreateTemporary(
+		context.Background(),
+		serviceTestActor,
+		createTestCommand([]byte("%PDF-1.4 temporary resume")),
+	)
+	if err != nil || !created.Temporary || created.ExpiresAt == nil ||
+		!created.ExpiresAt.Equal(fixedNow.Add(TemporaryResumeLifetime)) {
+		t.Fatalf("created = %#v, err = %v", created, err)
+	}
+}
+
 // TestServiceCreateCompensatesFailedUpload 验证对象保存失败会硬删除 UPLOADING 记录。
 func TestServiceCreateCompensatesFailedUpload(t *testing.T) {
 	repository := &repositoryFake{}
@@ -156,6 +173,28 @@ func TestParseWorkerCompletesAndPersistsFailures(t *testing.T) {
 	processed, err = worker.ProcessNext(context.Background())
 	if err != nil || !processed || repository.failedCode != "pdf_text_unavailable" {
 		t.Fatalf("processed = %v, failedCode = %q, err = %v", processed, repository.failedCode, err)
+	}
+}
+
+func TestParseWorkerDeletesExpiredTemporaryBeforeParsing(t *testing.T) {
+	expired := resume.Resume{
+		ID: "40000000-0000-4000-8000-000000000009", OwnerUserID: serviceTestActor.UserID,
+		ObjectKey: "resume/v1/temporary.pdf", Temporary: true,
+	}
+	repository := &repositoryFake{expired: expired, expiredFound: true}
+	files := newFileStorageFake()
+	files.objects[expired.ObjectKey] = []byte("pdf")
+	worker, err := NewParseWorker(repository, files, &parserFake{}, time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewParseWorker: %v", err)
+	}
+
+	processed, err := worker.ProcessNext(context.Background())
+	if err != nil || !processed || repository.item.ID != "" {
+		t.Fatalf("processed = %v, item = %#v, err = %v", processed, repository.item, err)
+	}
+	if _, exists := files.objects[expired.ObjectKey]; exists {
+		t.Fatal("expired temporary object was not deleted")
 	}
 }
 
@@ -378,6 +417,8 @@ type repositoryFake struct {
 	completedRevision resume.Revision
 	failedCode        string
 	detailRevision    *resume.Revision
+	expired           resume.Resume
+	expiredFound      bool
 }
 
 // CreateWithinLimit 创建测试记录或返回幂等冲突。
@@ -475,6 +516,15 @@ func (repository *repositoryFake) ClaimNextQueuedParse(context.Context) (resume.
 	found := repository.claimFound
 	repository.claimFound = false
 	return repository.claim, found, nil
+}
+
+func (repository *repositoryFake) ClaimExpiredTemporary(context.Context, time.Time) (resume.Resume, bool, error) {
+	found := repository.expiredFound
+	repository.expiredFound = false
+	if found {
+		repository.item = repository.expired
+	}
+	return repository.expired, found, nil
 }
 
 // CompleteParse 记录测试解析修订。

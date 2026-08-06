@@ -48,6 +48,38 @@ func TestCreateUsesTrustedActorAndValidatesPDF(t *testing.T) {
 	}
 }
 
+func TestTemporaryResumeRoutesStayOutsideSavedResumeContract(t *testing.T) {
+	application := newTransportApplicationFake()
+	router := newResumeRouter(t, application, &transportTestActor, 1024)
+	body, contentType := multipartRequest(t, nil, "%PDF-1.4 temporary")
+	request := httptest.NewRequest(http.MethodPost, "/v1/temporary-resumes", body)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Idempotency-Key", "temporary-key-1")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || application.calls["create_temporary"] != 1 ||
+		!strings.Contains(response.Body.String(), `"expires_at"`) ||
+		!strings.Contains(response.Body.String(), `"resume_id"`) {
+		t.Fatalf("create temporary response = %d %s", response.Code, response.Body.String())
+	}
+
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/v1/temporary-resumes/"+transportTestResumeID, nil),
+		httptest.NewRequest(http.MethodPost, "/v1/temporary-resumes/"+transportTestResumeID+"/parse-retries", nil),
+		httptest.NewRequest(http.MethodDelete, "/v1/temporary-resumes/"+transportTestResumeID+"?expected_version=2", nil),
+	} {
+		if request.Method != http.MethodGet {
+			request.Header.Set("Idempotency-Key", "temporary-key-2")
+		}
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code < 200 || response.Code >= 300 {
+			t.Fatalf("%s %s response = %d %s", request.Method, request.URL, response.Code, response.Body.String())
+		}
+	}
+}
+
 // TestResumeRoutesCoverCRUDContract 验证其余公开路由调用正确应用用例和状态码。
 func TestResumeRoutesCoverCRUDContract(t *testing.T) {
 	tests := []struct {
@@ -205,6 +237,17 @@ func (application *transportApplicationFake) Create(_ context.Context, actor req
 	return application.item, nil
 }
 
+func (application *transportApplicationFake) CreateTemporary(_ context.Context, actor requestcontext.Actor, command app.CreateCommand) (resume.Resume, error) {
+	application.calls["create_temporary"]++
+	application.actor = actor
+	application.createCommand = command
+	item := application.item
+	item.Temporary = true
+	expiresAt := item.CreatedAt.Add(app.TemporaryResumeLifetime)
+	item.ExpiresAt = &expiresAt
+	return item, nil
+}
+
 // List 返回单份测试简历。
 func (application *transportApplicationFake) List(_ context.Context, actor requestcontext.Actor, _ app.ListQuery) (app.ListResult, error) {
 	application.calls["list"]++
@@ -221,6 +264,17 @@ func (application *transportApplicationFake) Get(_ context.Context, actor reques
 		ParserVersion: "test/v1", Content: emptyTransportContent(), CreatedAt: time.Now().UTC(),
 	}
 	return app.Detail{Resume: application.item, Revision: &revision}, nil
+}
+
+func (application *transportApplicationFake) GetTemporary(ctx context.Context, actor requestcontext.Actor, id string) (app.Detail, error) {
+	detail, err := application.Get(ctx, actor, id)
+	if err != nil {
+		return app.Detail{}, err
+	}
+	detail.Resume.Temporary = true
+	expiresAt := detail.Resume.CreatedAt.Add(app.TemporaryResumeLifetime)
+	detail.Resume.ExpiresAt = &expiresAt
+	return detail, nil
 }
 
 // UpdateMetadata 返回更新后的测试元数据。
@@ -260,11 +314,23 @@ func (application *transportApplicationFake) RetryParse(_ context.Context, actor
 	return application.item, nil
 }
 
+func (application *transportApplicationFake) RetryTemporaryParse(ctx context.Context, actor requestcontext.Actor, id string) (resume.Resume, error) {
+	item, err := application.RetryParse(ctx, actor, id)
+	item.Temporary = true
+	expiresAt := item.CreatedAt.Add(app.TemporaryResumeLifetime)
+	item.ExpiresAt = &expiresAt
+	return item, err
+}
+
 // Delete 记录测试删除请求。
 func (application *transportApplicationFake) Delete(_ context.Context, actor requestcontext.Actor, _ app.DeleteCommand) error {
 	application.calls["delete"]++
 	application.actor = actor
 	return nil
+}
+
+func (application *transportApplicationFake) DeleteTemporary(ctx context.Context, actor requestcontext.Actor, command app.DeleteCommand) error {
+	return application.Delete(ctx, actor, command)
 }
 
 // emptyTransportContent 返回满足公开必填数组约束的空内容。

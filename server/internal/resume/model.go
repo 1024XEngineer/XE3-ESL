@@ -17,6 +17,8 @@ type Resume struct {
 	ParseStatus      ParseStatus
 	ParseFailureCode string
 	CurrentRevision  int64
+	Temporary        bool
+	ExpiresAt        *time.Time
 	Version          int64
 	CreatedAt        time.Time
 	UpdatedAt        time.Time

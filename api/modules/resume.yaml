@@ -1,5 +1,105 @@
 # 本文件定义 Resume 模块的 REST 契约；所有操作只访问认证 Actor 自己的简历。
 paths:
+  /v1/temporary-resumes:
+    post:
+      tags:
+        - Resume
+      summary: Upload a temporary interview resume
+      description: |
+        Creates an interview-only resume that is excluded from the saved resume
+        list and three-resume quota. It expires after 24 hours and is intended
+        to be deleted after its parsed revision has entered a preparation snapshot.
+      operationId: createTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateTemporaryResumeRequest'
+      responses:
+        '202':
+          description: Temporary resume accepted and queued for parsing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/temporary-resumes/{resume_id}:
+    get:
+      tags:
+        - Resume
+      summary: Get a temporary interview resume
+      operationId: getTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+      responses:
+        '200':
+          description: Owned, unexpired temporary resume detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResumeDetail'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Resume
+      summary: Delete a temporary interview resume
+      operationId: deleteTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/ExpectedVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Temporary resume deleted.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/temporary-resumes/{resume_id}/parse-retries:
+    post:
+      tags:
+        - Resume
+      summary: Retry temporary resume parsing
+      operationId: retryTemporaryResumeParse
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Temporary resume parsing retry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/resumes:
     post:
       tags:
@@ -317,6 +417,16 @@ components:
           type: string
           format: binary
           contentMediaType: application/pdf
+    CreateTemporaryResumeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+          contentMediaType: application/pdf
     ReplaceResumeFileRequest:
       type: object
       additionalProperties: false
@@ -427,6 +537,69 @@ components:
           type: string
           minLength: 1
           maxLength: 512
+    TemporaryResume:
+      type: object
+      additionalProperties: false
+      required:
+        - resume_id
+        - title
+        - original_filename
+        - content_type
+        - size_bytes
+        - file_status
+        - parse_status
+        - version
+        - created_at
+        - updated_at
+        - expires_at
+      properties:
+        resume_id:
+          $ref: '#/components/schemas/ResumeId'
+        title:
+          $ref: '#/components/schemas/ResumeTitle'
+        original_filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content_type:
+          type: string
+          const: application/pdf
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+        file_status:
+          type: string
+          enum: [UPLOADING, AVAILABLE, DELETING]
+        parse_status:
+          type: string
+          enum: [QUEUED, PARSING, READY, FAILED]
+        current_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    TemporaryResumeDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - resume
+      properties:
+        resume:
+          $ref: '#/components/schemas/TemporaryResume'
+        current_revision:
+          $ref: '#/components/schemas/ResumeRevision'
     ResumeDetail:
       type: object
       additionalProperties: false

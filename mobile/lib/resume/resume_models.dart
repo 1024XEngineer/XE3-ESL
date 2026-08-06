@@ -10,6 +10,7 @@ final class ResumeItem {
     required this.originalFilename,
     required this.sizeBytes,
     required this.parseStatus,
+    required this.currentRevision,
     required this.version,
     required this.updatedAt,
   });
@@ -19,6 +20,7 @@ final class ResumeItem {
   final String originalFilename;
   final int sizeBytes;
   final ResumeParseStatus parseStatus;
+  final int? currentRevision;
   final int version;
   final DateTime updatedAt;
 
@@ -36,6 +38,9 @@ final class ResumeItem {
         'FAILED' => ResumeParseStatus.failed,
         _ => throw const FormatException('Invalid resume parse status.'),
       },
+      currentRevision: json.containsKey('current_revision')
+          ? _requiredInt(json, 'current_revision')
+          : null,
       version: _requiredInt(json, 'version'),
       updatedAt: DateTime.parse(_requiredString(json, 'updated_at')),
     );

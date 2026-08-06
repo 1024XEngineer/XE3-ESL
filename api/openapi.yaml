@@ -83,6 +83,12 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
   /v1/resumes:
     $ref: ./modules/resume.yaml#/paths/~1v1~1resumes
+  /v1/temporary-resumes:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes
+  /v1/temporary-resumes/{resume_id}:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes~1{resume_id}
+  /v1/temporary-resumes/{resume_id}/parse-retries:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes~1{resume_id}~1parse-retries
   /v1/resumes/{resume_id}:
     $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}
   /v1/resumes/{resume_id}/content:

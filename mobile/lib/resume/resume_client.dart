@@ -9,6 +9,10 @@ abstract interface class ResumeClient {
     required String title,
     required ResumePdfFile file,
   });
+  Future<ResumeItem> createTemporary(ResumePdfFile file);
+  Future<ResumeDetail> getTemporary(String resumeId);
+  Future<ResumeItem> retryTemporaryParse(ResumeItem resume);
+  Future<void> deleteTemporary(ResumeItem resume);
   Future<ResumeDetail> get(String resumeId);
   Future<ResumeItem> rename(ResumeItem resume, String title);
   Future<ResumeItem> replace(ResumeItem resume, ResumePdfFile file);

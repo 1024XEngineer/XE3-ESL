@@ -28,22 +28,26 @@ PreparationProfile decodePreparationProfile(Object? value) {
       'updated_at',
     },
     optional: const <String>{
-      'resume_ref',
+      'resume_id',
+      'resume_revision',
       'job_description_ref',
       'job_target_id',
       'job_target_confirmation_version',
     },
   );
   final hasJobTarget = object.containsKey('job_target_id');
+  final hasResume = object.containsKey('resume_id');
+  if (hasResume != object.containsKey('resume_revision')) {
+    throw const PreparationWireFormatException();
+  }
   if (hasJobTarget != object.containsKey('job_target_confirmation_version')) {
     throw const PreparationWireFormatException();
   }
   return PreparationProfile(
     id: _resourceId(object['preparation_profile_id']),
     userId: _resourceId(object['user_id']),
-    resumeRef: object.containsKey('resume_ref')
-        ? _text(object['resume_ref'], maximumBytes: 16 * 1024)
-        : null,
+    resumeId: hasResume ? _resourceId(object['resume_id']) : null,
+    resumeRevision: hasResume ? _version(object['resume_revision']) : null,
     jobDescriptionRef: object.containsKey('job_description_ref')
         ? _text(object['job_description_ref'], maximumBytes: 16 * 1024)
         : null,

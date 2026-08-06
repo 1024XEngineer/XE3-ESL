@@ -63,6 +63,29 @@ void main() {
     await server.close(force: true);
   });
 
+  test('temporary upload uses the interview-only resume endpoint', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestSeen = _serveOnce(server, (request, body) {
+      expect(request.method, 'POST');
+      expect(request.uri.path, '/v1/temporary-resumes');
+      expect(request.headers.value('Idempotency-Key'), startsWith('resume-'));
+      expect(latin1.decode(body), contains('filename="temporary.pdf"'));
+      request.response.statusCode = HttpStatus.accepted;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(_resumeJson('temporary')));
+    });
+    final client = _client(server);
+
+    final created = await client.createTemporary(
+      ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
+    );
+    await requestSeen;
+
+    expect(created.id, 'temporary');
+    expect(created.currentRevision, 1);
+    await server.close(force: true);
+  });
+
   test('get accepts contract-valid empty target and summary', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestSeen = _serveOnce(server, (request, body) {
@@ -155,6 +178,7 @@ Map<String, Object?> _resumeJson(String id) => <String, Object?>{
   'size_bytes': 1024,
   'file_status': 'AVAILABLE',
   'parse_status': 'READY',
+  'current_revision': 1,
   'version': 1,
   'created_at': '2026-08-03T00:00:00Z',
   'updated_at': '2026-08-03T00:00:00Z',

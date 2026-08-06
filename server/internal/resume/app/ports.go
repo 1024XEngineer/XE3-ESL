@@ -37,6 +37,8 @@ type Repository interface {
 	QueueParse(context.Context, string, string) error
 	// ClaimNextQueuedParse 领取下一份可处理的解析任务。
 	ClaimNextQueuedParse(context.Context) (resume.Resume, bool, error)
+	// ClaimExpiredTemporary claims one expired temporary resume for raw-file cleanup.
+	ClaimExpiredTemporary(context.Context, time.Time) (resume.Resume, bool, error)
 	// CompleteParse 原子保存解析修订并完成解析任务。
 	CompleteParse(context.Context, resume.Resume, resume.Revision) error
 	// FailParse 保存解析失败状态和稳定失败码。

@@ -63,6 +63,7 @@ final class JobPreparationController extends ChangeNotifier {
   );
   JobTarget? _target;
   JobTargetCandidate? _candidate;
+  JobPreparationResumeSelection? _resumeSelection;
   PracticePlan? _plan;
   PreparationPracticeBootstrap? _bootstrap;
   JobPreparationStep _step = JobPreparationStep.input;
@@ -99,6 +100,7 @@ final class JobPreparationController extends ChangeNotifier {
   JobTargetInput get input => _input;
   JobTarget? get target => _target;
   JobTargetCandidate? get candidate => _candidate;
+  JobPreparationResumeSelection? get resumeSelection => _resumeSelection;
   PracticePlan? get plan => _plan;
   PreparationPracticeBootstrap? get bootstrap => _bootstrap;
   JobPreparationStep get step => _step;
@@ -378,6 +380,23 @@ final class JobPreparationController extends ChangeNotifier {
     _confirmationKey = null;
     _errorMessage = null;
     _operationStage = null;
+    notifyListeners();
+    _queueDraftWrite();
+  }
+
+  void selectResume(JobPreparationResumeSelection? value) {
+    if (_disposed || _busy || identical(value, _resumeSelection)) {
+      return;
+    }
+    _epoch++;
+    _resumeSelection = value;
+    _plan = null;
+    _bootstrap = null;
+    if (_step == JobPreparationStep.preview) {
+      _step = JobPreparationStep.setup;
+    }
+    _clearPreviewAttempt();
+    _errorMessage = null;
     notifyListeners();
     _queueDraftWrite();
   }
@@ -716,6 +735,8 @@ final class JobPreparationController extends ChangeNotifier {
       final profile = await client.createProfile(
         input: CreatePreparationProfileInput(
           backgroundSummary: background,
+          resumeId: _resumeSelection?.resumeId,
+          resumeRevision: _resumeSelection?.revision,
           jobTargetId: target.id,
           jobTargetConfirmationVersion: confirmation.confirmationVersion,
         ),
@@ -1036,6 +1057,7 @@ final class JobPreparationController extends ChangeNotifier {
     _input = draft.input;
     _target = null;
     _candidate = draft.candidate;
+    _resumeSelection = draft.resumeSelection;
     _plan = null;
     _bootstrap = null;
     _step = JobPreparationStep.input;
@@ -1088,6 +1110,7 @@ final class JobPreparationController extends ChangeNotifier {
     _agentIntentPrefill = null;
     _target = null;
     _candidate = null;
+    _resumeSelection = null;
     _plan = null;
     _bootstrap = null;
     _step = JobPreparationStep.input;
@@ -1115,6 +1138,7 @@ final class JobPreparationController extends ChangeNotifier {
       input: _input,
       targetId: _target?.id,
       candidate: _candidate,
+      resumeSelection: _resumeSelection,
       planId: _plan?.id,
       createTargetKey: _createTargetKey,
       updateTargetKey: _updateTargetKey,
@@ -1219,6 +1243,7 @@ final class _StoredJobPreparationDraft {
     required this.input,
     this.targetId,
     this.candidate,
+    this.resumeSelection,
     this.planId,
     this.createTargetKey,
     this.updateTargetKey,
@@ -1236,6 +1261,7 @@ final class _StoredJobPreparationDraft {
   final JobTargetInput input;
   final String? targetId;
   final JobTargetCandidate? candidate;
+  final JobPreparationResumeSelection? resumeSelection;
   final String? planId;
   final String? createTargetKey;
   final String? updateTargetKey;
@@ -1251,12 +1277,21 @@ final class _StoredJobPreparationDraft {
 
   String encode() {
     return jsonEncode(<String, Object?>{
-      'schema_version': 2,
+      'schema_version': 3,
       'input': _storedInputJson(input),
       'target_id': ?targetId,
       'candidate': ?(candidate == null
           ? null
           : _storedCandidateJson(candidate!)),
+      'resume_selection': ?(resumeSelection == null
+          ? null
+          : <String, Object?>{
+              'resume_id': resumeSelection!.resumeId,
+              'revision': resumeSelection!.revision,
+              'resource_version': resumeSelection!.resourceVersion,
+              'temporary': resumeSelection!.temporary,
+              'title': resumeSelection!.title,
+            }),
       'plan_id': ?planId,
       'create_target_key': ?createTargetKey,
       'update_target_key': ?updateTargetKey,
@@ -1278,8 +1313,11 @@ final class _StoredJobPreparationDraft {
         return null;
       }
       final value = jsonDecode(encoded);
+      final schemaVersion = value is Map<String, Object?>
+          ? value['schema_version']
+          : null;
       if (value is! Map<String, Object?> ||
-          value['schema_version'] != 2 ||
+          (schemaVersion != 2 && schemaVersion != 3) ||
           !value.containsKey('input') ||
           value.keys.any(
             (key) => !const <String>{
@@ -1287,6 +1325,7 @@ final class _StoredJobPreparationDraft {
               'input',
               'target_id',
               'candidate',
+              'resume_selection',
               'plan_id',
               'create_target_key',
               'update_target_key',
@@ -1300,12 +1339,16 @@ final class _StoredJobPreparationDraft {
               'session_key',
               'voice_key',
             }.contains(key),
-          )) {
+          ) ||
+          (schemaVersion == 2 && value.containsKey('resume_selection'))) {
         return null;
       }
       final input = _storedInput(value['input']);
       final candidate = value.containsKey('candidate')
           ? _storedCandidate(value['candidate'])
+          : null;
+      final resumeSelection = value.containsKey('resume_selection')
+          ? _storedResumeSelection(value['resume_selection'])
           : null;
       final targetId = _storedOptionalId(value, 'target_id');
       final planId = _storedOptionalId(value, 'plan_id');
@@ -1317,6 +1360,7 @@ final class _StoredJobPreparationDraft {
         input: input,
         targetId: targetId,
         candidate: candidate,
+        resumeSelection: resumeSelection,
         planId: planId,
         createTargetKey: _storedOptionalKey(value, 'create_target_key'),
         updateTargetKey: _storedOptionalKey(value, 'update_target_key'),
@@ -1334,6 +1378,42 @@ final class _StoredJobPreparationDraft {
       return null;
     }
   }
+}
+
+JobPreparationResumeSelection _storedResumeSelection(Object? value) {
+  if (value is! Map<String, Object?> ||
+      value.keys.toSet().difference(const <String>{
+        'resume_id',
+        'revision',
+        'resource_version',
+        'temporary',
+        'title',
+      }).isNotEmpty ||
+      value.length != 5 ||
+      value['resume_id'] is! String ||
+      value['revision'] is! int ||
+      value['resource_version'] is! int ||
+      value['temporary'] is! bool ||
+      value['title'] is! String) {
+    throw const FormatException('Invalid stored resume selection.');
+  }
+  final id = value['resume_id']! as String;
+  final revision = value['revision']! as int;
+  final resourceVersion = value['resource_version']! as int;
+  final title = (value['title']! as String).trim();
+  if (!_validResourceId(id) ||
+      revision < 1 ||
+      resourceVersion < 1 ||
+      title.isEmpty) {
+    throw const FormatException('Invalid stored resume selection.');
+  }
+  return JobPreparationResumeSelection(
+    resumeId: id,
+    revision: revision,
+    resourceVersion: resourceVersion,
+    temporary: value['temporary']! as bool,
+    title: title,
+  );
 }
 
 Map<String, Object?> _storedInputJson(JobTargetInput input) {

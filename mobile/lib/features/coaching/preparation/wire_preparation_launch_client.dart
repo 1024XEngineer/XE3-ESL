@@ -88,7 +88,8 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
         'background_summary': input.backgroundSummary,
-        'resume_ref': ?input.resumeRef,
+        'resume_id': ?input.resumeId,
+        'resume_revision': ?input.resumeRevision,
         'job_description_ref': ?input.jobDescriptionRef,
         'job_target_id': ?input.jobTargetId,
         'job_target_confirmation_version': ?input.jobTargetConfirmationVersion,
@@ -100,7 +101,8 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       decode: () {
         final profile = decodePreparationProfileBody(response.body);
         if (profile.backgroundSummary != input.backgroundSummary ||
-            profile.resumeRef != input.resumeRef ||
+            profile.resumeId != input.resumeId ||
+            profile.resumeRevision != input.resumeRevision ||
             profile.jobDescriptionRef != input.jobDescriptionRef ||
             profile.jobTargetId != input.jobTargetId ||
             profile.jobTargetConfirmationVersion !=
@@ -876,8 +878,21 @@ void _requireBackground(String value) {
 
 void _requireProfileInput(CreatePreparationProfileInput input) {
   _requireBackground(input.backgroundSummary);
-  if (input.resumeRef case final value?) {
-    _requireText(value, 16 * 1024);
+  final hasResume = input.resumeId != null;
+  if (hasResume != (input.resumeRevision != null)) {
+    throw const PreparationLaunchException(
+      kind: PreparationLaunchFailureKind.invalidRequest,
+      stage: PreparationLaunchStage.profile,
+    );
+  }
+  if (input.resumeId case final value?) {
+    _requireResourceId(value);
+  }
+  if (input.resumeRevision case final value? when value < 1) {
+    throw const PreparationLaunchException(
+      kind: PreparationLaunchFailureKind.invalidRequest,
+      stage: PreparationLaunchStage.profile,
+    );
   }
   if (input.jobDescriptionRef case final value?) {
     _requireText(value, 16 * 1024);
