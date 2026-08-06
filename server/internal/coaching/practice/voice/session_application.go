@@ -23,6 +23,7 @@ type Session struct {
 	PracticeMode               string
 	TurnPolicyRef              string
 	Prompt                     practice.ScenePrompt
+	ScenarioContext            *practice.ScenarioPreparationContext
 	IELTSAssignment            *practice.IELTSAssignment
 	PreviousUserResponse       string
 	PreviousQuestion           string

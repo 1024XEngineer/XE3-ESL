@@ -212,6 +212,7 @@ func mapPracticeSession(
 		PracticeMode:               string(snapshot.PracticeMode),
 		TurnPolicyRef:              option.TurnPolicyRef,
 		Prompt:                     cloneScenePrompt(selection.Scene.Prompt),
+		ScenarioContext:            cloneScenarioPreparationContext(snapshot.Preparation.ScenarioContext),
 		IELTSAssignment:            cloneIELTSAssignment(snapshot.IELTSAssignment),
 		SessionVersion:             session.Version,
 		EffectiveTurns:             session.EffectiveTurns,
@@ -311,6 +312,16 @@ func cloneScenePrompt(source practice.ScenePrompt) practice.ScenePrompt {
 	result.FocusAreas = append([]string(nil), source.FocusAreas...)
 	result.TurnBlueprints = append([]string(nil), source.TurnBlueprints...)
 	return result
+}
+
+func cloneScenarioPreparationContext(
+	source *practice.ScenarioPreparationContext,
+) *practice.ScenarioPreparationContext {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	return &result
 }
 
 func cloneIELTSAssignment(
