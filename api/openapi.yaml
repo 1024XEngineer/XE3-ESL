@@ -1,0 +1,473 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: SpeakUp MS1 API
+  version: 0.1.0
+  description: |
+    Language-neutral REST contract for the deterministic MS1 practice flow.
+    User-private operations require a first-party opaque Bearer Session. Only
+    explicitly marked public operations accept anonymous requests. Fixed demo
+    identities remain limited to explicit Mock and Test composition roots;
+    production requests derive their trusted actor from the validated Session.
+    Clients never submit trusted user or respondent participant identifiers.
+    The formal `Idempotency-Key` scope for protected writes is the trusted
+    Actor, HTTP method, canonical path, and key.
+
+    Optional JSON properties use absent-only semantics: clients omit values that
+    are not present and must not serialize them as explicit `null`.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:8080
+    description: Local deterministic MS1 server
+security:
+  - BearerSession: []
+x-json-null-policy: omit
+tags:
+  - name: Identity
+    description: Minimal account registration, opaque Session, and current-user operations.
+  - name: Goal
+    description: User-owned real-world activities and their lifecycle.
+  - name: Agent
+    description: Durable Agent Threads, Goal links, and committed Messages.
+  - name: Scene
+    description: Versioned training Scenes, roles, and practice options.
+  - name: IELTS Speaking
+    description: Published IELTS Speaking question-bank resources.
+  - name: Preparation
+    description: User materials, immutable snapshots, and versioned practice plans.
+  - name: Practice
+    description: Session lifecycle, frozen context, Questions, Answers, Turns, and completion facts.
+  - name: Review
+    description: Analysis, evidence feedback, same-question retry, and history projections.
+  - name: Evaluation
+    description: Versioned Scene and Core 4D evaluation facts, gates, evidence, and revisions.
+  - name: Avatar
+    description: Short-lived avatar rendering credentials for owned interactive practice sessions.
+  - name: Resume
+    description: Actor-owned PDF resumes, structured content revisions, and parsing lifecycle.
+paths:
+  /health:
+    get:
+      summary: Check the modular monolith process
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Process health and registered business modules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+                modules:
+                  - preparation
+                  - practice
+                  - conversation
+                  - review
+        '400':
+          $ref: ./common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ./common/errors.yaml#/components/responses/DefaultError
+  /v1/auth/register:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1register
+  /v1/auth/login:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1login
+  /v1/auth/logout:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1logout
+  /v1/me:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1me
+  /v1/me/profile:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
+  /v1/resumes:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes
+  /v1/temporary-resumes:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes
+  /v1/temporary-resumes/{resume_id}:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes~1{resume_id}
+  /v1/temporary-resumes/{resume_id}/parse-retries:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1temporary-resumes~1{resume_id}~1parse-retries
+  /v1/resumes/{resume_id}:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}
+  /v1/resumes/{resume_id}/content:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1content
+  /v1/resumes/{resume_id}/file:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1file
+  /v1/resumes/{resume_id}/content-url:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1content-url
+  /v1/resumes/{resume_id}/parse-retries:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1parse-retries
+  /v1/scenes:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
+  /v1/ielts-speaking/question-bank:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1question-bank
+  /v1/goals:
+    $ref: ./modules/goal.yaml#/paths/~1v1~1goals
+  /v1/goals/{goal_id}:
+    $ref: ./modules/goal.yaml#/paths/~1v1~1goals~1{goal_id}
+  /v1/agent-threads:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads
+  /v1/agent-threads/focused:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1focused
+  /v1/agent-threads/{thread_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}
+  /v1/agent-threads/{thread_id}/active-goal:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-goal
+  /v1/agent-threads/{thread_id}/messages:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1messages
+  /v1/agent-threads/{thread_id}/image-assets:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1image-assets
+  /v1/agent-image-assets/{image_asset_id}/content:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-image-assets~1{image_asset_id}~1content
+  /v1/agent-image-assets/{image_asset_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-image-assets~1{image_asset_id}
+  /v1/agent-threads/{thread_id}/voice-message-candidates:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-message-candidates
+  /v1/agent-voice-message-candidates/{candidate_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}
+  /v1/agent-voice-message-candidates/{candidate_id}/retries:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}~1retries
+  /v1/agent-voice-message-candidates/{candidate_id}/confirmations:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}~1confirmations
+  /v1/agent-message-audios/{audio_id}/playback:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-message-audios~1{audio_id}~1playback
+  /v1/agent-message-audios/{audio_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-message-audios~1{audio_id}
+  /v1/agent-messages/{message_id}/speech:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1speech
+  /v1/agent-threads/{thread_id}/runs:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs
+  /v1/agent-threads/{thread_id}/runs/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs~1stream
+  /v1/agent-runs/{run_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}
+  /v1/agent-runs/{run_id}/retries:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries
+  /v1/agent-runs/{run_id}/retries/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries~1stream
+  /v1/agent-runs/{run_id}/context-manifest:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1context-manifest
+  /v1/practice-sessions/{practice_session_id}/voice-activation:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-activation
+  /v1/practice-sessions/{practice_session_id}/voice-state:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-state
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates~1{candidate_id}~1confirmations
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/tips:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1tips
+  /v1/transcription-candidates/{candidate_id}/confirmations:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
+  /v1/voice-questions/{question_id}/speech:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1speech
+  /v1/voice-questions/{question_id}/translation:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1translation
+  /v1/evaluation-reports:
+    $ref: ./modules/review.yaml#/paths/~1v1~1evaluation-reports
+  /v1/evaluation-reports/{report_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1evaluation-reports~1{report_id}
+  /v1/evaluations:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations
+  /v1/evaluations/{evaluation_id}:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations~1{evaluation_id}
+  /v1/evaluations/{evaluation_id}/re-evaluate:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations~1{evaluation_id}~1re-evaluate
+  /v1/practice-sessions/{practice_session_id}/interview-report:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interview-report
+  /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1ielts-speaking-report
+  /v1/scenes/{scene_id}:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}
+  /v1/scenes/{scene_id}/roles:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}~1roles
+  /v1/preparation-profiles:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles
+  /v1/preparation-profiles/{preparation_profile_id}/snapshots:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles~1{preparation_profile_id}~1snapshots
+  /v1/job-targets:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets
+  /v1/job-targets/{job_target_id}:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}
+  /v1/job-targets/{job_target_id}/analyses:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1analyses
+  /v1/job-targets/{job_target_id}/confirmations:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1confirmations
+  /v1/job-targets/{job_target_id}/discard:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1discard
+  /v1/practice-plans:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1practice-plans
+  /v1/practice-plans/{practice_plan_id}:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}
+  /v1/practice-plans/{practice_plan_id}/practice-sessions:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}~1practice-sessions
+  /v1/practice-sessions/{practice_session_id}:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}
+  /v1/practice-sessions/{practice_session_id}/avatar-session-token:
+    $ref: ./modules/avatar.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1avatar-session-token
+  /v1/practice-sessions/{practice_session_id}/snapshot:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1snapshot
+  /v1/practice-sessions/{practice_session_id}/pause:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1pause
+  /v1/practice-sessions/{practice_session_id}/resume:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1resume
+  /v1/practice-sessions/{practice_session_id}/end-early:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1end-early
+  /v1/practice-sessions/{practice_session_id}/bootstrap:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1bootstrap
+  /v1/practice-sessions/{practice_session_id}/questions:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions
+  /v1/questions/{question_id}/turns:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1questions~1{question_id}~1turns
+  /v1/turns/{turn_id}:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1turns~1{turn_id}
+  /v1/audio-assets/{audio_asset_id}:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}
+  /v1/audio-assets/{audio_asset_id}/playback:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}~1playback
+  /v1/practice-sessions/{practice_session_id}/events:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
+  /v1/speech-feedback/{speech_feedback_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1speech-feedback~1{speech_feedback_id}
+  /v1/feedback-items/{feedback_item_id}/retry-requests:
+    $ref: ./modules/review.yaml#/paths/~1v1~1feedback-items~1{feedback_item_id}~1retry-requests
+  /v1/retry-requests/{retry_request_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1retry-requests~1{retry_request_id}
+components:
+  securitySchemes:
+    BearerSession:
+      type: http
+      scheme: bearer
+      bearerFormat: OpaqueSessionToken
+      description: |
+        A first-party, high-entropy opaque Session Token supplied only as
+        `Authorization: Bearer <opaque-session-token>`. It is not a JWT and must
+        not appear in URLs, request bodies, logs, telemetry, or error details.
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - modules
+      properties:
+        status:
+          type: string
+          const: ok
+        modules:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - preparation
+              - practice
+              - conversation
+              - review
+    ErrorResponse:
+      $ref: ./common/errors.yaml#/components/schemas/ErrorResponse
+    User:
+      $ref: ./modules/identity.yaml#/components/schemas/User
+    UserProfile:
+      $ref: ./modules/identity.yaml#/components/schemas/UserProfile
+    UpdateUserProfileRequest:
+      $ref: ./modules/identity.yaml#/components/schemas/UpdateUserProfileRequest
+    Resume:
+      $ref: ./modules/resume.yaml#/components/schemas/Resume
+    ResumeList:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeList
+    ResumeDetail:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeDetail
+    ResumeRevision:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeRevision
+    ResumeContent:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeContent
+    RegisterRequest:
+      $ref: ./modules/identity.yaml#/components/schemas/RegisterRequest
+    LoginRequest:
+      $ref: ./modules/identity.yaml#/components/schemas/LoginRequest
+    LoginResponse:
+      $ref: ./modules/identity.yaml#/components/schemas/LoginResponse
+    Goal:
+      $ref: ./modules/goal.yaml#/components/schemas/Goal
+    AgentThread:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentThread
+    ThreadGoalLink:
+      $ref: ./modules/agent.yaml#/components/schemas/ThreadGoalLink
+    AgentMessage:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessage
+    AgentMessageHandoff:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageHandoff
+    AgentMessageAudio:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageAudio
+    AgentVoiceMessageCandidate:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentVoiceMessageCandidate
+    AgentVoiceMessageConfirmation:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentVoiceMessageConfirmation
+    AgentMessageAudioPlayback:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageAudioPlayback
+    AgentRun:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentRun
+    ContextManifest:
+      $ref: ./modules/agent.yaml#/components/schemas/ContextManifest
+    SceneDefinition:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneDefinition
+    SceneDefinitionList:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneDefinitionList
+    PracticeExperience:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeExperience
+    SceneCategory:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneCategory
+    SceneStatus:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneStatus
+    ScenePrompt:
+      $ref: ./modules/scene.yaml#/components/schemas/ScenePrompt
+    RoleDefinition:
+      $ref: ./modules/scene.yaml#/components/schemas/RoleDefinition
+    PracticeOption:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeOption
+    PracticeMode:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeMode
+    IeltsQuestionBank:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsQuestionBank
+    IeltsPart1Set:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Set
+    IeltsPart1Topic:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Topic
+    IeltsTopicGroup:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsTopicGroup
+    IeltsPart2CueCard:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart2CueCard
+    PreparationProfile:
+      $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
+    PreparationSnapshot:
+      $ref: ./modules/preparation.yaml#/components/schemas/PreparationSnapshot
+    JobTarget:
+      $ref: ./modules/preparation.yaml#/components/schemas/JobTarget
+    JobTargetCandidate:
+      $ref: ./modules/preparation.yaml#/components/schemas/JobTargetCandidate
+    PracticePlan:
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticePlan
+    PracticeSession:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeSession
+    PracticeParticipant:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeParticipant
+    PracticeSessionSnapshot:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeSessionSnapshot
+    PracticeSessionPolicy:
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticeSessionPolicy
+    Question:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/Question
+    Turn:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/Turn
+    TranscriptSnapshot:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/TranscriptSnapshot
+    AudioReference:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/AudioReference
+    AudioAssetPlayback:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/AudioAssetPlayback
+    TurnReviewSource:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/TurnReviewSource
+    CreateRetryTurnCommand:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/CreateRetryTurnCommand
+    CreateRetryTurnResult:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/CreateRetryTurnResult
+    RetryTranscriptionCandidate:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/RetryTranscriptionCandidate
+    ConfirmedRetryTurn:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/ConfirmedRetryTurn
+    PracticeBootstrap:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/PracticeBootstrap
+    SpeechFeedback:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedback
+    SpeechFeedbackSource:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedbackSource
+    SpeechFeedbackAnchor:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedbackAnchor
+    FeedbackItem:
+      $ref: ./modules/review.yaml#/components/schemas/FeedbackItem
+    RetryRequest:
+      $ref: ./modules/review.yaml#/components/schemas/RetryRequest
+    CreateEvaluationRequest:
+      $ref: ./modules/evaluation.yaml#/components/schemas/CreateEvaluationRequest
+    ReevaluateEvaluationRequest:
+      $ref: ./modules/evaluation.yaml#/components/schemas/ReevaluateEvaluationRequest
+    EvaluationAccepted:
+      $ref: ./modules/evaluation.yaml#/components/schemas/EvaluationAccepted
+    InterviewReportEnvelope:
+      $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReportEnvelope
+    InterviewReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReport
+    IeltsSpeakingReportEnvelope:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportEnvelope
+    IeltsSpeakingReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReport
+    Evaluation:
+      $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
+    SceneEvaluationResult:
+      $ref: ./modules/evaluation.yaml#/components/schemas/SceneEvaluationResult
+    CoreAbilityObservation:
+      $ref: ./modules/evaluation.yaml#/components/schemas/CoreAbilityObservation
+    EvidenceRef:
+      $ref: ./modules/evaluation.yaml#/components/schemas/EvidenceRef
+    ConversationEvent:
+      oneOf:
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/StreamReadyEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/QuestionCreatedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnSubmittedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionCompletedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionEndedEarlyEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/StreamResyncRequiredEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/SystemErrorEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/SystemHeartbeatEvent
+      discriminator:
+        propertyName: event_type
+        mapping:
+          stream.ready: ./websocket/conversation-events.schema.json#/$defs/StreamReadyEvent
+          question.created: ./websocket/conversation-events.schema.json#/$defs/QuestionCreatedEvent
+          turn.submitted: ./websocket/conversation-events.schema.json#/$defs/TurnSubmittedEvent
+          turn.processing: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
+          turn.completed: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
+          answer.processing_failed: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
+          practice_session.started: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
+          practice_session.paused: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
+          practice_session.resumed: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
+          practice_session.completed: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionCompletedEvent
+          practice_session.ended_early: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionEndedEarlyEvent
+          stream.resync_required: ./websocket/conversation-events.schema.json#/$defs/StreamResyncRequiredEvent
+          system.error: ./websocket/conversation-events.schema.json#/$defs/SystemErrorEvent
+          system.heartbeat: ./websocket/conversation-events.schema.json#/$defs/SystemHeartbeatEvent
+x-websocket-contract:
+  endpoint: /v1/practice-sessions/{practice_session_id}/events
+  schema:
+    $ref: '#/components/schemas/ConversationEvent'
+x-module-commands:
+  CreateRetryTurn:
+    visibility: internal
+    direction: 'Review -> Conversation'
+    request:
+      $ref: '#/components/schemas/CreateRetryTurnCommand'
+    result:
+      $ref: '#/components/schemas/CreateRetryTurnResult'
+    idempotency_key: retry_request_id
+    description: |
+      Review invokes this command after durably saving a pending RetryRequest.
+      Conversation validates that the original Turn is completed, reuses its
+      Session, immutable Question, sequence, and respondent, and creates a real
+      `ANSWERING` retry Turn. The result includes the server-authoritative
+      `answer_path` for that draft. Replaying the same ID and payload returns
+      the same `new_turn_id`; changing `original_turn_id` for that ID is a
+      conflict. This is an internal modular-monolith contract and is never
+      called by Flutter.

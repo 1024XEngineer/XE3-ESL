@@ -1,2 +1,0 @@
-/// Practice module boundary.
-library;

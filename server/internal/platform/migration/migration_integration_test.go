@@ -1,0 +1,2406 @@
+package migration
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	migratedatabase "github.com/golang-migrate/migrate/v4/database"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func TestRunnerAppliesIdempotentlyAndRevertsLatestMigration(t *testing.T) {
+	migrationConfig, _, _ := isolatedMigrationConfig(t)
+
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	}()
+
+	changed, err := runner.Up()
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+	if !changed {
+		t.Fatal("first Up reported no change")
+	}
+
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("Version after Up: %v", err)
+	}
+	if !status.Present || status.Version == 0 || status.Dirty {
+		t.Fatalf("status after Up = %+v, want a positive clean version", status)
+	}
+	latestVersion := status.Version
+
+	changed, err = runner.Up()
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if changed {
+		t.Fatal("second Up reported a change")
+	}
+
+	changed, err = runner.DownOne()
+	if err != nil {
+		t.Fatalf("DownOne: %v", err)
+	}
+	if !changed {
+		t.Fatal("DownOne reported no change")
+	}
+
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("Version after DownOne: %v", err)
+	}
+	if latestVersion == 1 {
+		if status.Present {
+			t.Fatalf("status after DownOne = %+v, want no applied version", status)
+		}
+	} else if !status.Present || status.Dirty || status.Version >= latestVersion {
+		t.Fatalf(
+			"status after DownOne = %+v, want a clean version before %d",
+			status,
+			latestVersion,
+		)
+	}
+
+	changed, err = runner.Up()
+	if err != nil {
+		t.Fatalf("Up after DownOne: %v", err)
+	}
+	if !changed {
+		t.Fatal("Up after DownOne reported no change")
+	}
+
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("Version after re-applying migrations: %v", err)
+	}
+	if !status.Present || status.Version != latestVersion || status.Dirty {
+		t.Fatalf(
+			"status after re-applying migrations = %+v, want version %d and clean",
+			status,
+			latestVersion,
+		)
+	}
+
+	if err := runner.Force(
+		int(latestVersion),
+		ForceConfirmation(int(latestVersion)),
+	); !errors.Is(err, ErrForceRequiresDirty) {
+		t.Fatalf("Force on clean database error = %v, want %v", err, ErrForceRequiresDirty)
+	}
+}
+
+func TestGoalAuthorityMigrationSwitchesOnlyTheEmptyGoalSlice(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(48); err != nil {
+		t.Fatalf("apply migrations through version 48: %v", err)
+	}
+	assertMigrationStatus(t, runner, 48)
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to version 48 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close version 48 schema connection: %v", err)
+		}
+	})
+
+	const ownerID = "10000000-0000-4000-8000-000000000149"
+	const memoryID = "11000000-0000-4000-8000-000000000149"
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO identity_users (id, canonical_email)
+		VALUES ($1, 'goal-migration@example.com')
+	`, ownerID); err != nil {
+		t.Fatalf("seed Goal migration owner: %v", err)
+	}
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO agent_memories (
+		    id,
+		    owner_user_id,
+		    memory_type,
+		    canonical_key,
+		    content,
+		    scope_type,
+		    policy_version
+		) VALUES (
+		    $2,
+		    $1,
+		    'preference',
+		    'preference.response_style',
+		    'Prefer concise explanations',
+		    'user',
+		    'goal-migration.v1'
+		)
+	`, ownerID, memoryID); err != nil {
+		t.Fatalf("seed unrelated user-scoped data: %v", err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("apply Goal authority migration: %v", err)
+	}
+	assertMigrationStatus(t, runner, 49)
+	assertGoalAuthoritySchema(t, admin, schema, true)
+
+	var preserved bool
+	if err := scoped.QueryRow(context.Background(), `
+		SELECT scope_type = 'user' AND goal_id IS NULL
+		FROM agent_memories
+		WHERE id = $1
+	`, memoryID).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("unrelated Memory preserved = %t, error = %v", preserved, err)
+	}
+
+	changed, err := runner.DownOne()
+	if err != nil {
+		t.Fatalf("revert Goal authority migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("Goal authority down migration reported no change")
+	}
+	assertMigrationStatus(t, runner, 48)
+	assertGoalAuthoritySchema(t, admin, schema, false)
+
+	if err := scoped.QueryRow(context.Background(), `
+		SELECT scope_type = 'user' AND matter_id IS NULL
+		FROM agent_memories
+		WHERE id = $1
+	`, memoryID).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("Memory after down migration preserved = %t, error = %v", preserved, err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply Goal authority migration: %v", err)
+	}
+	assertMigrationStatus(t, runner, 49)
+	assertGoalAuthoritySchema(t, admin, schema, true)
+}
+
+func TestGoalAuthorityMigrationRejectsLegacyMatterData(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(48); err != nil {
+		t.Fatalf("apply migrations through version 48: %v", err)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to version 48 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close version 48 schema connection: %v", err)
+		}
+	})
+
+	const ownerID = "10000000-0000-4000-8000-000000000249"
+	const matterID = "11000000-0000-4000-8000-000000000249"
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO identity_users (id, canonical_email)
+		VALUES ($1, 'legacy-matter@example.com')
+	`, ownerID); err != nil {
+		t.Fatalf("seed legacy Matter owner: %v", err)
+	}
+	if _, err := scoped.Exec(context.Background(), `
+		INSERT INTO matters (id, owner_user_id, title)
+		VALUES ($2, $1, 'Legacy Matter')
+	`, ownerID, matterID); err != nil {
+		t.Fatalf("seed legacy Matter: %v", err)
+	}
+
+	err = runner.migrate.Steps(1)
+	if err == nil {
+		t.Fatal("Goal authority migration accepted legacy Matter data")
+	}
+	if !strings.Contains(
+		err.Error(),
+		"recreate the development or test database",
+	) {
+		t.Fatalf("Goal authority migration error = %q", err)
+	}
+
+	var oldTable, newTable *string
+	if err := admin.QueryRow(
+		context.Background(),
+		"SELECT to_regclass($1), to_regclass($2)",
+		schema+".matters",
+		schema+".coaching_goals",
+	).Scan(&oldTable, &newTable); err != nil {
+		t.Fatalf("inspect rolled-back Goal schema: %v", err)
+	}
+	if oldTable == nil || newTable != nil {
+		t.Fatalf(
+			"schema after rejected migration: matters=%v coaching_goals=%v",
+			oldTable,
+			newTable,
+		)
+	}
+}
+
+func TestConversationHardeningNormalizesLegacyFailureCodes(t *testing.T) {
+	migrationConfig, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(9); err != nil {
+		t.Fatalf("apply migrations through Conversation v9: %v", err)
+	}
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read Conversation v9 status: %v", err)
+	}
+	if !status.Present || status.Version != 9 || status.Dirty {
+		t.Fatalf("Conversation migration status = %+v, want clean version 9", status)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to Conversation v9 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close Conversation v9 schema connection: %v", err)
+		}
+	})
+
+	const userID = "10000000-0000-4000-8000-000000000127"
+	const reservationID = "legacy-reservation"
+	const attemptID = "legacy-attempt"
+	fixtures := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{
+			name: "Identity user",
+			sql: `INSERT INTO identity_users (id, canonical_email)
+			      VALUES ($1, 'conversation-upgrade@example.com')`,
+			args: []any{userID},
+		},
+		{
+			name: "Conversation question",
+			sql: `INSERT INTO conversation_questions (
+			          owner_user_id, question_id, practice_session_id,
+			          speaker_participant_id, addressee_participant_ids,
+			          objective_id, question_type, content, sequence, created_at
+			      ) VALUES (
+			          $1, 'legacy-question', 'legacy-session',
+			          'interviewer', ARRAY['candidate']::text[],
+			          'legacy-objective', 'PRIMARY', 'Legacy question?', 1, now()
+			      )`,
+			args: []any{userID},
+		},
+		{
+			name: "transcription reservation",
+			sql: `INSERT INTO conversation_transcription_reservations (
+			          owner_user_id, reservation_id, question_id,
+			          practice_session_id, idempotency_key, input_fingerprint,
+			          respondent_participant_id, status, fencing_token,
+			          deletion_generation, lease_expires_at, current_attempt_id,
+			          created_at, updated_at
+			      ) VALUES (
+			          $1, $2, 'legacy-question', 'legacy-session',
+			          'legacy-key', 'legacy-fingerprint', 'candidate',
+			          'failed', 1, 0, now() + interval '1 minute',
+			          $3, now(), now()
+			      )`,
+			args: []any{userID, reservationID, attemptID},
+		},
+		{
+			name: "processing attempt",
+			sql: `INSERT INTO conversation_processing_attempts (
+			          owner_user_id, attempt_id, reservation_id, operation,
+			          fencing_token, status, lease_expires_at, error_code,
+			          retryable, provider_request_id, duration_ms,
+			          started_at, finished_at
+			      ) VALUES (
+			          $1, $3, $2, 'transcription',
+			          1, 'failed', now() + interval '1 minute',
+			          'HTTP 500: upstream secret response',
+			          true, 'legacy-request', 25, now(), now()
+			      )`,
+			args: []any{userID, reservationID, attemptID},
+		},
+	}
+	for _, fixture := range fixtures {
+		if _, err := scoped.Exec(
+			context.Background(),
+			fixture.sql,
+			fixture.args...,
+		); err != nil {
+			t.Fatalf("insert %s fixture: %v", fixture.name, err)
+		}
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("upgrade Conversation v9 to v10: %v", err)
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read Conversation v10 status: %v", err)
+	}
+	if !status.Present || status.Version != 10 || status.Dirty {
+		t.Fatalf("Conversation migration status = %+v, want clean version 10", status)
+	}
+
+	var errorCode string
+	if err := scoped.QueryRow(
+		context.Background(),
+		`SELECT error_code
+		 FROM conversation_processing_attempts
+		 WHERE owner_user_id = $1 AND attempt_id = $2`,
+		userID,
+		attemptID,
+	).Scan(&errorCode); err != nil {
+		t.Fatalf("restore normalized legacy failure: %v", err)
+	}
+	if errorCode != "legacy_provider_failure" {
+		t.Fatalf(
+			"normalized legacy failure code = %q, want legacy_provider_failure",
+			errorCode,
+		)
+	}
+	if _, err := scoped.Exec(
+		context.Background(),
+		`UPDATE conversation_processing_attempts
+		 SET error_code = 'raw provider response'
+		 WHERE owner_user_id = $1 AND attempt_id = $2`,
+		userID,
+		attemptID,
+	); err == nil {
+		t.Fatal("Conversation v10 accepted an unnormalized failure code")
+	}
+}
+
+func TestAgentDataMigrationUpgradesIdentitySchemaAndReapplies(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(2); err != nil {
+		t.Fatalf("apply migrations through Identity: %v", err)
+	}
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read Identity migration version: %v", err)
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf("Identity migration status = %+v, want clean version 2", status)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to Identity schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close Identity schema connection: %v", err)
+		}
+	})
+	const existingUserID = "10000000-0000-4000-8000-000000000085"
+	if _, err := scoped.Exec(
+		context.Background(),
+		`INSERT INTO identity_users (id, canonical_email)
+VALUES ($1, 'agent-data-upgrade@example.com')`,
+		existingUserID,
+	); err != nil {
+		t.Fatalf("insert pre-upgrade Identity user: %v", err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("upgrade Identity schema to Agent data: %v", err)
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read Agent data migration version: %v", err)
+	}
+	if !status.Present || status.Version != 3 || status.Dirty {
+		t.Fatalf("Agent data migration status = %+v, want clean version 3", status)
+	}
+	assertAgentDataTables(t, admin, schema, true)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+
+	changed, err := runner.DownOne()
+	if err != nil {
+		t.Fatalf("revert Agent data migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("Agent data down migration reported no change")
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read version after Agent data down: %v", err)
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf("status after Agent data down = %+v, want clean version 2", status)
+	}
+	assertAgentDataTables(t, admin, schema, false)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply Agent data migration: %v", err)
+	}
+	assertMigrationStatus(t, runner, 3)
+	assertAgentDataTables(t, admin, schema, true)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+}
+
+func assertAgentDataTables(
+	t *testing.T,
+	admin *pgx.Conn,
+	schema string,
+	wantPresent bool,
+) {
+	t.Helper()
+	var tableCount int
+	if err := admin.QueryRow(
+		context.Background(),
+		`SELECT count(*)
+FROM information_schema.tables
+WHERE table_schema = $1
+  AND table_name IN (
+      'matters',
+      'agent_threads',
+      'agent_thread_matter_links',
+      'agent_messages'
+  )`,
+		schema,
+	).Scan(&tableCount); err != nil {
+		t.Fatalf("inspect Agent data tables: %v", err)
+	}
+	wantCount := 0
+	if wantPresent {
+		wantCount = 4
+	}
+	if tableCount != wantCount {
+		t.Fatalf(
+			"Agent data table count = %d, want %d",
+			tableCount,
+			wantCount,
+		)
+	}
+}
+
+func assertIdentityUserPreserved(
+	t *testing.T,
+	scoped *pgx.Conn,
+	userID string,
+) {
+	t.Helper()
+	var canonicalEmail string
+	if err := scoped.QueryRow(
+		context.Background(),
+		`SELECT canonical_email
+FROM identity_users
+WHERE id = $1`,
+		userID,
+	).Scan(&canonicalEmail); err != nil {
+		t.Fatalf("read preserved Identity user: %v", err)
+	}
+	if canonicalEmail != "agent-data-upgrade@example.com" {
+		t.Fatalf(
+			"preserved canonical email = %q, want agent-data-upgrade@example.com",
+			canonicalEmail,
+		)
+	}
+}
+
+func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
+	t.Run("already_applied_version_four", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		if err := runner.migrate.Steps(4); err != nil {
+			t.Fatalf("apply migrations through version four: %v", err)
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		if err := runner.migrate.Steps(1); err != nil {
+			t.Fatalf("apply version five: %v", err)
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+
+		changed, err := runner.DownOne()
+		if err != nil {
+			t.Fatalf("revert version five: %v", err)
+		}
+		if !changed {
+			t.Fatal("version five down reported no change")
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		if err := runner.migrate.Steps(1); err != nil {
+			t.Fatalf("reapply version five: %v", err)
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+
+	t.Run("empty_schema", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		changed, err := runner.Up()
+		if err != nil {
+			t.Fatalf("apply all migrations to empty schema: %v", err)
+		}
+		if !changed {
+			t.Fatal("empty-schema migration reported no change")
+		}
+		status, err := runner.Version()
+		if err != nil {
+			t.Fatalf("read empty-schema migration status: %v", err)
+		}
+		if !status.Present || status.Dirty || status.Version < 5 {
+			t.Fatalf(
+				"migration status = %+v, want a clean version at or after 5",
+				status,
+			)
+		}
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+}
+
+func TestAgentTrustBoundaryMigrationPreservesLegacyAuditAndRetries(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open version-four migration runner: %v", err)
+	}
+	if err := runner.migrate.Steps(4); err != nil {
+		_ = runner.Close()
+		t.Fatalf("apply migrations through version four: %v", err)
+	}
+	assertMigrationStatus(t, runner, 4)
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close version-four migration runner: %v", err)
+	}
+
+	legacy := insertLegacyOverBudgetRun(t, migrationConfig)
+	failingVersionFive := fstest.MapFS{
+		"000004_existing_schema.up.sql": {
+			Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+		},
+		"000004_existing_schema.down.sql": {
+			Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+		},
+		"000005_legacy_budget_failure.up.sql": {
+			Data: []byte(`BEGIN;
+ALTER TABLE agent_runs
+    ADD CONSTRAINT agent_runs_result_budget_check
+        CHECK (
+            output_tokens IS NULL
+            OR output_tokens <= max_output_tokens
+        );
+COMMIT;
+`),
+		},
+		"000005_legacy_budget_failure.down.sql": {
+			Data: []byte(`BEGIN;
+ALTER TABLE agent_runs
+    DROP CONSTRAINT agent_runs_result_budget_check;
+COMMIT;
+`),
+		},
+	}
+	failingRunner, err := openConfigWithFS(
+		migrationConfig,
+		failingVersionFive,
+	)
+	if err != nil {
+		t.Fatalf("open failing version-five runner: %v", err)
+	}
+
+	_, migrationErr := failingRunner.Up()
+	if migrationErr == nil {
+		_ = failingRunner.Close()
+		t.Fatal("validated legacy budget migration unexpectedly succeeded")
+	}
+	if strings.Contains(migrationErr.Error(), "set migration lock timeout") {
+		_ = failingRunner.Close()
+		t.Fatalf(
+			"migration error contains statement-timeout cleanup noise: %v",
+			migrationErr,
+		)
+	}
+	failedStatus, err := failingRunner.Version()
+	if err != nil {
+		_ = failingRunner.Close()
+		t.Fatalf("read failed migration status: %v", err)
+	}
+	if !failedStatus.Dirty {
+		_ = failingRunner.Close()
+		t.Fatalf(
+			"failed migration error/status = %v / %+v, want dirty",
+			migrationErr,
+			failedStatus,
+		)
+	}
+	if _, exists := readAgentRunConstraintDefinitions(
+		t,
+		admin,
+		schema,
+	)["agent_runs_result_budget_check"]; exists {
+		_ = failingRunner.Close()
+		t.Fatal("failed transactional migration left its constraint behind")
+	}
+	assertVersionFourAgentSchema(t, admin, schema)
+	if err := failingRunner.Force(4, ForceConfirmation(4)); err != nil {
+		_ = failingRunner.Close()
+		t.Fatalf("force inspected schema back to version four: %v", err)
+	}
+	assertMigrationStatus(t, failingRunner, 4)
+	if err := failingRunner.Close(); err != nil {
+		t.Fatalf("close recovered failing runner: %v", err)
+	}
+
+	retryRunner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open fixed version-five runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := retryRunner.Close(); err != nil {
+			t.Errorf("close fixed version-five runner: %v", err)
+		}
+	})
+	if err := retryRunner.migrate.Steps(1); err != nil {
+		t.Fatalf("retry fixed version five: %v", err)
+	}
+	assertMigrationStatus(t, retryRunner, 5)
+	assertAgentTrustBoundarySchema(t, admin, schema)
+	assertLegacyOverBudgetRunPreserved(t, migrationConfig, legacy)
+	assertNewOverBudgetResultRejected(t, migrationConfig, legacy.ownerID)
+}
+
+func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(2); err != nil {
+		t.Fatalf("apply identity migration: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	users := pgx.Identifier{schema, "identity_users"}.Sanitize()
+	credentials := pgx.Identifier{schema, "identity_credentials"}.Sanitize()
+	sessions := pgx.Identifier{schema, "identity_auth_sessions"}.Sanitize()
+
+	const (
+		firstUserID     = "10000000-0000-4000-8000-000000000001"
+		secondUserID    = "10000000-0000-4000-8000-000000000002"
+		unknownUserID   = "10000000-0000-4000-8000-000000000099"
+		firstSessionID  = "20000000-0000-4000-8000-000000000001"
+		secondSessionID = "20000000-0000-4000-8000-000000000002"
+		thirdSessionID  = "20000000-0000-4000-8000-000000000003"
+	)
+	goRawStdEncodedPasswordHash := fmt.Sprintf(
+		"$argon2id$v=19$m=65536,t=3,p=2$%s$%s",
+		base64.RawStdEncoding.EncodeToString([]byte("1234567890abcdef")),
+		base64.RawStdEncoding.EncodeToString(bytesOf(0x42, 32)),
+	)
+	createdAt := time.Date(2026, time.July, 24, 10, 0, 0, 0, time.UTC)
+	expiresAt := createdAt.Add(24 * time.Hour)
+
+	if _, err := admin.Exec(
+		ctx,
+		"INSERT INTO "+users+
+			" (id, canonical_email, created_at, updated_at) VALUES ($1, $2, $3, $3)",
+		firstUserID,
+		"first@example.com",
+		createdAt,
+	); err != nil {
+		t.Fatalf("insert first user: %v", err)
+	}
+	if _, err := admin.Exec(
+		ctx,
+		"INSERT INTO "+users+
+			" (id, canonical_email, created_at, updated_at) VALUES ($1, $2, $3, $3)",
+		secondUserID,
+		"second@example.com",
+		createdAt,
+	); err != nil {
+		t.Fatalf("insert second user: %v", err)
+	}
+	if _, err := admin.Exec(
+		ctx,
+		"INSERT INTO "+credentials+" (user_id, password_hash, updated_at) VALUES ($1, $2, $3)",
+		firstUserID,
+		goRawStdEncodedPasswordHash,
+		createdAt,
+	); err != nil {
+		t.Fatalf("insert credential: %v", err)
+	}
+	if _, err := admin.Exec(
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		firstSessionID,
+		firstUserID,
+		bytesOf(0x11, 32),
+		createdAt,
+		expiresAt,
+	); err != nil {
+		t.Fatalf("insert first session: %v", err)
+	}
+	if _, err := admin.Exec(
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		secondSessionID,
+		firstUserID,
+		bytesOf(0x22, 32),
+		createdAt.Add(time.Minute),
+		expiresAt,
+	); err != nil {
+		t.Fatalf("insert second session for same user: %v", err)
+	}
+
+	var sessionCount int
+	if err := admin.QueryRow(
+		ctx,
+		"SELECT count(*) FROM "+sessions+" WHERE user_id = $1",
+		firstUserID,
+	).Scan(&sessionCount); err != nil {
+		t.Fatalf("count multiple sessions: %v", err)
+	}
+	if sessionCount != 2 {
+		t.Fatalf("session count = %d, want 2", sessionCount)
+	}
+
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+users+" (id, canonical_email) VALUES ($1, $2)",
+		[]any{"10000000-0000-4000-8000-000000000003", "first@example.com"},
+		"23505",
+		"identity_users_canonical_email_key",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+users+" (id, canonical_email) VALUES ($1, $2)",
+		[]any{"10000000-0000-4000-8000-000000000004", "Upper@example.com"},
+		"23514",
+		"identity_users_canonical_email_lowercase_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+users+" (id, canonical_email) VALUES ($1, $2)",
+		[]any{"10000000-0000-4000-8000-000000000005", "space @example.com"},
+		"23514",
+		"identity_users_canonical_email_ascii_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+users+" (id, canonical_email, account_status) VALUES ($1, $2, $3)",
+		[]any{"10000000-0000-4000-8000-000000000006", "status@example.com", "disabled"},
+		"23514",
+		"identity_users_account_status_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+users+
+			" (id, canonical_email, created_at, updated_at) VALUES ($1, $2, $3, $4)",
+		[]any{
+			"10000000-0000-4000-8000-000000000007",
+			"time@example.com",
+			createdAt,
+			createdAt.Add(-time.Second),
+		},
+		"23514",
+		"identity_users_timestamps_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+		[]any{firstUserID, goRawStdEncodedPasswordHash},
+		"23505",
+		"identity_credentials_pkey",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+		[]any{unknownUserID, goRawStdEncodedPasswordHash},
+		"23503",
+		"identity_credentials_user_id_fkey",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+		[]any{secondUserID, strings.Repeat("x", 80)},
+		"23514",
+		"identity_credentials_password_hash_phc_shape_check",
+	)
+	malformedPasswordHashes := []struct {
+		name string
+		hash string
+	}{
+		{
+			name: "missing version",
+			hash: "$argon2id$$m=65536,t=3,p=4$" +
+				strings.Repeat("c", 24) + "$" + strings.Repeat("d", 43),
+		},
+		{
+			name: "missing parameters",
+			hash: "$argon2id$v=19$$" +
+				strings.Repeat("c", 24) + "$" + strings.Repeat("d", 43),
+		},
+		{
+			name: "missing salt",
+			hash: "$argon2id$v=19$m=65536,t=3,p=4$$" +
+				strings.Repeat("d", 43),
+		},
+		{
+			name: "missing hash",
+			hash: "$argon2id$v=19$m=65536,t=3,p=4$" +
+				strings.Repeat("c", 64) + "$",
+		},
+	}
+	for _, malformedPasswordHash := range malformedPasswordHashes {
+		t.Run("rejects PHC "+malformedPasswordHash.name, func(t *testing.T) {
+			assertConstraintViolation(
+				t,
+				admin,
+				ctx,
+				"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+				[]any{secondUserID, malformedPasswordHash.hash},
+				"23514",
+				"identity_credentials_password_hash_phc_shape_check",
+			)
+		})
+	}
+	malformedBase64Segments := []struct {
+		name       string
+		hash       string
+		constraint string
+	}{
+		{
+			name: "salt length modulo four is one",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$A$" +
+				strings.Repeat("d", 43),
+			constraint: "identity_credentials_password_hash_base64_length_check",
+		},
+		{
+			name: "hash length modulo four is one",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "$" + strings.Repeat("d", 41),
+			constraint: "identity_credentials_password_hash_base64_length_check",
+		},
+		{
+			name: "salt contains padding",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "==$" + strings.Repeat("d", 43),
+			constraint: "identity_credentials_password_hash_phc_shape_check",
+		},
+		{
+			name: "hash contains padding",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "$" + strings.Repeat("d", 43) + "=",
+			constraint: "identity_credentials_password_hash_phc_shape_check",
+		},
+	}
+	for _, malformedBase64Segment := range malformedBase64Segments {
+		t.Run("rejects PHC "+malformedBase64Segment.name, func(t *testing.T) {
+			assertConstraintViolation(
+				t,
+				admin,
+				ctx,
+				"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+				[]any{secondUserID, malformedBase64Segment.hash},
+				"23514",
+				malformedBase64Segment.constraint,
+			)
+		})
+	}
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		[]any{thirdSessionID, unknownUserID, bytesOf(0x33, 32), createdAt, expiresAt},
+		"23503",
+		"identity_auth_sessions_user_id_fkey",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		[]any{thirdSessionID, secondUserID, bytesOf(0x33, 31), createdAt, expiresAt},
+		"23514",
+		"identity_auth_sessions_token_digest_length_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)",
+		[]any{thirdSessionID, secondUserID, bytesOf(0x11, 32), createdAt, expiresAt},
+		"23505",
+		"identity_auth_sessions_token_digest_key",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at) VALUES ($1, $2, $3, $4, $4)",
+		[]any{thirdSessionID, secondUserID, bytesOf(0x33, 32), createdAt},
+		"23514",
+		"identity_auth_sessions_expiry_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at, revoked_at)"+
+			" VALUES ($1, $2, $3, $4, $5, $6)",
+		[]any{
+			thirdSessionID,
+			secondUserID,
+			bytesOf(0x33, 32),
+			createdAt,
+			expiresAt,
+			createdAt.Add(time.Minute),
+		},
+		"23514",
+		"identity_auth_sessions_revocation_pair_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at, revoked_at, revocation_reason)"+
+			" VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		[]any{
+			thirdSessionID,
+			secondUserID,
+			bytesOf(0x33, 32),
+			createdAt,
+			expiresAt,
+			createdAt.Add(-time.Second),
+			"logout",
+		},
+		"23514",
+		"identity_auth_sessions_revoked_at_check",
+	)
+	assertConstraintViolation(
+		t,
+		admin,
+		ctx,
+		"INSERT INTO "+sessions+
+			" (id, user_id, token_digest, created_at, expires_at, revoked_at, revocation_reason)"+
+			" VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		[]any{
+			thirdSessionID,
+			secondUserID,
+			bytesOf(0x33, 32),
+			createdAt,
+			expiresAt,
+			createdAt.Add(time.Minute),
+			"contains spaces",
+		},
+		"23514",
+		"identity_auth_sessions_revocation_reason_check",
+	)
+
+	assertIdentityIndexes(t, admin, ctx, schema)
+	assertNoRawIdentitySecrets(t, admin, ctx, schema)
+
+	if _, err := admin.Exec(ctx, "DELETE FROM "+users+" WHERE id = $1", firstUserID); err != nil {
+		t.Fatalf("delete user for cascade check: %v", err)
+	}
+	var credentialCount int
+	if err := admin.QueryRow(
+		ctx,
+		"SELECT count(*) FROM "+credentials+" WHERE user_id = $1",
+		firstUserID,
+	).Scan(&credentialCount); err != nil {
+		t.Fatalf("count credentials after user delete: %v", err)
+	}
+	if credentialCount != 0 {
+		t.Fatalf("credential count after user delete = %d, want 0", credentialCount)
+	}
+	if err := admin.QueryRow(
+		ctx,
+		"SELECT count(*) FROM "+sessions+" WHERE user_id = $1",
+		firstUserID,
+	).Scan(&sessionCount); err != nil {
+		t.Fatalf("count sessions after user delete: %v", err)
+	}
+	if sessionCount != 0 {
+		t.Fatalf("session count after user delete = %d, want 0", sessionCount)
+	}
+
+	var changed bool
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read version before identity down migration: %v", err)
+	}
+	for status.Present && status.Version > 2 {
+		changed, err = runner.DownOne()
+		if err != nil {
+			t.Fatalf("revert migration newer than identity: %v", err)
+		}
+		if !changed {
+			t.Fatal("newer migration down reported no change")
+		}
+		status, err = runner.Version()
+		if err != nil {
+			t.Fatalf("read version while reverting newer migrations: %v", err)
+		}
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf(
+			"status before identity down migration = %+v, want version 2 clean",
+			status,
+		)
+	}
+	for _, table := range []string{
+		"matters",
+		"agent_threads",
+		"agent_thread_matter_links",
+		"agent_messages",
+	} {
+		var relation *string
+		if err := admin.QueryRow(
+			ctx,
+			"SELECT to_regclass($1)",
+			schema+"."+table,
+		).Scan(&relation); err != nil {
+			t.Fatalf("inspect %s after newer migrations down: %v", table, err)
+		}
+		if relation != nil {
+			t.Fatalf("%s still exists after its down migration as %q", table, *relation)
+		}
+	}
+
+	changed, err = runner.DownOne()
+	if err != nil {
+		t.Fatalf("revert identity migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("identity down migration reported no change")
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read version after identity down migration: %v", err)
+	}
+	if !status.Present || status.Version != 1 || status.Dirty {
+		t.Fatalf("status after identity down migration = %+v, want version 1 clean", status)
+	}
+	for _, table := range []string{
+		"identity_users",
+		"identity_credentials",
+		"identity_auth_sessions",
+	} {
+		var relation *string
+		if err := admin.QueryRow(
+			ctx,
+			"SELECT to_regclass($1)",
+			schema+"."+table,
+		).Scan(&relation); err != nil {
+			t.Fatalf("inspect %s after down migration: %v", table, err)
+		}
+		if relation != nil {
+			t.Fatalf("%s still exists after down migration as %q", table, *relation)
+		}
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply identity migration from baseline: %v", err)
+	}
+}
+
+func TestNilVersionDirtyStateIsVisibleAndRecoverable(t *testing.T) {
+	migrationConfig, _, _ := isolatedMigrationConfig(t)
+
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.database.Lock(); err != nil {
+		t.Fatalf("lock migration driver: %v", err)
+	}
+	setVersionErr := runner.database.SetVersion(
+		migratedatabase.NilVersion,
+		true,
+	)
+	unlockErr := runner.database.Unlock()
+	if err := errors.Join(setVersionErr, unlockErr); err != nil {
+		t.Fatalf("create nil-version dirty state: %v", err)
+	}
+
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("Version in nil-version dirty state: %v", err)
+	}
+	if !status.Present ||
+		status.Version != migratedatabase.NilVersion ||
+		!status.Dirty {
+		t.Fatalf(
+			"status = %+v, want version %d dirty true",
+			status,
+			migratedatabase.NilVersion,
+		)
+	}
+
+	if err := runner.Force(
+		migratedatabase.NilVersion,
+		ForceConfirmation(migratedatabase.NilVersion),
+	); err != nil {
+		t.Fatalf("Force nil-version dirty state: %v", err)
+	}
+
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("Version after Force: %v", err)
+	}
+	if status.Present || status.Dirty {
+		t.Fatalf("status after Force = %+v, want no applied version", status)
+	}
+}
+
+func TestConcurrentRunnersSerializeBaseline(t *testing.T) {
+	migrationConfig, _, _ := isolatedMigrationConfig(t)
+
+	first, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open first migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := first.Close(); err != nil {
+			t.Errorf("close first migration runner: %v", err)
+		}
+	})
+
+	second, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open second migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := second.Close(); err != nil {
+			t.Errorf("close second migration runner: %v", err)
+		}
+	})
+
+	type result struct {
+		changed bool
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+
+	for _, runner := range []*Runner{first, second} {
+		runner := runner
+		go func() {
+			<-start
+			changed, err := runner.Up()
+			results <- result{changed: changed, err: err}
+		}()
+	}
+	close(start)
+
+	changedCount := 0
+	for range 2 {
+		select {
+		case result := <-results:
+			if result.err != nil {
+				t.Fatalf("concurrent Up: %v", result.err)
+			}
+			if result.changed {
+				changedCount++
+			}
+		case <-time.After(LockTimeout + 5*time.Second):
+			t.Fatal("concurrent Up did not serialize within the lock timeout")
+		}
+	}
+
+	if changedCount != 1 {
+		t.Fatalf("changed runner count = %d, want exactly 1", changedCount)
+	}
+
+	status, err := first.Version()
+	if err != nil {
+		t.Fatalf("Version after concurrent Up: %v", err)
+	}
+	if !status.Present || status.Version == 0 || status.Dirty {
+		t.Fatalf(
+			"status after concurrent Up = %+v, want a positive clean version",
+			status,
+		)
+	}
+}
+
+func TestRunnerInitializationLockIsBounded(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+
+	var databaseName string
+	if err := admin.QueryRow(
+		context.Background(),
+		"SELECT current_database()",
+	).Scan(&databaseName); err != nil {
+		t.Fatalf("read current database: %v", err)
+	}
+
+	lockID, err := migratedatabase.GenerateAdvisoryLockId(
+		databaseName,
+		schema,
+		"schema_migrations",
+	)
+	if err != nil {
+		t.Fatalf("generate migration lock ID: %v", err)
+	}
+	if _, err := admin.Exec(
+		context.Background(),
+		"SELECT pg_advisory_lock($1)",
+		lockID,
+	); err != nil {
+		t.Fatalf("hold migration advisory lock: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(
+			context.Background(),
+			"SELECT pg_advisory_unlock($1)",
+			lockID,
+		); err != nil {
+			t.Errorf("release migration advisory lock: %v", err)
+		}
+	})
+
+	const testLockTimeout = 300 * time.Millisecond
+	startedAt := time.Now()
+	runner, err := openConfigWithFSAndLockTimeout(
+		migrationConfig,
+		fstest.MapFS{
+			"000001_lock_test.up.sql": {
+				Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+			},
+			"000001_lock_test.down.sql": {
+				Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+			},
+		},
+		testLockTimeout,
+	)
+	elapsed := time.Since(startedAt)
+	if runner != nil {
+		_ = runner.Close()
+	}
+	if err == nil {
+		t.Fatal("runner initialization unexpectedly acquired a held lock")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf(
+			"runner initialization exceeded bounded lock wait: %s",
+			elapsed,
+		)
+	}
+}
+
+func TestFailedTransactionalMigrationStaysDirtyAndRollsBack(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+
+	failedMigration := fstest.MapFS{
+		"000001_intentional_failure.up.sql": {
+			Data: []byte(`BEGIN;
+CREATE TABLE dirty_probe (id integer);
+SELECT * FROM relation_that_must_not_exist;
+COMMIT;
+`),
+		},
+		"000001_intentional_failure.down.sql": {
+			Data: []byte(`BEGIN;
+DROP TABLE IF EXISTS dirty_probe;
+COMMIT;
+`),
+		},
+	}
+
+	runner, err := openConfigWithFS(migrationConfig, failedMigration)
+	if err != nil {
+		t.Fatalf("open failing migration runner: %v", err)
+	}
+
+	if _, err := runner.Up(); err == nil {
+		t.Fatal("failing migration unexpectedly succeeded")
+	}
+	// A failed explicit transaction leaves that session aborted. The command
+	// closes it on exit; a fresh invocation then observes the durable dirty
+	// marker while PostgreSQL rolls the failed transaction back.
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close failing migration runner: %v", err)
+	}
+
+	inspector, err := openConfigWithFS(migrationConfig, failedMigration)
+	if err != nil {
+		t.Fatalf("open migration inspector: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := inspector.Close(); err != nil {
+			t.Errorf("close migration inspector: %v", err)
+		}
+	})
+
+	status, err := inspector.Version()
+	if err != nil {
+		t.Fatalf("Version after failed Up: %v", err)
+	}
+	if !status.Present || status.Version != 1 || !status.Dirty {
+		t.Fatalf("status after failed Up = %+v, want version 1 and dirty", status)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var probe *string
+	if err := admin.QueryRow(
+		ctx,
+		"SELECT to_regclass($1)",
+		schema+".dirty_probe",
+	).Scan(&probe); err != nil {
+		t.Fatalf("inspect transactional probe: %v", err)
+	}
+	if probe != nil {
+		t.Fatalf("dirty_probe still exists as %q; failed transaction was not rolled back", *probe)
+	}
+
+	if err := inspector.Force(-1, ForceConfirmation(-1)); err != nil {
+		t.Fatalf("Force after schema inspection: %v", err)
+	}
+	status, err = inspector.Version()
+	if err != nil {
+		t.Fatalf("Version after Force recovery: %v", err)
+	}
+	if status.Present {
+		t.Fatalf("status after Force recovery = %+v, want no applied version", status)
+	}
+}
+
+func assertConstraintViolation(
+	t *testing.T,
+	conn *pgx.Conn,
+	ctx context.Context,
+	query string,
+	arguments []any,
+	code string,
+	constraint string,
+) {
+	t.Helper()
+
+	_, err := conn.Exec(ctx, query, arguments...)
+	if err == nil {
+		t.Fatalf("statement unexpectedly succeeded; want constraint %s", constraint)
+	}
+
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) {
+		t.Fatalf("statement error = %v, want PostgreSQL constraint violation", err)
+	}
+	if postgresError.Code != code || postgresError.ConstraintName != constraint {
+		t.Fatalf(
+			"statement error code/constraint = %s/%s, want %s/%s",
+			postgresError.Code,
+			postgresError.ConstraintName,
+			code,
+			constraint,
+		)
+	}
+}
+
+type legacyRunAudit struct {
+	runID                string
+	ownerID              string
+	status               string
+	requestedModel       string
+	maxOutputTokens      int
+	assistantMessageID   string
+	providerCompletionID string
+	providerModel        string
+	inputTokens          int
+	outputTokens         int
+	totalTokens          int
+}
+
+func insertLegacyOverBudgetRun(
+	t *testing.T,
+	config *pgx.ConnConfig,
+) legacyRunAudit {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to version-four schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close version-four schema connection: %v", err)
+		}
+	}()
+
+	const (
+		ownerID            = "90000000-0000-4000-8000-000000000001"
+		threadID           = "90000000-0000-4000-8000-000000000002"
+		messageID          = "90000000-0000-4000-8000-000000000003"
+		runID              = "90000000-0000-4000-8000-000000000004"
+		assistantMessageID = "90000000-0000-4000-8000-000000000005"
+	)
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO identity_users (id, canonical_email)
+VALUES ($1, 'legacy-audit@example.com')`,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert legacy audit owner: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_threads (id, owner_user_id)
+VALUES ($1, $2)`,
+		threadID,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert legacy audit thread: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content
+) VALUES ($1, $2, $3, 1, 'user', $4, $5)`,
+		messageID,
+		ownerID,
+		threadID,
+		"legacy-budget-input",
+		"Preserve this historical request and result.",
+	); err != nil {
+		t.Fatalf("insert legacy audit message: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_runs (
+    id,
+    owner_user_id,
+    thread_id,
+    input_message_id,
+    attempt_no,
+    status,
+    requested_provider,
+    requested_model,
+    max_output_tokens
+) VALUES (
+    $1, $2, $3, $4, 1, 'pending', 'qianwen', 'qwen-legacy',
+    512
+)`,
+		runID,
+		ownerID,
+		threadID,
+		messageID,
+	); err != nil {
+		t.Fatalf("insert legacy audit run: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    produced_by_run_id,
+    content
+) VALUES ($1, $2, $3, 2, 'assistant', $4, $5)`,
+		assistantMessageID,
+		ownerID,
+		threadID,
+		runID,
+		"Preserve the historical provider result.",
+	); err != nil {
+		t.Fatalf("insert legacy audit assistant message: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`UPDATE agent_runs
+SET
+    status = 'completed',
+    started_at = created_at,
+    completed_at = created_at,
+    updated_at = created_at,
+    assistant_message_id = $2,
+    provider_completion_id = 'completion-legacy',
+    provider_model = requested_model,
+    finish_reason = 'stop',
+    input_tokens = 39,
+    output_tokens = 688,
+    total_tokens = 727
+WHERE id = $1`,
+		runID,
+		assistantMessageID,
+	); err != nil {
+		t.Fatalf("complete legacy over-budget audit row: %v", err)
+	}
+	return legacyRunAudit{
+		runID:                runID,
+		ownerID:              ownerID,
+		status:               "completed",
+		requestedModel:       "qwen-legacy",
+		maxOutputTokens:      512,
+		assistantMessageID:   assistantMessageID,
+		providerCompletionID: "completion-legacy",
+		providerModel:        "qwen-legacy",
+		inputTokens:          39,
+		outputTokens:         688,
+		totalTokens:          727,
+	}
+}
+
+func assertLegacyOverBudgetRunPreserved(
+	t *testing.T,
+	config *pgx.ConnConfig,
+	legacy legacyRunAudit,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to upgraded schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close upgraded schema connection: %v", err)
+		}
+	}()
+
+	var (
+		status               string
+		requestedModel       string
+		maxOutputTokens      int
+		assistantMessageID   string
+		providerCompletionID string
+		providerModel        string
+		inputTokens          int
+		outputTokens         int
+		totalTokens          int
+	)
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT
+    status,
+    requested_model,
+    max_output_tokens,
+    assistant_message_id,
+    provider_completion_id,
+    provider_model,
+    input_tokens,
+    output_tokens,
+    total_tokens
+FROM agent_runs
+WHERE id = $1 AND owner_user_id = $2`,
+		legacy.runID,
+		legacy.ownerID,
+	).Scan(
+		&status,
+		&requestedModel,
+		&maxOutputTokens,
+		&assistantMessageID,
+		&providerCompletionID,
+		&providerModel,
+		&inputTokens,
+		&outputTokens,
+		&totalTokens,
+	); err != nil {
+		t.Fatalf("read preserved legacy audit row: %v", err)
+	}
+	if status != legacy.status ||
+		requestedModel != legacy.requestedModel ||
+		maxOutputTokens != legacy.maxOutputTokens ||
+		assistantMessageID != legacy.assistantMessageID ||
+		providerCompletionID != legacy.providerCompletionID ||
+		providerModel != legacy.providerModel ||
+		inputTokens != legacy.inputTokens ||
+		outputTokens != legacy.outputTokens ||
+		totalTokens != legacy.totalTokens {
+		t.Fatalf(
+			"legacy audit changed: status=%q model=%q budget=%d assistant=%q completion=%q provider_model=%q usage=%d/%d/%d",
+			status,
+			requestedModel,
+			maxOutputTokens,
+			assistantMessageID,
+			providerCompletionID,
+			providerModel,
+			inputTokens,
+			outputTokens,
+			totalTokens,
+		)
+	}
+}
+
+func assertNewOverBudgetResultRejected(
+	t *testing.T,
+	config *pgx.ConnConfig,
+	ownerID string,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to upgraded schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close upgraded schema connection: %v", err)
+		}
+	}()
+
+	const (
+		threadID         = "91000000-0000-4000-8000-000000000001"
+		inputMessageID   = "91000000-0000-4000-8000-000000000002"
+		runID            = "91000000-0000-4000-8000-000000000003"
+		assistantMessage = "91000000-0000-4000-8000-000000000004"
+	)
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_threads (id, owner_user_id)
+VALUES ($1, $2)`,
+		threadID,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert current constraint probe thread: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content
+) VALUES ($1, $2, $3, 1, 'user', $4, $5)`,
+		inputMessageID,
+		ownerID,
+		threadID,
+		"new-budget-input",
+		"Reject an over-budget result.",
+	); err != nil {
+		t.Fatalf("insert current constraint probe input: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_runs (
+    id,
+    owner_user_id,
+    thread_id,
+    input_message_id,
+    attempt_no,
+    status,
+    requested_provider,
+    requested_model,
+    max_output_tokens
+) VALUES ($1, $2, $3, $4, 1, 'pending', 'qianwen', 'qwen-current', 1)`,
+		runID,
+		ownerID,
+		threadID,
+		inputMessageID,
+	); err != nil {
+		t.Fatalf("insert current constraint probe run: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    produced_by_run_id,
+    content
+) VALUES ($1, $2, $3, 2, 'assistant', $4, $5)`,
+		assistantMessage,
+		ownerID,
+		threadID,
+		runID,
+		"This result must not be committed.",
+	); err != nil {
+		t.Fatalf("insert current constraint probe assistant: %v", err)
+	}
+
+	assertConstraintViolation(
+		t,
+		conn,
+		ctx,
+		`UPDATE agent_runs
+SET
+    status = 'completed',
+    started_at = created_at,
+    completed_at = created_at,
+    assistant_message_id = $2,
+    provider_completion_id = 'completion-current',
+    provider_model = requested_model,
+    finish_reason = 'stop',
+    input_tokens = 3,
+    output_tokens = 2,
+    total_tokens = 5
+WHERE id = $1`,
+		[]any{runID, assistantMessage},
+		"23514",
+		"agent_runs_result_budget_check",
+	)
+}
+
+func assertMigrationStatus(t *testing.T, runner *Runner, version int) {
+	t.Helper()
+
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read migration version: %v", err)
+	}
+	if !status.Present || status.Version != version || status.Dirty {
+		t.Fatalf(
+			"migration status = %+v, want version %d clean",
+			status,
+			version,
+		)
+	}
+}
+
+func assertGoalAuthoritySchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+	wantGoal bool,
+) {
+	t.Helper()
+
+	goalTables := []string{
+		"coaching_goals",
+		"agent_thread_goal_links",
+		"goal_agent_create_requests",
+	}
+	matterTables := []string{
+		"matters",
+		"agent_thread_matter_links",
+		"matter_agent_create_requests",
+	}
+	for _, table := range append(goalTables, matterTables...) {
+		wantPresent := wantGoal
+		if slicesContain(matterTables, table) {
+			wantPresent = !wantGoal
+		}
+		var relation *string
+		if err := conn.QueryRow(
+			context.Background(),
+			"SELECT to_regclass($1)",
+			schema+"."+table,
+		).Scan(&relation); err != nil {
+			t.Fatalf("inspect table %s: %v", table, err)
+		}
+		if (relation != nil) != wantPresent {
+			t.Errorf(
+				"table %s present = %t, want %t",
+				table,
+				relation != nil,
+				wantPresent,
+			)
+		}
+	}
+
+	type columnExpectation struct {
+		table  string
+		goal   string
+		matter string
+	}
+	for _, expectation := range []columnExpectation{
+		{
+			table:  "agent_context_manifests",
+			goal:   "active_goal_id",
+			matter: "active_matter_id",
+		},
+		{
+			table:  "agent_context_manifests",
+			goal:   "active_goal_version",
+			matter: "active_matter_version",
+		},
+		{table: "agent_memories", goal: "goal_id", matter: "matter_id"},
+		{table: "practice_plans", goal: "goal_id", matter: "matter_id"},
+		{table: "practice_sessions", goal: "goal_id", matter: "matter_id"},
+	} {
+		for column, wantPresent := range map[string]bool{
+			expectation.goal:   wantGoal,
+			expectation.matter: !wantGoal,
+		} {
+			var exists bool
+			if err := conn.QueryRow(context.Background(), `
+				SELECT EXISTS (
+				    SELECT 1
+				    FROM information_schema.columns
+				    WHERE table_schema = $1
+				      AND table_name = $2
+				      AND column_name = $3
+				)
+			`, schema, expectation.table, column).Scan(&exists); err != nil {
+				t.Fatalf("inspect %s.%s: %v", expectation.table, column, err)
+			}
+			if exists != wantPresent {
+				t.Errorf(
+					"column %s.%s present = %t, want %t",
+					expectation.table,
+					column,
+					exists,
+					wantPresent,
+				)
+			}
+		}
+	}
+
+	goalConstraints := []string{
+		"agent_context_manifests_goal_owner_fkey",
+		"agent_context_manifests_goal_shape_check",
+		"agent_memories_goal_owner_fkey",
+		"practice_plans_goal_context_anchor_key",
+		"practice_plans_goal_owner_fkey",
+		"practice_plans_thread_goal_link_fkey",
+		"practice_sessions_goal_context_anchor_fkey",
+	}
+	matterConstraints := []string{
+		"agent_context_manifests_matter_owner_fkey",
+		"agent_context_manifests_matter_shape_check",
+		"agent_memories_matter_owner_fkey",
+		"practice_plans_context_anchor_key",
+		"practice_plans_matter_owner_fkey",
+		"practice_plans_thread_matter_link_fkey",
+		"practice_sessions_context_anchor_fkey",
+	}
+	for _, name := range append(goalConstraints, matterConstraints...) {
+		wantPresent := wantGoal
+		if slicesContain(matterConstraints, name) {
+			wantPresent = !wantGoal
+		}
+		var exists bool
+		if err := conn.QueryRow(context.Background(), `
+			SELECT EXISTS (
+			    SELECT 1
+			    FROM pg_constraint AS constraint_data
+			    JOIN pg_class AS relation_data
+			      ON relation_data.oid = constraint_data.conrelid
+			    JOIN pg_namespace AS namespace_data
+			      ON namespace_data.oid = relation_data.relnamespace
+			    WHERE namespace_data.nspname = $1
+			      AND constraint_data.conname = $2
+			)
+		`, schema, name).Scan(&exists); err != nil {
+			t.Fatalf("inspect constraint %s: %v", name, err)
+		}
+		if exists != wantPresent {
+			t.Errorf(
+				"constraint %s present = %t, want %t",
+				name,
+				exists,
+				wantPresent,
+			)
+		}
+	}
+
+	var scopeDefinition string
+	if err := conn.QueryRow(context.Background(), `
+		SELECT pg_get_constraintdef(constraint_data.oid)
+		FROM pg_constraint AS constraint_data
+		JOIN pg_class AS relation_data
+		  ON relation_data.oid = constraint_data.conrelid
+		JOIN pg_namespace AS namespace_data
+		  ON namespace_data.oid = relation_data.relnamespace
+		WHERE namespace_data.nspname = $1
+		  AND relation_data.relname = 'agent_memories'
+		  AND constraint_data.conname = 'agent_memories_scope_check'
+	`, schema).Scan(&scopeDefinition); err != nil {
+		t.Fatalf("inspect Memory scope constraint: %v", err)
+	}
+	wantScope := "'matter'"
+	forbiddenScope := "'goal'"
+	if wantGoal {
+		wantScope, forbiddenScope = forbiddenScope, wantScope
+	}
+	if !strings.Contains(scopeDefinition, wantScope) ||
+		strings.Contains(scopeDefinition, forbiddenScope) {
+		t.Errorf("Memory scope constraint = %q", scopeDefinition)
+	}
+}
+
+func slicesContain(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func assertVersionFourAgentSchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, true)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	for _, name := range []string{
+		"agent_runs_id_owner_thread_input_key",
+		"agent_runs_result_model_check",
+		"agent_runs_result_budget_check",
+	} {
+		if _, exists := constraints[name]; exists {
+			t.Errorf("version four unexpectedly contains constraint %s", name)
+		}
+	}
+	retryDefinition := constraints["agent_runs_retry_of_fkey"]
+	if !strings.Contains(
+		retryDefinition.definition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id)",
+	) || strings.Contains(
+		retryDefinition.definition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+	) {
+		t.Errorf(
+			"version four retry constraint = %q",
+			retryDefinition.definition,
+		)
+	}
+	if strings.Contains(
+		constraints["agent_runs_result_numbers_check"].definition,
+		"::bigint",
+	) {
+		t.Error("version four unexpectedly contains the token sum constraint")
+	}
+}
+
+func assertAgentTrustBoundarySchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, false)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	expectedFragments := map[string][]string{
+		"agent_runs_id_owner_thread_input_key": {
+			"UNIQUE (id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_retry_of_fkey": {
+			"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+			"agent_runs(id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_result_numbers_check": {
+			"input_tokens",
+			"output_tokens",
+			"total_tokens",
+			"::bigint",
+		},
+		"agent_runs_result_model_check": {
+			"provider_model = requested_model",
+		},
+		"agent_runs_result_budget_check": {
+			"output_tokens <= max_output_tokens",
+		},
+		"agent_runs_state_shape_check": {
+			"status = 'pending'::text",
+			"provider_completion_id IS NULL",
+			"total_tokens IS NULL",
+		},
+	}
+	for name, fragments := range expectedFragments {
+		constraint, exists := constraints[name]
+		if !exists {
+			t.Errorf("constraint %s is missing", name)
+			continue
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(constraint.definition, fragment) {
+				t.Errorf(
+					"constraint %s definition %q does not contain %q",
+					name,
+					constraint.definition,
+					fragment,
+				)
+			}
+		}
+		wantValidated := name != "agent_runs_result_budget_check"
+		if constraint.validated != wantValidated {
+			t.Errorf(
+				"constraint %s validated = %t, want %t",
+				name,
+				constraint.validated,
+				wantValidated,
+			)
+		}
+	}
+}
+
+func assertContextManifestTitleColumn(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+	want bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = $1
+      AND table_name = 'agent_context_manifests'
+      AND column_name = 'active_matter_title'
+)`,
+		schema,
+	).Scan(&exists); err != nil {
+		t.Fatalf("inspect ContextManifest title column: %v", err)
+	}
+	if exists != want {
+		t.Fatalf(
+			"ContextManifest title column exists = %t, want %t",
+			exists,
+			want,
+		)
+	}
+}
+
+func readAgentRunConstraintDefinitions(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) map[string]agentRunConstraint {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := conn.Query(
+		ctx,
+		`SELECT
+    constraint_data.conname,
+    pg_get_constraintdef(constraint_data.oid),
+    constraint_data.convalidated
+FROM pg_constraint AS constraint_data
+JOIN pg_class AS relation_data
+  ON relation_data.oid = constraint_data.conrelid
+JOIN pg_namespace AS namespace_data
+  ON namespace_data.oid = relation_data.relnamespace
+WHERE namespace_data.nspname = $1
+  AND relation_data.relname = 'agent_runs'`,
+		schema,
+	)
+	if err != nil {
+		t.Fatalf("query AgentRun constraints: %v", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]agentRunConstraint)
+	for rows.Next() {
+		var name string
+		var constraint agentRunConstraint
+		if err := rows.Scan(
+			&name,
+			&constraint.definition,
+			&constraint.validated,
+		); err != nil {
+			t.Fatalf("scan AgentRun constraint: %v", err)
+		}
+		result[name] = constraint
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate AgentRun constraints: %v", err)
+	}
+	return result
+}
+
+type agentRunConstraint struct {
+	definition string
+	validated  bool
+}
+
+func assertIdentityIndexes(
+	t *testing.T,
+	conn *pgx.Conn,
+	ctx context.Context,
+	schema string,
+) {
+	t.Helper()
+
+	rows, err := conn.Query(
+		ctx,
+		`SELECT indexname, indexdef
+FROM pg_indexes
+WHERE schemaname = $1
+  AND tablename IN ('identity_users', 'identity_auth_sessions')`,
+		schema,
+	)
+	if err != nil {
+		t.Fatalf("query identity indexes: %v", err)
+	}
+	defer rows.Close()
+
+	indexes := make(map[string]string)
+	for rows.Next() {
+		var name string
+		var definition string
+		if err := rows.Scan(&name, &definition); err != nil {
+			t.Fatalf("scan identity index: %v", err)
+		}
+		indexes[name] = definition
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate identity indexes: %v", err)
+	}
+
+	expectedFragments := map[string][]string{
+		"identity_users_canonical_email_key": {
+			"UNIQUE INDEX",
+			"(canonical_email)",
+		},
+		"identity_auth_sessions_token_digest_key": {
+			"UNIQUE INDEX",
+			"(token_digest)",
+		},
+		"identity_auth_sessions_user_created_idx": {
+			"(user_id, created_at DESC)",
+		},
+		"identity_auth_sessions_active_user_idx": {
+			"(user_id)",
+			"WHERE (revoked_at IS NULL)",
+		},
+		"identity_auth_sessions_active_expiry_idx": {
+			"(expires_at)",
+			"WHERE (revoked_at IS NULL)",
+		},
+	}
+	for name, fragments := range expectedFragments {
+		definition, ok := indexes[name]
+		if !ok {
+			t.Errorf("identity index %s is missing", name)
+			continue
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(definition, fragment) {
+				t.Errorf(
+					"identity index %s definition %q does not contain %q",
+					name,
+					definition,
+					fragment,
+				)
+			}
+		}
+	}
+}
+
+func assertNoRawIdentitySecrets(
+	t *testing.T,
+	conn *pgx.Conn,
+	ctx context.Context,
+	schema string,
+) {
+	t.Helper()
+
+	var forbiddenColumnCount int
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT count(*)
+FROM information_schema.columns
+WHERE table_schema = $1
+  AND table_name IN (
+      'identity_users',
+      'identity_credentials',
+      'identity_auth_sessions'
+  )
+  AND (
+      (
+          column_name ~ '(^|_)(password|token|authorization)(_|$)'
+          AND column_name NOT IN ('password_hash', 'token_digest')
+      )
+      OR column_name = 'actor_id'
+  )`,
+		schema,
+	).Scan(&forbiddenColumnCount); err != nil {
+		t.Fatalf("inspect forbidden identity columns: %v", err)
+	}
+	if forbiddenColumnCount != 0 {
+		t.Fatalf("found %d forbidden raw identity columns", forbiddenColumnCount)
+	}
+}
+
+func bytesOf(value byte, count int) []byte {
+	result := make([]byte, count)
+	for index := range result {
+		result[index] = value
+	}
+	return result
+}
+
+func isolatedMigrationConfig(
+	t *testing.T,
+) (*pgx.ConnConfig, *pgx.Conn, string) {
+	t.Helper()
+
+	databaseURL := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	config, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("parse TEST_DATABASE_URL: %v", err)
+	}
+	config.ConnectTimeout = ConnectTimeout
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	admin, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to integration database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := admin.Close(context.Background()); err != nil {
+			t.Errorf("close integration database: %v", err)
+		}
+	})
+
+	schema := fmt.Sprintf("migration_test_%d", time.Now().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		t.Fatalf("create isolated schema: %v", err)
+	}
+	t.Cleanup(func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer dropCancel()
+		if _, err := admin.Exec(dropCtx, "DROP SCHEMA "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop isolated schema: %v", err)
+		}
+	})
+
+	migrationConfig := config.Copy()
+	migrationConfig.RuntimeParams["search_path"] = schema
+	return migrationConfig, admin, schema
+}

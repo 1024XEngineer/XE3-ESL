@@ -1,0 +1,12 @@
+{
+  "event_id": "event_stream_ready_001",
+  "event_type": "stream.ready",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:03:30Z",
+  "practice_session_id": "session_demo_001",
+  "correlation_id": "corr_stream_001",
+  "replayable": false,
+  "payload": {
+    "last_sequence": 0
+  }
+}

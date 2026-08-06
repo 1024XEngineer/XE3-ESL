@@ -1,0 +1,296 @@
+paths:
+  /v1/scenes:
+    get:
+      tags:
+        - Scene
+      summary: List active Scene definitions
+      description: |
+        Returns active Scenes in stable menu order. Presentation order does
+        not define a workflow or required progression.
+      operationId: listScenes
+      security: []
+      responses:
+        '200':
+          description: Active Scene definitions in stable display order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SceneDefinitionList'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/scenes/{scene_id}:
+    get:
+      tags:
+        - Scene
+      summary: Get one active Scene definition
+      operationId: getScene
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SceneId'
+      responses:
+        '200':
+          description: The versioned Scene definition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SceneDefinition'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/scenes/{scene_id}/roles:
+    get:
+      tags:
+        - Scene
+      summary: List selectable roles for one Scene
+      description: |
+        Response order is presentation order and never implies a mandatory
+        workflow stage.
+      operationId: listRoleDefinitions
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SceneId'
+      responses:
+        '200':
+          description: Scene roles in stable display order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleDefinitionList'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    SceneId:
+      name: scene_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    Version:
+      type: integer
+      minimum: 1
+    PracticeExperience:
+      type: string
+      enum:
+        - INTERVIEW
+        - IELTS_SPEAKING
+        - WORKPLACE
+        - LIFE_AND_TRAVEL
+    SceneCategory:
+      type: string
+      enum:
+        - INTERVIEW_RECRUITER
+        - INTERVIEW_BEHAVIORAL
+        - INTERVIEW_PROFESSIONAL
+        - INTERVIEW_HIRING_MANAGER
+        - INTERVIEW_CUSTOM
+        - IELTS_SPEAKING
+        - WORKPLACE_GENERAL
+        - LIFE_TRAVEL
+        - LIFE_DAILY
+    SceneStatus:
+      type: string
+      enum:
+        - active
+        - inactive
+    ScenePrompt:
+      type: object
+      additionalProperties: false
+      required:
+        - public_scene_brief
+        - practice_goal
+        - user_role
+        - ai_role
+        - persona_summary
+        - focus_areas
+        - turn_blueprints
+      properties:
+        public_scene_brief:
+          type: string
+          minLength: 1
+        practice_goal:
+          type: string
+          minLength: 1
+        user_role:
+          type: string
+          minLength: 1
+        ai_role:
+          type: string
+          minLength: 1
+        persona_summary:
+          type: string
+          minLength: 1
+        focus_areas:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        turn_blueprints:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+    PracticeObjectiveDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - objective_id
+        - description
+      properties:
+        objective_id:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,127}$'
+        description:
+          type: string
+          minLength: 1
+    RoleDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - role_definition_id
+        - scene_id
+        - role_type
+        - display_name
+        - responsibilities
+        - style
+        - practice_objectives
+      properties:
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        role_type:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+        display_name:
+          type: string
+          minLength: 1
+        responsibilities:
+          type: string
+          minLength: 1
+        style:
+          type: string
+          minLength: 1
+        practice_objectives:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PracticeObjectiveDefinition'
+        voice_config_ref:
+          type: string
+          minLength: 1
+    RoleDefinitionList:
+      type: object
+      additionalProperties: false
+      required:
+        - roles
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleDefinition'
+    PracticeMode:
+      type: string
+      enum:
+        - FULL_SIMULATION
+        - FOCUS
+        - FULL_MOCK
+        - PART_1
+        - PART_2
+        - PART_3
+    PracticeOption:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_option_id
+        - scene_id
+        - practice_mode
+        - display_name
+        - suggested_duration_seconds
+        - turn_policy_ref
+        - session_policy_ref
+        - evaluation_policy_ref
+      properties:
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
+        display_name:
+          type: string
+          minLength: 1
+        suggested_duration_seconds:
+          type: integer
+          minimum: 1
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        evaluation_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+    SceneDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - scene_id
+        - practice_experience
+        - scene_category
+        - name
+        - scene_version
+        - status
+        - prompt
+        - roles
+        - practice_options
+      properties:
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
+        name:
+          type: string
+          minLength: 1
+        scene_version:
+          $ref: '#/components/schemas/Version'
+        status:
+          $ref: '#/components/schemas/SceneStatus'
+        prompt:
+          $ref: '#/components/schemas/ScenePrompt'
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RoleDefinition'
+        practice_options:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PracticeOption'
+    SceneDefinitionList:
+      type: object
+      additionalProperties: false
+      required:
+        - scenes
+      properties:
+        scenes:
+          type: array
+          items:
+            $ref: '#/components/schemas/SceneDefinition'

@@ -36,3 +36,6 @@ yarn-error.log*
 server/bin/
 *.test
 *.out
+
+#docs
+server/internal/agent/docs

@@ -1,0 +1,14 @@
+{
+  "event_id": "event_session_paused_001",
+  "event_type": "practice_session.paused",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:10:00Z",
+  "practice_session_id": "session_lifecycle_paused_001",
+  "sequence": 1,
+  "correlation_id": "corr_session_paused_001",
+  "replayable": true,
+  "payload": {
+    "practice_session_status": "paused",
+    "session_version": 3
+  }
+}

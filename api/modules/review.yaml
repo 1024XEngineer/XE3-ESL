@@ -1,0 +1,1026 @@
+paths:
+  /v1/evaluation-reports:
+    get:
+      tags:
+        - Review
+      summary: List the current Actor's completed Evaluation reports
+      description: |
+        Review reads the canonical reports owned by Evaluation and returns only
+        READY, latest-revision results ordered by
+        `created_at DESC, report_id DESC`. Pagination uses an opaque keyset
+        cursor; clients must not synthesize or inspect it. `next_cursor` is
+        omitted, never `null`, when no older result remains. The server fully
+        encodes the response before writing it and rejects a body larger than
+        768 KiB without returning a partial page.
+      operationId: listEvaluationReports
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+      responses:
+        '200':
+          description: Actor-owned Evaluation reports in stable order.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReportHistoryPage'
+              example:
+                items:
+                  - report_id: 20000000-0000-4000-8000-000000000002
+                    evaluation_id: 7b000001-0000-4000-8000-000000000001
+                    evaluation_revision_id: a1000001-0000-4000-8000-000000000001
+                    practice_session_id: session_demo_002
+                    revision: 1
+                    schema_version: evaluation-report/v1
+                    scene_type: INTERVIEW
+                    practice_experience: INTERVIEW
+                    scene_category: INTERVIEW_PROFESSIONAL
+                    practice_mode: FULL_SIMULATION
+                    scoreability_status: PROVISIONAL
+                    summary: 本次练习已形成面试表达评估，可按优先行动继续复练。
+                    dimensions:
+                      - key: INTERVIEW_STRUCTURE
+                        score: 82
+                        scale: PERCENTAGE_100
+                        coverage: 1
+                        confidence: 0.8
+                        reason_codes:
+                          - ASR_CONFIDENCE_UNAVAILABLE
+                        evidence_ref_ids:
+                          - evidence_demo_001
+                        strengths: []
+                        improvements: []
+                        recommended_examples: []
+                    priority_actions: []
+                    detail_schema: interview-report/v1
+                    detail: {}
+                    created_at: '2026-07-26T10:00:00Z'
+                next_cursor: eyJ2IjoxLCJraW5kIjoiZXZhbHVhdGlvbl9yZXBvcnRzIn0.QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE
+        '400':
+          $ref: '#/components/responses/PrivateBadRequest'
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
+  /v1/evaluation-reports/{report_id}:
+    get:
+      tags:
+        - Review
+      summary: Get one Actor-owned Evaluation report
+      description: |
+        Returns one canonical Evaluation report through Review's read-only
+        history boundary. Unknown, superseded, deleted, hidden, and cross-Actor
+        resources all return 404. This read never starts scoring or changes the
+        Learning Profile.
+      operationId: getEvaluationReport
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+      responses:
+        '200':
+          description: One current Evaluation report.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: ./evaluation.yaml#/components/schemas/EvaluationFormalReport
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/PrivateNotFound'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
+  /v1/speech-feedback/{speech_feedback_id}:
+    get:
+      tags:
+        - Review
+      summary: Get one Actor-owned asynchronous speech feedback resource
+      description: |
+        Returns the durable Review-owned status projected by a confirmed,
+        eligible voice source. The opaque status URL is discovered from the
+        parent Conversation Turn or Agent Message; clients must not enumerate
+        feedback IDs. Another Actor's resource, a deleted source, a hidden
+        source, and an unknown ID all return 404.
+
+        The response never contains a numeric score, Core 4D observation,
+        Speaking Profile mutation, audio URL, Prompt, or Provider output.
+        Clients must reject unknown fields and must not persist the response.
+      operationId: getSpeechFeedback
+      parameters:
+        - $ref: '#/components/parameters/SpeechFeedbackId'
+      responses:
+        '200':
+          description: Current durable feedback state.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeechFeedback'
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/PrivateNotFound'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
+  /v1/feedback-items/{feedback_item_id}/retry-requests:
+    post:
+      tags:
+        - Review
+      summary: Request an idempotent same-question retry
+      description: |
+        This route accepts only an Actor-owned `SAME_QUESTION` item from an
+        eligible Daily or Workplace Conversation Turn. Agent `SAME_THREAD`
+        repractice reopens the existing Agent composer and never calls this
+        route.
+
+        Review first saves one durable relation, then invokes Conversation's
+        internal idempotent CreateRetryTurn command. `TURN_CREATED` is returned
+        only after Conversation has created a real `ANSWERING` retry Turn bound
+        to the original Question. `answer_path` is the only client write target
+        for that draft; clients must not synthesize it or submit the retry
+        through the ordinary effective-Turn confirmation route.
+
+        Replaying the same Idempotency-Key and item returns the same
+        RetryRequest. Practice alone decides whether the confirmed
+        same-question retry affects progress.
+      operationId: requestRetry
+      parameters:
+        - $ref: '#/components/parameters/FeedbackItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Newly created retry relation.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+            Location:
+              description: Opaque status URL for this RetryRequest.
+              required: true
+              schema:
+                type: string
+                minLength: 1
+                maxLength: 256
+                pattern: '^/v1/retry-requests/[A-Za-z0-9._~-]{1,128}$'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryRequest'
+        '200':
+          description: Existing retry relation returned by idempotent replay.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryRequest'
+        '400':
+          $ref: '#/components/responses/PrivateBadRequest'
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/PrivateNotFound'
+        '409':
+          $ref: '#/components/responses/PrivateConflict'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
+  /v1/retry-requests/{retry_request_id}:
+    get:
+      tags:
+        - Review
+      summary: Get a same-question retry request
+      description: |
+        Returns only the current Actor's retry relation. Unknown, deleted,
+        hidden, and cross-Actor resources all return 404. `TURN_CREATED` means
+        the referenced `new_turn_id` exists as an answerable `ANSWERING` draft;
+        it does not mean that the user has submitted or confirmed a new answer.
+        The response must not be persisted.
+      operationId: getRetryRequest
+      parameters:
+        - $ref: '#/components/parameters/RetryRequestId'
+      responses:
+        '200':
+          description: Retry relation and its current status.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryRequest'
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/PrivateNotFound'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
+components:
+  parameters:
+    ReportId:
+      name: report_id
+      in: path
+      required: true
+      schema:
+        $ref: ./evaluation.yaml#/components/schemas/EvaluationUUID
+    SpeechFeedbackId:
+      name: speech_feedback_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    FeedbackItemId:
+      name: feedback_item_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    RetryRequestId:
+      name: retry_request_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  headers:
+    PrivateNoStore:
+      description: Prohibits shared and private storage of Actor-owned data.
+      required: true
+      schema:
+        type: string
+        const: private, no-store
+  responses:
+    PrivateBadRequest:
+      description: The request is malformed or violates a field constraint.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    PrivateUnauthorized:
+      description: A valid Bearer Session is required for this operation.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        WWW-Authenticate:
+          description: Authentication scheme required by the API.
+          required: true
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    PrivateNotFound:
+      description: |
+        The resource is unknown, hidden, deleted, or unavailable to the current
+        Actor. These cases are intentionally indistinguishable.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    PrivateConflict:
+      description: The request conflicts with the current resource revision.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          description: Optional minimum delay while the resource is processing.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    PrivateDefaultError:
+      description: A stable private error response.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          description: Optional minimum delay for a retryable service failure.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+  schemas:
+    EvaluationReportHistoryPage:
+      type: object
+      additionalProperties: false
+      description: |
+        One Evaluation report history page. The complete UTF-8 JSON response is
+        limited to 768 KiB (786432 bytes), including field names and escaping.
+      x-max-json-bytes: 786432
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: ./evaluation.yaml#/components/schemas/EvaluationFormalReport
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            Opaque cursor. The encoded cursor is limited to 512 characters;
+            its decoded metadata fields remain subject to the server's
+            128-byte UTF-8 metadata boundary.
+          pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    SpeechFeedback:
+      type: object
+      additionalProperties: false
+      description: |
+        Durable asynchronous, text-evidence-only feedback. This resource is not
+        an Evaluation and deliberately has no score, total, weight, Core 4D
+        observation, or Speaking Profile eligibility field. The complete UTF-8
+        JSON response, including field names and escaping, is limited to
+        512 KiB (524288 bytes).
+      x-max-json-bytes: 524288
+      x-invariants:
+        - status_url identifies speech_feedback_id
+        - every item.speech_feedback_id equals speech_feedback_id
+        - every item anchor belongs to the declared source identity
+      required:
+        - speech_feedback_id
+        - source
+        - feedback_status
+        - schema_version
+        - strategy_ref
+        - pipeline_version
+        - is_final
+        - items
+        - acoustic_assessment
+        - status_url
+        - created_at
+        - updated_at
+      properties:
+        speech_feedback_id:
+          $ref: '#/components/schemas/ResourceId'
+        source:
+          $ref: '#/components/schemas/SpeechFeedbackSource'
+        feedback_status:
+          $ref: '#/components/schemas/SpeechFeedbackStatus'
+        scoreability_status:
+          type: string
+          enum:
+            - PROVISIONAL
+            - INSUFFICIENT
+        gate_status:
+          type: string
+          enum:
+            - FEEDBACK_ONLY
+            - BLOCKED
+        reason_codes:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/SpeechFeedbackInsufficientReasonCode'
+        schema_version:
+          type: string
+          const: speech-feedback/v1
+        strategy_ref:
+          type: string
+          const: qianwen-speech-feedback/v1
+        pipeline_version:
+          type: string
+          const: speech-feedback-pipeline/v1
+        is_final:
+          type: boolean
+          const: false
+        items:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/FeedbackItem'
+        acoustic_assessment:
+          $ref: '#/components/schemas/SpeechFeedbackAcousticAssessment'
+        stable_failure:
+          $ref: '#/components/schemas/SpeechFeedbackStableFailure'
+        status_url:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^/v1/speech-feedback/[A-Za-z0-9._~-]{1,128}$'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      oneOf:
+        - title: Queued feedback
+          properties:
+            feedback_status:
+              const: QUEUED
+            items:
+              type: array
+              maxItems: 0
+          required:
+            - feedback_status
+          not:
+            anyOf:
+              - required: [scoreability_status]
+              - required: [gate_status]
+              - required: [reason_codes]
+              - required: [stable_failure]
+              - required: [completed_at]
+        - title: Running feedback
+          properties:
+            feedback_status:
+              const: RUNNING
+            items:
+              type: array
+              maxItems: 0
+          required:
+            - feedback_status
+          not:
+            anyOf:
+              - required: [scoreability_status]
+              - required: [gate_status]
+              - required: [reason_codes]
+              - required: [stable_failure]
+              - required: [completed_at]
+        - title: Ready provisional feedback
+          properties:
+            feedback_status:
+              const: READY
+            scoreability_status:
+              const: PROVISIONAL
+            gate_status:
+              const: FEEDBACK_ONLY
+            items:
+              type: array
+              minItems: 1
+          required:
+            - feedback_status
+            - scoreability_status
+            - gate_status
+            - completed_at
+          not:
+            anyOf:
+              - required: [reason_codes]
+              - required: [stable_failure]
+        - title: Ready insufficient feedback
+          properties:
+            feedback_status:
+              const: READY
+            scoreability_status:
+              const: INSUFFICIENT
+            gate_status:
+              const: BLOCKED
+            items:
+              type: array
+              maxItems: 0
+          required:
+            - feedback_status
+            - scoreability_status
+            - gate_status
+            - reason_codes
+            - completed_at
+          not:
+            required: [stable_failure]
+        - title: Failed feedback
+          properties:
+            feedback_status:
+              const: FAILED
+            items:
+              type: array
+              maxItems: 0
+          required:
+            - feedback_status
+            - stable_failure
+            - completed_at
+          not:
+            anyOf:
+              - required: [scoreability_status]
+              - required: [gate_status]
+              - required: [reason_codes]
+    SpeechFeedbackStatus:
+      type: string
+      enum:
+        - QUEUED
+        - RUNNING
+        - READY
+        - FAILED
+    SpeechFeedbackSource:
+      oneOf:
+        - $ref: '#/components/schemas/ConversationTurnFeedbackSource'
+        - $ref: '#/components/schemas/AgentVoiceMessageFeedbackSource'
+      discriminator:
+        propertyName: source_kind
+        mapping:
+          CONVERSATION_TURN: '#/components/schemas/ConversationTurnFeedbackSource'
+          AGENT_VOICE_MESSAGE: '#/components/schemas/AgentVoiceMessageFeedbackSource'
+    ConversationTurnFeedbackSource:
+      type: object
+      additionalProperties: false
+      required:
+        - source_kind
+        - practice_session_id
+        - turn_id
+        - input_revision
+        - evidence_snapshot_id
+      properties:
+        source_kind:
+          type: string
+          const: CONVERSATION_TURN
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        input_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        evidence_snapshot_id:
+          $ref: '#/components/schemas/ResourceId'
+    AgentVoiceMessageFeedbackSource:
+      type: object
+      additionalProperties: false
+      required:
+        - source_kind
+        - thread_id
+        - message_id
+        - transcript_evidence_id
+        - candidate_version
+      properties:
+        source_kind:
+          type: string
+          const: AGENT_VOICE_MESSAGE
+        thread_id:
+          $ref: '#/components/schemas/ResourceId'
+        message_id:
+          $ref: '#/components/schemas/ResourceId'
+        transcript_evidence_id:
+          $ref: '#/components/schemas/ResourceId'
+        candidate_version:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+    SpeechFeedbackInsufficientReasonCode:
+      type: string
+      enum:
+        - TEXT_TOO_SHORT
+        - TRANSCRIPT_CONFIDENCE_INSUFFICIENT
+        - EVIDENCE_INCONSISTENT
+    SpeechFeedbackAcousticAssessment:
+      oneOf:
+        - $ref: '#/components/schemas/SpeechFeedbackAcousticUnavailable'
+        - $ref: '#/components/schemas/SpeechFeedbackAcousticAvailable'
+        - $ref: '#/components/schemas/SpeechFeedbackAcousticTopic'
+    SpeechFeedbackAcousticUnavailable:
+      type: object
+      additionalProperties: false
+      required:
+        - pronunciation
+        - acoustic_fluency
+        - reason_code
+      properties:
+        pronunciation:
+          type: string
+          const: NOT_ASSESSED
+        acoustic_fluency:
+          type: string
+          const: NOT_ASSESSED
+        reason_code:
+          type: string
+          const: ACOUSTIC_EVIDENCE_UNAVAILABLE
+    SpeechFeedbackAcousticAvailable:
+      type: object
+      additionalProperties: false
+      required:
+        - pronunciation
+        - acoustic_fluency
+        - integrity
+        - accuracy_score
+        - fluency_score
+        - integrity_score
+        - provider
+        - provider_session_id
+        - category
+        - notice
+      properties:
+        pronunciation:
+          type: string
+          const: ASSESSED
+        acoustic_fluency:
+          type: string
+          const: ASSESSED
+        integrity:
+          type: string
+          const: ASSESSED
+        accuracy_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        fluency_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        integrity_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        provider:
+          type: string
+          const: xfyun-ise
+        provider_session_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^\S(?:.*\S)?$'
+        category:
+          type: string
+          enum:
+            - read_word
+            - read_sentence
+        notice:
+          type: string
+          const: 根据本次录音自动评估，仅供练习参考。
+    SpeechFeedbackAcousticTopic:
+      type: object
+      additionalProperties: false
+      required:
+        - pronunciation
+        - acoustic_fluency
+        - pronunciation_score
+        - speaking_speed_wpm
+        - semantic_score
+        - provider
+        - provider_session_id
+        - category
+        - notice
+      properties:
+        pronunciation:
+          type: string
+          const: ASSESSED
+        acoustic_fluency:
+          type: string
+          const: ASSESSED
+        pronunciation_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        speaking_speed_wpm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000
+        semantic_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        provider:
+          type: string
+          const: xfyun-ise
+        provider_session_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^\S(?:.*\S)?$'
+        category:
+          type: string
+          const: topic
+        notice:
+          type: string
+          const: 根据本次录音自动评估，仅供练习参考。
+    SpeechFeedbackStableFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - retryable
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - PROVIDER_UNAVAILABLE
+            - PROVIDER_RESPONSE_INVALID
+            - PROCESSING_TIMEOUT
+            - INTERNAL_PROCESSING_ERROR
+        retryable:
+          type: boolean
+    FeedbackItem:
+      type: object
+      additionalProperties: false
+      required:
+        - feedback_item_id
+        - speech_feedback_id
+        - kind
+        - anchor
+        - explanation
+        - repractice_mode
+        - created_at
+      properties:
+        feedback_item_id:
+          $ref: '#/components/schemas/ResourceId'
+        speech_feedback_id:
+          $ref: '#/components/schemas/ResourceId'
+        kind:
+          type: string
+          enum:
+            - CORRECTION
+            - STRENGTH
+            - IMPROVEMENT
+            - RECOMMENDED_EXPRESSION
+        anchor:
+          $ref: '#/components/schemas/SpeechFeedbackAnchor'
+        explanation:
+          $ref: '#/components/schemas/FeedbackText'
+        suggested_text:
+          $ref: '#/components/schemas/FeedbackText'
+        repractice_mode:
+          type: string
+          enum:
+            - NONE
+            - SAME_QUESTION
+            - SAME_THREAD
+        created_at:
+          type: string
+          format: date-time
+      oneOf:
+        - properties:
+            kind:
+              const: CORRECTION
+          required:
+            - kind
+            - suggested_text
+        - properties:
+            kind:
+              const: STRENGTH
+            repractice_mode:
+              const: NONE
+          required:
+            - kind
+          not:
+            required: [suggested_text]
+        - properties:
+            kind:
+              const: IMPROVEMENT
+          required:
+            - kind
+            - suggested_text
+        - properties:
+            kind:
+              const: RECOMMENDED_EXPRESSION
+          required:
+            - kind
+            - suggested_text
+    FeedbackText:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: '^(?![\s\S]*[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F])[\s\S]*\S[\s\S]*$'
+      x-max-utf8-bytes: 2048
+    SpeechFeedbackAnchor:
+      oneOf:
+        - $ref: '#/components/schemas/ConversationTranscriptAnchor'
+        - $ref: '#/components/schemas/AgentTranscriptAnchor'
+      discriminator:
+        propertyName: anchor_kind
+        mapping:
+          CONVERSATION_TRANSCRIPT: '#/components/schemas/ConversationTranscriptAnchor'
+          AGENT_TRANSCRIPT: '#/components/schemas/AgentTranscriptAnchor'
+    ConversationTranscriptAnchor:
+      type: object
+      additionalProperties: false
+      x-invariants:
+        - end_utf8_byte is greater than start_utf8_byte
+        - the UTF-8 bytes in the declared range equal original_excerpt exactly
+      required:
+        - anchor_kind
+        - evidence_ref_id
+        - turn_id
+        - start_utf8_byte
+        - end_utf8_byte
+        - original_excerpt
+      properties:
+        anchor_kind:
+          type: string
+          const: CONVERSATION_TRANSCRIPT
+        evidence_ref_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+          maximum: 16383
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+          maximum: 16384
+        original_excerpt:
+          $ref: '#/components/schemas/TranscriptExcerpt'
+    AgentTranscriptAnchor:
+      type: object
+      additionalProperties: false
+      x-invariants:
+        - end_utf8_byte is greater than start_utf8_byte
+        - the UTF-8 bytes in the declared range equal original_excerpt exactly
+      required:
+        - anchor_kind
+        - transcript_evidence_id
+        - message_id
+        - start_utf8_byte
+        - end_utf8_byte
+        - original_excerpt
+      properties:
+        anchor_kind:
+          type: string
+          const: AGENT_TRANSCRIPT
+        transcript_evidence_id:
+          $ref: '#/components/schemas/ResourceId'
+        message_id:
+          $ref: '#/components/schemas/ResourceId'
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+          maximum: 16383
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+          maximum: 16384
+        original_excerpt:
+          $ref: '#/components/schemas/TranscriptExcerpt'
+    TranscriptExcerpt:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      pattern: '^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]+$'
+      x-max-utf8-bytes: 16384
+    RetryRequest:
+      type: object
+      additionalProperties: false
+      x-invariants:
+        - status_url identifies retry_request_id
+        - question_id is the immutable Question referenced by original_turn_id
+        - in TURN_CREATED, answer_path identifies new_turn_id exactly
+      description: |
+        Review-owned retry creation state. `TURN_CREATED` is a terminal success
+        for this creation request: Conversation has durably created the
+        `new_turn_id` resource in `ANSWERING` state, while the user's later WAV
+        answer and confirmation remain separate Conversation operations.
+      required:
+        - retry_request_id
+        - feedback_item_id
+        - practice_session_id
+        - original_turn_id
+        - question_id
+        - retry_status
+        - status_url
+        - created_at
+        - updated_at
+      properties:
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        feedback_item_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        original_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        new_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        new_turn_status:
+          type: string
+          const: ANSWERING
+          readOnly: true
+        answer_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$'
+          readOnly: true
+          description: |
+            Server-authoritative raw-WAV submission path for `new_turn_id`.
+            Clients use this exact value and never construct a retry URL.
+        retry_status:
+          type: string
+          enum:
+            - PENDING
+            - TURN_CREATED
+            - FAILED
+        stable_failure:
+          $ref: '#/components/schemas/RetryRequestStableFailure'
+        status_url:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^/v1/retry-requests/[A-Za-z0-9._~-]{1,128}$'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          description: |
+            Time the retry creation orchestration reached TURN_CREATED or
+            FAILED. It never denotes completion of the user's new answer.
+      oneOf:
+        - properties:
+            retry_status:
+              const: PENDING
+          required:
+            - retry_status
+          not:
+            anyOf:
+              - required:
+                  - new_turn_id
+              - required:
+                  - new_turn_status
+              - required:
+                  - answer_path
+              - required:
+                  - stable_failure
+              - required:
+                  - completed_at
+        - properties:
+            retry_status:
+              const: TURN_CREATED
+          required:
+            - retry_status
+            - new_turn_id
+            - new_turn_status
+            - answer_path
+            - completed_at
+          not:
+            required:
+              - stable_failure
+        - properties:
+            retry_status:
+              const: FAILED
+          required:
+            - retry_status
+            - stable_failure
+            - completed_at
+          not:
+            anyOf:
+              - required:
+                  - new_turn_id
+              - required:
+                  - new_turn_status
+              - required:
+                  - answer_path
+    RetryRequestStableFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - retryable
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - SOURCE_NO_LONGER_AVAILABLE
+            - RETRY_TURN_CREATION_FAILED
+        retryable:
+          type: boolean

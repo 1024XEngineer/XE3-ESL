@@ -1,0 +1,603 @@
+paths:
+  /v1/practice-plans/{practice_plan_id}/practice-sessions:
+    post:
+      tags:
+        - Practice
+      summary: Create a session and its immutable snapshot
+      description: |
+        `user_confirmed: true` records the user's explicit confirmation of the
+        frozen scene preview. Requests without confirmation are rejected.
+        `expected_plan_revision` is the only Plan selection. Practice reads the
+        exact executable revision from Preparation and constructs the immutable
+        Session Snapshot exclusively from that frozen input. Repeating the same
+        idempotency key returns the same Session.
+      operationId: createPracticeSession
+      parameters:
+        - $ref: ./preparation.yaml#/components/parameters/PracticePlanId
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePracticeSessionRequest'
+            example:
+              expected_plan_revision: 1
+              user_confirmed: true
+      responses:
+        '201':
+          description: Session and immutable bootstrap snapshot created atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSessionBootstrap'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}:
+    get:
+      tags:
+        - Practice
+      summary: Get a practice session
+      operationId: getPracticeSession
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: Current session lifecycle state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSession'
+              example:
+                practice_session_id: session_demo_001
+                practice_plan_id: plan_demo_backend
+                plan_revision: 1
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
+                evaluation_policy_ref: interview.shadow.evaluation.v1
+                snapshot_id: snapshot_session_demo_001
+                practice_session_status: in_progress
+                session_version: 2
+                started_at: '2026-07-23T10:04:00Z'
+                created_at: '2026-07-23T10:03:00Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/pause:
+    post:
+      tags:
+        - Practice
+      summary: Pause an in-progress practice session
+      operationId: pausePracticeSession
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionLifecycleCommand'
+            example:
+              expected_session_version: 2
+      responses:
+        '200':
+          description: The paused Session; repeating the same intent returns this state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSession'
+              example:
+                practice_session_id: session_demo_001
+                practice_plan_id: plan_demo_backend
+                plan_revision: 1
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
+                evaluation_policy_ref: interview.shadow.evaluation.v1
+                snapshot_id: snapshot_session_demo_001
+                practice_session_status: paused
+                session_version: 3
+                started_at: '2026-07-23T10:04:00Z'
+                created_at: '2026-07-23T10:03:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/resume:
+    post:
+      tags:
+        - Practice
+      summary: Resume a paused practice session
+      operationId: resumePracticeSession
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionLifecycleCommand'
+            example:
+              expected_session_version: 3
+      responses:
+        '200':
+          description: The resumed Session; repeating the same intent returns this state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSession'
+              example:
+                practice_session_id: session_demo_001
+                practice_plan_id: plan_demo_backend
+                plan_revision: 1
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
+                evaluation_policy_ref: interview.shadow.evaluation.v1
+                snapshot_id: snapshot_session_demo_001
+                practice_session_status: in_progress
+                session_version: 4
+                started_at: '2026-07-23T10:04:00Z'
+                created_at: '2026-07-23T10:03:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/end-early:
+    post:
+      tags:
+        - Practice
+      summary: End an active practice session early
+      operationId: endPracticeSessionEarly
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionLifecycleCommand'
+            example:
+              expected_session_version: 4
+      responses:
+        '200':
+          description: The terminal Session; repeating the same intent returns this state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSession'
+              example:
+                practice_session_id: session_demo_001
+                practice_plan_id: plan_demo_backend
+                plan_revision: 1
+                practice_experience: INTERVIEW
+                scene_category: INTERVIEW_PROFESSIONAL
+                practice_mode: FULL_SIMULATION
+                evaluation_policy_ref: interview.shadow.evaluation.v1
+                snapshot_id: snapshot_session_demo_001
+                practice_session_status: ended_early
+                session_version: 5
+                started_at: '2026-07-23T10:04:00Z'
+                ended_at: '2026-07-23T10:10:00Z'
+                end_reason: USER_ENDED
+                created_at: '2026-07-23T10:03:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/snapshot:
+    get:
+      tags:
+        - Practice
+      summary: Get the immutable session snapshot
+      operationId: getPracticeSessionSnapshot
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: Immutable context used by Conversation and Review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSessionSnapshot'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    PracticeSessionId:
+      name: practice_session_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    Version:
+      type: integer
+      minimum: 1
+    PracticeExperience:
+      $ref: ./scene.yaml#/components/schemas/PracticeExperience
+    SceneCategory:
+      $ref: ./scene.yaml#/components/schemas/SceneCategory
+    PracticeMode:
+      $ref: ./scene.yaml#/components/schemas/PracticeMode
+    CreatePracticeSessionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_plan_revision
+        - user_confirmed
+      properties:
+        expected_plan_revision:
+          type: integer
+          minimum: 1
+        user_confirmed:
+          type: boolean
+          const: true
+          description: Explicit confirmation of the frozen scene preview.
+    PracticeSession:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - practice_plan_id
+        - plan_revision
+        - practice_experience
+        - scene_category
+        - practice_mode
+        - evaluation_policy_ref
+        - snapshot_id
+        - practice_session_status
+        - session_version
+        - created_at
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_plan_id:
+          $ref: '#/components/schemas/ResourceId'
+        plan_revision:
+          type: integer
+          minimum: 1
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
+        evaluation_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        snapshot_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_status:
+          type: string
+          enum:
+            - starting
+            - in_progress
+            - paused
+            - completed
+            - ended_early
+        session_version:
+          type: integer
+          minimum: 1
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        end_reason:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+        created_at:
+          type: string
+          format: date-time
+      allOf:
+        - if:
+            properties:
+              practice_session_status:
+                enum:
+                  - in_progress
+                  - paused
+                  - completed
+                  - ended_early
+            required:
+              - practice_session_status
+          then:
+            required:
+              - started_at
+        - if:
+            properties:
+              practice_session_status:
+                enum:
+                  - completed
+                  - ended_early
+            required:
+              - practice_session_status
+          then:
+            required:
+              - ended_at
+              - end_reason
+          else:
+            not:
+              anyOf:
+                - required:
+                    - ended_at
+                - required:
+                    - end_reason
+    SessionLifecycleCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_session_version
+      properties:
+        expected_session_version:
+          type: integer
+          minimum: 1
+    SubjectRef:
+      type: object
+      additionalProperties: false
+      required:
+        - namespace
+        - subject_id
+      properties:
+        namespace:
+          type: string
+          pattern: '^[a-z][a-z0-9._-]*$'
+        subject_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    PracticeParticipant:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_participant_id
+        - practice_session_id
+        - participant_role
+        - subject_ref
+        - participant_order
+      properties:
+        practice_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        participant_role:
+          type: string
+          enum:
+            - FACILITATOR
+            - LEARNER
+        subject_ref:
+          $ref: '#/components/schemas/SubjectRef'
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        role_snapshot:
+          $ref: ./scene.yaml#/components/schemas/RoleDefinition
+        participant_order:
+          type: integer
+          minimum: 1
+      dependentRequired:
+        role_definition_id:
+          - role_snapshot
+        role_snapshot:
+          - role_definition_id
+    PracticeExecutionPolicy:
+      type: object
+      additionalProperties: false
+      description: |
+        Practice-owned execution values frozen for one Session. The policy
+        reference selects the registered behavior before this snapshot is
+        written; runtime progression reads only these frozen values.
+      required:
+        - suggested_duration_seconds
+        - min_effective_turns
+        - max_effective_turns
+        - coverage_checkpoint_turn
+        - max_follow_ups_per_question
+        - early_completion_rule
+        - retry_allowed
+        - question_translation_allowed
+        - question_tips_allowed
+        - avatar_allowed
+        - speech_feedback_allowed
+      properties:
+        suggested_duration_seconds:
+          type: integer
+          minimum: 1
+        min_effective_turns:
+          type: integer
+          minimum: 1
+        max_effective_turns:
+          type: integer
+          minimum: 1
+          maximum: 64
+        coverage_checkpoint_turn:
+          type: integer
+          minimum: 1
+          maximum: 64
+        max_follow_ups_per_question:
+          type: integer
+          minimum: 0
+          maximum: 3
+        early_completion_rule:
+          type: string
+          const: COVERAGE_SATISFIED_AFTER_CHECKPOINT
+        retry_allowed:
+          type: boolean
+        question_translation_allowed:
+          type: boolean
+        question_tips_allowed:
+          type: boolean
+        avatar_allowed:
+          type: boolean
+        speech_feedback_allowed:
+          type: boolean
+    PracticeSessionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot_id
+        - practice_session_id
+        - plan_revision
+        - practice_experience
+        - scene_category
+        - practice_mode
+        - scene_selection
+        - preparation_snapshot
+        - participants
+        - session_policy
+        - practice_objectives
+        - created_at
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        plan_revision:
+          type: integer
+          minimum: 1
+        practice_experience:
+          $ref: '#/components/schemas/PracticeExperience'
+        scene_category:
+          $ref: '#/components/schemas/SceneCategory'
+        practice_mode:
+          $ref: '#/components/schemas/PracticeMode'
+        scene_selection:
+          $ref: ./preparation.yaml#/components/schemas/SceneSelectionSnapshot
+        preparation_snapshot:
+          $ref: ./preparation.yaml#/components/schemas/PreparationSnapshot
+        participants:
+          type: array
+          minItems: 2
+          description: |
+            Stable immutable participant relations. Subject references and
+            participant IDs are unique within the Snapshot. Sessions contain
+            exactly one LEARNER and one or more selected FACILITATOR roles.
+          items:
+            $ref: '#/components/schemas/PracticeParticipant'
+        session_policy:
+          $ref: '#/components/schemas/PracticeExecutionPolicy'
+        practice_objectives:
+          type: array
+          minItems: 1
+          items:
+            $ref: ./preparation.yaml#/components/schemas/PracticeObjective
+        ielts_assignment:
+          $ref: ./preparation.yaml#/components/schemas/IELTSPracticeAssignment
+        created_at:
+          type: string
+          format: date-time
+      allOf:
+        - if:
+            properties:
+              practice_experience:
+                const: IELTS_SPEAKING
+            required:
+              - practice_experience
+          then:
+            required:
+              - ielts_assignment
+          else:
+            not:
+              required:
+                - ielts_assignment
+        - if:
+            properties:
+              practice_mode:
+                const: FULL_MOCK
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: FULL_MOCK
+        - if:
+            properties:
+              practice_mode:
+                const: PART_1
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_1
+        - if:
+            properties:
+              practice_mode:
+                const: PART_2
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_2
+        - if:
+            properties:
+              practice_mode:
+                const: PART_3
+            required:
+              - practice_mode
+          then:
+            properties:
+              ielts_assignment:
+                properties:
+                  mode:
+                    const: PART_3
+    PracticeSessionBootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session
+        - snapshot
+      properties:
+        practice_session:
+          $ref: '#/components/schemas/PracticeSession'
+        snapshot:
+          $ref: '#/components/schemas/PracticeSessionSnapshot'

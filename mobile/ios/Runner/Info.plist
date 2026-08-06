@@ -26,6 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于录制本轮英文回答并生成候选转写。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄需要 SpeakUp 帮助理解和讲解的图片。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于选择需要 SpeakUp 帮助理解和讲解的图片。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

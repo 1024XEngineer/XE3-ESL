@@ -1,0 +1,797 @@
+# 本文件定义 Resume 模块的 REST 契约；所有操作只访问认证 Actor 自己的简历。
+paths:
+  /v1/temporary-resumes:
+    post:
+      tags:
+        - Resume
+      summary: Upload a temporary interview resume
+      description: |
+        Creates an interview-only resume that is excluded from the saved resume
+        list and three-resume quota. It expires after 24 hours and is intended
+        to be deleted after its parsed revision has entered a preparation snapshot.
+      operationId: createTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateTemporaryResumeRequest'
+      responses:
+        '202':
+          description: Temporary resume accepted and queued for parsing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/temporary-resumes/{resume_id}:
+    get:
+      tags:
+        - Resume
+      summary: Get a temporary interview resume
+      operationId: getTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+      responses:
+        '200':
+          description: Owned, unexpired temporary resume detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResumeDetail'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Resume
+      summary: Delete a temporary interview resume
+      operationId: deleteTemporaryResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/ExpectedVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Temporary resume deleted.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/temporary-resumes/{resume_id}/parse-retries:
+    post:
+      tags:
+        - Resume
+      summary: Retry temporary resume parsing
+      operationId: retryTemporaryResumeParse
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Temporary resume parsing retry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemporaryResume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes:
+    post:
+      tags:
+        - Resume
+      summary: Upload a resume
+      description: |
+        Creates one resume for the authenticated actor and queues parsing after
+        the PDF is durably stored. One actor may own at most three active
+        resumes. Only text-based PDF files up to 10 MiB are accepted.
+      operationId: createResume
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateResumeRequest'
+      responses:
+        '202':
+          description: Resume accepted and queued for parsing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    get:
+      tags:
+        - Resume
+      summary: List resumes
+      description: Returns only active resumes owned by the authenticated actor.
+      operationId: listResumes
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Current actor resume page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeList'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes/{resume_id}:
+    get:
+      tags:
+        - Resume
+      summary: Get a resume
+      description: Returns one owned resume and its current structured revision when available.
+      operationId: getResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+      responses:
+        '200':
+          description: Owned resume detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeDetail'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    patch:
+      tags:
+        - Resume
+      summary: Update resume metadata
+      description: Updates the owned resume title with optimistic concurrency control.
+      operationId: updateResumeMetadata
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateResumeMetadataRequest'
+      responses:
+        '200':
+          description: Updated resume metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Resume
+      summary: Delete a resume
+      description: Soft-deletes one owned resume and schedules protected file cleanup.
+      operationId: deleteResume
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/ExpectedVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Resume deletion accepted.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes/{resume_id}/content:
+    patch:
+      tags:
+        - Resume
+      summary: Update structured resume content
+      description: Creates an immutable MANUAL revision and makes it the current revision.
+      operationId: updateResumeContent
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateResumeContentRequest'
+      responses:
+        '200':
+          description: Newly created manual revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeRevision'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes/{resume_id}/file:
+    put:
+      tags:
+        - Resume
+      summary: Replace a resume PDF
+      description: Replaces the original PDF and queues a new parser revision.
+      operationId: replaceResumeFile
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReplaceResumeFileRequest'
+      responses:
+        '202':
+          description: Replacement accepted and queued for parsing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes/{resume_id}/content-url:
+    get:
+      tags:
+        - Resume
+      summary: Get a resume PDF read URL
+      description: Returns a short-lived read URL only after ownership validation.
+      operationId: getResumeContentURL
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+      responses:
+        '200':
+          description: Short-lived protected PDF read URL.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeContentURL'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/resumes/{resume_id}/parse-retries:
+    post:
+      tags:
+        - Resume
+      summary: Retry resume parsing
+      description: Idempotently requeues an owned resume whose latest parse failed.
+      operationId: retryResumeParse
+      parameters:
+        - $ref: '#/components/parameters/ResumeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Resume parsing retry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resume'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    ResumeId:
+      name: resume_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResumeId'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~+/-]+$'
+    ExpectedVersion:
+      name: expected_version
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/Version'
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 3
+        default: 3
+  schemas:
+    ResumeId:
+      type: string
+      format: uuid
+    Version:
+      type: integer
+      format: int64
+      minimum: 1
+    CreateResumeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - file
+      properties:
+        title:
+          $ref: '#/components/schemas/ResumeTitle'
+        file:
+          type: string
+          format: binary
+          contentMediaType: application/pdf
+    CreateTemporaryResumeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+          contentMediaType: application/pdf
+    ReplaceResumeFileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_version
+        - file
+      properties:
+        expected_version:
+          $ref: '#/components/schemas/Version'
+        file:
+          type: string
+          format: binary
+          contentMediaType: application/pdf
+    UpdateResumeMetadataRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - expected_version
+      properties:
+        title:
+          $ref: '#/components/schemas/ResumeTitle'
+        expected_version:
+          $ref: '#/components/schemas/Version'
+    UpdateResumeContentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+        - expected_version
+      properties:
+        content:
+          $ref: '#/components/schemas/ResumeContent'
+        expected_version:
+          $ref: '#/components/schemas/Version'
+    ResumeTitle:
+      type: string
+      minLength: 1
+      maxLength: 120
+    Resume:
+      type: object
+      additionalProperties: false
+      required:
+        - resume_id
+        - title
+        - original_filename
+        - content_type
+        - size_bytes
+        - file_status
+        - parse_status
+        - version
+        - created_at
+        - updated_at
+      properties:
+        resume_id:
+          $ref: '#/components/schemas/ResumeId'
+        title:
+          $ref: '#/components/schemas/ResumeTitle'
+        original_filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content_type:
+          type: string
+          const: application/pdf
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+        file_status:
+          type: string
+          enum:
+            - UPLOADING
+            - AVAILABLE
+            - DELETING
+        parse_status:
+          type: string
+          enum:
+            - QUEUED
+            - PARSING
+            - READY
+            - FAILED
+        current_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ResumeList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/Resume'
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+    TemporaryResume:
+      type: object
+      additionalProperties: false
+      required:
+        - resume_id
+        - title
+        - original_filename
+        - content_type
+        - size_bytes
+        - file_status
+        - parse_status
+        - version
+        - created_at
+        - updated_at
+        - expires_at
+      properties:
+        resume_id:
+          $ref: '#/components/schemas/ResumeId'
+        title:
+          $ref: '#/components/schemas/ResumeTitle'
+        original_filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content_type:
+          type: string
+          const: application/pdf
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+        file_status:
+          type: string
+          enum: [UPLOADING, AVAILABLE, DELETING]
+        parse_status:
+          type: string
+          enum: [QUEUED, PARSING, READY, FAILED]
+        current_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        version:
+          $ref: '#/components/schemas/Version'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    TemporaryResumeDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - resume
+      properties:
+        resume:
+          $ref: '#/components/schemas/TemporaryResume'
+        current_revision:
+          $ref: '#/components/schemas/ResumeRevision'
+    ResumeDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - resume
+      properties:
+        resume:
+          $ref: '#/components/schemas/Resume'
+        current_revision:
+          $ref: '#/components/schemas/ResumeRevision'
+    ResumeRevision:
+      type: object
+      additionalProperties: false
+      required:
+        - resume_id
+        - revision
+        - source
+        - content
+        - created_at
+      properties:
+        resume_id:
+          $ref: '#/components/schemas/ResumeId'
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        source:
+          type: string
+          enum:
+            - PARSER
+            - MANUAL
+        parser_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        content:
+          $ref: '#/components/schemas/ResumeContent'
+        created_at:
+          type: string
+          format: date-time
+    ResumeContent:
+      type: object
+      additionalProperties: false
+      required:
+        - target_position
+        - professional_summary
+        - work_experiences
+        - project_experiences
+        - education_experiences
+        - skills
+      properties:
+        target_position:
+          type: string
+          maxLength: 200
+        professional_summary:
+          type: string
+          maxLength: 4000
+        work_experiences:
+          type: array
+          maxItems: 30
+          items:
+            $ref: '#/components/schemas/WorkExperience'
+        project_experiences:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/ProjectExperience'
+        education_experiences:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/EducationExperience'
+        skills:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        awards:
+          type: array
+          description: Explicit awards, honors, scholarships, and prizes preserved from the resume.
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 300
+    WorkExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - company
+        - position
+        - duties
+        - achievements
+      properties:
+        company:
+          type: string
+          maxLength: 200
+        position:
+          type: string
+          maxLength: 200
+        start_date:
+          type: string
+          maxLength: 32
+        end_date:
+          type: string
+          maxLength: 32
+        duties:
+          $ref: '#/components/schemas/BulletItems'
+        achievements:
+          $ref: '#/components/schemas/BulletItems'
+    ProjectExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - project_name
+        - role
+        - description
+        - technologies
+        - duties
+        - achievements
+      properties:
+        project_name:
+          type: string
+          maxLength: 200
+        role:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 4000
+        technologies:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        duties:
+          $ref: '#/components/schemas/BulletItems'
+        achievements:
+          $ref: '#/components/schemas/BulletItems'
+    EducationExperience:
+      type: object
+      additionalProperties: false
+      required:
+        - school
+        - major
+        - degree
+      properties:
+        school:
+          type: string
+          maxLength: 200
+        major:
+          type: string
+          maxLength: 200
+        degree:
+          type: string
+          maxLength: 100
+        gpa:
+          type: string
+          description: GPA exactly as written in the resume, including its original scale.
+          maxLength: 64
+        start_date:
+          type: string
+          maxLength: 32
+        end_date:
+          type: string
+          maxLength: 32
+    BulletItems:
+      type: array
+      maxItems: 100
+      items:
+        type: string
+        minLength: 1
+        maxLength: 1000
+    ResumeContentURL:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - expires_at
+      properties:
+        url:
+          type: string
+          format: uri
+          minLength: 1
+          maxLength: 4096
+        expires_at:
+          type: string
+          format: date-time

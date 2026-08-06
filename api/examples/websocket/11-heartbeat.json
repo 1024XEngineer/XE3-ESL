@@ -1,0 +1,12 @@
+{
+  "event_id": "event_heartbeat_001",
+  "event_type": "system.heartbeat",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:09:00Z",
+  "practice_session_id": "session_demo_001",
+  "correlation_id": "corr_stream_001",
+  "replayable": false,
+  "payload": {
+    "server_time": "2026-07-23T10:09:00Z"
+  }
+}

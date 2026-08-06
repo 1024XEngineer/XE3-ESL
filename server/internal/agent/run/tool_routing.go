@@ -1,0 +1,62 @@
+package run
+
+import (
+	"log/slog"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+)
+
+const (
+	modelToolRoutingVersionV1 = "model-tool-routing-v1"
+	reasonModelToolSelection  = "model_tool_selection"
+)
+
+type modelToolRouting struct {
+	Definitions []ToolDefinition
+	ToolChoice  ToolChoice
+}
+
+// buildModelToolRouting 将 Registry 中的全部工具交给模型自主选择。
+func buildModelToolRouting(
+	registry *capability.Registry,
+	logger *slog.Logger,
+	runID string,
+) modelToolRouting {
+	routing := modelToolRouting{
+		ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
+	}
+	if registry == nil {
+		return routing
+	}
+	registered := registry.Definitions()
+	routing.Definitions = make([]ToolDefinition, 0, len(registered))
+	names := make([]string, 0, len(registered))
+	for _, definition := range registered {
+		routing.Definitions = append(routing.Definitions, ToolDefinition{
+			Name:        definition.Name,
+			Description: definition.Description,
+			InputSchema: definition.InputSchema,
+		})
+		names = append(names, definition.Name)
+	}
+	if logger != nil {
+		logger.Debug(
+			"agent.tools.exposed",
+			"run_id", runID,
+			"tools", names,
+			"tool_count", len(names),
+			"routing_version", modelToolRoutingVersionV1,
+			"tool_choice_mode", string(routing.ToolChoice.Mode),
+		)
+	}
+	return routing
+}
+
+func applyModelToolSnapshot(
+	manifest *agentcontext.Manifest,
+	routing modelToolRouting,
+) {
+	manifest.ExposedTools = exposedToolNameList(routing.Definitions)
+	manifest.ToolSchemaHashes = toolSchemaHashes(routing.Definitions)
+}

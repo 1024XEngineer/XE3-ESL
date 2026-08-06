@@ -1,0 +1,260 @@
+name: Quality
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      flutter: ${{ steps.scope.outputs.flutter }}
+      go: ${{ steps.scope.outputs.go }}
+      api: ${{ steps.scope.outputs.api }}
+      smoke: ${{ steps.scope.outputs.smoke }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select required checks
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          flutter=false
+          go=false
+          api=false
+          smoke=false
+
+          set_all_checks() {
+            flutter=true
+            go=true
+            api=true
+            smoke=true
+          }
+
+          if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
+            set_all_checks
+          else
+            git cat-file -e "${BASE_SHA}^{commit}"
+            git cat-file -e "${HEAD_SHA}^{commit}"
+            changed_files="$RUNNER_TEMP/quality-changed-files"
+            git diff \
+              --no-renames \
+              --name-only \
+              -z \
+              "$BASE_SHA...$HEAD_SHA" > "$changed_files"
+
+            while IFS= read -r -d '' file; do
+              printf 'Changed file: %q\n' "$file"
+              case "$file" in
+                Makefile|.github/workflows/quality.yml)
+                  set_all_checks
+                  ;;
+                mobile/*)
+                  flutter=true
+                  ;;
+                server/*)
+                  go=true
+                  smoke=true
+                  ;;
+                api/*)
+                  api=true
+                  smoke=true
+                  ;;
+              esac
+            done < "$changed_files"
+          fi
+
+          {
+            echo "flutter=$flutter"
+            echo "go=$go"
+            echo "api=$api"
+            echo "smoke=$smoke"
+          } >> "$GITHUB_OUTPUT"
+
+  flutter:
+    name: Flutter
+    needs: changes
+    if: needs.changes.outputs.flutter == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+          channel: stable
+
+      - name: Restore Pub package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-flutter-3.44.6-${{ hashFiles('mobile/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-flutter-3.44.6-
+
+      - name: Check Flutter
+        run: make check-flutter
+
+  go:
+    name: Go
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache: true
+          cache-dependency-path: server/go.sum
+
+      - name: Check Go
+        run: make check-go
+
+  api:
+    name: API contracts
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Check API contracts
+        run: make check-api
+
+  smoke:
+    name: Deterministic smoke
+    needs: changes
+    if: needs.changes.outputs.smoke == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache: true
+          cache-dependency-path: server/go.sum
+
+      - name: Check deterministic Mock main flow
+        run: make check-smoke
+
+  quality-gate:
+    name: Quality gate
+    needs:
+      - changes
+      - flutter
+      - go
+      - api
+      - smoke
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      FLUTTER_REQUIRED: ${{ needs.changes.outputs.flutter }}
+      FLUTTER_RESULT: ${{ needs.flutter.result }}
+      GO_REQUIRED: ${{ needs.changes.outputs.go }}
+      GO_RESULT: ${{ needs.go.result }}
+      API_REQUIRED: ${{ needs.changes.outputs.api }}
+      API_RESULT: ${{ needs.api.result }}
+      SMOKE_REQUIRED: ${{ needs.changes.outputs.smoke }}
+      SMOKE_RESULT: ${{ needs.smoke.result }}
+    steps:
+      - name: Require every selected check to pass
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Change detection did not succeed: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          require_result() {
+            local name=$1
+            local required=$2
+            local result=$3
+
+            case "$required" in
+              true|false)
+                ;;
+              *)
+                echo "$name has invalid required state: $required"
+                return 1
+                ;;
+            esac
+
+            case "$result" in
+              success|skipped)
+                ;;
+              *)
+                echo "$name finished with unexpected result: $result"
+                return 1
+                ;;
+            esac
+
+            if [[ "$required" == "true" && "$result" != "success" ]]; then
+              echo "$name was required but finished with: $result"
+              return 1
+            fi
+          }
+
+          require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
+          require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
+          require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
+          require_result "Deterministic smoke" "$SMOKE_REQUIRED" "$SMOKE_RESULT"

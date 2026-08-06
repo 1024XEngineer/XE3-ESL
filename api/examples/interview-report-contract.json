@@ -1,0 +1,502 @@
+{
+  "queued": {
+    "practice_session_id": "session_interview_report_001",
+    "evaluation_id": "81000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "82000001-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "QUEUED",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_interview_report_001/interview-report"
+  },
+  "running": {
+    "practice_session_id": "session_interview_report_001",
+    "evaluation_id": "81000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "82000001-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "RUNNING",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_interview_report_001/interview-report"
+  },
+  "ready": {
+    "practice_session_id": "session_interview_report_001",
+    "evaluation_id": "81000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "82000001-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "READY",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_interview_report_001/interview-report",
+    "report": {
+      "schema_version": "interview-report/v1",
+      "scoreability_status": "PROVISIONAL",
+      "gate_status": "FEEDBACK_ONLY",
+      "readiness_level": "NOT_ASSESSED",
+      "readiness_notice": "Practice feedback only; not a hiring decision or probability.",
+      "dimensions": [
+        {
+          "dimension_id": "INTERVIEW_RELEVANCE",
+          "score": 78,
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "evidence_primary_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "interview_finding_relevance_001",
+              "message": "The response needs a clearer connection to the question.",
+              "suggestion": "State the answer first, then connect each supporting detail to the question.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "evidence_primary_001",
+                  "turn_id": "turn_primary_001",
+                  "start_utf8_byte": 2,
+                  "end_utf8_byte": 19,
+                  "original_excerpt": "led the migration"
+                }
+              ]
+            }
+          ],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_STRUCTURE",
+          "score": 72,
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "evidence_primary_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "interview_finding_structure_001",
+              "message": "The response's main point and support are difficult to follow.",
+              "suggestion": "Use a situation-action-result order and keep one main point per sentence.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "evidence_primary_001",
+                  "turn_id": "turn_primary_001",
+                  "start_utf8_byte": 2,
+                  "end_utf8_byte": 19,
+                  "original_excerpt": "led the migration"
+                }
+              ]
+            }
+          ],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_EVIDENCE",
+          "score": 70,
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "evidence_primary_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "interview_finding_evidence_001",
+              "message": "The response needs a more specific example or outcome.",
+              "suggestion": "Name the situation, your action, and the observable outcome.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "evidence_primary_001",
+                  "turn_id": "turn_primary_001",
+                  "start_utf8_byte": 2,
+                  "end_utf8_byte": 19,
+                  "original_excerpt": "led the migration"
+                }
+              ]
+            }
+          ],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_PROFESSIONAL",
+          "score": 82,
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "evidence_primary_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "interview_finding_professional_001",
+              "message": "The response could use more precise, professional wording.",
+              "suggestion": "Replace broad claims with specific actions and neutral workplace language.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "evidence_primary_001",
+                  "turn_id": "turn_primary_001",
+                  "start_utf8_byte": 2,
+                  "end_utf8_byte": 19,
+                  "original_excerpt": "led the migration"
+                }
+              ]
+            }
+          ],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_INTERACTION",
+          "score": 76,
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "evidence_followup_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "interview_finding_interaction_001",
+              "message": "The response needs to address the follow-up more directly.",
+              "suggestion": "Acknowledge the follow-up, answer it directly, then add one supporting detail.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "evidence_followup_001",
+                  "turn_id": "turn_followup_001",
+                  "start_utf8_byte": 2,
+                  "end_utf8_byte": 21,
+                  "original_excerpt": "measured the result"
+                }
+              ]
+            }
+          ],
+          "recommended_expressions": []
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "question_primary_001",
+          "question_type": "PRIMARY",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "question_text": "Tell me about a project you led.",
+          "confirmed_transcript": "I led the migration and reduced deployment time.",
+          "response_turn_id": "turn_primary_001",
+          "evidence_ref_ids": [
+            "evidence_primary_001"
+          ],
+          "dimension_findings": [
+            {
+              "dimension_id": "INTERVIEW_RELEVANCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "interview_finding_relevance_001"
+              ],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_STRUCTURE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "interview_finding_structure_001"
+              ],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_EVIDENCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "interview_finding_evidence_001"
+              ],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_PROFESSIONAL",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "interview_finding_professional_001"
+              ],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_INTERACTION",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "question_followup_001",
+          "question_type": "FOLLOW_UP",
+          "parent_question_id": "question_primary_001",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "question_text": "How did you measure the result?",
+          "confirmed_transcript": "I measured the result after two weeks.",
+          "response_turn_id": "turn_followup_001",
+          "evidence_ref_ids": [
+            "evidence_followup_001"
+          ],
+          "dimension_findings": [
+            {
+              "dimension_id": "INTERVIEW_RELEVANCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_STRUCTURE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_EVIDENCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_PROFESSIONAL",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_INTERACTION",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "interview_finding_interaction_001"
+              ],
+              "recommended_expression_finding_ids": []
+            }
+          ]
+        }
+      ],
+      "priority_actions": [
+        {
+          "dimension_id": "INTERVIEW_RELEVANCE",
+          "finding_id": "interview_finding_relevance_001"
+        },
+        {
+          "dimension_id": "INTERVIEW_STRUCTURE",
+          "finding_id": "interview_finding_structure_001"
+        },
+        {
+          "dimension_id": "INTERVIEW_EVIDENCE",
+          "finding_id": "interview_finding_evidence_001"
+        }
+      ]
+    }
+  },
+  "insufficient": {
+    "practice_session_id": "session_interview_report_002",
+    "evaluation_id": "81000002-0000-4000-8000-000000000002",
+    "evaluation_revision_id": "82000002-0000-4000-8000-000000000002",
+    "revision": 1,
+    "evaluation_status": "READY",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_interview_report_002/interview-report",
+    "report": {
+      "schema_version": "interview-report/v1",
+      "scoreability_status": "INSUFFICIENT",
+      "gate_status": "BLOCKED",
+      "readiness_level": "NOT_ASSESSED",
+      "readiness_notice": "Practice feedback only; not a hiring decision or probability.",
+      "dimensions": [
+        {
+          "dimension_id": "INTERVIEW_RELEVANCE",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_STRUCTURE",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_EVIDENCE",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_PROFESSIONAL",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "recommended_expressions": []
+        },
+        {
+          "dimension_id": "INTERVIEW_INTERACTION",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "OPPORTUNITY_NOT_PROVIDED"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "recommended_expressions": []
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "question_short_001",
+          "question_type": "PRIMARY",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "question_text": "Why are you interested in this role?",
+          "confirmed_transcript": "Hi.",
+          "response_turn_id": "turn_short_001",
+          "evidence_ref_ids": [
+            "evidence_short_001"
+          ],
+          "dimension_findings": [
+            {
+              "dimension_id": "INTERVIEW_RELEVANCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_STRUCTURE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_EVIDENCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_PROFESSIONAL",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_INTERACTION",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "question_short_followup_001",
+          "question_type": "FOLLOW_UP",
+          "parent_question_id": "question_short_001",
+          "opportunity_status": "NOT_PROVIDED",
+          "assessment_status": "NOT_ASSESSED",
+          "question_text": "Could you give a specific example?",
+          "evidence_ref_ids": [],
+          "dimension_findings": [
+            {
+              "dimension_id": "INTERVIEW_RELEVANCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_STRUCTURE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_EVIDENCE",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_PROFESSIONAL",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            },
+            {
+              "dimension_id": "INTERVIEW_INTERACTION",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "recommended_expression_finding_ids": []
+            }
+          ]
+        }
+      ],
+      "priority_actions": []
+    }
+  },
+  "failed": {
+    "practice_session_id": "session_interview_report_003",
+    "evaluation_id": "81000003-0000-4000-8000-000000000003",
+    "evaluation_revision_id": "82000003-0000-4000-8000-000000000003",
+    "revision": 1,
+    "evaluation_status": "FAILED",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_interview_report_003/interview-report",
+    "stable_failure": {
+      "reason_code": "INTERNAL_RETRYABLE",
+      "retryable": true
+    }
+  }
+}

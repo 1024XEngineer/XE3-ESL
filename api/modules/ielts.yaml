@@ -1,0 +1,225 @@
+paths:
+  /v1/ielts-speaking/question-bank:
+    get:
+      tags:
+        - IELTS Speaking
+      summary: Get the published IELTS Speaking question bank
+      description: |
+        Returns the current published Part 1 full-mock sets, Part 1 specialty
+        topics, and Part 2/Part 3 topic groups. Hidden or incomplete content is
+        never exposed.
+      operationId: getIeltsSpeakingQuestionBank
+      security: []
+      responses:
+        '200':
+          description: Published IELTS Speaking sets in stable catalog order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IeltsQuestionBank'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    IeltsQuestionBank:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - bank_id
+        - season
+        - source_cutoff
+        - part1_sets
+        - part1_topics
+        - topic_groups
+      properties:
+        schema_version:
+          type: integer
+          const: 2
+        bank_id:
+          $ref: '#/components/schemas/ResourceId'
+        season:
+          type: string
+          minLength: 1
+        source_cutoff:
+          type: string
+          format: date-time
+        part1_sets:
+          type: array
+          minItems: 38
+          maxItems: 38
+          items:
+            $ref: '#/components/schemas/IeltsPart1Set'
+        part1_topics:
+          type: array
+          minItems: 38
+          maxItems: 38
+          items:
+            $ref: '#/components/schemas/IeltsPart1PracticeTopic'
+        topic_groups:
+          type: array
+          minItems: 56
+          maxItems: 56
+          items:
+            $ref: '#/components/schemas/IeltsTopicGroup'
+    IeltsPart1Set:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - topics
+        - question_count
+        - published
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title:
+          type: string
+          minLength: 1
+        topics:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/IeltsPart1Topic'
+        question_count:
+          type: integer
+          const: 8
+        published:
+          type: boolean
+          const: true
+    IeltsPart1Topic:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - release
+        - questions
+      properties:
+        title:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+            - evergreen
+        questions:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            minLength: 1
+    IeltsPart1PracticeTopic:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title_zh
+        - title_en
+        - release
+        - category
+        - questions
+        - published
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title_zh:
+          type: string
+          minLength: 1
+        title_en:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+            - evergreen
+        category:
+          $ref: '#/components/schemas/IeltsTopicCategory'
+        questions:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            minLength: 1
+        published:
+          type: boolean
+          const: true
+    IeltsTopicGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title_zh
+        - release
+        - region
+        - category
+        - part2
+        - part3_questions
+        - published
+        - supplemented_question_count
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title_zh:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+        region:
+          type: string
+          const: mainland
+        category:
+          $ref: '#/components/schemas/IeltsTopicCategory'
+        part2:
+          $ref: '#/components/schemas/IeltsPart2CueCard'
+        part3_questions:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: string
+            minLength: 1
+        published:
+          type: boolean
+          const: true
+        supplemented_question_count:
+          type: integer
+          minimum: 0
+          maximum: 5
+    IeltsPart2CueCard:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - points
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+        points:
+          type: array
+          minItems: 3
+          items:
+            type: string
+            minLength: 1
+    IeltsTopicCategory:
+      type: string
+      enum:
+        - person
+        - place
+        - thing
+        - event

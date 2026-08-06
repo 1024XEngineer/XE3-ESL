@@ -1,0 +1,300 @@
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - retryable
+        - correlation_id
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          minLength: 1
+          description: Sanitized user-facing summary.
+        retryable:
+          type: boolean
+        correlation_id:
+          type: string
+          minLength: 1
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - reason
+      properties:
+        field:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+          minLength: 1
+    ErrorCode:
+      type: string
+      description: Stable machine-readable Delivery error code.
+      enum:
+        - invalid_request
+        - invalid_image
+        - unsupported_image_format
+        - image_too_large
+        - authentication_required
+        - invalid_credentials
+        - account_registration_unavailable
+        - profile_not_found
+        - profile_version_conflict
+        - resume_not_found
+        - resume_limit_exceeded
+        - resume_version_conflict
+        - unsupported_resume_format
+        - resume_file_too_large
+        - resume_parse_failed
+        - rate_limited
+        - resource_not_found
+        - resource_conflict
+        - resource_processing
+        - idempotency_key_conflict
+        - provider_unavailable
+        - quota_exhausted
+        - voice_capacity_exhausted
+        - scene_not_found
+        - role_definition_not_found
+        - preparation_profile_not_found
+        - preparation_version_conflict
+        - job_target_not_found
+        - job_target_version_conflict
+        - job_target_analysis_claim_lost
+        - job_target_analysis_failed
+        - practice_plan_not_found
+        - practice_plan_not_ready
+        - practice_plan_archived
+        - practice_plan_has_active_session
+        - practice_plan_revision_conflict
+        - practice_session_not_found
+        - practice_session_transition_not_allowed
+        - practice_session_already_terminal
+        - practice_session_version_conflict
+        - practice_participant_invalid
+        - practice_participant_not_authorized
+        - practice_option_invalid
+        - confirmation_required
+        - version_conflict
+        - active_session_conflict
+        - question_not_found
+        - answer_invalid
+        - turn_not_found
+        - turn_conflict
+        - turn_outcome_session_mismatch
+        - turn_analysis_not_found
+        - turn_analysis_conflict
+        - feedback_item_not_found
+        - retry_request_not_found
+        - retry_request_conflict
+        - transcript_unavailable
+        - evaluation_not_found
+        - evaluation_strategy_not_available
+        - evaluation_version_conflict
+        - evaluation_policy_violation
+        - evaluation_retryable_failure
+        - unsupported_message
+        - internal_error
+      x-http-status-map:
+        invalid_request: 400
+        invalid_image: 400
+        unsupported_image_format: 400
+        image_too_large: 413
+        answer_invalid: 400
+        unsupported_message: 400
+        authentication_required: 401
+        confirmation_required: 409
+        version_conflict: 409
+        active_session_conflict: 409
+        invalid_credentials: 401
+        practice_participant_not_authorized: 403
+        scene_not_found: 404
+        role_definition_not_found: 404
+        preparation_profile_not_found: 404
+        job_target_not_found: 404
+        practice_plan_not_found: 404
+        practice_session_not_found: 404
+        question_not_found: 404
+        turn_not_found: 404
+        turn_analysis_not_found: 404
+        feedback_item_not_found: 404
+        retry_request_not_found: 404
+        resource_not_found: 404
+        profile_not_found: 404
+        account_registration_unavailable: 409
+        profile_version_conflict: 409
+        resume_not_found: 404
+        resume_limit_exceeded: 409
+        resume_version_conflict: 409
+        unsupported_resume_format: 400
+        resume_file_too_large: 400
+        resume_parse_failed: 503
+        idempotency_key_conflict: 409
+        resource_conflict: 409
+        resource_processing: 409
+        preparation_version_conflict: 409
+        job_target_version_conflict: 409
+        job_target_analysis_claim_lost: 409
+        practice_plan_not_ready: 409
+        practice_plan_archived: 409
+        practice_plan_has_active_session: 409
+        practice_plan_revision_conflict: 409
+        practice_session_transition_not_allowed: 409
+        practice_session_already_terminal: 409
+        practice_session_version_conflict: 409
+        practice_participant_invalid: 409
+        practice_option_invalid: 409
+        turn_conflict: 409
+        turn_outcome_session_mismatch: 409
+        turn_analysis_conflict: 409
+        retry_request_conflict: 409
+        transcript_unavailable: 422
+        evaluation_not_found: 404
+        evaluation_strategy_not_available: 422
+        evaluation_version_conflict: 409
+        evaluation_policy_violation: 422
+        evaluation_retryable_failure: 503
+        rate_limited: 429
+        provider_unavailable: 503
+        quota_exhausted: 503
+        voice_capacity_exhausted: 503
+        job_target_analysis_failed: 503
+        internal_error: 500
+  responses:
+    BadRequest:
+      description: The request is malformed or violates a field constraint.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: invalid_request
+              message: Request validation failed.
+              retryable: false
+              correlation_id: corr_invalid_request
+              details:
+                - field: body
+                  reason: One or more fields are invalid.
+    PayloadTooLarge:
+      description: The uploaded payload exceeds an endpoint limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: image_too_large
+              message: The image exceeds the allowed limits.
+              retryable: false
+              correlation_id: corr_image_too_large
+    Unauthorized:
+      description: A valid Bearer Session is required for this operation.
+      headers:
+        WWW-Authenticate:
+          description: Authentication scheme required by the API.
+          schema:
+            type: string
+            const: Bearer
+          example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: authentication_required
+              message: Authentication is required.
+              retryable: false
+              correlation_id: corr_authentication_required
+    NotFound:
+      description: The requested resource does not exist for the current actor.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: resource_not_found
+              message: Resource was not found.
+              retryable: false
+              correlation_id: corr_not_found
+    Forbidden:
+      description: The current actor cannot perform this operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: practice_participant_not_authorized
+              message: The current actor is not an addressee for this question.
+              retryable: false
+              correlation_id: corr_forbidden
+    Conflict:
+      description: The request conflicts with the current resource state.
+      headers:
+        Retry-After:
+          description: Optional minimum delay when the conflicting resource is still processing.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: resource_conflict
+              message: Resource state conflicts with this operation.
+              retryable: false
+              correlation_id: corr_conflict
+    TooManyRequests:
+      description: The caller must wait before attempting this operation again.
+      headers:
+        Retry-After:
+          description: Minimum number of seconds before the caller retries.
+          schema:
+            type: integer
+            minimum: 1
+          example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: rate_limited
+              message: Too many requests. Try again later.
+              retryable: true
+              correlation_id: corr_rate_limited
+    DefaultError:
+      description: A stable error response.
+      headers:
+        Retry-After:
+          description: Optional minimum delay for a retryable service failure.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

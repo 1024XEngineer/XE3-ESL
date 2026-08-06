@@ -1,0 +1,21 @@
+{
+  "event_id": "event_question_001",
+  "event_type": "question.created",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:04:00Z",
+  "practice_session_id": "session_demo_001",
+  "sequence": 1,
+  "correlation_id": "corr_question_001",
+  "replayable": true,
+  "payload": {
+    "question_id": "question_demo_001",
+    "speaker_participant_id": "participant_interviewer_001",
+    "addressee_participant_ids": [
+      "participant_candidate_001"
+    ],
+    "objective_id": "introduction",
+    "question_type": "PRIMARY",
+    "content": "Tell me about your backend experience and one project you are proud of.",
+    "sequence": 1
+  }
+}

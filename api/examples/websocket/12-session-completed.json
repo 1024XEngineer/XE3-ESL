@@ -1,0 +1,16 @@
+{
+  "event_id": "event_session_completed_001",
+  "event_type": "practice_session.completed",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:20:00Z",
+  "practice_session_id": "session_demo_001",
+  "sequence": 7,
+  "correlation_id": "corr_turn_004",
+  "causation_id": "event_turn_completed_004",
+  "replayable": true,
+  "payload": {
+    "practice_session_status": "completed",
+    "session_version": 6,
+    "end_reason": "COVERAGE_SATISFIED_AT_CHECKPOINT"
+  }
+}

@@ -1,0 +1,1511 @@
+{
+  "queued": {
+    "practice_session_id": "session_ielts_report_001",
+    "evaluation_id": "7b000101-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000101-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "QUEUED",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report"
+  },
+  "running": {
+    "practice_session_id": "session_ielts_report_001",
+    "evaluation_id": "7b000101-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000101-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "RUNNING",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report"
+  },
+  "ready": {
+    "practice_session_id": "session_ielts_report_001",
+    "evaluation_id": "7b000101-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000101-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "READY",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report",
+    "report": {
+      "schema_version": "ielts-speaking-report/v1",
+      "disclaimer_code": "AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS",
+      "disclaimer": "AI 练习估分，非 IELTS 官方成绩。",
+      "scoreability_status": "PROVISIONAL",
+      "gate_status": "FEEDBACK_ONLY",
+      "test_summary": {
+        "part_1_topic": "IELTS speaking question 1",
+        "part_2_topic": "IELTS speaking question 9",
+        "part_3_topic": "IELTS speaking question 10",
+        "question_count": 14,
+        "answered_count": 14,
+        "recording_duration_ms": 548000
+      },
+      "criteria": [
+        {
+          "criterion_id": "IELTS_FC",
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "explanation": "根据已确认回答评估观点衔接与话题展开；缺少完整时序证据时只提供定性反馈。",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "FLUENCY_TIMING_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_001"
+          ],
+          "strengths": [
+            {
+              "finding_id": "ielts_finding_fc_001",
+              "message": "The response links its main idea clearly.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "ielts_evidence_001",
+                  "turn_id": "ielts_turn_001",
+                  "start_utf8_byte": 0,
+                  "end_utf8_byte": 8,
+                  "original_excerpt": "Answer 1"
+                }
+              ]
+            }
+          ],
+          "improvements": [],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_LR",
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "estimated_band": 6,
+          "band_descriptor": "Uses an adequate range of vocabulary for familiar topics.",
+          "explanation": "Uses an adequate range of vocabulary for familiar topics.",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "ielts_finding_lr_001",
+              "message": "Use a more precise topic word.",
+              "suggestion": "Replace the general word with one exact noun.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "ielts_evidence_001",
+                  "turn_id": "ielts_turn_001",
+                  "start_utf8_byte": 0,
+                  "end_utf8_byte": 8,
+                  "original_excerpt": "Answer 1"
+                }
+              ]
+            }
+          ],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_GRA",
+          "scoreability_status": "PROVISIONAL",
+          "gate_status": "FEEDBACK_ONLY",
+          "estimated_band": 6,
+          "band_descriptor": "Uses a mix of simple and complex forms with some flexibility.",
+          "explanation": "Uses a mix of simple and complex forms with some flexibility.",
+          "coverage": 1,
+          "confidence": 0,
+          "reason_codes": [
+            "ASR_CONFIDENCE_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_001"
+          ],
+          "strengths": [],
+          "improvements": [
+            {
+              "finding_id": "ielts_finding_gra_001",
+              "message": "Add a subordinate clause to develop the reason.",
+              "suggestion": "Connect the reason with because or although.",
+              "evidence": [
+                {
+                  "evidence_ref_id": "ielts_evidence_001",
+                  "turn_id": "ielts_turn_001",
+                  "start_utf8_byte": 0,
+                  "end_utf8_byte": 8,
+                  "original_excerpt": "Answer 1"
+                }
+              ]
+            }
+          ],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_PR",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "explanation": "本次缺少可用于整场评分的可信发音工件，因此不展示发音分数。",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "PRONUNCIATION_ARTIFACT_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "upgrade_examples": []
+        }
+      ],
+      "speaking_overall": {
+        "status": "NOT_AVAILABLE",
+        "explanation": "当前证据还不能同时支持四项评分，因此暂不计算口语总分。"
+      },
+      "part_reviews": [
+        {
+          "part_id": "PART_1",
+          "question_indexes": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_001",
+            "ielts_evidence_002",
+            "ielts_evidence_003",
+            "ielts_evidence_004",
+            "ielts_evidence_005",
+            "ielts_evidence_006",
+            "ielts_evidence_007",
+            "ielts_evidence_008"
+          ],
+          "strength_finding_ids": [
+            "ielts_finding_fc_001"
+          ],
+          "improvement_finding_ids": [
+            "ielts_finding_lr_001",
+            "ielts_finding_gra_001"
+          ],
+          "upgrade_example_finding_ids": []
+        },
+        {
+          "part_id": "PART_2",
+          "question_indexes": [
+            9
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_009"
+          ],
+          "strength_finding_ids": [],
+          "improvement_finding_ids": [],
+          "upgrade_example_finding_ids": []
+        },
+        {
+          "part_id": "PART_3",
+          "question_indexes": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_010",
+            "ielts_evidence_011",
+            "ielts_evidence_012",
+            "ielts_evidence_013",
+            "ielts_evidence_014"
+          ],
+          "strength_finding_ids": [],
+          "improvement_finding_ids": [],
+          "upgrade_example_finding_ids": []
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "ielts_question_001",
+          "part_id": "PART_1",
+          "index": 1,
+          "question_text": "IELTS speaking question 1",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 1",
+          "response_turn_id": "ielts_turn_001",
+          "evidence_ref_ids": [
+            "ielts_evidence_001"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [
+                "ielts_finding_fc_001"
+              ],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "ielts_finding_lr_001"
+              ],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [
+                "ielts_finding_gra_001"
+              ],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_002",
+          "part_id": "PART_1",
+          "index": 2,
+          "question_text": "IELTS speaking question 2",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 2",
+          "response_turn_id": "ielts_turn_002",
+          "evidence_ref_ids": [
+            "ielts_evidence_002"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_003",
+          "part_id": "PART_1",
+          "index": 3,
+          "question_text": "IELTS speaking question 3",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 3",
+          "response_turn_id": "ielts_turn_003",
+          "evidence_ref_ids": [
+            "ielts_evidence_003"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_004",
+          "part_id": "PART_1",
+          "index": 4,
+          "question_text": "IELTS speaking question 4",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 4",
+          "response_turn_id": "ielts_turn_004",
+          "evidence_ref_ids": [
+            "ielts_evidence_004"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_005",
+          "part_id": "PART_1",
+          "index": 5,
+          "question_text": "IELTS speaking question 5",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 5",
+          "response_turn_id": "ielts_turn_005",
+          "evidence_ref_ids": [
+            "ielts_evidence_005"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_006",
+          "part_id": "PART_1",
+          "index": 6,
+          "question_text": "IELTS speaking question 6",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 6",
+          "response_turn_id": "ielts_turn_006",
+          "evidence_ref_ids": [
+            "ielts_evidence_006"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_007",
+          "part_id": "PART_1",
+          "index": 7,
+          "question_text": "IELTS speaking question 7",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 7",
+          "response_turn_id": "ielts_turn_007",
+          "evidence_ref_ids": [
+            "ielts_evidence_007"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_008",
+          "part_id": "PART_1",
+          "index": 8,
+          "question_text": "IELTS speaking question 8",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 8",
+          "response_turn_id": "ielts_turn_008",
+          "evidence_ref_ids": [
+            "ielts_evidence_008"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_009",
+          "part_id": "PART_2",
+          "index": 9,
+          "question_text": "IELTS speaking question 9",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 9",
+          "response_turn_id": "ielts_turn_009",
+          "evidence_ref_ids": [
+            "ielts_evidence_009"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_010",
+          "part_id": "PART_3",
+          "index": 10,
+          "question_text": "IELTS speaking question 10",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 10",
+          "response_turn_id": "ielts_turn_010",
+          "evidence_ref_ids": [
+            "ielts_evidence_010"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_011",
+          "part_id": "PART_3",
+          "index": 11,
+          "question_text": "IELTS speaking question 11",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 11",
+          "response_turn_id": "ielts_turn_011",
+          "evidence_ref_ids": [
+            "ielts_evidence_011"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_012",
+          "part_id": "PART_3",
+          "index": 12,
+          "question_text": "IELTS speaking question 12",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 12",
+          "response_turn_id": "ielts_turn_012",
+          "evidence_ref_ids": [
+            "ielts_evidence_012"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_013",
+          "part_id": "PART_3",
+          "index": 13,
+          "question_text": "IELTS speaking question 13",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 13",
+          "response_turn_id": "ielts_turn_013",
+          "evidence_ref_ids": [
+            "ielts_evidence_013"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_014",
+          "part_id": "PART_3",
+          "index": 14,
+          "question_text": "IELTS speaking question 14",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 14",
+          "response_turn_id": "ielts_turn_014",
+          "evidence_ref_ids": [
+            "ielts_evidence_014"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        }
+      ],
+      "target_plan": {
+        "status": "NOT_CONFIGURED"
+      },
+      "priority_actions": [
+        {
+          "criterion_id": "IELTS_LR",
+          "finding_id": "ielts_finding_lr_001"
+        },
+        {
+          "criterion_id": "IELTS_GRA",
+          "finding_id": "ielts_finding_gra_001"
+        }
+      ]
+    }
+  },
+  "ready_insufficient": {
+    "practice_session_id": "session_ielts_report_001",
+    "evaluation_id": "7b000102-0000-4000-8000-000000000002",
+    "evaluation_revision_id": "a1000102-0000-4000-8000-000000000002",
+    "revision": 1,
+    "evaluation_status": "READY",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report",
+    "report": {
+      "schema_version": "ielts-speaking-report/v1",
+      "disclaimer_code": "AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS",
+      "disclaimer": "AI 练习估分，非 IELTS 官方成绩。",
+      "scoreability_status": "INSUFFICIENT",
+      "gate_status": "BLOCKED",
+      "test_summary": {
+        "part_1_topic": "IELTS speaking question 1",
+        "part_2_topic": "IELTS speaking question 9",
+        "part_3_topic": "IELTS speaking question 10",
+        "question_count": 14,
+        "answered_count": 14,
+        "recording_duration_ms": 0
+      },
+      "criteria": [
+        {
+          "criterion_id": "IELTS_FC",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_LR",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_GRA",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "upgrade_examples": []
+        },
+        {
+          "criterion_id": "IELTS_PR",
+          "scoreability_status": "INSUFFICIENT",
+          "gate_status": "BLOCKED",
+          "explanation": "本次缺少可用于整场评分的可信发音工件，因此不展示发音分数。",
+          "coverage": 0,
+          "confidence": 0,
+          "reason_codes": [
+            "PRONUNCIATION_ARTIFACT_UNAVAILABLE"
+          ],
+          "evidence_ref_ids": [],
+          "strengths": [],
+          "improvements": [],
+          "upgrade_examples": []
+        }
+      ],
+      "speaking_overall": {
+        "status": "NOT_AVAILABLE",
+        "explanation": "当前证据还不能同时支持四项评分，因此暂不计算口语总分。"
+      },
+      "part_reviews": [
+        {
+          "part_id": "PART_1",
+          "question_indexes": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_001",
+            "ielts_evidence_002",
+            "ielts_evidence_003",
+            "ielts_evidence_004",
+            "ielts_evidence_005",
+            "ielts_evidence_006",
+            "ielts_evidence_007",
+            "ielts_evidence_008"
+          ],
+          "strength_finding_ids": [],
+          "improvement_finding_ids": [],
+          "upgrade_example_finding_ids": []
+        },
+        {
+          "part_id": "PART_2",
+          "question_indexes": [
+            9
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_009"
+          ],
+          "strength_finding_ids": [],
+          "improvement_finding_ids": [],
+          "upgrade_example_finding_ids": []
+        },
+        {
+          "part_id": "PART_3",
+          "question_indexes": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "evidence_ref_ids": [
+            "ielts_evidence_010",
+            "ielts_evidence_011",
+            "ielts_evidence_012",
+            "ielts_evidence_013",
+            "ielts_evidence_014"
+          ],
+          "strength_finding_ids": [],
+          "improvement_finding_ids": [],
+          "upgrade_example_finding_ids": []
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "ielts_question_001",
+          "part_id": "PART_1",
+          "index": 1,
+          "question_text": "IELTS speaking question 1",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 1",
+          "response_turn_id": "ielts_turn_001",
+          "evidence_ref_ids": [
+            "ielts_evidence_001"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_002",
+          "part_id": "PART_1",
+          "index": 2,
+          "question_text": "IELTS speaking question 2",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 2",
+          "response_turn_id": "ielts_turn_002",
+          "evidence_ref_ids": [
+            "ielts_evidence_002"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_003",
+          "part_id": "PART_1",
+          "index": 3,
+          "question_text": "IELTS speaking question 3",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 3",
+          "response_turn_id": "ielts_turn_003",
+          "evidence_ref_ids": [
+            "ielts_evidence_003"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_004",
+          "part_id": "PART_1",
+          "index": 4,
+          "question_text": "IELTS speaking question 4",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 4",
+          "response_turn_id": "ielts_turn_004",
+          "evidence_ref_ids": [
+            "ielts_evidence_004"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_005",
+          "part_id": "PART_1",
+          "index": 5,
+          "question_text": "IELTS speaking question 5",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 5",
+          "response_turn_id": "ielts_turn_005",
+          "evidence_ref_ids": [
+            "ielts_evidence_005"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_006",
+          "part_id": "PART_1",
+          "index": 6,
+          "question_text": "IELTS speaking question 6",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 6",
+          "response_turn_id": "ielts_turn_006",
+          "evidence_ref_ids": [
+            "ielts_evidence_006"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_007",
+          "part_id": "PART_1",
+          "index": 7,
+          "question_text": "IELTS speaking question 7",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 7",
+          "response_turn_id": "ielts_turn_007",
+          "evidence_ref_ids": [
+            "ielts_evidence_007"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_008",
+          "part_id": "PART_1",
+          "index": 8,
+          "question_text": "IELTS speaking question 8",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 8",
+          "response_turn_id": "ielts_turn_008",
+          "evidence_ref_ids": [
+            "ielts_evidence_008"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_009",
+          "part_id": "PART_2",
+          "index": 9,
+          "question_text": "IELTS speaking question 9",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 9",
+          "response_turn_id": "ielts_turn_009",
+          "evidence_ref_ids": [
+            "ielts_evidence_009"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_010",
+          "part_id": "PART_3",
+          "index": 10,
+          "question_text": "IELTS speaking question 10",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 10",
+          "response_turn_id": "ielts_turn_010",
+          "evidence_ref_ids": [
+            "ielts_evidence_010"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_011",
+          "part_id": "PART_3",
+          "index": 11,
+          "question_text": "IELTS speaking question 11",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 11",
+          "response_turn_id": "ielts_turn_011",
+          "evidence_ref_ids": [
+            "ielts_evidence_011"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_012",
+          "part_id": "PART_3",
+          "index": 12,
+          "question_text": "IELTS speaking question 12",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 12",
+          "response_turn_id": "ielts_turn_012",
+          "evidence_ref_ids": [
+            "ielts_evidence_012"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_013",
+          "part_id": "PART_3",
+          "index": 13,
+          "question_text": "IELTS speaking question 13",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 13",
+          "response_turn_id": "ielts_turn_013",
+          "evidence_ref_ids": [
+            "ielts_evidence_013"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        },
+        {
+          "question_id": "ielts_question_014",
+          "part_id": "PART_3",
+          "index": 14,
+          "question_text": "IELTS speaking question 14",
+          "opportunity_status": "PROVIDED",
+          "assessment_status": "ASSESSED",
+          "confirmed_transcript": "Answer 14",
+          "response_turn_id": "ielts_turn_014",
+          "evidence_ref_ids": [
+            "ielts_evidence_014"
+          ],
+          "criterion_findings": [
+            {
+              "criterion_id": "IELTS_FC",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_LR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_GRA",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            },
+            {
+              "criterion_id": "IELTS_PR",
+              "strength_finding_ids": [],
+              "improvement_finding_ids": [],
+              "upgrade_example_finding_ids": []
+            }
+          ]
+        }
+      ],
+      "target_plan": {
+        "status": "NOT_CONFIGURED"
+      },
+      "priority_actions": []
+    }
+  },
+  "failed": {
+    "practice_session_id": "session_ielts_report_001",
+    "evaluation_id": "7b000101-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000101-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "FAILED",
+    "is_final": false,
+    "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report",
+    "stable_failure": {
+      "reason_code": "INTERNAL_RETRYABLE",
+      "retryable": true
+    }
+  }
+}

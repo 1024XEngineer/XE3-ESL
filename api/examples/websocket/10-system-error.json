@@ -1,0 +1,14 @@
+{
+  "event_id": "event_system_error_001",
+  "event_type": "system.error",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:08:30Z",
+  "practice_session_id": "session_demo_001",
+  "correlation_id": "corr_unknown_command_001",
+  "replayable": false,
+  "payload": {
+    "code": "unsupported_message",
+    "message": "The received WebSocket message is not supported.",
+    "retryable": false
+  }
+}

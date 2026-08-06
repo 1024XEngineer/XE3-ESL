@@ -1,0 +1,14 @@
+{
+  "event_id": "event_session_resumed_001",
+  "event_type": "practice_session.resumed",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:12:00Z",
+  "practice_session_id": "session_lifecycle_resumed_001",
+  "sequence": 1,
+  "correlation_id": "corr_session_resumed_001",
+  "replayable": true,
+  "payload": {
+    "practice_session_status": "in_progress",
+    "session_version": 4
+  }
+}

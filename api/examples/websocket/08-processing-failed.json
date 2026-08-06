@@ -1,0 +1,15 @@
+{
+  "event_id": "event_processing_failed_001",
+  "event_type": "answer.processing_failed",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:07:00Z",
+  "practice_session_id": "session_demo_001",
+  "correlation_id": "corr_invalid_turn_001",
+  "replayable": false,
+  "payload": {
+    "question_id": "question_demo_002",
+    "code": "transcript_unavailable",
+    "message": "No valid final transcript was produced; retry the same question.",
+    "retryable": true
+  }
+}

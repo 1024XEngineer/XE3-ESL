@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18-bookworm@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xe3_esl}
+      POSTGRES_USER: ${POSTGRES_USER:-xe3_esl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready --username="$${POSTGRES_USER}" --dbname="$${POSTGRES_DB}"',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
