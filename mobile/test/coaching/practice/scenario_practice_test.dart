@@ -10,7 +10,7 @@ import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
@@ -27,12 +27,12 @@ void main() {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           avatarStatusLabel: '画面已连接',
           avatarSurfaceBuilder: (_) => const ColoredBox(
@@ -44,45 +44,45 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
     expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
     expect(find.text('画面已连接'), findsOneWidget);
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-live-subtitle')), findsOneWidget);
     expect(
-      find.byKey(const Key('immersive-toggle-conversation-text')),
+      find.byKey(const Key('scenario-toggle-conversation-text')),
       findsNothing,
     );
     expect(
-      tester.getSize(find.byKey(const Key('immersive-avatar-region'))).height,
+      tester.getSize(find.byKey(const Key('scenario-avatar-region'))).height,
       closeTo(844 * 0.44, 0.1),
     );
-    expect(find.byKey(const Key('immersive-conversation-history')), findsOne);
+    expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
     expect(find.textContaining('评分'), findsNothing);
     expect(find.text('翻译'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps roleplay text and avatar subtitle visible', (
+  testWidgets('keeps scenario text and avatar subtitle visible', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     final question = controller.currentQuestion!.text;
     final questionMessage = controller.practiceMessages.last;
 
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
     expect(
-      find.byKey(const Key('immersive-toggle-conversation-text')),
+      find.byKey(const Key('scenario-toggle-conversation-text')),
       findsNothing,
     );
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-live-subtitle')), findsOneWidget);
     expect(find.text(question), findsNWidgets(2));
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),
@@ -93,7 +93,7 @@ void main() {
           .color,
       Colors.transparent,
     );
-    expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
+    expect(find.byKey(const Key('scenario-record')).hitTestable(), findsOne);
     expect(tester.takeException(), isNull);
   });
 
@@ -103,38 +103,38 @@ void main() {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController(
+    final controller = await _scenarioController(
       selectedScene: testScenes.first,
     );
     addTearDown(controller.dispose);
     final question = controller.currentQuestion!.text;
 
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-avatar-region')), findsOneWidget);
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
+    expect(find.byKey(const Key('scenario-avatar-region')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
     expect(find.text(question), findsOneWidget);
-    expect(find.byKey(const Key('immersive-conversation-history')), findsOne);
-    expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
+    expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
+    expect(find.byKey(const Key('scenario-record')).hitTestable(), findsOne);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('translates a roleplay question once and toggles the read aid', (
+  testWidgets('translates a scenario question once and toggles the read aid', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final practice = _TranslationPracticeClient();
-    final controller = await _roleplayController(practiceClient: practice);
+    final controller = await _scenarioController(practiceClient: practice);
     addTearDown(controller.dispose);
     final question = controller.currentQuestion!;
 
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
@@ -167,18 +167,18 @@ void main() {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController(
+    final controller = await _scenarioController(
       practiceClient: _QuestionTipPracticeClient(),
     );
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-question-tip')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('immersive-question-tip')));
+    expect(find.byKey(const Key('scenario-question-tip')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('scenario-question-tip')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
@@ -187,7 +187,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('immersive-record')).hitTestable(),
+      find.byKey(const Key('scenario-record')).hitTestable(),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
@@ -196,17 +196,17 @@ void main() {
   testWidgets('removes the avatar surface before leaving practice', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
           builder: (context) => TextButton(
-            key: const Key('open-immersive-practice'),
+            key: const Key('open-scenario-practice'),
             onPressed: () => Navigator.of(context).push<void>(
               MaterialPageRoute<void>(
-                builder: (_) => ImmersiveRoleplayPage(
+                builder: (_) => ScenarioPracticePage(
                   practiceController: controller,
                   avatarSurfaceBuilder: (_) => const ColoredBox(
                     key: Key('test-avatar-surface'),
@@ -221,26 +221,26 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.byKey(const Key('open-immersive-practice')));
+    await tester.tap(find.byKey(const Key('open-scenario-practice')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('immersive-exit')));
+    await tester.tap(find.byKey(const Key('scenario-exit')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('immersive-roleplay-page')), findsNothing);
+    expect(find.byKey(const Key('scenario-practice-page')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps the existing typed-answer flow in the immersive shell', (
+  testWidgets('keeps the existing typed-answer flow in the scenario shell', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     var interruptedBeforeSubmit = false;
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onBeforeSubmitText: () async {
             interruptedBeforeSubmit = true;
@@ -250,21 +250,21 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byKey(const Key('immersive-open-keyboard')));
+    await tester.tap(find.byKey(const Key('scenario-open-keyboard')));
     await tester.pump();
     const answer = 'Could I change my reservation to tomorrow morning?';
     await tester.enterText(
-      find.byKey(const Key('immersive-text-answer')),
+      find.byKey(const Key('scenario-text-answer')),
       answer,
     );
     await tester.pump();
     expect(
       tester
-          .widget<IconButton>(find.byKey(const Key('immersive-submit-text')))
+          .widget<IconButton>(find.byKey(const Key('scenario-submit-text')))
           .onPressed,
       isNotNull,
     );
-    await tester.tap(find.byKey(const Key('immersive-submit-text')));
+    await tester.tap(find.byKey(const Key('scenario-submit-text')));
     await tester.pumpAndSettle();
 
     expect(
@@ -279,31 +279,31 @@ void main() {
     expect(interruptedBeforeSubmit, isTrue);
   });
 
-  testWidgets('keeps a follow-up in the current displayed roleplay round', (
+  testWidgets('keeps a follow-up in the current displayed scenario round', (
     tester,
   ) async {
-    final controller = await _roleplayController(
+    final controller = await _scenarioController(
       practiceClient: _AsyncReviewPracticeClient(
-        practiceExperience: PracticeExperience.roleplay,
-        sceneCategory: SceneCategory.roleplayTravel,
+        practiceExperience: PracticeExperience.lifeAndTravel,
+        sceneCategory: SceneCategory.lifeTravel,
         followUpAfterAnswer: true,
       ),
     );
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
     expect(find.text('第 1 轮 · 共 3 轮'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('immersive-open-keyboard')));
+    await tester.tap(find.byKey(const Key('scenario-open-keyboard')));
     await tester.pump();
     await tester.enterText(
-      find.byKey(const Key('immersive-text-answer')),
+      find.byKey(const Key('scenario-text-answer')),
       'I led the API redesign for our checkout flow.',
     );
     await tester.pump();
-    await tester.tap(find.byKey(const Key('immersive-submit-text')));
+    await tester.tap(find.byKey(const Key('scenario-submit-text')));
     await tester.pumpAndSettle();
 
     expect(controller.completedTurns, 1);
@@ -314,19 +314,19 @@ void main() {
   testWidgets('bounds avatar interruption before opening the microphone', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     final neverCompletes = Completer<void>();
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onBeforeStartRecording: () => neverCompletes.future,
         ),
       ),
     );
 
-    await tester.tap(find.byKey(const Key('immersive-record')));
+    await tester.tap(find.byKey(const Key('scenario-record')));
     await tester.pump(const Duration(milliseconds: 499));
     expect(controller.recordingState, PracticeRecordingState.idle);
 
@@ -339,13 +339,13 @@ void main() {
   testWidgets('interrupts the avatar before tap and hold recording starts', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     final tapInterrupt = Completer<void>();
     var interruptCalls = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onBeforeStartRecording: () {
             interruptCalls++;
@@ -355,7 +355,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('immersive-record')));
+    await tester.tap(find.byKey(const Key('scenario-record')));
     await tester.pump();
     expect(interruptCalls, 1);
     expect(controller.recordingState, PracticeRecordingState.idle);
@@ -363,14 +363,14 @@ void main() {
     tapInterrupt.complete();
     await tester.pumpAndSettle();
     expect(controller.recordingState, PracticeRecordingState.recording);
-    await tester.tap(find.byKey(const Key('immersive-record')));
+    await tester.tap(find.byKey(const Key('scenario-record')));
     await tester.pumpAndSettle();
     controller.rerecord();
     await tester.pump();
 
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onBeforeStartRecording: () async {
             interruptCalls++;
@@ -379,7 +379,7 @@ void main() {
       ),
     );
     final hold = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('immersive-record'))),
+      tester.getCenter(find.byKey(const Key('scenario-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
     expect(interruptCalls, 2);
@@ -391,22 +391,22 @@ void main() {
   });
 
   testWidgets('supports send and upward cancel', (tester) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
 
     final send = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('immersive-record'))),
+      tester.getCenter(find.byKey(const Key('scenario-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
     expect(find.textContaining('上滑取消'), findsOneWidget);
     expect(
-      tester.getSize(find.byKey(const Key('immersive-stop-recording'))).height,
+      tester.getSize(find.byKey(const Key('scenario-stop-recording'))).height,
       48,
     );
-    expect(find.byKey(const Key('immersive-voice-targets')), findsNothing);
+    expect(find.byKey(const Key('scenario-voice-targets')), findsNothing);
     await send.up();
     await tester.pumpAndSettle();
     expect(controller.completedTurns, 1);
@@ -424,7 +424,7 @@ void main() {
         .where((message) => message.role == PracticeMessageRole.user)
         .length;
     final cancel = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('immersive-record'))),
+      tester.getCenter(find.byKey(const Key('scenario-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
     await cancel.moveBy(const Offset(0, -80));
@@ -447,42 +447,42 @@ void main() {
     tester,
   ) async {
     final practiceClient = _FailOncePracticeClient();
-    final controller = await _roleplayController(
+    final controller = await _scenarioController(
       practiceClient: practiceClient,
     );
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
 
     final send = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('immersive-record'))),
+      tester.getCenter(find.byKey(const Key('scenario-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
     await send.up();
     await tester.pumpAndSettle();
 
     expect(controller.hasPendingPracticeAudio, isTrue);
-    expect(find.byKey(const Key('immersive-pending-audio')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-pending-audio')), findsOneWidget);
     expect(
-      find.byKey(const Key('immersive-retry-transcription')),
+      find.byKey(const Key('scenario-retry-transcription')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('immersive-delete-pending-audio')),
+      find.byKey(const Key('scenario-delete-pending-audio')),
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('immersive-delete-pending-audio')));
+    await tester.tap(find.byKey(const Key('scenario-delete-pending-audio')));
     await tester.pumpAndSettle();
     expect(controller.hasPendingPracticeAudio, isFalse);
-    expect(find.byKey(const Key('immersive-record')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-record')), findsOneWidget);
   });
 
   testWidgets(
     'keeps pending feedback silent without breaking the composer row',
     (tester) async {
-      final controller = await _roleplayController(
+      final controller = await _scenarioController(
         practiceClient: _AsyncReviewPracticeClient(),
       );
       addTearDown(controller.dispose);
@@ -500,7 +500,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: SpeakUpTheme.light,
-          home: ImmersiveRoleplayPage(
+          home: ScenarioPracticePage(
             practiceController: controller,
             speechFeedbackController: feedbackController,
           ),
@@ -519,10 +519,10 @@ void main() {
     },
   );
 
-  testWidgets('hands completed roleplay to the generic completion callback', (
+  testWidgets('hands completed scenario to the generic completion callback', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     for (var turn = 0; turn < 3; turn++) {
       await controller.startRecording();
@@ -534,7 +534,7 @@ void main() {
     var completionCalls = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onPracticeCompleted: () async {
             completionCalls++;
@@ -553,12 +553,12 @@ void main() {
   testWidgets('prefers the injected avatar replay action over audio playback', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     var replayCalls = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onReplayQuestion: () async {
             replayCalls++;
@@ -567,7 +567,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('immersive-replay-question')));
+    await tester.tap(find.byKey(const Key('scenario-replay-question')));
     await tester.pump();
 
     expect(replayCalls, 1);
@@ -576,12 +576,12 @@ void main() {
   testWidgets('disables injected replay while the microphone is recording', (
     tester,
   ) async {
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
     await controller.startRecording();
     await tester.pumpWidget(
       MaterialApp(
-        home: ImmersiveRoleplayPage(
+        home: ScenarioPracticePage(
           practiceController: controller,
           onReplayQuestion: () async {},
         ),
@@ -589,7 +589,7 @@ void main() {
     );
 
     final button = tester.widget<IconButton>(
-      find.byKey(const Key('immersive-replay-question')),
+      find.byKey(const Key('scenario-replay-question')),
     );
     expect(button.onPressed, isNull);
     await controller.cancelRecording();
@@ -601,7 +601,7 @@ void main() {
     tester.view.physicalSize = const Size(320, 568);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final controller = await _roleplayController();
+    final controller = await _scenarioController();
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
@@ -611,30 +611,30 @@ void main() {
             size: Size(320, 568),
             textScaler: TextScaler.linear(2),
           ),
-          child: ImmersiveRoleplayPage(practiceController: controller),
+          child: ScenarioPracticePage(practiceController: controller),
         ),
       ),
     );
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.byKey(const Key('immersive-record')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-record')), findsOneWidget);
 
     tester.view.physicalSize = const Size(844, 390);
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
     expect(
-      tester.getSize(find.byKey(const Key('immersive-avatar-region'))).width,
+      tester.getSize(find.byKey(const Key('scenario-avatar-region'))).width,
       closeTo(844 * 0.44, 0.1),
     );
     expect(tester.takeException(), isNull);
   });
 }
 
-Future<PracticeController> _roleplayController({
+Future<PracticeController> _scenarioController({
   PracticeClient? practiceClient,
   SceneDefinition? selectedScene,
 }) async {
@@ -642,8 +642,8 @@ Future<PracticeController> _roleplayController({
       selectedScene ??
       testScene(
         id: 'daily-hotel',
-        experience: PracticeExperience.roleplay,
-        category: SceneCategory.roleplayTravel,
+        experience: PracticeExperience.lifeAndTravel,
+        category: SceneCategory.lifeTravel,
         name: '酒店入住',
         prompt: const ScenePrompt(
           publicSceneBrief: '练习办理入住与需求沟通。',
@@ -664,11 +664,11 @@ Future<PracticeController> _roleplayController({
   final controller = PracticeController(client: resolvedPracticeClient);
   await controller.activateCreatedPractice(
     scene: scene,
-    sessionId: _roleplaySessionId,
-    planId: 'practice-plan-$_roleplaySessionId',
+    sessionId: _scenarioSessionId,
+    planId: 'practice-plan-$_scenarioSessionId',
     practiceMode: scene.practiceOptions.first.mode,
     turnLimit: 3,
-    clientOperationId: 'activate-$_roleplaySessionId',
+    clientOperationId: 'activate-$_scenarioSessionId',
   );
   return controller;
 }
@@ -751,8 +751,8 @@ final class _ScenePracticeClient implements PracticeClient {
 final class _TranslationPracticeClient
     implements PracticeClient, PracticeQuestionTranslationClient {
   final _delegate = _AsyncReviewPracticeClient(
-    practiceExperience: PracticeExperience.roleplay,
-    sceneCategory: SceneCategory.roleplayTravel,
+    practiceExperience: PracticeExperience.lifeAndTravel,
+    sceneCategory: SceneCategory.lifeTravel,
   );
 
   final String translation = '请介绍一次你解决团队分歧的经历。';
@@ -834,8 +834,8 @@ final class _FailOncePracticeClient implements PracticeClient {
     required String sessionId,
   }) async => _withSceneIdentity(
     await _delegate.restorePractice(sessionId: sessionId),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -847,8 +847,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       sessionId: sessionId,
       clientOperationId: clientOperationId,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -878,8 +878,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       candidateId: candidateId,
       idempotencyKey: idempotencyKey,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -895,16 +895,16 @@ final class _FailOncePracticeClient implements PracticeClient {
       answerText: answerText,
       idempotencyKey: idempotencyKey,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 }
 
 final class _QuestionTipPracticeClient
     implements PracticeClient, PracticeQuestionTipClient {
   final _delegate = FakePracticeClient(
-    practiceExperience: PracticeExperience.roleplay,
-    sceneCategory: SceneCategory.roleplayTravel,
+    practiceExperience: PracticeExperience.lifeAndTravel,
+    sceneCategory: SceneCategory.lifeTravel,
   );
 
   @override
@@ -982,9 +982,9 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
   final bool followUpAfterAnswer;
 
   PracticeExperience get resolvedExperience =>
-      practiceExperience ?? PracticeExperience.roleplay;
+      practiceExperience ?? PracticeExperience.lifeAndTravel;
   SceneCategory get resolvedCategory =>
-      sceneCategory ?? SceneCategory.roleplayTravel;
+      sceneCategory ?? SceneCategory.lifeTravel;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -1149,7 +1149,7 @@ PracticeTurnConfirmation _withSceneIdentityConfirmation(
   speechFeedbackStatusUrl: confirmation.speechFeedbackStatusUrl,
 );
 
-const _roleplaySessionId = 'practice-session-roleplay';
+const _scenarioSessionId = 'practice-session-scenario';
 
 final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
   final _pending = Completer<SpeechFeedback>();

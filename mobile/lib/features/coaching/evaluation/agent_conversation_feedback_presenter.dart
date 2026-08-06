@@ -68,6 +68,7 @@ final class AgentConversationFeedbackPresenter extends ChangeNotifier
     }
     return InlineLanguageSuggestion(
       text: item!.suggestedText!,
+      originalText: item.anchor.originalExcerpt,
       explanation: item.explanation,
     );
   }

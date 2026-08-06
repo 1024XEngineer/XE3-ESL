@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -167,8 +168,9 @@ void main() {
           body: AgentMessageBubble(
             message: message,
             correction: InlineLanguageSuggestion(
-              text: 'This plan is good.',
-              explanation: 'Use a complete English sentence.',
+              originalText: 'I was planning this project.',
+              text: 'I am planning this project.',
+              explanation: 'Use the present tense for a current action.',
             ),
             polish: InlineLanguageSuggestion(
               text: 'This plan sounds good.',
@@ -179,22 +181,42 @@ void main() {
       ),
     );
 
-    expect(find.text('润色'), findsOneWidget);
+    expect(find.text('优化'), findsOneWidget);
+    expect(find.text('纠错'), findsNothing);
+    expect(find.text('This plan sounds good.'), findsNothing);
+
+    await tester.tap(find.text('优化'));
+    await tester.pump();
+
     expect(find.text('纠错'), findsOneWidget);
-    expect(find.text('This plan sounds good.'), findsNothing);
-
-    await tester.tap(find.text('润色'));
-    await tester.pump();
-
+    expect(find.text('更自然的表达'), findsOneWidget);
     expect(find.text('This plan sounds good.'), findsOneWidget);
-    expect(find.text('This plan is good.'), findsNothing);
-
-    await tester.tap(find.text('纠错'));
-    await tester.pump();
-
-    expect(find.text('This plan sounds good.'), findsNothing);
-    expect(find.text('This plan is good.'), findsOneWidget);
-    expect(find.text('Use a complete English sentence.'), findsOneWidget);
+    expect(
+      find.text('Use the present tense for a current action.'),
+      findsOneWidget,
+    );
+    final correctionText = tester.widget<Text>(
+      find.byKey(const Key('inline-language-correction-diff')),
+    );
+    final spans = (correctionText.textSpan as TextSpan).children!
+        .cast<TextSpan>();
+    expect(
+      spans.any(
+        (span) =>
+            span.text!.contains('was') &&
+            span.style?.decoration == TextDecoration.lineThrough &&
+            span.style?.color == SpeakUpDesign.error,
+      ),
+      isTrue,
+    );
+    expect(
+      spans.any(
+        (span) =>
+            span.text!.contains('am') &&
+            span.style?.color == SpeakUpDesign.success,
+      ),
+      isTrue,
+    );
   });
 
   testWidgets('renders and dispatches a practice plan handoff', (tester) async {

@@ -1,7 +1,8 @@
 enum PracticeExperience {
   interview('INTERVIEW'),
   ieltsSpeaking('IELTS_SPEAKING'),
-  roleplay('ROLEPLAY');
+  workplace('WORKPLACE'),
+  lifeAndTravel('LIFE_AND_TRAVEL');
 
   const PracticeExperience(this.wireValue);
 
@@ -20,10 +21,9 @@ enum SceneCategory {
   interviewHiringManager('INTERVIEW_HIRING_MANAGER'),
   interviewCustom('INTERVIEW_CUSTOM'),
   ieltsSpeaking('IELTS_SPEAKING'),
-  roleplayWorkplace('ROLEPLAY_WORKPLACE'),
-  roleplayTravel('ROLEPLAY_TRAVEL'),
-  roleplayDaily('ROLEPLAY_DAILY'),
-  roleplayCustom('ROLEPLAY_CUSTOM');
+  workplaceGeneral('WORKPLACE_GENERAL'),
+  lifeTravel('LIFE_TRAVEL'),
+  lifeDaily('LIFE_DAILY');
 
   const SceneCategory(this.wireValue);
 
@@ -33,8 +33,6 @@ enum SceneCategory {
       .where((category) => category.wireValue == value)
       .firstOrNull;
 }
-
-enum ScenePresentationMode { standard, immersiveRoleplay }
 
 enum SceneStatus { active, inactive }
 
@@ -152,14 +150,6 @@ final class SceneDefinition {
   final ScenePrompt prompt;
   final List<RoleDefinition> roles;
   final List<PracticeOption> practiceOptions;
-}
-
-extension ScenePresentation on SceneDefinition {
-  ScenePresentationMode get presentationMode => switch (experience) {
-    PracticeExperience.interview ||
-    PracticeExperience.roleplay => ScenePresentationMode.immersiveRoleplay,
-    PracticeExperience.ieltsSpeaking => ScenePresentationMode.standard,
-  };
 }
 
 final class SceneSelectionSnapshot {

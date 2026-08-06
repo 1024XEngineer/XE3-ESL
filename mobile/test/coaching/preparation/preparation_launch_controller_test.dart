@@ -1071,8 +1071,8 @@ final _selection = PreparationLaunchSelection(
 
 final _scenarioScene = testScene(
   id: 'scene-scenario',
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayWorkplace,
+  experience: PracticeExperience.workplace,
+  category: SceneCategory.workplaceGeneral,
   name: 'Workplace update',
   prompt: const ScenePrompt(
     publicSceneBrief: _background,

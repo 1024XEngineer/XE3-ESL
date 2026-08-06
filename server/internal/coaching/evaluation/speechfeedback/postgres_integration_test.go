@@ -697,8 +697,8 @@ func insertConversationSpeechFeedbackFixture(
 			$1,
 			$2,
 			'snapshot-1',
-			'ROLEPLAY',
-			'ROLEPLAY_DAILY',
+			'LIFE_AND_TRAVEL',
+			'LIFE_DAILY',
 			'FULL_SIMULATION'
 		)
 	`, ownerID, sessionID); err != nil {

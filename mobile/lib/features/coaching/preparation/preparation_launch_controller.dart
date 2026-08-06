@@ -84,9 +84,6 @@ final class PreparationLaunchController extends ChangeNotifier {
   String? get resumableSceneId => workspaceController?.currentSceneId;
   String? get resumablePracticeExperience =>
       workspaceController?.currentPracticeExperience;
-  ScenePresentationMode get resumablePresentationMode =>
-      workspaceController?.currentPresentationMode ??
-      ScenePresentationMode.standard;
   String? get resumableSessionId => workspaceController?.currentSessionId;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
   bool get canRetryWorkspaceActivation =>
