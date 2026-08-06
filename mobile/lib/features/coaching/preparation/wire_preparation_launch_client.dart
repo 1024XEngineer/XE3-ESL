@@ -739,8 +739,20 @@ bool _samePreparationSnapshot(
     left.jobTargetCandidate == right.jobTargetCandidate &&
     left.resumeSnapshot == right.resumeSnapshot &&
     left.jobDescriptionSnapshot == right.jobDescriptionSnapshot &&
+    _sameScenarioPreparationContext(left.context, right.context) &&
     left.backgroundSnapshot == right.backgroundSnapshot &&
     left.createdAt == right.createdAt;
+
+bool _sameScenarioPreparationContext(
+  PreparationContext? left,
+  PreparationContext? right,
+) {
+  if (left is ScenarioPreparationContext ||
+      right is ScenarioPreparationContext) {
+    return left == right;
+  }
+  return true;
+}
 
 bool _sameSessionPolicy(
   PreparationSessionPolicy left,

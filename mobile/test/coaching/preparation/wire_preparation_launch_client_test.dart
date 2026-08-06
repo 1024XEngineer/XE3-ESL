@@ -117,9 +117,19 @@ void main() {
       ..['preparation_context'] = _scenarioContextJson();
     final snapshotResponse = _snapshotJson()
       ..['preparation_context'] = _scenarioContextJson();
+    final planResponse = _planJson();
+    (planResponse['preparation_snapshot']!
+            as Map<String, Object?>)['preparation_context'] =
+        _scenarioContextJson();
+    final bootstrapResponse = _bootstrapJson();
+    final practicePreparation = _preparationSnapshot(bootstrapResponse)
+      ..['preparation_kind'] = 'scenario'
+      ..['scenario_context'] = _scenarioPayloadJson();
     final transport = _QueueTransport([
       _response(profileResponse),
       _response(snapshotResponse),
+      _response(planResponse),
+      _response(bootstrapResponse),
     ]);
     final client = _client(transport);
 
@@ -131,6 +141,18 @@ void main() {
       profileId: profile.id,
       sourceVersion: profile.version,
       idempotencyKey: 'scenario-snapshot-key',
+    );
+    final plan = await client.createPlan(
+      input: _planInput(),
+      idempotencyKey: 'scenario-plan-key',
+    );
+    final bootstrap = await client.createSession(
+      plan: plan,
+      input: const CreatePreparationSessionInput(
+        expectedPlanRevision: 1,
+        userConfirmed: true,
+      ),
+      idempotencyKey: 'scenario-session-key',
     );
 
     expect(jsonDecode(transport.calls.first.body!), {
@@ -146,6 +168,41 @@ void main() {
     });
     expect(profile.context, _scenarioContext);
     expect(snapshot.context, _scenarioContext);
+    expect(plan.preparationSnapshot.context, _scenarioContext);
+    expect(bootstrap.session.id, _sessionId);
+    expect(practicePreparation['preparation_context'], isNull);
+  });
+
+  test('rejects a changed projected scenario context in Session', () async {
+    final planResponse = _planJson();
+    (planResponse['preparation_snapshot']!
+            as Map<String, Object?>)['preparation_context'] =
+        _scenarioContextJson();
+    final bootstrapResponse = _bootstrapJson();
+    _preparationSnapshot(bootstrapResponse)
+      ..['preparation_kind'] = 'scenario'
+      ..['scenario_context'] = (_scenarioPayloadJson()
+        ..['goal'] = 'A different frozen goal');
+    final client = _client(
+      _QueueTransport([_response(planResponse), _response(bootstrapResponse)]),
+    );
+
+    final plan = await client.createPlan(
+      input: _planInput(),
+      idempotencyKey: 'scenario-plan-mismatch-key',
+    );
+
+    await expectLater(
+      client.createSession(
+        plan: plan,
+        input: const CreatePreparationSessionInput(
+          expectedPlanRevision: 1,
+          userConfirmed: true,
+        ),
+        idempotencyKey: 'scenario-session-mismatch-key',
+      ),
+      throwsA(_invalidResponse),
+    );
   });
 
   test('accepts the complete canonical selection in a created Plan', () async {
@@ -689,13 +746,15 @@ Map<String, Object?> _snapshotJson() => {
 
 Map<String, Object?> _scenarioContextJson() => <String, Object?>{
   'kind': 'scenario',
-  'scenario': <String, Object?>{
-    'situation': _background,
-    'user_role': 'Project owner',
-    'counterpart_role': 'Stakeholder',
-    'goal': 'Explain progress and risk clearly.',
-    'counterpart_persona': 'Direct and evidence seeking.',
-  },
+  'scenario': _scenarioPayloadJson(),
+};
+
+Map<String, Object?> _scenarioPayloadJson() => <String, Object?>{
+  'situation': _background,
+  'user_role': 'Project owner',
+  'counterpart_role': 'Stakeholder',
+  'goal': 'Explain progress and risk clearly.',
+  'counterpart_persona': 'Direct and evidence seeking.',
 };
 
 Map<String, Object?> _planJson({

@@ -94,6 +94,8 @@ PreparationSnapshot decodePreparationSnapshot(
     },
     optional: const <String>{
       'preparation_context',
+      'preparation_kind',
+      'scenario_context',
       'source_job_target_id',
       'source_job_target_confirmation_version',
       'job_target_input_snapshot',
@@ -125,6 +127,32 @@ PreparationSnapshot decodePreparationSnapshot(
   if (input != null && candidate != null && input.source != candidate.source) {
     throw const PreparationWireFormatException();
   }
+  final hasCanonicalContext = object.containsKey('preparation_context');
+  final hasProjectedKind = object.containsKey('preparation_kind');
+  final hasProjectedScenario = object.containsKey('scenario_context');
+  if (hasCanonicalContext && (hasProjectedKind || hasProjectedScenario) ||
+      !hasProjectedKind && hasProjectedScenario) {
+    throw const PreparationWireFormatException();
+  }
+  PreparationContext? context;
+  if (hasCanonicalContext) {
+    context = _preparationContext(object['preparation_context']);
+  } else if (hasProjectedKind) {
+    final kind = _text(object['preparation_kind'], maximumBytes: 16);
+    switch (kind) {
+      case 'scenario':
+        if (!hasProjectedScenario) {
+          throw const PreparationWireFormatException();
+        }
+        context = _scenarioPreparationPayload(object['scenario_context']);
+      case 'interview':
+        if (hasProjectedScenario) {
+          throw const PreparationWireFormatException();
+        }
+      default:
+        throw const PreparationWireFormatException();
+    }
+  }
   return PreparationSnapshot(
     id: _resourceId(object['preparation_snapshot_id']),
     sourceProfileId: _resourceId(object['source_profile_id']),
@@ -143,9 +171,7 @@ PreparationSnapshot decodePreparationSnapshot(
     jobDescriptionSnapshot: object.containsKey('job_description_snapshot')
         ? _text(object['job_description_snapshot'], maximumBytes: 64 * 1024)
         : null,
-    context: object.containsKey('preparation_context')
-        ? _preparationContext(object['preparation_context'])
-        : null,
+    context: context,
     backgroundSnapshot: _text(
       object['background_snapshot'],
       maximumBytes: 64 * 1024,
@@ -169,8 +195,12 @@ ScenarioPreparationContext _scenarioPreparationContext(
   Map<String, Object?> value,
 ) {
   final context = _object(value, required: const <String>{'kind', 'scenario'});
+  return _scenarioPreparationPayload(context['scenario']);
+}
+
+ScenarioPreparationContext _scenarioPreparationPayload(Object? value) {
   final scenario = _object(
-    context['scenario'],
+    value,
     required: const <String>{
       'situation',
       'user_role',
