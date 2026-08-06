@@ -321,7 +321,7 @@ void main() {
       await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
-      expect(find.byKey(const Key('job-description-field')), findsOneWidget);
+      expect(find.byKey(const Key('job-input-field')), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsNothing);
       await tester.tap(find.byKey(const Key('job-wizard-close')));
       await tester.pumpAndSettle();
