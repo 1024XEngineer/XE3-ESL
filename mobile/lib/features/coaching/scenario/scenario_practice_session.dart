@@ -3,20 +3,20 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
 typedef AvatarControllerFactory = AvatarController Function();
 
-/// Owns one avatar connection for one immersive practice route.
+/// Owns one avatar connection for one scenario practice route.
 ///
 /// The product shell remains vendor-neutral: this coordinator only knows the
 /// AvatarController boundary, while the composition root chooses Spatius (or a
 /// future provider).
-class ImmersiveRoleplaySession extends StatefulWidget {
-  const ImmersiveRoleplaySession({
+class ScenarioPracticeSession extends StatefulWidget {
+  const ScenarioPracticeSession({
     required this.practiceController,
     required this.avatarControllerFactory,
     this.onPracticeCompleted,
@@ -32,11 +32,11 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   final Future<bool> Function()? onExitRequested;
 
   @override
-  State<ImmersiveRoleplaySession> createState() =>
-      _ImmersiveRoleplaySessionState();
+  State<ScenarioPracticeSession> createState() =>
+      _ScenarioPracticeSessionState();
 }
 
-class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
+class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
     with WidgetsBindingObserver {
   static const _avatarReadinessTimeout = Duration(seconds: 15);
   static const _userTurnInterruptBudget = Duration(milliseconds: 500);
@@ -83,7 +83,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
   }
 
   @override
-  void didUpdateWidget(covariant ImmersiveRoleplaySession oldWidget) {
+  void didUpdateWidget(covariant ScenarioPracticeSession oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.practiceController == widget.practiceController) {
       return;
@@ -460,7 +460,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       }
       await avatarController.speakWav(bytes);
     } catch (_) {
-      // The roleplay remains usable through text/recording when media or the
+      // The scenario remains usable through text/recording when media or the
       // provider is unavailable. A replay tap can retry the same question.
     } finally {
       if (bytes != null) {
@@ -553,13 +553,13 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
 
   @override
   Widget build(BuildContext context) {
-    return ImmersiveRoleplayPage(
+    return ScenarioPracticePage(
       practiceController: widget.practiceController,
       avatarSurfaceBuilder: (_) => _hasLiveAvatarController
           ? _avatarController.buildSurface(
-              key: const Key('immersive-avatar-surface'),
+              key: const Key('scenario-avatar-surface'),
             )
-          : const SizedBox.expand(key: Key('immersive-avatar-surface')),
+          : const SizedBox.expand(key: Key('scenario-avatar-surface')),
       avatarStatusLabel: _avatarStatusLabel,
       onBeforeStartRecording: _interruptForUserTurn,
       onBeforeSubmitText: _interruptForUserTurn,

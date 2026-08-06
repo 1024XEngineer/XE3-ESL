@@ -463,14 +463,11 @@ func validExperienceCategory(
 		}
 	case PracticeExperienceIELTSSpeaking:
 		return category == SceneCategoryIELTSSpeaking
-	case PracticeExperienceRoleplay:
-		switch category {
-		case SceneCategoryRoleplayWorkplace,
-			SceneCategoryRoleplayTravel,
-			SceneCategoryRoleplayDaily,
-			SceneCategoryRoleplayCustom:
-			return true
-		}
+	case PracticeExperienceWorkplace:
+		return category == SceneCategoryWorkplaceGeneral
+	case PracticeExperienceLifeAndTravel:
+		return category == SceneCategoryLifeTravel ||
+			category == SceneCategoryLifeDaily
 	default:
 		return false
 	}

@@ -37,7 +37,8 @@ type PracticeExperience string
 const (
 	PracticeExperienceInterview     PracticeExperience = "INTERVIEW"
 	PracticeExperienceIELTSSpeaking PracticeExperience = "IELTS_SPEAKING"
-	PracticeExperienceRoleplay      PracticeExperience = "ROLEPLAY"
+	PracticeExperienceWorkplace     PracticeExperience = "WORKPLACE"
+	PracticeExperienceLifeAndTravel PracticeExperience = "LIFE_AND_TRAVEL"
 )
 
 type SceneCategory string

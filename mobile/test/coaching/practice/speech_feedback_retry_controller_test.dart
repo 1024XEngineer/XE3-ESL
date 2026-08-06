@@ -256,8 +256,8 @@ final _failedRetryRequest = PracticeRetryRequest(
 
 final _dailyScene = testScene(
   id: 'scene_daily_001',
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayDaily,
+  experience: PracticeExperience.lifeAndTravel,
+  category: SceneCategory.lifeDaily,
   name: 'Daily',
   prompt: const ScenePrompt(
     publicSceneBrief: 'Daily practice',
@@ -273,8 +273,8 @@ final _dailyScene = testScene(
 final _completedDailySnapshot = PracticeSessionSnapshot(
   sessionId: 'session_daily_001',
   planId: 'plan_daily_001',
-  practiceExperience: PracticeExperience.roleplay,
-  sceneCategory: SceneCategory.roleplayDaily,
+  practiceExperience: PracticeExperience.lifeAndTravel,
+  sceneCategory: SceneCategory.lifeDaily,
   practiceMode: PracticeMode.fullSimulation,
   capabilities: testPracticeCapabilities,
   sessionVersion: 1,

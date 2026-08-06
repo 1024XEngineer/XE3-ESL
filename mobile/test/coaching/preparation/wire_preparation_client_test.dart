@@ -168,14 +168,14 @@ void main() {
       ),
       _sceneJsonFor(
         id: 'scn_workplace_progress_risk_update',
-        experience: 'ROLEPLAY',
-        category: 'ROLEPLAY_WORKPLACE',
+        experience: 'WORKPLACE',
+        category: 'WORKPLACE_GENERAL',
         name: 'Progress and risk update',
       ),
       _sceneJsonFor(
         id: 'scn_daily_hotel_checkin_issue',
-        experience: 'ROLEPLAY',
-        category: 'ROLEPLAY_TRAVEL',
+        experience: 'LIFE_AND_TRAVEL',
+        category: 'LIFE_TRAVEL',
         name: 'Hotel check-in and issue handling',
       ),
     ];
@@ -191,8 +191,8 @@ void main() {
     expect(result.map((scene) => scene.experience), [
       PracticeExperience.interview,
       PracticeExperience.ieltsSpeaking,
-      PracticeExperience.roleplay,
-      PracticeExperience.roleplay,
+      PracticeExperience.workplace,
+      PracticeExperience.lifeAndTravel,
     ]);
   });
 

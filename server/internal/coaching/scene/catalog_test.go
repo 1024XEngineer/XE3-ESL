@@ -116,7 +116,7 @@ func TestCatalogRejectsInvalidCanonicalDefinitions(t *testing.T) {
 	}{
 		{"missing id", func(value *SceneDefinition) { value.ID = "" }},
 		{"invalid experience category", func(value *SceneDefinition) {
-			value.Experience = PracticeExperienceRoleplay
+			value.Experience = PracticeExperienceWorkplace
 		}},
 		{"missing prompt", func(value *SceneDefinition) { value.Prompt.PublicSceneBrief = "" }},
 		{"role parent", func(value *SceneDefinition) { value.Roles[0].SceneID = "other" }},

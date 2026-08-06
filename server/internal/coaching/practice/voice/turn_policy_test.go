@@ -79,8 +79,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.InterviewProjectDeepDiveTurnPolicy
-		session.PracticeExperience = "ROLEPLAY"
-		session.SceneCategory = "ROLEPLAY_DAILY"
+		session.PracticeExperience = "LIFE_AND_TRAVEL"
+		session.SceneCategory = "LIFE_DAILY"
 		session.EffectiveTurns = 1
 		session.PreviousQuestion = "What did you deliver?"
 		session.PreviousUserResponse = "I led the launch."
@@ -106,8 +106,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		generator := &turnPolicyQuestionGenerator{response: "must not be used"}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.IELTSSpeakingPart1TurnPolicy
-		session.PracticeExperience = "ROLEPLAY"
-		session.SceneCategory = "ROLEPLAY_DAILY"
+		session.PracticeExperience = "LIFE_AND_TRAVEL"
+		session.SceneCategory = "LIFE_DAILY"
 		session.Prompt.TurnBlueprints = []string{"Part 1: What do you do?"}
 
 		question, err := (&questionAdapter{

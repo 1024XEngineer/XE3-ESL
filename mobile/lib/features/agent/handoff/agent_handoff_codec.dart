@@ -22,7 +22,8 @@ const _confirmPracticePlanFields = <String>{
 const _practiceExperiences = <String>{
   'INTERVIEW',
   'IELTS_SPEAKING',
-  'ROLEPLAY',
+  'WORKPLACE',
+  'LIFE_AND_TRAVEL',
 };
 
 const _sceneCategories = <String>{
@@ -32,10 +33,9 @@ const _sceneCategories = <String>{
   'INTERVIEW_HIRING_MANAGER',
   'INTERVIEW_CUSTOM',
   'IELTS_SPEAKING',
-  'ROLEPLAY_WORKPLACE',
-  'ROLEPLAY_TRAVEL',
-  'ROLEPLAY_DAILY',
-  'ROLEPLAY_CUSTOM',
+  'WORKPLACE_GENERAL',
+  'LIFE_TRAVEL',
+  'LIFE_DAILY',
 };
 
 const _practiceModes = <String>{

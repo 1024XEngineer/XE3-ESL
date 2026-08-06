@@ -509,8 +509,8 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
 
 PracticeSessionSnapshot _practiceSnapshot(
   String statusUrl, {
-  PracticeExperience practiceExperience = PracticeExperience.roleplay,
-  SceneCategory sceneCategory = SceneCategory.roleplayWorkplace,
+  PracticeExperience practiceExperience = PracticeExperience.workplace,
+  SceneCategory sceneCategory = SceneCategory.workplaceGeneral,
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';

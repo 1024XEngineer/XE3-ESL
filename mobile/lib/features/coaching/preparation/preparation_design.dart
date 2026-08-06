@@ -26,8 +26,8 @@ abstract final class PreparationDesign {
   static const ieltsDeep = Color(0xFF075985);
   static const ieltsTint = Color(0xFFE0F2FE);
   static const ieltsBorder = Color(0xFFBAE6FD);
-  static const roleplay = Color(0xFF173B47);
-  static const roleplayTint = Color(0xFFDDECF0);
+  static const scenario = Color(0xFF173B47);
+  static const scenarioTint = Color(0xFFDDECF0);
 
   static const radiusControl = SpeakUpDesign.radiusControl;
   static const radiusCard = SpeakUpDesign.radiusCard;

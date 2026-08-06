@@ -14,16 +14,16 @@ import 'package:speakup/features/coaching/practice/practice_message_bubble.dart'
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
-/// A vendor-neutral surface used by the immersive roleplay shell.
+/// A vendor-neutral surface used by the scenario scenario shell.
 ///
 /// The injected builder may render any avatar implementation. Keeping the
 /// dependency in the composition root lets the product UI survive a vendor
 /// change without importing a provider SDK.
-typedef ImmersiveAvatarSurfaceBuilder = Widget Function(BuildContext context);
-typedef ImmersiveAsyncAction = Future<void> Function();
+typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
+typedef ScenarioAsyncAction = Future<void> Function();
 
-class ImmersiveRoleplayPage extends StatefulWidget {
-  const ImmersiveRoleplayPage({
+class ScenarioPracticePage extends StatefulWidget {
+  const ScenarioPracticePage({
     required this.practiceController,
     this.avatarSurfaceBuilder,
     this.avatarStatusLabel = '正在准备画面',
@@ -40,11 +40,11 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   });
 
   final PracticeController practiceController;
-  final ImmersiveAvatarSurfaceBuilder? avatarSurfaceBuilder;
+  final ScenarioAvatarSurfaceBuilder? avatarSurfaceBuilder;
   final String? avatarStatusLabel;
-  final ImmersiveAsyncAction? onBeforeStartRecording;
-  final ImmersiveAsyncAction? onBeforeSubmitText;
-  final ImmersiveAsyncAction? onReplayQuestion;
+  final ScenarioAsyncAction? onBeforeStartRecording;
+  final ScenarioAsyncAction? onBeforeSubmitText;
+  final ScenarioAsyncAction? onReplayQuestion;
   final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
@@ -53,10 +53,10 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final bool previewMode;
 
   @override
-  State<ImmersiveRoleplayPage> createState() => _ImmersiveRoleplayPageState();
+  State<ScenarioPracticePage> createState() => _ScenarioPracticePageState();
 }
 
-class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
+class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   final _conversationScrollController = ScrollController();
   final _textController = TextEditingController();
   final _textFocusNode = FocusNode();
@@ -92,7 +92,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   }
 
   @override
-  void didUpdateWidget(covariant ImmersiveRoleplayPage oldWidget) {
+  void didUpdateWidget(covariant ScenarioPracticePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final controllerChanged =
         oldWidget.practiceController != widget.practiceController;
@@ -212,7 +212,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     for (final message in widget.practiceController.practiceMessages) {
       final statusUrl = message.speechFeedbackStatusUrl;
       if (statusUrl != null) {
-        current[_immersiveFeedbackSourceKey(
+        current[_scenarioFeedbackSourceKey(
               widget.practiceController,
               message,
             )] =
@@ -417,7 +417,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
         }
       },
       child: Scaffold(
-        key: const Key('immersive-roleplay-page'),
+        key: const Key('scenario-practice-page'),
         backgroundColor: SpeakUpDesign.canvas,
         body: SafeArea(
           child: scene == null
@@ -475,7 +475,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       return Row(
                         children: [
                           SizedBox(
-                            key: const Key('immersive-avatar-region'),
+                            key: const Key('scenario-avatar-region'),
                             width: constraints.maxWidth * 0.44,
                             child: avatar,
                           ),
@@ -486,7 +486,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                     return Column(
                       children: [
                         SizedBox(
-                          key: const Key('immersive-avatar-region'),
+                          key: const Key('scenario-avatar-region'),
                           height: constraints.maxHeight * 0.44,
                           child: avatar,
                         ),
@@ -512,7 +512,7 @@ class _AvatarStage extends StatelessWidget {
   });
 
   final SceneDefinition scene;
-  final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
+  final ScenarioAvatarSurfaceBuilder? surfaceBuilder;
   final String? statusLabel;
   final PracticeMessage? latestAssistantMessage;
   final bool exitInFlight;
@@ -554,7 +554,7 @@ class _AvatarStage extends StatelessWidget {
             child: Row(
               children: [
                 IconButton.filledTonal(
-                  key: const Key('immersive-exit'),
+                  key: const Key('scenario-exit'),
                   tooltip: '返回',
                   onPressed: exitInFlight ? null : onExit,
                   icon: exitInFlight
@@ -589,7 +589,7 @@ class _AvatarStage extends StatelessWidget {
                     child: Semantics(
                       liveRegion: true,
                       child: Container(
-                        key: const Key('immersive-avatar-status'),
+                        key: const Key('scenario-avatar-status'),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 7,
@@ -620,7 +620,7 @@ class _AvatarStage extends StatelessWidget {
               right: 16,
               bottom: 14,
               child: Container(
-                key: const Key('immersive-live-subtitle'),
+                key: const Key('scenario-live-subtitle'),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 15,
                   vertical: 11,
@@ -631,7 +631,7 @@ class _AvatarStage extends StatelessWidget {
                 ),
                 child: Text(
                   message.text,
-                  key: const Key('immersive-live-subtitle-text'),
+                  key: const Key('scenario-live-subtitle-text'),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
@@ -660,7 +660,7 @@ class _AvatarPlaceholder extends StatelessWidget {
       child: const Center(
         child: Icon(
           Icons.person_outline_rounded,
-          key: Key('immersive-avatar-placeholder'),
+          key: Key('scenario-avatar-placeholder'),
           size: 84,
           color: Color(0xFF819087),
         ),
@@ -700,8 +700,8 @@ class _ConversationPanel extends StatelessWidget {
   final bool textMode;
   final int recordingSeconds;
   final bool previewMode;
-  final ImmersiveAsyncAction? onBeforeStartRecording;
-  final ImmersiveAsyncAction? onReplayQuestion;
+  final ScenarioAsyncAction? onBeforeStartRecording;
+  final ScenarioAsyncAction? onReplayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
   final bool replayPlaying;
@@ -732,7 +732,7 @@ class _ConversationPanel extends StatelessWidget {
             child: messages.isEmpty
                 ? const _ConversationEmpty()
                 : ListView.separated(
-                    key: const Key('immersive-conversation-history'),
+                    key: const Key('scenario-conversation-history'),
                     controller: scrollController,
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                     itemCount:
@@ -793,7 +793,7 @@ class _ConversationPanel extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Text(
                 message,
-                key: const Key('immersive-question-tip-error'),
+                key: const Key('scenario-question-tip-error'),
                 textAlign: TextAlign.right,
                 style: const TextStyle(
                   color: SpeakUpDesign.error,
@@ -801,7 +801,7 @@ class _ConversationPanel extends StatelessWidget {
                 ),
               ),
             ),
-          _ImmersiveComposer(
+          _ScenarioComposer(
             controller: controller,
             textController: textController,
             textFocusNode: textFocusNode,
@@ -823,7 +823,7 @@ class _ConversationPanel extends StatelessWidget {
       return null;
     }
     final projection = speechFeedbackController!.projectionFor(
-      _immersiveFeedbackSourceKey(controller, message),
+      _scenarioFeedbackSourceKey(controller, message),
     );
     if (projection?.feedback?.scoreabilityStatus ==
         SpeechFeedbackScoreabilityStatus.insufficient) {
@@ -844,7 +844,7 @@ class _ConversationHeader extends StatelessWidget {
 
   final PracticeController controller;
   final VoidCallback onShowTip;
-  final ImmersiveAsyncAction? onReplayQuestion;
+  final ScenarioAsyncAction? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
 
@@ -865,7 +865,7 @@ class _ConversationHeader extends StatelessWidget {
           Flexible(
             child: Text(
               '第 $current 轮 · 共 ${controller.turnLimit} 轮',
-              key: const Key('immersive-turn-progress'),
+              key: const Key('scenario-turn-progress'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.end,
@@ -876,7 +876,7 @@ class _ConversationHeader extends StatelessWidget {
               false) ...[
             const SizedBox(width: 8),
             TextButton.icon(
-              key: const Key('immersive-question-tip'),
+              key: const Key('scenario-question-tip'),
               onPressed: controller.canRequestQuestionTip ? onShowTip : null,
               style: TextButton.styleFrom(
                 foregroundColor: SpeakUpDesign.primary,
@@ -898,7 +898,7 @@ class _ConversationHeader extends StatelessWidget {
           if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
             const SizedBox(width: 6),
             IconButton(
-              key: const Key('immersive-replay-question'),
+              key: const Key('scenario-replay-question'),
               tooltip:
                   (onReplayQuestion != null
                       ? replayPlaying
@@ -906,7 +906,7 @@ class _ConversationHeader extends StatelessWidget {
                   ? '停止播放'
                   : '重听对方',
               onPressed: onReplayQuestion != null
-                  ? replayLoading || !_canTriggerImmersiveReplay(controller)
+                  ? replayLoading || !_canTriggerScenarioReplay(controller)
                         ? null
                         : () => unawaited(onReplayQuestion!())
                   : controller.canUsePracticeAudio
@@ -969,8 +969,8 @@ class _InlineError extends StatelessWidget {
   }
 }
 
-class _ImmersiveComposer extends StatefulWidget {
-  const _ImmersiveComposer({
+class _ScenarioComposer extends StatefulWidget {
+  const _ScenarioComposer({
     required this.controller,
     required this.textController,
     required this.textFocusNode,
@@ -987,16 +987,16 @@ class _ImmersiveComposer extends StatefulWidget {
   final FocusNode textFocusNode;
   final bool textMode;
   final int recordingSeconds;
-  final ImmersiveAsyncAction? onBeforeStartRecording;
+  final ScenarioAsyncAction? onBeforeStartRecording;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
   final VoidCallback onPracticeCompleted;
 
   @override
-  State<_ImmersiveComposer> createState() => _ImmersiveComposerState();
+  State<_ScenarioComposer> createState() => _ScenarioComposerState();
 }
 
-class _ImmersiveComposerState extends State<_ImmersiveComposer> {
+class _ScenarioComposerState extends State<_ScenarioComposer> {
   Future<void> _sendVoice() async {
     await widget.controller.finishRecordingGesture();
     if (!mounted ||
@@ -1060,7 +1060,7 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
           PracticeRecordingState.idle =>
             widget.controller.hasPendingPracticeAudio
                 ? PracticePendingAudioComposer(
-                    keyPrefix: 'immersive',
+                    keyPrefix: 'scenario',
                     onDelete: widget.controller.discardPendingPracticeAudio,
                     onRetry: widget.controller.retryPracticeTranscription,
                   )
@@ -1084,7 +1084,7 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
           PracticeRecordingState.awaitingConfirmation =>
             PracticeTranscriptComposer(
               transcript: widget.controller.transcript ?? '',
-              keyPrefix: 'immersive',
+              keyPrefix: 'scenario',
               onRerecord: widget.controller.rerecord,
               onConfirm: widget.controller.confirmTranscript,
             ),
@@ -1130,7 +1130,7 @@ class _IdleComposer extends StatelessWidget {
       textMode: textMode,
       onToggleTextMode: onToggleTextMode,
       onSubmitText: onSubmitText,
-      keyPrefix: 'immersive',
+      keyPrefix: 'scenario',
     );
   }
 }
@@ -1151,14 +1151,14 @@ class _RecordingComposer extends StatelessWidget {
     return PracticeRecordingComposer(
       capture: capture,
       phase: phase,
-      keyPrefix: 'immersive',
+      keyPrefix: 'scenario',
       elapsed: Duration(seconds: seconds),
       upwardCancelOnly: true,
     );
   }
 }
 
-String _immersiveFeedbackSourceKey(
+String _scenarioFeedbackSourceKey(
   PracticeController controller,
   PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
@@ -1172,7 +1172,7 @@ PracticeMessage? _latestAssistantMessage(List<PracticeMessage> messages) {
   return null;
 }
 
-bool _canTriggerImmersiveReplay(PracticeController controller) {
+bool _canTriggerScenarioReplay(PracticeController controller) {
   if (controller.isBusy) {
     return false;
   }
@@ -1187,7 +1187,7 @@ bool _canTriggerImmersiveReplay(PracticeController controller) {
   };
 }
 
-Future<void> _runBoundedUserTurnAction(ImmersiveAsyncAction? action) async {
+Future<void> _runBoundedUserTurnAction(ScenarioAsyncAction? action) async {
   if (action == null) {
     return;
   }
