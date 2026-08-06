@@ -336,10 +336,12 @@ components:
       $ref: ./modules/scene.yaml#/components/schemas/PracticeMode
     IeltsQuestionBank:
       $ref: ./modules/ielts.yaml#/components/schemas/IeltsQuestionBank
-    IeltsPart1Set:
-      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Set
-    IeltsPart1Topic:
-      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1Topic
+    IeltsCatalogFilters:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsCatalogFilters
+    IeltsFilterOption:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsFilterOption
+    IeltsPart1PracticeTopic:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart1PracticeTopic
     IeltsTopicGroup:
       $ref: ./modules/ielts.yaml#/components/schemas/IeltsTopicGroup
     IeltsPart2CueCard:

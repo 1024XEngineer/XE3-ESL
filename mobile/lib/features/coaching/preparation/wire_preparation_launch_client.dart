@@ -443,7 +443,12 @@ PracticePlan _plan(
       selection.practiceOptionId != expected.practiceOptionId ||
       (expected.maxEffectiveTurns != null &&
           plan.sessionPolicy.maxEffectiveTurns != expected.maxEffectiveTurns) ||
-      !_matchesIeltsSelection(plan.ieltsAssignment, expected.ieltsSelection) ||
+      !_matchesIeltsSelection(
+        plan.ieltsAssignment,
+        expected.ieltsSelection,
+        allowServerAssignment:
+            selection.scene.experience == PracticeExperience.ieltsSpeaking,
+      ) ||
       plan.status != PracticePlanStatus.ready) {
     throw _invalidResponse();
   }
@@ -632,10 +637,12 @@ PreparationPracticeBootstrap _bootstrap(
 
 bool _matchesIeltsSelection(
   IeltsPracticeAssignment? assignment,
-  IeltsPracticeSelection? selection,
-) {
+  IeltsPracticeSelection? selection, {
+  required bool allowServerAssignment,
+}) {
   if (selection == null) {
-    return assignment == null;
+    return assignment == null ||
+        (allowServerAssignment && assignment.mode == PracticeMode.fullMock);
   }
   return assignment?.matchesSelection(selection) ?? false;
 }

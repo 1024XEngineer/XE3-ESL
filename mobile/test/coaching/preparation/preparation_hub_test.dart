@@ -82,13 +82,13 @@ void main() {
 
       await _openModule(tester, const Key('practice-hub-exam'));
 
-      expect(find.text('IELTS 口语'), findsOneWidget);
-      expect(find.text('一次完成三个 Part'), findsOneWidget);
-      expect(find.text('Part 1'), findsOneWidget);
-      expect(find.text('题卡陈述 · 可继续 Part 3'), findsOneWidget);
-      expect(find.text('承接 Part 2 主题讨论'), findsOneWidget);
+      expect(find.text('专项练习'), findsOneWidget);
+      expect(find.text('快速开始整轮模考'), findsOneWidget);
+      expect(find.text('Part 1'), findsWidgets);
+      expect(find.text('Part 2'), findsOneWidget);
+      expect(find.text('Part 3'), findsOneWidget);
       expect(
-        find.byKey(const Key('catalog-scene-scene_ielts_speaking-part1')),
+        find.byKey(const Key('ielts-part1-set-p1-topic-001')),
         findsOneWidget,
       );
       expect(find.text('自定义口语考试'), findsNothing);
@@ -104,19 +104,11 @@ void main() {
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
 
-    await tester.tap(
-      find.byKey(const Key('catalog-scene-scene_ielts_speaking-part2')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Part 2 题卡'), findsOneWidget);
-    expect(find.text('已完成 0 / 1 套'), findsOneWidget);
+    expect(find.text('共 3 道专项题'), findsOneWidget);
     expect(
-      find.text('Describe a skill you would like to learn'),
-      findsOneWidget,
+      find.textContaining('Describe a skill you would like to learn'),
+      findsWidgets,
     );
-    expect(find.textContaining('可继续对应 Part 3'), findsOneWidget);
-    expect(find.textContaining('Part 2 未练习'), findsOneWidget);
     expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
   });
 
@@ -275,7 +267,7 @@ void main() {
       (
         entry: Key('practice-hub-exam'),
         title: Key('practice-hub-title-ielts'),
-        scene: Key('catalog-scene-scene_ielts_speaking-part1'),
+        scene: Key('ielts-part1-set-p1-topic-001'),
       ),
       (
         entry: Key('practice-hub-workplace'),
@@ -412,38 +404,27 @@ final class _HubQuestionBankClient implements IeltsQuestionBankClient {
 final _ieltsBank = IeltsQuestionBank(
   bankId: 'ielts-bank-1',
   season: '2026-05-08',
+  seasonLabel: '5–8 月题库',
+  seasonStart: DateTime.utc(2026, 5),
+  seasonEnd: DateTime.utc(2026, 8, 31),
   sourceCutoff: DateTime.utc(2026, 6, 18),
-  part1Sets: const [
-    IeltsPart1Set(
-      id: 'p1-001',
-      title: 'Part 1 套题 01',
-      topics: [
-        IeltsPart1Topic(
-          title: 'Hometown',
-          release: 'carry_over',
-          questions: ['Q1', 'Q2'],
-        ),
-        IeltsPart1Topic(
-          title: 'Music',
-          release: 'new',
-          questions: ['Q3', 'Q4', 'Q5'],
-        ),
-        IeltsPart1Topic(
-          title: 'Parks',
-          release: 'new',
-          questions: ['Q6', 'Q7', 'Q8'],
-        ),
-      ],
-      questionCount: 8,
-    ),
-  ],
+  filters: const IeltsCatalogFilters(
+    releases: [IeltsFilterOption(code: 'new', label: '本季新增')],
+    parts: [
+      IeltsFilterOption(code: 'PART_1', label: 'Part 1'),
+      IeltsFilterOption(code: 'PART_2', label: 'Part 2'),
+      IeltsFilterOption(code: 'PART_3', label: 'Part 3'),
+    ],
+    topicTags: [IeltsFilterOption(code: 'daily_life', label: '日常生活')],
+    cueCardTypes: [IeltsFilterOption(code: 'thing', label: '事物')],
+  ),
   part1Topics: const [
     IeltsPart1PracticeTopic(
       id: 'p1-topic-001',
       titleZh: '家乡',
       titleEn: 'Hometown',
-      release: 'carry_over',
-      category: IeltsTopicCategory.place,
+      releaseStatus: 'carry_over',
+      tagCodes: ['daily_life'],
       questions: ['Q1', 'Q2'],
     ),
   ],
@@ -451,14 +432,14 @@ final _ieltsBank = IeltsQuestionBank(
     IeltsTopicGroup(
       id: 'p23-001',
       title: '学习技能',
-      release: 'new',
-      category: IeltsTopicCategory.thing,
+      releaseStatus: 'new',
+      cueCardType: 'thing',
+      tagCodes: ['daily_life'],
       cueCard: IeltsCueCard(
         prompt: 'Describe a skill you would like to learn',
         points: ['What', 'Why', 'How', 'Benefit'],
       ),
       part3Questions: ['Q1', 'Q2', 'Q3', 'Q4', 'Q5'],
-      supplementedQuestionCount: 0,
     ),
   ],
 );

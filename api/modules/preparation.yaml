@@ -475,6 +475,7 @@ components:
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
         ielts_selection:
+          description: Required for IELTS Part 1/2/3 specialty practice. Omit for FULL_MOCK so the server assembles the published question set.
           $ref: '#/components/schemas/IELTSPracticeSelection'
         max_effective_turns:
           type: integer
@@ -500,6 +501,7 @@ components:
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
         ielts_selection:
+          description: Required for IELTS Part 1/2/3 specialty practice. Omit for FULL_MOCK so the server assembles the published question set.
           $ref: '#/components/schemas/IELTSPracticeSelection'
         max_effective_turns:
           type: integer

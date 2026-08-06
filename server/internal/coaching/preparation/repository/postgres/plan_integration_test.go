@@ -418,21 +418,17 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	if err != nil {
 		t.Fatalf("ResolveSelection IELTS: %v", err)
 	}
-	questionBank, err := ielts.NewBank()
-	if err != nil {
-		t.Fatalf("New IELTS Bank: %v", err)
-	}
-	bank, err := questionBank.QuestionBank()
-	if err != nil || len(bank.TopicGroups) == 0 {
-		t.Fatalf("IELTSQuestionBank = (%d, %v)", len(bank.TopicGroups), err)
-	}
-	questionSelection := ielts.QuestionSetSelection{
-		Mode:         ielts.PracticeModePart2,
-		TopicGroupID: bank.TopicGroups[0].ID,
-	}
-	resolved, err := questionBank.ResolveQuestionSet(questionSelection)
-	if err != nil {
-		t.Fatalf("ResolveIELTSQuestionSet: %v", err)
+	resolved := ielts.ResolvedQuestionSet{
+		BankID: "ielts-speaking-integration-bank",
+		Season: "2026-05-08",
+		Mode:   ielts.PracticeModePart2,
+		Parts: []ielts.ResolvedPart{{
+			Part:           ielts.PracticeModePart2,
+			SourceID:       "integration-topic-group",
+			TopicTitle:     "An integration topic",
+			CueCard:        "Describe an integration topic.",
+			TurnBlueprints: []string{"Describe an integration topic."},
+		}},
 	}
 	assignment := &preparation.IELTSAssignmentSnapshot{
 		BankID: resolved.BankID,

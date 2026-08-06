@@ -120,20 +120,6 @@ final class IeltsPreparationController extends ChangeNotifier {
     return value ?? const IeltsSetProgress();
   }
 
-  IeltsPracticeSelection? randomFullMockSelection() {
-    final bank = _questionBank;
-    if (bank == null || bank.part1Sets.isEmpty || bank.topicGroups.isEmpty) {
-      return null;
-    }
-    return randomIeltsFullMockSelection(
-      bank: bank,
-      completedPart1SetIds: _completedIds(_part1Progress),
-      completedTopicGroupIds: _completedIds(
-        _part2Progress,
-      ).intersection(_completedIds(_part3Progress)),
-    );
-  }
-
   IeltsPracticeSelection? nextUnfinishedSelection(
     PracticeMode mode, {
     String? afterId,
@@ -303,12 +289,6 @@ final class IeltsPreparationController extends ChangeNotifier {
       lastPracticedAt: now,
     );
   }
-
-  Set<String> _completedIds(Map<String, IeltsSetProgress> values) => values
-      .entries
-      .where((entry) => entry.value.completed)
-      .map((entry) => entry.key)
-      .toSet();
 
   void _clearProgress() {
     _part1Progress.clear();
