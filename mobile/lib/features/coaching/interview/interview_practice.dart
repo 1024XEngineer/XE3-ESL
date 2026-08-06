@@ -609,7 +609,7 @@ class _SceneConversationMessageList extends StatelessWidget {
   final PracticeController controller;
   final ScrollController scrollController;
   final bool previewMode;
-  final SpeechFeedbackRepracticeCallback onRepractice;
+  final ValueChanged<SpeechFeedbackItem> onRepractice;
   final SpeechFeedbackController? speechFeedbackController;
 
   @override
