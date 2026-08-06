@@ -13,3 +13,30 @@ abstract interface class AgentMessageAudioClient {
     required String text,
   });
 }
+
+final class AgentAssistantSpeechTextSegment {
+  const AgentAssistantSpeechTextSegment({
+    required this.sequence,
+    required this.text,
+  });
+
+  final int sequence;
+  final String text;
+}
+
+final class AgentAssistantSpeechAudioSegment {
+  const AgentAssistantSpeechAudioSegment({
+    required this.sequence,
+    required this.audio,
+  });
+
+  final int sequence;
+  final Uint8List audio;
+}
+
+abstract interface class AgentAssistantSpeechClient {
+  Stream<AgentAssistantSpeechAudioSegment> streamAssistantSpeech({
+    required String threadId,
+    required Stream<AgentAssistantSpeechTextSegment> segments,
+  });
+}

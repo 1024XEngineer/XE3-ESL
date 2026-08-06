@@ -4,12 +4,32 @@ import (
 	"context"
 	"errors"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 type AgentVoiceRecognizer struct {
 	recognizer *speechRecognizer
+}
+
+func (synthesizer *AgentVoiceSynthesizer) SynthesizeAssistantSegment(
+	ctx context.Context,
+	text string,
+) (agentconversation.AssistantSpeechSegment, error) {
+	if synthesizer == nil || synthesizer.synthesizer == nil {
+		return agentconversation.AssistantSpeechSegment{}, errors.New(
+			"qianwen: Agent assistant speech synthesizer is required",
+		)
+	}
+	audio, err := synthesizer.synthesizer.synthesizeRealtimeWAV(ctx, text)
+	if err != nil {
+		return agentconversation.AssistantSpeechSegment{}, err
+	}
+	return agentconversation.AssistantSpeechSegment{
+		ContentType: agentconversation.AssistantSpeechContentTypeWAV,
+		Audio:       audio,
+	}, nil
 }
 
 func NewAgentVoiceRecognizer(
@@ -221,6 +241,7 @@ func mapAgentVoiceErrorKind(kind protocol.ErrorKind) agentvoice.ErrorKind {
 }
 
 var (
-	_ agentvoice.StreamingSpeechRecognizer = (*AgentVoiceRecognizer)(nil)
-	_ agentvoice.SpeechSynthesizer         = (*AgentVoiceSynthesizer)(nil)
+	_ agentvoice.StreamingSpeechRecognizer         = (*AgentVoiceRecognizer)(nil)
+	_ agentvoice.SpeechSynthesizer                 = (*AgentVoiceSynthesizer)(nil)
+	_ agentconversation.AssistantSpeechSynthesizer = (*AgentVoiceSynthesizer)(nil)
 )

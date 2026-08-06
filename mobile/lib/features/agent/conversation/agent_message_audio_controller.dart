@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
@@ -14,6 +16,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     required this.conversationController,
     required this.client,
     required this.audioPlayer,
+    this.assistantSpeechClient,
   }) {
     _positionSubscription = audioPlayer.onPosition.listen(_handlePosition);
     _completionSubscription = audioPlayer.onComplete.listen((_) {
@@ -27,6 +30,7 @@ final class AgentMessageAudioController extends ChangeNotifier
   final ConversationController conversationController;
   final AgentMessageAudioClient client;
   final AgentAudioPlayer audioPlayer;
+  final AgentAssistantSpeechClient? assistantSpeechClient;
 
   String? _threadId;
   Set<String> _visibleMessageIds = <String>{};
@@ -48,6 +52,9 @@ final class AgentMessageAudioController extends ChangeNotifier
   Future<void>? _cleanupFuture;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<void>? _completionSubscription;
+  _LiveAssistantSpeech? _liveAssistantSpeech;
+  Object? _liveSpeechStartToken;
+  String? _liveSpeechCommittedMessageId;
 
   String? get threadId => _threadId;
   double get speechSpeed => _speechSpeed;
@@ -72,23 +79,32 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (message.role != AgentMessageRole.assistant) {
       return Future<void>.value();
     }
+    if (_liveSpeechCommittedMessageId == message.id) {
+      return Future<void>.value();
+    }
     return _toggleMessagePlayback(message);
   }
 
-  Future<void> stopPlayback() {
+  Future<void> stopPlayback() async {
     if (_disposed) {
-      return Future<void>.value();
+      return;
     }
     _generation++;
+    await _cancelLiveAssistantSpeech();
     _resetPlaybackPresentation();
     notifyListeners();
-    return audioPlayer.stop();
+    await audioPlayer.stop();
   }
 
   Future<void> _toggleMessagePlayback(
     AgentMessage message, {
     String? previewText,
   }) {
+    if (_liveAssistantSpeech != null) {
+      return _cancelLiveAssistantSpeech().then(
+        (_) => _toggleMessagePlayback(message, previewText: previewText),
+      );
+    }
     if (!_visibleMessageIds.contains(message.id) ||
         _threadId == null ||
         _disposed ||
@@ -184,6 +200,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     _speechSpeed = speeds[(index + 1) % speeds.length];
     if (_playingMessageId != null) {
       _generation++;
+      unawaited(_cancelLiveAssistantSpeech());
       _resetPlaybackPresentation();
       unawaited(audioPlayer.stop());
     }
@@ -269,6 +286,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     }
     _accountEpoch++;
     _generation++;
+    await _cancelLiveAssistantSpeech();
     _threadId = null;
     _visibleMessageIds = <String>{};
     _visibleMessageAudioIds = <String, String?>{};
@@ -295,6 +313,7 @@ final class AgentMessageAudioController extends ChangeNotifier
       return;
     }
     _generation++;
+    unawaited(_cancelLiveAssistantSpeech());
     _resetPlaybackPresentation(clearError: false);
     notifyListeners();
     unawaited(audioPlayer.stop());
@@ -310,6 +329,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     conversationController.removeListener(_syncConversation);
     _accountEpoch++;
     _generation++;
+    unawaited(_cancelLiveAssistantSpeech());
     unawaited(_positionSubscription?.cancel());
     unawaited(_completionSubscription?.cancel());
     unawaited(audioPlayer.dispose());
@@ -331,6 +351,8 @@ final class AgentMessageAudioController extends ChangeNotifier
     };
     if (nextThreadId != _threadId) {
       _generation++;
+      unawaited(_cancelLiveAssistantSpeech());
+      _liveSpeechCommittedMessageId = null;
       _threadId = nextThreadId;
       _visibleMessageIds = messageIds;
       _visibleMessageAudioIds = messageAudioIds;
@@ -341,6 +363,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     }
     _visibleMessageIds = messageIds;
     _visibleMessageAudioIds = messageAudioIds;
+    _syncLiveAssistantSpeech(messages);
     _fenceUnavailableMedia();
   }
 
@@ -356,8 +379,270 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (_disposed) {
       return;
     }
+    final live = _liveAssistantSpeech;
+    if (live != null && live.playing) {
+      live.playing = false;
+      if (live.audio.isNotEmpty) {
+        unawaited(_playNextLiveAssistantSegment(live));
+      } else if (live.remoteCompleted) {
+        _finishLiveAssistantSpeech(live);
+      } else {
+        _playingMessageId = null;
+        _loadingMessageId = live.messageId;
+        notifyListeners();
+      }
+      return;
+    }
     _resetPlaybackPresentation(clearError: false);
     notifyListeners();
+  }
+
+  void _syncLiveAssistantSpeech(List<AgentMessage> messages) {
+    final speechClient = assistantSpeechClient;
+    final threadId = _threadId;
+    if (speechClient == null || threadId == null) {
+      return;
+    }
+    AgentMessage? streaming;
+    for (var index = messages.length - 1; index >= 0; index--) {
+      final candidate = messages[index];
+      if (candidate.role != AgentMessageRole.assistant ||
+          !candidate.isStreaming ||
+          candidate.hasFailed ||
+          !candidate.id.startsWith('stream-')) {
+        continue;
+      }
+      AgentMessage? precedingUser;
+      for (var userIndex = index - 1; userIndex >= 0; userIndex--) {
+        if (messages[userIndex].role == AgentMessageRole.user) {
+          precedingUser = messages[userIndex];
+          break;
+        }
+      }
+      if (precedingUser?.modality == AgentMessageModality.voice) {
+        streaming = candidate;
+      }
+      break;
+    }
+    final live = _liveAssistantSpeech;
+    if (streaming != null) {
+      if (live == null || live.messageId != streaming.id) {
+        unawaited(_startLiveAssistantSpeech(threadId, streaming));
+        return;
+      }
+      _appendLiveAssistantText(live, streaming.text, finalText: false);
+      return;
+    }
+    if (live == null || live.inputClosed) {
+      return;
+    }
+    AgentMessage? committed;
+    for (var index = messages.length - 1; index >= 0; index--) {
+      final candidate = messages[index];
+      if (candidate.role == AgentMessageRole.assistant &&
+          !candidate.isStreaming &&
+          !candidate.hasFailed &&
+          candidate.text == live.observedText) {
+        committed = candidate;
+        break;
+      }
+    }
+    if (committed == null) {
+      unawaited(_cancelLiveAssistantSpeech());
+      return;
+    }
+    final transientId = live.messageId;
+    live.messageId = committed.id;
+    _liveSpeechCommittedMessageId = committed.id;
+    if (_playingMessageId == transientId) {
+      _playingMessageId = committed.id;
+    }
+    if (_loadingMessageId == transientId) {
+      _loadingMessageId = committed.id;
+    }
+    _appendLiveAssistantText(live, committed.text, finalText: true);
+    live.inputClosed = true;
+    unawaited(live.segments.close());
+  }
+
+  Future<void> _startLiveAssistantSpeech(
+    String threadId,
+    AgentMessage message,
+  ) async {
+    final startToken = Object();
+    _liveSpeechStartToken = startToken;
+    await _cancelLiveAssistantSpeech(preserveStartToken: true);
+    if (_disposed ||
+        _threadId != threadId ||
+        !identical(_liveSpeechStartToken, startToken)) {
+      return;
+    }
+    _liveSpeechStartToken = null;
+    final speechClient = assistantSpeechClient;
+    if (speechClient == null) {
+      return;
+    }
+    final live = _LiveAssistantSpeech(
+      threadId: threadId,
+      messageId: message.id,
+    );
+    _liveAssistantSpeech = live;
+    _liveSpeechCommittedMessageId = null;
+    _loadingMessageId = message.id;
+    _playingMessageId = null;
+    _messagePlaybackUsesPreview = false;
+    _errorMessage = null;
+    _errorMessageId = null;
+    notifyListeners();
+    live.subscription = speechClient
+        .streamAssistantSpeech(
+          threadId: threadId,
+          segments: live.segments.stream,
+        )
+        .listen(
+          (segment) => _handleLiveAssistantAudio(live, segment),
+          onError: (Object error, StackTrace _) {
+            _failLiveAssistantSpeech(live, error);
+          },
+          onDone: () {
+            if (!identical(_liveAssistantSpeech, live)) {
+              return;
+            }
+            live.remoteCompleted = true;
+            if (!live.playing && live.audio.isEmpty) {
+              _finishLiveAssistantSpeech(live);
+            }
+          },
+        );
+    _appendLiveAssistantText(live, message.text, finalText: false);
+  }
+
+  void _appendLiveAssistantText(
+    _LiveAssistantSpeech live,
+    String text, {
+    required bool finalText,
+  }) {
+    if (!identical(_liveAssistantSpeech, live) ||
+        live.inputClosed ||
+        !text.startsWith(live.observedText)) {
+      return;
+    }
+    live.observedText = text;
+    final boundaries = _assistantSpeechBoundaries(
+      text,
+      live.consumedOffset,
+      finalText: finalText,
+    );
+    for (final boundary in boundaries) {
+      if (live.nextSequence > 64) {
+        _failLiveAssistantSpeech(
+          live,
+          StateError('Assistant speech segment limit exceeded.'),
+        );
+        return;
+      }
+      final spoken = _cleanAssistantSpeechText(
+        text.substring(live.consumedOffset, boundary),
+      );
+      live.consumedOffset = boundary;
+      if (spoken.isEmpty) {
+        continue;
+      }
+      live.segments.add(
+        AgentAssistantSpeechTextSegment(
+          sequence: live.nextSequence++,
+          text: spoken,
+        ),
+      );
+    }
+  }
+
+  void _handleLiveAssistantAudio(
+    _LiveAssistantSpeech live,
+    AgentAssistantSpeechAudioSegment segment,
+  ) {
+    if (!identical(_liveAssistantSpeech, live) ||
+        segment.sequence != live.nextAudioSequence) {
+      segment.audio.fillRange(0, segment.audio.length, 0);
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Assistant speech audio sequence is invalid.'),
+      );
+      return;
+    }
+    live.nextAudioSequence++;
+    live.audio.add(segment.audio);
+    if (!live.playing) {
+      unawaited(_playNextLiveAssistantSegment(live));
+    }
+  }
+
+  Future<void> _playNextLiveAssistantSegment(_LiveAssistantSpeech live) async {
+    if (!identical(_liveAssistantSpeech, live) ||
+        live.playing ||
+        live.audio.isEmpty) {
+      return;
+    }
+    final audio = live.audio.removeFirst();
+    live.playing = true;
+    _loadingMessageId = null;
+    _playingMessageId = live.messageId;
+    _playbackPosition = Duration.zero;
+    notifyListeners();
+    try {
+      await audioPlayer.playWav(audio, speed: _speechSpeed);
+    } catch (error) {
+      _failLiveAssistantSpeech(live, error);
+    } finally {
+      audio.fillRange(0, audio.length, 0);
+    }
+  }
+
+  void _finishLiveAssistantSpeech(_LiveAssistantSpeech live) {
+    if (!identical(_liveAssistantSpeech, live)) {
+      return;
+    }
+    _liveAssistantSpeech = null;
+    _loadingMessageId = null;
+    _playingMessageId = null;
+    _playbackPosition = Duration.zero;
+    notifyListeners();
+  }
+
+  void _failLiveAssistantSpeech(_LiveAssistantSpeech live, Object error) {
+    if (!identical(_liveAssistantSpeech, live)) {
+      return;
+    }
+    final messageId = live.messageId;
+    unawaited(_cancelLiveAssistantSpeech());
+    _loadingMessageId = null;
+    _playingMessageId = null;
+    _errorMessageId = messageId;
+    _errorMessage = '实时朗读中断，可点击朗读重新播放。';
+    notifyListeners();
+    unawaited(_clearOnAuthenticationFailure(error));
+  }
+
+  Future<void> _cancelLiveAssistantSpeech({
+    bool preserveStartToken = false,
+  }) async {
+    if (!preserveStartToken) {
+      _liveSpeechStartToken = null;
+    }
+    final live = _liveAssistantSpeech;
+    if (live == null) {
+      return;
+    }
+    _liveAssistantSpeech = null;
+    if (!live.inputClosed) {
+      live.inputClosed = true;
+      await live.segments.close();
+    }
+    await live.subscription?.cancel();
+    while (live.audio.isNotEmpty) {
+      final audio = live.audio.removeFirst();
+      audio.fillRange(0, audio.length, 0);
+    }
   }
 
   void _fenceUnavailableMedia() {
@@ -496,3 +781,55 @@ final class _MessageAudioFence {
   final String messageId;
   final String? audioId;
 }
+
+final class _LiveAssistantSpeech {
+  _LiveAssistantSpeech({required this.threadId, required this.messageId});
+
+  final String threadId;
+  String messageId;
+  final StreamController<AgentAssistantSpeechTextSegment> segments =
+      StreamController<AgentAssistantSpeechTextSegment>();
+  StreamSubscription<AgentAssistantSpeechAudioSegment>? subscription;
+  final Queue<Uint8List> audio = Queue<Uint8List>();
+  String observedText = '';
+  int consumedOffset = 0;
+  int nextSequence = 1;
+  int nextAudioSequence = 1;
+  bool inputClosed = false;
+  bool remoteCompleted = false;
+  bool playing = false;
+}
+
+List<int> _assistantSpeechBoundaries(
+  String text,
+  int start, {
+  required bool finalText,
+}) {
+  final boundaries = <int>[];
+  for (var index = start; index < text.length; index++) {
+    if (_assistantSpeechTerminators.contains(text[index])) {
+      boundaries.add(index + 1);
+    }
+  }
+  if (finalText && (boundaries.isEmpty || boundaries.last < text.length)) {
+    boundaries.add(text.length);
+  }
+  return boundaries;
+}
+
+String _cleanAssistantSpeechText(String value) {
+  return value
+      .replaceAll(RegExp(r'[`*_#>]'), '')
+      .replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '')
+      .trim();
+}
+
+const _assistantSpeechTerminators = <String>{
+  '.',
+  '?',
+  '!',
+  '。',
+  '？',
+  '！',
+  '\n',
+};

@@ -279,6 +279,7 @@ ProductionAppDependencies createProductionAppDependencies({
     conversationController: conversationController,
     client: agentVoiceClient,
     audioPlayer: agentMessageAudioPlayer ?? AudioplayersAgentAudioPlayer(),
+    assistantSpeechClient: agentVoiceClient,
   );
   final composerController = ComposerController(
     conversationController: conversationController,
