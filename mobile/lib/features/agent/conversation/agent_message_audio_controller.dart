@@ -77,10 +77,74 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (message.role != AgentMessageRole.assistant) {
       return Future<void>.value();
     }
-    if (_liveSpeechCommittedMessageId == message.id) {
+    if (_liveAssistantSpeech != null ||
+        _liveSpeechCommittedMessageId == message.id) {
       return Future<void>.value();
     }
     return _toggleMessagePlayback(message);
+  }
+
+  Future<void> startLiveAssistantSpeech({
+    required String transientMessageId,
+  }) async {
+    final threadId = _threadId;
+    if (_disposed ||
+        threadId == null ||
+        transientMessageId.isEmpty ||
+        assistantSpeechClient == null ||
+        audioPlayer is! AgentPCMStreamPlayer) {
+      return;
+    }
+    await _startLiveAssistantSpeech(threadId, transientMessageId);
+  }
+
+  void appendLiveAssistantSpeech({
+    required String transientMessageId,
+    required String delta,
+  }) {
+    final live = _liveAssistantSpeech;
+    if (_disposed ||
+        live == null ||
+        live.inputClosed ||
+        live.messageId != transientMessageId ||
+        delta.isEmpty) {
+      return;
+    }
+    _appendLiveAssistantText(live, live.observedText + delta, finalText: false);
+  }
+
+  void completeLiveAssistantSpeech({
+    required String transientMessageId,
+    required AgentMessage message,
+  }) {
+    final live = _liveAssistantSpeech;
+    if (_disposed ||
+        live == null ||
+        live.inputClosed ||
+        live.messageId != transientMessageId ||
+        message.role != AgentMessageRole.assistant ||
+        message.hasFailed) {
+      return;
+    }
+    live.messageId = message.id;
+    _liveSpeechCommittedMessageId = message.id;
+    if (_playingMessageId == transientMessageId) {
+      _playingMessageId = message.id;
+    }
+    if (_loadingMessageId == transientMessageId) {
+      _loadingMessageId = message.id;
+    }
+    _appendLiveAssistantText(live, live.observedText, finalText: true);
+    live.inputClosed = true;
+    unawaited(live.segments.close());
+  }
+
+  void failLiveAssistantSpeech({required String transientMessageId}) {
+    final live = _liveAssistantSpeech;
+    if (live == null || live.messageId != transientMessageId) {
+      return;
+    }
+    unawaited(_cancelLiveAssistantSpeech());
   }
 
   Future<void> stopPlayback() async {
@@ -361,7 +425,6 @@ final class AgentMessageAudioController extends ChangeNotifier
     }
     _visibleMessageIds = messageIds;
     _visibleMessageAudioIds = messageAudioIds;
-    _syncLiveAssistantSpeech(messages);
     _fenceUnavailableMedia();
   }
 
@@ -389,95 +452,10 @@ final class AgentMessageAudioController extends ChangeNotifier
     notifyListeners();
   }
 
-  void _syncLiveAssistantSpeech(List<AgentMessage> messages) {
-    final speechClient = assistantSpeechClient;
-    final threadId = _threadId;
-    if (speechClient == null ||
-        threadId == null ||
-        audioPlayer is! AgentPCMStreamPlayer) {
-      return;
-    }
-    final live = _liveAssistantSpeech;
-    AgentMessage? streaming;
-    for (var index = messages.length - 1; index >= 0; index--) {
-      final candidate = messages[index];
-      if (candidate.role != AgentMessageRole.assistant ||
-          !candidate.isStreaming ||
-          candidate.hasFailed ||
-          !candidate.id.startsWith('stream-')) {
-        continue;
-      }
-      AgentMessage? precedingUser;
-      for (var userIndex = index - 1; userIndex >= 0; userIndex--) {
-        if (messages[userIndex].role == AgentMessageRole.user) {
-          precedingUser = messages[userIndex];
-          break;
-        }
-      }
-      if (precedingUser?.modality == AgentMessageModality.voice) {
-        streaming = candidate;
-        if (live == null || live.messageId != candidate.id) {
-          unawaited(
-            _startLiveAssistantSpeech(
-              threadId,
-              candidate,
-              precedingUserMessageId: precedingUser!.id,
-            ),
-          );
-          return;
-        }
-      }
-      break;
-    }
-    if (streaming != null && live != null) {
-      _appendLiveAssistantText(live, streaming.text, finalText: false);
-      return;
-    }
-    if (live == null || live.inputClosed) {
-      return;
-    }
-    final userIndex = messages.indexWhere(
-      (message) => message.id == live.precedingUserMessageId,
-    );
-    AgentMessage? committed;
-    if (userIndex >= 0) {
-      for (var index = userIndex + 1; index < messages.length; index++) {
-        final candidate = messages[index];
-        if (candidate.role == AgentMessageRole.user) {
-          break;
-        }
-        if (candidate.role == AgentMessageRole.assistant &&
-            !candidate.isStreaming &&
-            !candidate.hasFailed &&
-            candidate.text.startsWith(live.observedText)) {
-          committed = candidate;
-          break;
-        }
-      }
-    }
-    if (committed == null) {
-      unawaited(_cancelLiveAssistantSpeech());
-      return;
-    }
-    final transientId = live.messageId;
-    live.messageId = committed.id;
-    _liveSpeechCommittedMessageId = committed.id;
-    if (_playingMessageId == transientId) {
-      _playingMessageId = committed.id;
-    }
-    if (_loadingMessageId == transientId) {
-      _loadingMessageId = committed.id;
-    }
-    _appendLiveAssistantText(live, committed.text, finalText: true);
-    live.inputClosed = true;
-    unawaited(live.segments.close());
-  }
-
   Future<void> _startLiveAssistantSpeech(
     String threadId,
-    AgentMessage message, {
-    required String precedingUserMessageId,
-  }) async {
+    String messageId,
+  ) async {
     final startToken = Object();
     _liveSpeechStartToken = startToken;
     await _cancelLiveAssistantSpeech(preserveStartToken: true);
@@ -491,14 +469,10 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (speechClient == null || audioPlayer is! AgentPCMStreamPlayer) {
       return;
     }
-    final live = _LiveAssistantSpeech(
-      threadId: threadId,
-      messageId: message.id,
-      precedingUserMessageId: precedingUserMessageId,
-    );
+    final live = _LiveAssistantSpeech(threadId: threadId, messageId: messageId);
     _liveAssistantSpeech = live;
     _liveSpeechCommittedMessageId = null;
-    _loadingMessageId = message.id;
+    _loadingMessageId = messageId;
     _playingMessageId = null;
     _messagePlaybackUsesPreview = false;
     _errorMessage = null;
@@ -533,7 +507,6 @@ final class AgentMessageAudioController extends ChangeNotifier
                 });
           },
         );
-    _appendLiveAssistantText(live, message.text, finalText: false);
   }
 
   void _appendLiveAssistantText(
@@ -810,14 +783,9 @@ final class _MessageAudioFence {
 }
 
 final class _LiveAssistantSpeech {
-  _LiveAssistantSpeech({
-    required this.threadId,
-    required this.messageId,
-    required this.precedingUserMessageId,
-  });
+  _LiveAssistantSpeech({required this.threadId, required this.messageId});
 
   final String threadId;
-  final String precedingUserMessageId;
   String messageId;
   final StreamController<AgentAssistantSpeechTextSegment> segments =
       StreamController<AgentAssistantSpeechTextSegment>();

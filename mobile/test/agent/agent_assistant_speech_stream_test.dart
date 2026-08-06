@@ -63,19 +63,28 @@ void main() {
         isStreaming: true,
       ),
     );
+    await controller.startLiveAssistantSpeech(
+      transientMessageId: 'stream-run-a',
+    );
+    controller.appendLiveAssistantSpeech(
+      transientMessageId: 'stream-run-a',
+      delta: 'First sentence. Second sentence',
+    );
     await tester.pump();
 
     expect(speech.texts, <String>['First sentence.']);
     expect(controller.playingMessageId, 'stream-run-a');
 
-    conversation.changeComposerStreamMessage(
-      'stream-run-a',
-      const AgentMessage(
-        id: 'assistant-a',
-        role: AgentMessageRole.assistant,
-        text: 'First sentence. Second sentence',
-      ),
+    const committed = AgentMessage(
+      id: 'assistant-a',
+      role: AgentMessageRole.assistant,
+      text: 'First sentence. Second sentence',
     );
+    controller.completeLiveAssistantSpeech(
+      transientMessageId: 'stream-run-a',
+      message: committed,
+    );
+    conversation.changeComposerStreamMessage('stream-run-a', committed);
     await tester.pump();
     expect(speech.texts, <String>['First sentence.', 'Second sentence']);
     expect(controller.playingMessageId, 'assistant-a');
@@ -126,17 +135,31 @@ void main() {
         isStreaming: true,
       ),
     );
+    await controller.startLiveAssistantSpeech(
+      transientMessageId: 'stream-run-b',
+    );
+    controller.appendLiveAssistantSpeech(
+      transientMessageId: 'stream-run-b',
+      delta: 'Actually.',
+    );
     await tester.pump();
     expect(speech.texts, <String>['Actually.']);
 
-    conversation.changeComposerStreamMessage(
-      'stream-run-b',
-      const AgentMessage(
-        id: 'assistant-b',
-        role: AgentMessageRole.assistant,
-        text: 'Actually. Please say the complete sentence again.',
-      ),
+    controller.appendLiveAssistantSpeech(
+      transientMessageId: 'stream-run-b',
+      delta: ' Please say the complete sentence again.',
     );
+    const committed = AgentMessage(
+      id: 'assistant-b',
+      role: AgentMessageRole.assistant,
+      text: 'The authoritative message does not drive speech segmentation.',
+    );
+    controller.completeLiveAssistantSpeech(
+      transientMessageId: 'stream-run-b',
+      message: committed,
+    );
+    conversation.changeComposerStreamMessage('stream-run-b', committed);
+    unawaited(controller.playCommittedAssistant(committed));
     await tester.pump();
     speech.releaseFirstSegment();
     await tester.pumpAndSettle();

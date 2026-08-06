@@ -10,6 +10,7 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dar
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
@@ -63,16 +64,32 @@ void main() {
     (tester) async {
       final client = FakeAgentClient();
       final voiceClient = FakeAgentVoiceClient();
+      final assistantSpeech = _FlowAssistantSpeechClient();
+      final messagePlayer = FakeAgentAudioPlayer();
       final conversationController = ConversationController(client: client);
       final messageAudioController = AgentMessageAudioController(
         conversationController: conversationController,
         client: voiceClient,
-        audioPlayer: FakeAgentAudioPlayer(),
+        audioPlayer: messagePlayer,
+        assistantSpeechClient: assistantSpeech,
       );
       final composerController = ComposerController(
         conversationController: conversationController,
         voiceClient: voiceClient,
-        onAssistantCommitted: messageAudioController.playCommittedAssistant,
+        onAssistantStreamStarted: (transientMessageId) => messageAudioController
+            .startLiveAssistantSpeech(transientMessageId: transientMessageId),
+        onAssistantStreamDelta: (transientMessageId, delta) =>
+            messageAudioController.appendLiveAssistantSpeech(
+              transientMessageId: transientMessageId,
+              delta: delta,
+            ),
+        onAssistantStreamCompleted: (transientMessageId, message) =>
+            messageAudioController.completeLiveAssistantSpeech(
+              transientMessageId: transientMessageId,
+              message: message,
+            ),
+        onAssistantStreamFailed: (transientMessageId) => messageAudioController
+            .failLiveAssistantSpeech(transientMessageId: transientMessageId),
         clientIdFactory: _sequentialIdFactory(),
       );
       addTearDown(() {
@@ -135,9 +152,14 @@ void main() {
       final assistantTts = find.byKey(
         Key('agent-assistant-tts-${assistant.id}'),
       );
+      await tester.pumpAndSettle();
       expect(assistantTts.hitTestable(), findsOneWidget);
+      expect(assistantSpeech.texts, <String>[
+        'That was clear.',
+        'Add one measurable result to make the answer stronger.',
+      ]);
       expect(messageAudioController.playingMessageId, assistant.id);
-      await tester.tap(assistantTts);
+      messagePlayer.complete();
       await tester.pump();
       expect(messageAudioController.playingMessageId, isNull);
       await tester.tap(assistantTts);
@@ -644,6 +666,25 @@ final class _FailNextStopAgentAudioPlayer implements AgentAudioPlayer {
 
   @override
   Future<void> dispose() async {}
+}
+
+final class _FlowAssistantSpeechClient implements AgentAssistantSpeechClient {
+  final List<String> texts = <String>[];
+
+  @override
+  Stream<AgentAssistantSpeechAudioSegment> streamAssistantSpeech({
+    required String threadId,
+    required Stream<AgentAssistantSpeechTextSegment> segments,
+  }) async* {
+    await for (final segment in segments) {
+      texts.add(segment.text);
+      yield AgentAssistantSpeechAudioSegment(
+        sequence: segment.sequence,
+        chunkIndex: 1,
+        audio: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
+    }
+  }
 }
 
 Future<void> _pumpVoiceOperation(WidgetTester tester) async {

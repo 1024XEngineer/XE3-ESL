@@ -289,7 +289,20 @@ ProductionAppDependencies createProductionAppDependencies({
     voiceRecorder: agentVoiceRecorder ?? IosAgentVoiceRecorder(),
     draftAudioPlayer:
         agentComposerAudioPlayer ?? AudioplayersAgentAudioPlayer(),
-    onAssistantCommitted: messageAudioController.playCommittedAssistant,
+    onAssistantStreamStarted: (transientMessageId) => messageAudioController
+        .startLiveAssistantSpeech(transientMessageId: transientMessageId),
+    onAssistantStreamDelta: (transientMessageId, delta) =>
+        messageAudioController.appendLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          delta: delta,
+        ),
+    onAssistantStreamCompleted: (transientMessageId, message) =>
+        messageAudioController.completeLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          message: message,
+        ),
+    onAssistantStreamFailed: (transientMessageId) => messageAudioController
+        .failLiveAssistantSpeech(transientMessageId: transientMessageId),
   );
   final practiceController = PracticeController(
     client: practiceClient,
