@@ -16,6 +16,8 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/scenario_preparation_form.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
@@ -54,6 +56,8 @@ class _PreparationPageState extends State<PreparationPage> {
   _PracticeHub? _selectedHub;
   PracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
+  bool _scenarioFormVisible = false;
+  bool _scenarioReplaceCurrentPractice = false;
   bool _handlingIeltsNavigation = false;
 
   @override
@@ -166,6 +170,7 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    ScenarioPreparationContext? scenarioContext,
   }) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
@@ -181,7 +186,7 @@ class _PreparationPageState extends State<PreparationPage> {
         option == null) {
       return;
     }
-    if (launch.backgroundSummary.trim().isEmpty) {
+    if (scenarioContext == null && launch.backgroundSummary.trim().isEmpty) {
       launch.updateBackgroundSummary('默认示例：${detail.prompt.publicSceneBrief}');
     }
     final started = await launch.start(
@@ -192,6 +197,7 @@ class _PreparationPageState extends State<PreparationPage> {
         ieltsSelection: ieltsSelection,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
+      scenarioContext: scenarioContext,
     );
     if (started && mounted) {
       final bootstrap = launch.bootstrap;
@@ -207,6 +213,7 @@ class _PreparationPageState extends State<PreparationPage> {
         _selectedHub = null;
         _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
+        _scenarioFormVisible = false;
       });
       widget.onPracticeStarted?.call();
     }
@@ -233,6 +240,7 @@ class _PreparationPageState extends State<PreparationPage> {
         _selectedHub = null;
         _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
+        _scenarioFormVisible = false;
       });
       widget.onPracticeStarted?.call();
     }
@@ -244,6 +252,7 @@ class _PreparationPageState extends State<PreparationPage> {
     PracticeMode? practiceMode,
     IeltsPracticeSelection? ieltsSelection,
     bool forceReplaceCurrentPractice = false,
+    bool requireScenarioPreparation = false,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -292,10 +301,29 @@ class _PreparationPageState extends State<PreparationPage> {
       controller.showSceneList();
       return;
     }
+    if (requireScenarioPreparation) {
+      setState(() {
+        _scenarioFormVisible = true;
+        _scenarioReplaceCurrentPractice = replaceCurrentPractice;
+      });
+      return;
+    }
     _launchingIeltsSelection = ieltsSelection;
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+    );
+  }
+
+  Future<void> _submitScenarioPreparation(
+    ScenarioPreparationContext context,
+  ) async {
+    setState(() {
+      _scenarioFormVisible = false;
+    });
+    await _startPractice(
+      replaceCurrentPractice: _scenarioReplaceCurrentPractice,
+      scenarioContext: context,
     );
   }
 
@@ -423,6 +451,10 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       launch?.selectionChanged();
       controller?.showSceneList();
+      setState(() {
+        _scenarioFormVisible = false;
+        _scenarioReplaceCurrentPractice = false;
+      });
       return;
     }
     if (_selectedHub != null) {
@@ -480,6 +512,19 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildCatalog(PreparationController controller) {
     final selectedScene = controller.selectedScene;
     if (selectedScene != null) {
+      if (_scenarioFormVisible &&
+          (selectedScene.experience == PracticeExperience.workplace ||
+              selectedScene.experience == PracticeExperience.lifeAndTravel)) {
+        return ScenarioPreparationForm(
+          key: ValueKey(
+            'scenario-preparation-${selectedScene.id}-${selectedScene.version}',
+          ),
+          scene: selectedScene,
+          hasPrimaryNavigation: !widget.showBackButton,
+          onBack: () => _handleBack(controller),
+          onSubmit: _submitScenarioPreparation,
+        );
+      }
       return _SceneLaunchStatus(
         controller: controller,
         scene: selectedScene,
@@ -686,8 +731,13 @@ class _PreparationPageState extends State<PreparationPage> {
             description: _scenarioHubDescription(hub),
             titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
-            onScenePressed: (scene) =>
-                unawaited(_startSceneDirectly(controller, scene)),
+            onScenePressed: (scene) => unawaited(
+              _startSceneDirectly(
+                controller,
+                scene,
+                requireScenarioPreparation: true,
+              ),
+            ),
           ),
       ],
     );

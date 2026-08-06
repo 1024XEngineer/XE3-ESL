@@ -112,6 +112,99 @@ void main() {
     },
   );
 
+  test('sends and decodes a typed scenario Preparation context', () async {
+    final profileResponse = _profileJson()
+      ..['preparation_context'] = _scenarioContextJson();
+    final snapshotResponse = _snapshotJson()
+      ..['preparation_context'] = _scenarioContextJson();
+    final planResponse = _planJson();
+    (planResponse['preparation_snapshot']!
+            as Map<String, Object?>)['preparation_context'] =
+        _scenarioContextJson();
+    final bootstrapResponse = _bootstrapJson();
+    final practicePreparation = _preparationSnapshot(bootstrapResponse)
+      ..['preparation_kind'] = 'scenario'
+      ..['scenario_context'] = _scenarioPayloadJson();
+    final transport = _QueueTransport([
+      _response(profileResponse),
+      _response(snapshotResponse),
+      _response(planResponse),
+      _response(bootstrapResponse),
+    ]);
+    final client = _client(transport);
+
+    final profile = await client.createProfile(
+      input: CreatePreparationProfileInput.scenario(context: _scenarioContext),
+      idempotencyKey: 'scenario-profile-key',
+    );
+    final snapshot = await client.createSnapshot(
+      profileId: profile.id,
+      sourceVersion: profile.version,
+      idempotencyKey: 'scenario-snapshot-key',
+    );
+    final plan = await client.createPlan(
+      input: _planInput(),
+      idempotencyKey: 'scenario-plan-key',
+    );
+    final bootstrap = await client.createSession(
+      plan: plan,
+      input: const CreatePreparationSessionInput(
+        expectedPlanRevision: 1,
+        userConfirmed: true,
+      ),
+      idempotencyKey: 'scenario-session-key',
+    );
+
+    expect(jsonDecode(transport.calls.first.body!), {
+      'kind': 'scenario',
+      'scenario': {
+        'situation': _background,
+        'user_role': 'Project owner',
+        'counterpart_role': 'Stakeholder',
+        'goal': 'Explain progress and risk clearly.',
+        'counterpart_persona': 'Direct and evidence seeking.',
+      },
+      'background_summary': _background,
+    });
+    expect(profile.context, _scenarioContext);
+    expect(snapshot.context, _scenarioContext);
+    expect(plan.preparationSnapshot.context, _scenarioContext);
+    expect(bootstrap.session.id, _sessionId);
+    expect(practicePreparation['preparation_context'], isNull);
+  });
+
+  test('rejects a changed projected scenario context in Session', () async {
+    final planResponse = _planJson();
+    (planResponse['preparation_snapshot']!
+            as Map<String, Object?>)['preparation_context'] =
+        _scenarioContextJson();
+    final bootstrapResponse = _bootstrapJson();
+    _preparationSnapshot(bootstrapResponse)
+      ..['preparation_kind'] = 'scenario'
+      ..['scenario_context'] = (_scenarioPayloadJson()
+        ..['goal'] = 'A different frozen goal');
+    final client = _client(
+      _QueueTransport([_response(planResponse), _response(bootstrapResponse)]),
+    );
+
+    final plan = await client.createPlan(
+      input: _planInput(),
+      idempotencyKey: 'scenario-plan-mismatch-key',
+    );
+
+    await expectLater(
+      client.createSession(
+        plan: plan,
+        input: const CreatePreparationSessionInput(
+          expectedPlanRevision: 1,
+          userConfirmed: true,
+        ),
+        idempotencyKey: 'scenario-session-mismatch-key',
+      ),
+      throwsA(_invalidResponse),
+    );
+  });
+
   test('accepts the complete canonical selection in a created Plan', () async {
     final response = _planJson();
     final client = _client(_QueueTransport([_response(response)]));
@@ -651,6 +744,19 @@ Map<String, Object?> _snapshotJson() => {
   'created_at': _time,
 };
 
+Map<String, Object?> _scenarioContextJson() => <String, Object?>{
+  'kind': 'scenario',
+  'scenario': _scenarioPayloadJson(),
+};
+
+Map<String, Object?> _scenarioPayloadJson() => <String, Object?>{
+  'situation': _background,
+  'user_role': 'Project owner',
+  'counterpart_role': 'Stakeholder',
+  'goal': 'Explain progress and risk clearly.',
+  'counterpart_persona': 'Direct and evidence seeking.',
+};
+
 Map<String, Object?> _planJson({
   PreparationLaunchSelection selection = _selection,
 }) {
@@ -942,6 +1048,13 @@ const _fullOptionId = 'option-full';
 const _ieltsSceneId = 'scn_ielts_speaking_test';
 const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
 const _background = 'Backend engineer preparing a technical interview.';
+const _scenarioContext = ScenarioPreparationContext(
+  situation: _background,
+  userRole: 'Project owner',
+  counterpartRole: 'Stakeholder',
+  goal: 'Explain progress and risk clearly.',
+  counterpartPersona: 'Direct and evidence seeking.',
+);
 
 const _technicalRole = RoleDefinition(
   id: _roleId,
