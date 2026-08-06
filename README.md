@@ -15,17 +15,17 @@ SpeakUp 是一个面向英语口语训练的 AI 陪练项目，通过自由对�
 ## 项目结构
 
 ```text
-mobile/   Flutter Android/iOS 客户端
-server/   Go API、Agent、场景练习、评估与数据访问
-api/      OpenAPI、WebSocket 与数据契约
+mobile/   Flutter Android/iOS 客户端与 Feature 组合
+server/   Go 业务模块、应用装配、数据与供应商实现
+api/      OpenAPI、WebSocket Schema 与契约校验
 tools/    本地开发、模拟器验证和专项检查脚本
 ```
 
-工程设计和架构决策以已接受的 GitHub Issue 为权威来源，不在仓库中重复维护：
+代码依赖保持为“客户端页面 → Controller → Client Port → 传输契约 → 服务端入口 → 应用编排 → 领域能力 → PostgreSQL/供应商实现”。各模块职责、核心伪代码调用链和扩展位置统一记录在 GitHub Issue，不在 README 重复维护。
 
-- [产品范围与功能边界](https://github.com/1024XEngineer/XE3-ESL/issues/9)
-- [系统架构](https://github.com/1024XEngineer/XE3-ESL/issues/15)
-- [场景与角色扩展模型](https://github.com/1024XEngineer/XE3-ESL/issues/24)
+当前架构与发布：
+
+- [当前代码模块与协作主链](https://github.com/1024XEngineer/XE3-ESL/issues/456)
 - [MS3：核心功能闭合](https://github.com/1024XEngineer/XE3-ESL/milestone/3)
 - [v0.1.0-alpha.1 首次预发布准备](https://github.com/1024XEngineer/XE3-ESL/issues/452)
 
