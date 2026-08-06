@@ -80,29 +80,33 @@ func (handler *Handler) streamAssistantSpeech(c *gin.Context) {
 			}
 			if err := connection.WriteJSON(gin.H{
 				"type": "segment.started",
-				"data": gin.H{"sequence": frame.Sequence},
+				"data": gin.H{
+					"sequence":        frame.Sequence,
+					"content_type":    agentconversation.AssistantSpeechContentTypePCM,
+					"sample_rate":     agentconversation.AssistantSpeechSampleRate,
+					"channel_count":   agentconversation.AssistantSpeechChannelCount,
+					"bits_per_sample": agentconversation.AssistantSpeechBitsPerSample,
+				},
 			}); err != nil {
 				return
 			}
-			segment, synthesisErr := handler.assistantSpeech.
-				SynthesizeAssistantSegment(c.Request.Context(), frame.Text)
-			if synthesisErr != nil ||
-				segment.ContentType != agentconversation.AssistantSpeechContentTypeWAV ||
-				len(segment.Audio) == 0 {
+			chunkCount := 0
+			synthesisErr := handler.assistantSpeech.StreamAssistantSegment(
+				c.Request.Context(),
+				frame.Text,
+				func(audio []byte) error {
+					chunkCount++
+					return connection.WriteMessage(websocket.BinaryMessage, audio)
+				},
+			)
+			if synthesisErr != nil || chunkCount == 0 {
 				writeAssistantSpeechFailure(connection, "synthesis_failed", true)
-				return
-			}
-			if err := connection.WriteMessage(
-				websocket.BinaryMessage,
-				segment.Audio,
-			); err != nil {
 				return
 			}
 			if err := connection.WriteJSON(gin.H{
 				"type": "segment.completed",
 				"data": gin.H{
-					"sequence":     frame.Sequence,
-					"content_type": segment.ContentType,
+					"sequence": frame.Sequence,
 				},
 			}); err != nil {
 				return

@@ -78,9 +78,6 @@ void main() {
     );
     await tester.pump();
     expect(speech.texts, <String>['First sentence.', 'Second sentence']);
-
-    player.complete();
-    await tester.pump();
     expect(controller.playingMessageId, 'assistant-a');
     player.complete();
     await tester.pump();
@@ -98,10 +95,13 @@ final class _FakeAssistantSpeechClient implements AgentAssistantSpeechClient {
   }) async* {
     await for (final segment in segments) {
       texts.add(segment.text);
-      yield AgentAssistantSpeechAudioSegment(
-        sequence: segment.sequence,
-        audio: Uint8List.fromList(<int>[1, 2, 3]),
-      );
+      for (var chunkIndex = 1; chunkIndex <= 2; chunkIndex++) {
+        yield AgentAssistantSpeechAudioSegment(
+          sequence: segment.sequence,
+          chunkIndex: chunkIndex,
+          audio: Uint8List.fromList(<int>[1, 2, 3, 4]),
+        );
+      }
     }
   }
 }

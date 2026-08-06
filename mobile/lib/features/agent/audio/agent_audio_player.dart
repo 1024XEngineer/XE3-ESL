@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -24,12 +24,20 @@ abstract interface class AgentAudioPlayer {
   Future<void> dispose();
 }
 
+abstract interface class AgentPCMStreamPlayer {
+  Future<void> startPCMStream({required double speed});
+
+  Future<void> appendPCM(Uint8List bytes);
+
+  Future<void> finishPCMStream();
+}
+
 final class AgentAudioPlaybackException implements Exception {
   const AgentAudioPlaybackException();
 }
 
 final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
-    implements AgentAudioPlayer {
+    implements AgentAudioPlayer, AgentPCMStreamPlayer {
   AudioplayersAgentAudioPlayer({
     AudioPlayer? player,
     Future<Directory> Function()? temporaryDirectory,
@@ -40,6 +48,7 @@ final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
   }
 
   static const _managedDirectoryName = 'speakup-agent-voice-playback';
+  static const _pcmChannel = MethodChannel('speakup/agent_pcm_player');
 
   final AudioPlayer _player;
   final Future<Directory> Function() _temporaryDirectory;
@@ -54,6 +63,7 @@ final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
   String? _ownedPlaybackPath;
   int _generation = 0;
   bool _disposed = false;
+  bool _pcmStreaming = false;
 
   @override
   Stream<Duration> get onPosition => _positions.stream;
@@ -94,6 +104,55 @@ final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
       speed: speed,
       generation: generation,
     );
+  }
+
+  @override
+  Future<void> startPCMStream({required double speed}) async {
+    if (_disposed || speed < 0.5 || speed > 2) {
+      throw const AgentAudioPlaybackException();
+    }
+    _generation++;
+    await _stopActive();
+    try {
+      await _pcmChannel.invokeMethod<void>('start', <String, Object>{
+        'sampleRate': 24000,
+        'channelCount': 1,
+        'bitsPerSample': 16,
+        'speed': speed,
+      });
+      _pcmStreaming = true;
+    } on PlatformException {
+      await _stopActive();
+      throw const AgentAudioPlaybackException();
+    }
+  }
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) async {
+    if (!_pcmStreaming || bytes.isEmpty || bytes.length.isOdd) {
+      throw const AgentAudioPlaybackException();
+    }
+    try {
+      await _pcmChannel.invokeMethod<void>('append', bytes);
+    } on PlatformException {
+      await _stopActive();
+      throw const AgentAudioPlaybackException();
+    }
+  }
+
+  @override
+  Future<void> finishPCMStream() async {
+    if (!_pcmStreaming) {
+      throw const AgentAudioPlaybackException();
+    }
+    try {
+      await _pcmChannel.invokeMethod<void>('finish');
+      _pcmStreaming = false;
+      _completions.add(null);
+    } on PlatformException {
+      await _stopActive();
+      throw const AgentAudioPlaybackException();
+    }
   }
 
   Future<void> _play(
@@ -181,6 +240,14 @@ final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
   }
 
   Future<void> _stopActive() async {
+    if (_pcmStreaming) {
+      _pcmStreaming = false;
+      try {
+        await _pcmChannel.invokeMethod<void>('stop');
+      } on PlatformException {
+        // Native playback is already treated as stopped locally.
+      }
+    }
     try {
       await _player.stop();
     } catch (_) {
@@ -228,7 +295,8 @@ final class AudioplayersAgentAudioPlayer extends WidgetsBindingObserver
   }
 }
 
-final class FakeAgentAudioPlayer implements AgentAudioPlayer {
+final class FakeAgentAudioPlayer
+    implements AgentAudioPlayer, AgentPCMStreamPlayer {
   final StreamController<Duration> _positions =
       StreamController<Duration>.broadcast(sync: true);
   final StreamController<void> _completions = StreamController<void>.broadcast(
@@ -236,6 +304,7 @@ final class FakeAgentAudioPlayer implements AgentAudioPlayer {
   );
   bool playing = false;
   double? speed;
+  final List<Uint8List> pcmChunks = <Uint8List>[];
 
   @override
   Stream<Duration> get onPosition => _positions.stream;
@@ -254,6 +323,20 @@ final class FakeAgentAudioPlayer implements AgentAudioPlayer {
     playing = true;
     this.speed = speed;
   }
+
+  @override
+  Future<void> startPCMStream({required double speed}) async {
+    playing = true;
+    this.speed = speed;
+  }
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) async {
+    pcmChunks.add(Uint8List.fromList(bytes));
+  }
+
+  @override
+  Future<void> finishPCMStream() async {}
 
   void emitPosition(Duration position) => _positions.add(position);
 

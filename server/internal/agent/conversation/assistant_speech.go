@@ -3,18 +3,17 @@ package conversation
 import "context"
 
 const (
-	AssistantSpeechContentTypeWAV  = "audio/wav"
+	AssistantSpeechContentTypePCM  = "audio/pcm"
+	AssistantSpeechSampleRate      = 24_000
+	AssistantSpeechChannelCount    = 1
+	AssistantSpeechBitsPerSample   = 16
 	MaxAssistantSpeechSegmentRunes = 800
 )
 
-type AssistantSpeechSegment struct {
-	ContentType string
-	Audio       []byte
-}
-
 type AssistantSpeechSynthesizer interface {
-	SynthesizeAssistantSegment(
+	StreamAssistantSegment(
 		context.Context,
 		string,
-	) (AssistantSpeechSegment, error)
+		func([]byte) error,
+	) error
 }

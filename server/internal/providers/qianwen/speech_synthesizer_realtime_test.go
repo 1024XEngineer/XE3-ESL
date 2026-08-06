@@ -1,13 +1,13 @@
 package qianwen
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,7 +15,7 @@ import (
 func TestRealtimeSynthesisUsesDocumentedWebSocketSequence(t *testing.T) {
 	t.Parallel()
 	const apiKey = "test-realtime-tts-key"
-	wav := ttsTestWAV(20 * time.Millisecond)
+	chunks := [][]byte{{1, 2, 3, 4}, {5, 6, 7, 8}}
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -56,7 +56,7 @@ func TestRealtimeSynthesisUsesDocumentedWebSocketSequence(t *testing.T) {
 		if run.Header.Action != "run-task" ||
 			run.Payload.Model != "qwen-audio-3.0-tts-flash" ||
 			run.Payload.Parameters.Voice != "loongeva_v3.6" ||
-			run.Payload.Parameters.Format != "wav" ||
+			run.Payload.Parameters.Format != "pcm" ||
 			run.Payload.Parameters.SampleRate != ttsOutputSampleRate {
 			t.Errorf("unexpected run-task: %#v", run)
 			return
@@ -105,9 +105,11 @@ func TestRealtimeSynthesisUsesDocumentedWebSocketSequence(t *testing.T) {
 			t.Errorf("unexpected finish-task: %s", finishPayload)
 			return
 		}
-		if err := connection.WriteMessage(websocket.BinaryMessage, wav); err != nil {
-			t.Errorf("write audio: %v", err)
-			return
+		for _, chunk := range chunks {
+			if err := connection.WriteMessage(websocket.BinaryMessage, chunk); err != nil {
+				t.Errorf("write audio: %v", err)
+				return
+			}
 		}
 		if err := connection.WriteJSON(map[string]any{
 			"header": map[string]any{
@@ -124,14 +126,21 @@ func TestRealtimeSynthesisUsesDocumentedWebSocketSequence(t *testing.T) {
 		return nil, nil
 	}), apiKey, "")
 	synthesizer.realtimeEndpoint = "ws" + strings.TrimPrefix(server.URL, "http")
-	result, err := synthesizer.synthesizeRealtimeWAV(
+	var received [][]byte
+	err := synthesizer.streamRealtimePCM(
 		context.Background(),
 		" Speak this sentence. ",
+		func(chunk []byte) error {
+			received = append(received, bytes.Clone(chunk))
+			return nil
+		},
 	)
 	if err != nil {
 		t.Fatalf("synthesize realtime: %v", err)
 	}
-	if string(result[:4]) != "RIFF" || string(result[8:12]) != "WAVE" {
-		t.Fatalf("result is not WAV: %q", result[:12])
+	if len(received) != len(chunks) ||
+		!bytes.Equal(received[0], chunks[0]) ||
+		!bytes.Equal(received[1], chunks[1]) {
+		t.Fatalf("received chunks = %#v", received)
 	}
 }

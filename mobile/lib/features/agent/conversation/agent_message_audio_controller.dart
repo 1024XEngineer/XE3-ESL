@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
@@ -382,14 +380,8 @@ final class AgentMessageAudioController extends ChangeNotifier
     final live = _liveAssistantSpeech;
     if (live != null && live.playing) {
       live.playing = false;
-      if (live.audio.isNotEmpty) {
-        unawaited(_playNextLiveAssistantSegment(live));
-      } else if (live.remoteCompleted) {
+      if (live.remoteCompleted) {
         _finishLiveAssistantSpeech(live);
-      } else {
-        _playingMessageId = null;
-        _loadingMessageId = live.messageId;
-        notifyListeners();
       }
       return;
     }
@@ -400,7 +392,9 @@ final class AgentMessageAudioController extends ChangeNotifier
   void _syncLiveAssistantSpeech(List<AgentMessage> messages) {
     final speechClient = assistantSpeechClient;
     final threadId = _threadId;
-    if (speechClient == null || threadId == null) {
+    if (speechClient == null ||
+        threadId == null ||
+        audioPlayer is! AgentPCMStreamPlayer) {
       return;
     }
     AgentMessage? streaming;
@@ -479,7 +473,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     }
     _liveSpeechStartToken = null;
     final speechClient = assistantSpeechClient;
-    if (speechClient == null) {
+    if (speechClient == null || audioPlayer is! AgentPCMStreamPlayer) {
       return;
     }
     final live = _LiveAssistantSpeech(
@@ -509,9 +503,18 @@ final class AgentMessageAudioController extends ChangeNotifier
               return;
             }
             live.remoteCompleted = true;
-            if (!live.playing && live.audio.isEmpty) {
+            if (!live.playing) {
               _finishLiveAssistantSpeech(live);
+              return;
             }
+            live.playbackOperation = live.playbackOperation
+                .then(
+                  (_) =>
+                      (audioPlayer as AgentPCMStreamPlayer).finishPCMStream(),
+                )
+                .catchError((Object error) {
+                  _failLiveAssistantSpeech(live, error);
+                });
           },
         );
     _appendLiveAssistantText(live, message.text, finalText: false);
@@ -561,8 +564,12 @@ final class AgentMessageAudioController extends ChangeNotifier
     _LiveAssistantSpeech live,
     AgentAssistantSpeechAudioSegment segment,
   ) {
-    if (!identical(_liveAssistantSpeech, live) ||
-        segment.sequence != live.nextAudioSequence) {
+    final sameSegment = segment.sequence == live.audioSequence;
+    final nextSegment = segment.sequence == live.audioSequence + 1;
+    final validChunk = sameSegment
+        ? segment.chunkIndex == live.nextChunkIndex
+        : nextSegment && segment.chunkIndex == 1;
+    if (!identical(_liveAssistantSpeech, live) || !validChunk) {
       segment.audio.fillRange(0, segment.audio.length, 0);
       _failLiveAssistantSpeech(
         live,
@@ -570,32 +577,37 @@ final class AgentMessageAudioController extends ChangeNotifier
       );
       return;
     }
-    live.nextAudioSequence++;
-    live.audio.add(segment.audio);
+    if (nextSegment) {
+      live.audioSequence = segment.sequence;
+      live.nextChunkIndex = 1;
+    }
+    live.nextChunkIndex++;
+    final audio = segment.audio;
+    final streamPlayer = audioPlayer as AgentPCMStreamPlayer;
     if (!live.playing) {
-      unawaited(_playNextLiveAssistantSegment(live));
+      live.playing = true;
+      _loadingMessageId = null;
+      _playingMessageId = live.messageId;
+      _playbackPosition = Duration.zero;
+      notifyListeners();
     }
-  }
-
-  Future<void> _playNextLiveAssistantSegment(_LiveAssistantSpeech live) async {
-    if (!identical(_liveAssistantSpeech, live) ||
-        live.playing ||
-        live.audio.isEmpty) {
-      return;
-    }
-    final audio = live.audio.removeFirst();
-    live.playing = true;
-    _loadingMessageId = null;
-    _playingMessageId = live.messageId;
-    _playbackPosition = Duration.zero;
-    notifyListeners();
-    try {
-      await audioPlayer.playWav(audio, speed: _speechSpeed);
-    } catch (error) {
-      _failLiveAssistantSpeech(live, error);
-    } finally {
-      audio.fillRange(0, audio.length, 0);
-    }
+    live.playbackOperation = live.playbackOperation
+        .then((_) async {
+          if (!identical(_liveAssistantSpeech, live)) {
+            return;
+          }
+          if (!live.playerStarted) {
+            live.playerStarted = true;
+            await streamPlayer.startPCMStream(speed: _speechSpeed);
+          }
+          await streamPlayer.appendPCM(audio);
+        })
+        .catchError((Object error) {
+          _failLiveAssistantSpeech(live, error);
+        })
+        .whenComplete(() {
+          audio.fillRange(0, audio.length, 0);
+        });
   }
 
   void _finishLiveAssistantSpeech(_LiveAssistantSpeech live) {
@@ -639,9 +651,8 @@ final class AgentMessageAudioController extends ChangeNotifier
       await live.segments.close();
     }
     await live.subscription?.cancel();
-    while (live.audio.isNotEmpty) {
-      final audio = live.audio.removeFirst();
-      audio.fillRange(0, audio.length, 0);
+    if (live.playerStarted) {
+      await audioPlayer.stop();
     }
   }
 
@@ -790,14 +801,16 @@ final class _LiveAssistantSpeech {
   final StreamController<AgentAssistantSpeechTextSegment> segments =
       StreamController<AgentAssistantSpeechTextSegment>();
   StreamSubscription<AgentAssistantSpeechAudioSegment>? subscription;
-  final Queue<Uint8List> audio = Queue<Uint8List>();
   String observedText = '';
   int consumedOffset = 0;
   int nextSequence = 1;
-  int nextAudioSequence = 1;
+  int audioSequence = 0;
+  int nextChunkIndex = 1;
   bool inputClosed = false;
   bool remoteCompleted = false;
   bool playing = false;
+  bool playerStarted = false;
+  Future<void> playbackOperation = Future<void>.value();
 }
 
 List<int> _assistantSpeechBoundaries(

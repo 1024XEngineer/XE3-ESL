@@ -27,10 +27,12 @@ final class AgentAssistantSpeechTextSegment {
 final class AgentAssistantSpeechAudioSegment {
   const AgentAssistantSpeechAudioSegment({
     required this.sequence,
+    required this.chunkIndex,
     required this.audio,
   });
 
   final int sequence;
+  final int chunkIndex;
   final Uint8List audio;
 }
 

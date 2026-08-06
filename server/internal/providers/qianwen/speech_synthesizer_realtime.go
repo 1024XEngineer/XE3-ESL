@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	"github.com/gorilla/websocket"
@@ -44,17 +44,18 @@ func realtimeTTSEndpoint(baseURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
+func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	ctx context.Context,
 	text string,
-) ([]byte, error) {
-	if synthesizer == nil || ctx == nil {
-		return nil, errors.New("Qianwen realtime TTS is unavailable")
+	consume func([]byte) error,
+) error {
+	if synthesizer == nil || ctx == nil || consume == nil {
+		return errors.New("Qianwen realtime TTS is unavailable")
 	}
 	if err := protocol.ValidateSynthesisRequest(
 		protocol.SynthesisRequest{Text: text},
 	); err != nil {
-		return nil, err
+		return err
 	}
 	callContext, cancel := context.WithTimeout(ctx, synthesizer.timeout)
 	defer cancel()
@@ -70,7 +71,7 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 		defer response.Body.Close()
 	}
 	if err != nil {
-		return nil, speechTransportError(
+		return speechTransportError(
 			protocol.SpeechOperationSynthesis,
 			callContext,
 			err,
@@ -83,7 +84,7 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 	}
 	taskID, err := newRealtimeTaskID()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := connection.WriteJSON(map[string]any{
 		"header": map[string]any{
@@ -94,16 +95,16 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 			"function": "SpeechSynthesizer", "model": synthesizer.model,
 			"parameters": map[string]any{
 				"text_type": "PlainText", "voice": synthesizer.voice,
-				"format": "wav", "sample_rate": ttsOutputSampleRate,
+				"format": "pcm", "sample_rate": agentconversation.AssistantSpeechSampleRate,
 				"volume": 50, "rate": 1, "pitch": 1, "enable_ssml": false,
 			},
 			"input": map[string]any{},
 		},
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := waitForSpeechRealtimeEvent(connection, taskID, "task-started"); err != nil {
-		return nil, err
+		return err
 	}
 	if err := connection.WriteJSON(map[string]any{
 		"header": map[string]any{
@@ -111,7 +112,7 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 		},
 		"payload": map[string]any{"input": map[string]any{"text": strings.TrimSpace(text)}},
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := connection.WriteJSON(map[string]any{
 		"header": map[string]any{
@@ -119,35 +120,40 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 		},
 		"payload": map[string]any{"input": map[string]any{}},
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	var audio bytes.Buffer
+	var audioBytes int64
 	for {
 		messageType, payload, readErr := connection.ReadMessage()
 		if readErr != nil {
-			return nil, readErr
+			return readErr
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
-			if len(payload) == 0 ||
-				int64(audio.Len()+len(payload)) > platformmedia.MaxAudioBytes {
-				return nil, errors.New("Qianwen realtime TTS audio exceeds the accepted size")
+			if len(payload) == 0 || audioBytes+int64(len(payload)) > platformmedia.MaxAudioBytes {
+				return errors.New("Qianwen realtime TTS audio exceeds the accepted size")
 			}
-			_, _ = audio.Write(payload)
+			audioBytes += int64(len(payload))
+			if err := consume(payload); err != nil {
+				return err
+			}
 		case websocket.TextMessage:
 			event, eventErr := decodeSpeechRealtimeEvent(payload, taskID)
 			if eventErr != nil {
-				return nil, eventErr
+				return eventErr
 			}
 			switch event {
 			case "result-generated":
 			case "task-finished":
-				return normalizeRealtimeWAV(audio.Bytes())
+				if audioBytes == 0 {
+					return errors.New("Qianwen realtime TTS returned no audio")
+				}
+				return nil
 			default:
-				return nil, fmt.Errorf("Qianwen realtime TTS returned unexpected event %q", event)
+				return fmt.Errorf("Qianwen realtime TTS returned unexpected event %q", event)
 			}
 		default:
-			return nil, errors.New("Qianwen realtime TTS returned an invalid frame")
+			return errors.New("Qianwen realtime TTS returned an invalid frame")
 		}
 	}
 }
@@ -184,25 +190,6 @@ func decodeSpeechRealtimeEvent(payload []byte, taskID string) (string, error) {
 		return "", errors.New("Qianwen realtime TTS event type is missing")
 	}
 	return envelope.Header.Event, nil
-}
-
-func normalizeRealtimeWAV(audio []byte) ([]byte, error) {
-	if len(audio) < 44 || int64(len(audio)) > platformmedia.MaxAudioBytes {
-		return nil, errors.New("Qianwen realtime TTS returned invalid WAV audio")
-	}
-	normalized, err := normalizeProviderWAVSizeMarkers(
-		bytes.NewReader(audio),
-		int64(len(audio)),
-	)
-	if err != nil {
-		return nil, err
-	}
-	result, err := io.ReadAll(io.LimitReader(normalized, platformmedia.MaxAudioBytes+1))
-	if err != nil || len(result) != len(audio) || string(result[:4]) != "RIFF" ||
-		string(result[8:12]) != "WAVE" {
-		return nil, errors.New("Qianwen realtime TTS returned malformed WAV audio")
-	}
-	return result, nil
 }
 
 func newRealtimeTaskID() (string, error) {

@@ -408,22 +408,36 @@ final class WireAgentVoiceClient
           'segment.started',
           sequence: expectedSequence,
         );
-        final audioMessage = await _nextAssistantSpeechMessage(messages);
-        if (audioMessage is! List<int> ||
-            audioMessage.isEmpty ||
-            audioMessage.length > _maximumAudioBytes) {
-          throw _invalidResponse();
+        var chunkIndex = 0;
+        var receivedBytes = 0;
+        while (true) {
+          final message = await _nextAssistantSpeechMessage(messages);
+          if (message is String) {
+            _requireAssistantSpeechEvent(
+              message,
+              'segment.completed',
+              sequence: expectedSequence,
+            );
+            if (chunkIndex == 0) {
+              throw _invalidResponse();
+            }
+            break;
+          }
+          if (message is! List<int> ||
+              message.isEmpty ||
+              message.length.isOdd) {
+            throw _invalidResponse();
+          }
+          receivedBytes += message.length;
+          if (receivedBytes > _maximumAudioBytes) {
+            throw _invalidResponse();
+          }
+          yield AgentAssistantSpeechAudioSegment(
+            sequence: expectedSequence,
+            chunkIndex: ++chunkIndex,
+            audio: Uint8List.fromList(message),
+          );
         }
-        final completed = await _nextAssistantSpeechMessage(messages);
-        _requireAssistantSpeechEvent(
-          completed,
-          'segment.completed',
-          sequence: expectedSequence,
-        );
-        yield AgentAssistantSpeechAudioSegment(
-          sequence: expectedSequence,
-          audio: Uint8List.fromList(audioMessage),
-        );
         expectedSequence++;
       }
       connection.socket.add(
@@ -2334,14 +2348,26 @@ void _requireAssistantSpeechEvent(
   final data = _strictObject(
     envelope['data'],
     allowed: switch (type) {
-      'segment.started' => const <String>{'sequence'},
-      'segment.completed' => const <String>{'sequence', 'content_type'},
+      'segment.started' => const <String>{
+        'sequence',
+        'content_type',
+        'sample_rate',
+        'channel_count',
+        'bits_per_sample',
+      },
+      'segment.completed' => const <String>{'sequence'},
       'stream.failed' => const <String>{'kind', 'retryable'},
       _ => const <String>{},
     },
     required: switch (type) {
-      'segment.started' => const <String>{'sequence'},
-      'segment.completed' => const <String>{'sequence', 'content_type'},
+      'segment.started' => const <String>{
+        'sequence',
+        'content_type',
+        'sample_rate',
+        'channel_count',
+        'bits_per_sample',
+      },
+      'segment.completed' => const <String>{'sequence'},
       'stream.failed' => const <String>{'kind', 'retryable'},
       _ => const <String>{},
     },
@@ -2360,9 +2386,13 @@ void _requireAssistantSpeechEvent(
       _strictInt(data['sequence'], min: 1, max: 64) != sequence) {
     throw _invalidResponse();
   }
-  if (type == 'segment.completed' &&
-      _strictString(data['content_type'], min: 1, max: 32) != 'audio/wav') {
-    throw _invalidResponse();
+  if (type == 'segment.started') {
+    if (_strictString(data['content_type'], min: 1, max: 32) != 'audio/pcm' ||
+        _strictInt(data['sample_rate'], min: 8000, max: 48000) != 24000 ||
+        _strictInt(data['channel_count'], min: 1, max: 2) != 1 ||
+        _strictInt(data['bits_per_sample'], min: 8, max: 32) != 16) {
+      throw _invalidResponse();
+    }
   }
 }
 
