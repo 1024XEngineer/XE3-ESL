@@ -101,10 +101,8 @@ private final class AgentPCMStreamPlayer {
     )
     try session.setActive(true)
     guard let format = AVAudioFormat(
-      commonFormat: .pcmFormatInt16,
-      sampleRate: 24_000,
-      channels: 1,
-      interleaved: true
+      standardFormatWithSampleRate: 24_000,
+      channels: 1
     ) else {
       throw PlayerError.invalidState
     }
@@ -128,25 +126,26 @@ private final class AgentPCMStreamPlayer {
       data.count > 0,
       data.count.isMultiple(of: 2),
       let format = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: 24_000,
-        channels: 1,
-        interleaved: true
+        standardFormatWithSampleRate: 24_000,
+        channels: 1
       ),
       let buffer = AVAudioPCMBuffer(
         pcmFormat: format,
         frameCapacity: AVAudioFrameCount(data.count / 2)
-      )
+      ),
+      let samples = buffer.floatChannelData?[0]
     else {
       throw PlayerError.invalidState
     }
     buffer.frameLength = buffer.frameCapacity
-    let audioBuffer = buffer.mutableAudioBufferList.pointee.mBuffers
-    guard let destination = audioBuffer.mData else {
-      throw PlayerError.invalidState
+    data.withUnsafeBytes { rawBuffer in
+      let bytes = rawBuffer.bindMemory(to: UInt8.self)
+      for frame in 0..<Int(buffer.frameLength) {
+        let offset = frame * 2
+        let value = UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+        samples[frame] = Float(Int16(bitPattern: value)) / 32_768
+      }
     }
-    data.copyBytes(to: destination.assumingMemoryBound(to: UInt8.self), count: data.count)
-    buffer.mutableAudioBufferList.pointee.mBuffers.mDataByteSize = UInt32(data.count)
     pendingBuffers += 1
     player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) {
       [weak self] _ in
