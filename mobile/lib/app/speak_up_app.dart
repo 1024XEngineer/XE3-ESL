@@ -209,6 +209,14 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   late final bool _ownsMessageAudioController;
   late final bool _ownsPracticeController;
 
+  Future<void> _openSavedInterviewPlan(String planId) async {
+    final controller = widget.jobPreparationController;
+    if (controller == null || !await controller.openSavedPlan(planId)) {
+      return;
+    }
+    _navigatorKey.currentState?.pushNamed(AppRoutes.jobPreparation);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -376,11 +384,18 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             preparationController: widget.preparationController,
             ieltsController: widget.ieltsPreparationController,
             launchController: widget.preparationLaunchController,
+            jobPreparationController: widget.jobPreparationController,
             onOpenJobPreparation: widget.jobPreparationController == null
                 ? null
-                : () => _navigatorKey.currentState?.pushNamed(
-                    AppRoutes.jobPreparation,
-                  ),
+                : () {
+                    widget.jobPreparationController!.beginNewPreparation();
+                    _navigatorKey.currentState?.pushNamed(
+                      AppRoutes.jobPreparation,
+                    );
+                  },
+            onOpenInterviewPlan: widget.jobPreparationController == null
+                ? null
+                : (planId) => unawaited(_openSavedInterviewPlan(planId)),
             onPracticeStarted: () => _navigatorKey.currentState
                 ?.pushReplacementNamed(AppRoutes.practice),
           ),
@@ -392,6 +407,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
               resumeController: widget.resumeController,
               onPracticeStarted: () => _navigatorKey.currentState
                   ?.pushReplacementNamed(AppRoutes.practice),
+              onPlanCreated: () => _navigatorKey.currentState?.pop(),
             ),
           AppRoutes.practice => _buildPracticePage(),
           AppRoutes.conversation => SpeakUpShell(

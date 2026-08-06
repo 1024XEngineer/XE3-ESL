@@ -354,6 +354,10 @@ components:
       $ref: ./modules/preparation.yaml#/components/schemas/JobTargetCandidate
     PracticePlan:
       $ref: ./modules/preparation.yaml#/components/schemas/PracticePlan
+    PracticePlanList:
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticePlanList
+    PracticePlanSummary:
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticePlanSummary
     PracticeSession:
       $ref: ./modules/practice.yaml#/components/schemas/PracticeSession
     PracticeParticipant:

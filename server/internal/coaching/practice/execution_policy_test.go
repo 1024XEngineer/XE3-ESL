@@ -24,7 +24,7 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 	}{
 		{"daily", DailyPracticeSessionPolicy, true, false, 1, nil},
 		{"workplace", WorkplacePracticeSessionPolicy, true, false, 1, nil},
-		{"interview", InterviewPracticeSessionPolicy, false, true, 1, nil},
+		{"interview", InterviewPracticeSessionPolicy, false, true, 3, nil},
 		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, false, true, 3, nil},
 		{"exam", ExamPracticeSessionPolicy, false, false, 1, nil},
 		{"unknown", "unknown.practice.session.v1", false, false, 0, ErrExecutionPolicyNotFound},

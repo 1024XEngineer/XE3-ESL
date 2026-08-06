@@ -103,6 +103,23 @@ type PracticePlan struct {
 	UpdatedAt           time.Time                `json:"updated_at"`
 }
 
+type PracticePlanSummary struct {
+	ID                       string                   `json:"practice_plan_id"`
+	Revision                 int                      `json:"plan_revision"`
+	Status                   PlanStatus               `json:"practice_plan_status"`
+	PracticeExperience       scene.PracticeExperience `json:"practice_experience"`
+	SceneName                string                   `json:"scene_name"`
+	PracticeScope            string                   `json:"practice_scope"`
+	JobTitle                 string                   `json:"job_title"`
+	PracticeObjectives       []string                 `json:"practice_objectives"`
+	ResumeUsed               bool                     `json:"resume_used"`
+	SuggestedDurationSeconds int                      `json:"suggested_duration_seconds"`
+	MinEffectiveTurns        int                      `json:"min_effective_turns"`
+	MaxEffectiveTurns        int                      `json:"max_effective_turns"`
+	CreatedAt                time.Time                `json:"created_at"`
+	UpdatedAt                time.Time                `json:"updated_at"`
+}
+
 type CreatePlanRequest struct {
 	SourceThreadID        string                  `json:"source_thread_id,omitempty"`
 	GoalID                string                  `json:"goal_id,omitempty"`
@@ -180,11 +197,21 @@ type PlanRepository interface {
 		requestcontext.Actor,
 		string,
 	) (PracticePlan, error)
+	ListCurrentPlans(
+		context.Context,
+		requestcontext.Actor,
+		scene.PracticeExperience,
+	) ([]PracticePlan, error)
 	RevisePlan(
 		context.Context,
 		requestcontext.Actor,
 		RevisePlanCommand,
 	) (plan PracticePlan, replayed bool, err error)
+	ArchivePlan(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) error
 	// ReadExecutablePlan succeeds only when exactRevision is the Plan's
 	// current revision and its status is ready.
 	ReadExecutablePlan(

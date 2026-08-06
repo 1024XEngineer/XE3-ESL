@@ -146,6 +146,18 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: JobPreparationWizard(controller: controller)),
     );
+    expect(find.byKey(const Key('candidate-title-field')), findsOneWidget);
+    expect(find.byKey(const Key('candidate-company-field')), findsOneWidget);
+    expect(
+      find.byKey(const Key('candidate-responsibilities-field')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('candidate-skills-field')), findsOneWidget);
+    expect(
+      find.byKey(const Key('candidate-communication-field')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('candidate-seniority-field')), findsNothing);
     await _scrollTo(
       tester,
       target: const Key('job-practice-focus-field'),
@@ -157,19 +169,24 @@ void main() {
       find.byKey(const Key('job-practice-focus-suggestions')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('job-practice-focus-技术深挖')));
+    final focusField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const Key('job-practice-focus-field')),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(focusField.controller?.text, isEmpty);
+    await tester.tap(find.byKey(const Key('job-practice-focus-突出成就与贡献')));
     await tester.pump();
 
-    expect(controller.candidate?.practiceGoals, contains('技术深挖'));
+    expect(controller.candidate?.practiceGoals, contains('突出成就与贡献'));
   });
 
-  testWidgets('runs confirmation and preview before one explicit start', (
+  testWidgets('saves a generated plan without creating a Session', (
     tester,
   ) async {
-    final pendingSession = Completer<PreparationPracticeBootstrap>();
-    final client = _WizardClient(sessionCompleter: pendingSession);
-    var voiceCalls = 0;
-    var opened = 0;
+    final client = _WizardClient();
+    var created = 0;
     final controller = _controller(
       client,
       voiceActivator:
@@ -178,9 +195,7 @@ void main() {
             required scene,
             required bootstrap,
             required clientOperationId,
-          }) async {
-            voiceCalls++;
-          },
+          }) async {},
     );
     addTearDown(controller.dispose);
 
@@ -188,7 +203,7 @@ void main() {
       MaterialApp(
         home: JobPreparationWizard(
           controller: controller,
-          onPracticeStarted: () => opened++,
+          onPlanCreated: () => created++,
         ),
       ),
     );
@@ -208,6 +223,10 @@ void main() {
       find.byKey(const Key('job-wizard-confirmation-step')),
       findsOneWidget,
     );
+    await tester.enterText(
+      find.byKey(const Key('job-practice-focus-field')),
+      '自我介绍',
+    );
     await _scrollTo(
       tester,
       target: const Key('confirm-job-analysis-button'),
@@ -222,19 +241,14 @@ void main() {
 
     await _scrollTo(
       tester,
-      target: const Key('start-job-practice-button'),
+      target: const Key('save-job-plan-button'),
       scrollable: const Key('job-wizard-preview-step'),
     );
-    await tester.tap(find.byKey(const Key('start-job-practice-button')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('start-job-practice-button')));
-    expect(client.sessionCalls, 1);
-    pendingSession.complete(_bootstrap);
-    await tester.pump();
+    await tester.tap(find.byKey(const Key('save-job-plan-button')));
     await tester.pump();
 
-    expect(voiceCalls, 1);
-    expect(opened, 1);
+    expect(client.sessionCalls, 0);
+    expect(created, 1);
   });
 
   testWidgets('confirmation selects an existing READY resume or no resume', (
@@ -328,6 +342,10 @@ void main() {
     expect(find.text('临时简历解析失败，可以重试或重新上传。'), findsOneWidget);
     expect(find.text('重试解析'), findsOneWidget);
     expect(controller.candidate?.jobTitle, 'Backend engineer');
+    await tester.enterText(
+      find.byKey(const Key('job-practice-focus-field')),
+      '自我介绍',
+    );
     await _scrollTo(
       tester,
       target: const Key('confirm-job-analysis-button'),
@@ -371,6 +389,10 @@ void main() {
           resumeController: resumeController,
         ),
       ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('job-practice-focus-field')),
+      '自我介绍',
     );
     await _scrollTo(
       tester,
@@ -425,6 +447,10 @@ void main() {
         ),
       ),
     );
+    await tester.enterText(
+      find.byKey(const Key('job-practice-focus-field')),
+      '自我介绍',
+    );
     await _scrollTo(
       tester,
       target: const Key('confirm-job-analysis-button'),
@@ -457,10 +483,7 @@ void main() {
           },
     );
     addTearDown(controller.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-    await controller.confirm();
-    await controller.createPreview();
+    expect(await controller.openSavedPlan(_plan.id), isTrue);
 
     await tester.pumpWidget(
       MaterialApp(home: JobPreparationWizard(controller: controller)),
@@ -690,6 +713,11 @@ final class _WizardClient implements JobPreparationClient {
 
   @override
   Future<PracticePlan> getPlan(String planId) async => _planValue ?? _plan;
+
+  @override
+  Future<List<PracticePlanSummary>> listPlans({
+    required PracticeExperience experience,
+  }) async => const <PracticePlanSummary>[];
 
   @override
   Future<JobTarget> getJobTarget(String jobTargetId) async =>

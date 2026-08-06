@@ -62,4 +62,5 @@ import "embed"
 //go:embed 000074_scene_experience_policy_boundary.*.sql
 //go:embed 000075_remove_agent_message_memes.*.sql
 //go:embed 000076_temporary_resumes.*.sql
+//go:embed 000077_restore_interview_follow_ups.*.sql
 var Files embed.FS

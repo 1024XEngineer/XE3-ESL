@@ -2,16 +2,23 @@ package preparation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
 
 type planHTTPApplicationStub struct {
+	list func(
+		context.Context,
+		requestcontext.Actor,
+		scene.PracticeExperience,
+	) ([]PracticePlanSummary, error)
 	create func(
 		context.Context,
 		requestcontext.Actor,
@@ -30,6 +37,61 @@ type planHTTPApplicationStub struct {
 		string,
 		RevisePlanRequest,
 	) (PracticePlan, bool, error)
+}
+
+func (s planHTTPApplicationStub) ListPlans(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlanSummary, error) {
+	if s.list == nil {
+		return nil, errors.New("unexpected ListPlans call")
+	}
+	return s.list(ctx, actor, experience)
+}
+
+func TestPlanHTTPListsInterviewPlans(t *testing.T) {
+	actor := profileHTTPActor()
+	want := []PracticePlanSummary{{
+		ID:                 "plan-1",
+		Revision:           1,
+		Status:             PlanStatusReady,
+		PracticeExperience: scene.PracticeExperienceInterview,
+		JobTitle:           "Backend Engineer",
+	}}
+	router := newPlanHTTPTestRouter(t, planHTTPApplicationStub{
+		list: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			experience scene.PracticeExperience,
+		) ([]PracticePlanSummary, error) {
+			if gotActor != actor || experience != scene.PracticeExperienceInterview {
+				t.Fatalf("ListPlans = (%#v, %q)", gotActor, experience)
+			}
+			return want, nil
+		},
+	})
+	response := serveProfileHTTPRequest(
+		router,
+		http.MethodGet,
+		"/v1/practice-plans?practice_experience=INTERVIEW",
+		"",
+		"",
+		"",
+		&actor,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", response.Code, response.Body)
+	}
+	var body struct {
+		Plans []PracticePlanSummary `json:"practice_plans"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if !reflect.DeepEqual(body.Plans, want) {
+		t.Fatalf("plans = %#v, want %#v", body.Plans, want)
+	}
 }
 
 func (s planHTTPApplicationStub) CreatePlan(

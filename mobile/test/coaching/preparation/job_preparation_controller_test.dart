@@ -1020,6 +1020,11 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   }
 
   @override
+  Future<List<PracticePlanSummary>> listPlans({
+    required PracticeExperience experience,
+  }) async => const <PracticePlanSummary>[];
+
+  @override
   Future<PracticePlan> revisePlan({
     required String planId,
     required RevisePreparationPlanInput input,

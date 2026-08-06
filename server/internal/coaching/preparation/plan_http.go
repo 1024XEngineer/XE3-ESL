@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -12,6 +13,11 @@ import (
 // PlanHTTPApplication is Preparation's transport-facing Plan boundary.
 // Practice consumes only PlanReader and never registers these write routes.
 type PlanHTTPApplication interface {
+	ListPlans(
+		context.Context,
+		requestcontext.Actor,
+		scene.PracticeExperience,
+	) ([]PracticePlanSummary, error)
 	CreatePlan(
 		context.Context,
 		requestcontext.Actor,
@@ -30,6 +36,7 @@ type PlanHTTPApplication interface {
 		string,
 		RevisePlanRequest,
 	) (PracticePlan, bool, error)
+	ArchivePlan(context.Context, requestcontext.Actor, string) error
 }
 
 type PlanHTTPHandler struct {
@@ -46,9 +53,59 @@ func NewPlanHTTPHandler(
 }
 
 func (h *PlanHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
+	routes.GET("/v1/practice-plans", h.list)
 	routes.POST("/v1/practice-plans", h.create)
 	routes.GET("/v1/practice-plans/:practice_plan_id", h.read)
 	routes.PUT("/v1/practice-plans/:practice_plan_id", h.revise)
+	routes.DELETE("/v1/practice-plans/:practice_plan_id", h.archive)
+}
+
+func (h *PlanHTTPHandler) archive(c *gin.Context) {
+	setProfilePrivateResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		writePlanAuthenticationRequired(c)
+		return
+	}
+	planID := c.Param("practice_plan_id")
+	if !validPlanResourceID(planID) {
+		writePlanHTTPError(c, http.StatusNotFound, "practice_plan_not_found")
+		return
+	}
+	if err := h.application.ArchivePlan(
+		c.Request.Context(),
+		actor,
+		planID,
+	); err != nil {
+		writePlanServiceError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *PlanHTTPHandler) list(c *gin.Context) {
+	setProfilePrivateResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		writePlanAuthenticationRequired(c)
+		return
+	}
+	query := c.Request.URL.Query()
+	if len(query) != 1 || len(query["practice_experience"]) != 1 {
+		writePlanHTTPError(c, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	experience := scene.PracticeExperience(c.Query("practice_experience"))
+	plans, err := h.application.ListPlans(
+		c.Request.Context(),
+		actor,
+		experience,
+	)
+	if err != nil {
+		writePlanServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"practice_plans": plans})
 }
 
 func (h *PlanHTTPHandler) create(c *gin.Context) {

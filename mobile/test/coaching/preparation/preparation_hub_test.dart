@@ -52,23 +52,11 @@ void main() {
     await _openModule(tester, const Key('practice-hub-interview'));
 
     expect(find.text('英文面试'), findsOneWidget);
-    expect(find.byKey(const Key('interview-mode-hr')), findsOneWidget);
-    expect(
-      find.byKey(const Key('interview-mode-professional')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('create-interview-plan')), findsOneWidget);
+    expect(find.byKey(const Key('interview-plan-empty')), findsOneWidget);
+    expect(find.text('专项练习'), findsNothing);
     expect(find.text('英文自我介绍'), findsNothing);
     expect(find.text('案例面试'), findsNothing);
-
-    await tester.tap(find.byKey(const Key('interview-mode-hr')));
-    await tester.pumpAndSettle();
-    expect(find.text('英文自我介绍'), findsOneWidget);
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('interview-mode-professional')));
-    await tester.pumpAndSettle();
-    expect(find.text('案例面试'), findsOneWidget);
     expect(find.text('IELTS 口语完整模拟'), findsNothing);
     expect(find.text('进度与风险汇报'), findsNothing);
   });
@@ -196,7 +184,7 @@ void main() {
     await _pumpHub(tester, controller);
 
     await _openModule(tester, const Key('practice-hub-interview'));
-    final interviewMode = find.byKey(const Key('interview-mode-professional'));
+    final interviewMode = find.byKey(const Key('create-interview-plan'));
     await tester.scrollUntilVisible(
       interviewMode,
       180,

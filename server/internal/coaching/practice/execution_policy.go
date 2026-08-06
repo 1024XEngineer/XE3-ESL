@@ -4,6 +4,7 @@ import "errors"
 
 const (
 	GenericPracticeTurnPolicy             = "generic.practice.turn.v1"
+	InterviewPracticeTurnPolicy           = "interview.practice.turn.v1"
 	DailyHotelCheckinIssueTurnPolicy      = "daily.hotel_checkin_issue.turn.v1"
 	WorkplaceProgressRiskUpdateTurnPolicy = "workplace.progress_risk_update.turn.v1"
 	InterviewProjectDeepDiveTurnPolicy    = "interview.project_deep_dive.turn.v1"
@@ -62,7 +63,8 @@ func ResolveTurnPolicy(reference string) (TurnPolicy, error) {
 		DailyHotelCheckinIssueTurnPolicy,
 		WorkplaceProgressRiskUpdateTurnPolicy:
 		return TurnPolicy{Kind: TurnPolicyGenerated}, nil
-	case InterviewProjectDeepDiveTurnPolicy:
+	case InterviewPracticeTurnPolicy,
+		InterviewProjectDeepDiveTurnPolicy:
 		return TurnPolicy{Kind: TurnPolicyInterview}, nil
 	case IELTSSpeakingPart1TurnPolicy:
 		return TurnPolicy{
@@ -178,6 +180,7 @@ func resolveSessionPolicyRegistration(
 		ExamPracticeSessionPolicy:
 		return standard, true
 	case InterviewPracticeSessionPolicy:
+		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
 		standard.avatarAllowed = true
