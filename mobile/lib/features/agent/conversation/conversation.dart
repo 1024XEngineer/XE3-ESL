@@ -142,6 +142,12 @@ class ConversationPage extends StatefulWidget {
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
+    final voiceShowsReplyProgress = switch (voiceController?.state) {
+      AgentVoiceComposerState.confirming ||
+      AgentVoiceComposerState.awaitingAssistant => true,
+      _ => false,
+    };
+    final replyPending = isBusy || voiceShowsReplyProgress;
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -282,6 +288,7 @@ class ConversationPage extends StatefulWidget {
                               ],
                               _MessageList(
                                 messages: messages,
+                                suppressLoadingFeedback: replyPending,
                                 messageAudioController: messageAudioController,
                                 onHandoff: onMessageHandoff,
                                 onRefreshImage: onRefreshMessageImage,
@@ -295,7 +302,7 @@ class ConversationPage extends StatefulWidget {
                                     : null,
                               ),
                             ],
-                            if (isBusy) ...[
+                            if (isBusy && !voiceShowsReplyProgress) ...[
                               const SizedBox(height: 14),
                               Center(
                                 child: Semantics(
@@ -907,6 +914,7 @@ class _QuickActionButton extends StatelessWidget {
 class _MessageList extends StatelessWidget {
   const _MessageList({
     required this.messages,
+    required this.suppressLoadingFeedback,
     this.messageAudioController,
     this.onHandoff,
     this.onRefreshImage,
@@ -916,6 +924,7 @@ class _MessageList extends StatelessWidget {
   });
 
   final List<AgentMessage> messages;
+  final bool suppressLoadingFeedback;
   final AgentMessageAudioController? messageAudioController;
   final ValueChanged<AgentHandoff>? onHandoff;
   final ConversationMessageImageAction? onRefreshImage;
@@ -923,18 +932,25 @@ class _MessageList extends StatelessWidget {
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
   final VoidCallback? onSameThreadRepractice;
 
+  Widget? _feedbackFor(BuildContext context, AgentMessage message) {
+    if (suppressLoadingFeedback &&
+        (feedbackPresenter?.polishLoadingFor(message) ?? false)) {
+      return null;
+    }
+    return feedbackPresenter?.buildFeedback(
+      context,
+      message,
+      onSameThreadRepractice: onSameThreadRepractice,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       key: const Key('agent-message-list'),
       children: [
         for (final message in messages) ...[
-          if (feedbackPresenter?.buildFeedback(
-                context,
-                message,
-                onSameThreadRepractice: onSameThreadRepractice,
-              )
-              case final feedback?) ...[
+          if (_feedbackFor(context, message) case final feedback?) ...[
             AgentMessageBubble(
               message: message,
               messageAudioController: messageAudioController,
@@ -942,8 +958,6 @@ class _MessageList extends StatelessWidget {
               onRefreshImage: onRefreshImage,
               onRefreshMeme: onRefreshMeme,
               polishedText: feedbackPresenter?.polishedTextFor(message),
-              polishLoading:
-                  feedbackPresenter?.polishLoadingFor(message) ?? false,
             ),
             const SizedBox(height: SpeakUpDesign.space8),
             Align(
@@ -958,8 +972,6 @@ class _MessageList extends StatelessWidget {
               onRefreshImage: onRefreshImage,
               onRefreshMeme: onRefreshMeme,
               polishedText: feedbackPresenter?.polishedTextFor(message),
-              polishLoading:
-                  feedbackPresenter?.polishLoadingFor(message) ?? false,
             ),
         ],
       ],

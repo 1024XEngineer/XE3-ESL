@@ -18,7 +18,6 @@ final class AgentMessageBubble extends StatefulWidget {
     this.onRefreshImage,
     this.onRefreshMeme,
     this.polishedText,
-    this.polishLoading = false,
     super.key,
   });
 
@@ -30,7 +29,6 @@ final class AgentMessageBubble extends StatefulWidget {
   final FutureOr<void> Function(String messageId, String memeAttachmentId)?
   onRefreshMeme;
   final String? polishedText;
-  final bool polishLoading;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -369,7 +367,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             _VoiceTextAction(
               key: Key('agent-user-voice-polish-${message.id}'),
               icon: Icons.auto_awesome_rounded,
-              loading: widget.polishLoading,
+              loading: false,
               label: '润色',
               onPressed: widget.polishedText == null
                   ? null

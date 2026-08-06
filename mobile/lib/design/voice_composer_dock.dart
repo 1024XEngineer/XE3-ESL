@@ -56,38 +56,21 @@ class VoiceComposerDock extends StatelessWidget {
         upwardCancelOnly ? '上滑取消 · 松开发送' : '松开发送 · 左取消 · 右转文字',
       _ => enabled ? '点击或长按说话' : '暂时无法录音',
     };
-    final targetContent = AnimatedContainer(
+    final stateColor = capture.cancelArmed
+        ? SpeakUpDesign.error
+        : capture.convertArmed
+        ? SpeakUpDesign.primary
+        : capturing
+        ? SpeakUpDesign.ink
+        : SpeakUpDesign.secondary;
+    final targetContent = ConstrainedBox(
       key: capturing ? stopRecordingKey : null,
-      duration: const Duration(milliseconds: 100),
       constraints: const BoxConstraints(minHeight: 48),
-      decoration: BoxDecoration(
-        color: capture.cancelArmed
-            ? SpeakUpDesign.errorMuted
-            : capture.convertArmed
-            ? SpeakUpDesign.primaryMuted
-            : capturing
-            ? SpeakUpDesign.surfaceMuted
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: capture.cancelArmed
-              ? SpeakUpDesign.error
-              : capture.convertArmed
-              ? SpeakUpDesign.primary
-              : capturing
-              ? SpeakUpDesign.border
-              : Colors.transparent,
-        ),
-      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (capturing) ...[
-            const Icon(
-              Icons.graphic_eq_rounded,
-              color: SpeakUpDesign.ink,
-              size: 22,
-            ),
+            Icon(Icons.graphic_eq_rounded, color: stateColor, size: 22),
             const SizedBox(width: 9),
           ],
           Flexible(
@@ -97,7 +80,7 @@ class VoiceComposerDock extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: capturing ? SpeakUpDesign.ink : SpeakUpDesign.secondary,
+                color: stateColor,
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
               ),
