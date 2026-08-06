@@ -229,7 +229,8 @@ func (r *PostgresPlanRepository) ListCurrentPlans(
 		!validPreparationActor(actor) ||
 		(experience != scene.PracticeExperienceInterview &&
 			experience != scene.PracticeExperienceIELTSSpeaking &&
-			experience != scene.PracticeExperienceRoleplay) {
+			experience != scene.PracticeExperienceWorkplace &&
+			experience != scene.PracticeExperienceLifeAndTravel) {
 		return nil, ErrPlanInvalid
 	}
 	rows, err := r.pool.Query(ctx, `

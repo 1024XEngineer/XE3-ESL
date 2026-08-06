@@ -60,7 +60,8 @@ func (s *PlanService) ListPlans(
 	if ctx == nil || !actor.Valid() ||
 		(experience != scene.PracticeExperienceInterview &&
 			experience != scene.PracticeExperienceIELTSSpeaking &&
-			experience != scene.PracticeExperienceRoleplay) {
+			experience != scene.PracticeExperienceWorkplace &&
+			experience != scene.PracticeExperienceLifeAndTravel) {
 		return nil, ErrPlanInvalid
 	}
 	plans, err := s.repository.ListCurrentPlans(ctx, actor, experience)

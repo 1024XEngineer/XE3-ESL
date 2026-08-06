@@ -32,6 +32,7 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.InterviewPracticeSessionPolicy
 	plan.SessionPolicy.RetryAllowed = false
+	plan.SessionPolicy.MaxFollowUpsPerQuestion = 3
 	plan.SessionPolicy.QuestionTranslationAllowed = true
 	plan.SessionPolicy.QuestionTipsAllowed = true
 	plan.SessionPolicy.AvatarAllowed = true

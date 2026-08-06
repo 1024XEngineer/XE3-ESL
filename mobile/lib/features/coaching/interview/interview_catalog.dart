@@ -138,7 +138,7 @@ class _PlanCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: PreparationDesign.roleplayTint,
+                  color: PreparationDesign.scenarioTint,
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: const Icon(Icons.mic_none_rounded),

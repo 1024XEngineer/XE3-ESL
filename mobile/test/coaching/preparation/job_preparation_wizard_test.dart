@@ -1,6 +1,4 @@
 import '../../support/scene_fixtures.dart';
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/speak_up_theme.dart';
@@ -223,6 +221,11 @@ void main() {
       find.byKey(const Key('job-wizard-confirmation-step')),
       findsOneWidget,
     );
+    await _scrollTo(
+      tester,
+      target: const Key('job-practice-focus-field'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
     await tester.enterText(
       find.byKey(const Key('job-practice-focus-field')),
       '自我介绍',
@@ -390,6 +393,11 @@ void main() {
         ),
       ),
     );
+    await _scrollTo(
+      tester,
+      target: const Key('job-practice-focus-field'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
     await tester.enterText(
       find.byKey(const Key('job-practice-focus-field')),
       '自我介绍',
@@ -426,7 +434,6 @@ void main() {
     addTearDown(resumeController.dispose);
     controller.updateInput(_input);
     await controller.analyze();
-    await controller.confirm();
     await resumeController.pickTemporary();
     controller.selectResume(
       JobPreparationResumeSelection(
@@ -446,6 +453,11 @@ void main() {
           resumeController: resumeController,
         ),
       ),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('job-practice-focus-field'),
+      scrollable: const Key('job-wizard-confirmation-step'),
     );
     await tester.enterText(
       find.byKey(const Key('job-practice-focus-field')),
@@ -588,9 +600,8 @@ JobPreparationController _controller(
 }
 
 final class _WizardClient implements JobPreparationClient {
-  _WizardClient({this.sessionCompleter, this.failPlan = false});
+  _WizardClient({this.failPlan = false});
 
-  final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final bool failPlan;
   JobTarget? _target;
   PreparationSnapshot? _snapshotValue;
@@ -649,14 +660,7 @@ final class _WizardClient implements JobPreparationClient {
       );
     }
     final snapshot = _snapshotValue ?? _snapshot;
-    _planValue = _planFrom(
-      snapshot: snapshot,
-      context: AgentPracticeContext(
-        threadId: input.sourceThreadId!,
-        goalId: input.goalId!,
-      ),
-      revision: 1,
-    );
+    _planValue = _planFrom(snapshot: snapshot, context: null, revision: 1);
     return _planValue!;
   }
 
@@ -667,7 +671,7 @@ final class _WizardClient implements JobPreparationClient {
     required String idempotencyKey,
   }) async {
     sessionCalls++;
-    return sessionCompleter?.future ?? _bootstrap;
+    return _bootstrap;
   }
 
   @override
@@ -720,6 +724,9 @@ final class _WizardClient implements JobPreparationClient {
   }) async => const <PracticePlanSummary>[];
 
   @override
+  Future<void> deletePlan(String planId) async {}
+
+  @override
   Future<JobTarget> getJobTarget(String jobTargetId) async =>
       _target ?? _targetFor(JobTargetStage.awaitingConfirmation);
 
@@ -732,7 +739,7 @@ final class _WizardClient implements JobPreparationClient {
     final current = _planValue ?? _plan;
     _planValue = _planFrom(
       snapshot: current.preparationSnapshot,
-      context: current.agentContext!,
+      context: current.agentContext,
       revision: input.expectedPlanRevision + 1,
     );
     return _planValue!;
@@ -935,17 +942,19 @@ PracticePlan _planWithRevision(int revision) => _planFrom(
 
 PracticePlan _planFrom({
   required PreparationSnapshot snapshot,
-  required AgentPracticeContext context,
+  required AgentPracticeContext? context,
   required int revision,
 }) => PracticePlan(
   id: _planId,
   userId: _userId,
-  sourceThreadId: context.threadId,
-  goalSnapshot: PreparationGoalSnapshot(
-    id: context.goalId,
-    title: _scene.name,
-    version: 1,
-  ),
+  sourceThreadId: context?.threadId,
+  goalSnapshot: context == null
+      ? null
+      : PreparationGoalSnapshot(
+          id: context.goalId,
+          title: _scene.name,
+          version: 1,
+        ),
   preparationSnapshot: snapshot,
   sceneSelection: SceneSelectionSnapshot(
     scene: _scene,

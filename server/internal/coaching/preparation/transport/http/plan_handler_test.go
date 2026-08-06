@@ -37,6 +37,7 @@ type planHTTPApplicationStub struct {
 		string,
 		RevisePlanRequest,
 	) (PracticePlan, bool, error)
+	archive func(context.Context, requestcontext.Actor, string) error
 }
 
 func (s planHTTPApplicationStub) ListPlans(
@@ -128,6 +129,17 @@ func (s planHTTPApplicationStub) RevisePlan(
 		return PracticePlan{}, false, errors.New("unexpected RevisePlan call")
 	}
 	return s.revise(ctx, actor, planID, key, request)
+}
+
+func (s planHTTPApplicationStub) ArchivePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+) error {
+	if s.archive == nil {
+		return errors.New("unexpected ArchivePlan call")
+	}
+	return s.archive(ctx, actor, planID)
 }
 
 func TestPlanHTTPCreateUsesOnlyCompletePreparationInput(t *testing.T) {

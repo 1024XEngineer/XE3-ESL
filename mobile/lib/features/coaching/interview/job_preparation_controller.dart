@@ -101,7 +101,6 @@ final class JobPreparationController extends ChangeNotifier {
   String? _voiceKey;
   String? _workspaceKey;
   PracticeWorkspaceLease? _workspaceLease;
-  bool _workspaceReplaceRequested = false;
 
   JobTargetInput get input => _input;
   JobTarget? get target => _target;
@@ -950,7 +949,9 @@ final class JobPreparationController extends ChangeNotifier {
         final operationId =
             previousLease?.operationId ??
             (_workspaceKey ??= _newId('saved-plan-workspace'));
-        final lease = await workspace.replaceCurrentPractice(operationId);
+        final lease = previousLease == null
+            ? await workspace.replaceCurrentPractice(operationId)
+            : await workspace.acquireThread(operationId);
         workspaceOperationId = operationId;
         if (lease == null ||
             (previousLease != null &&
@@ -1212,7 +1213,6 @@ final class JobPreparationController extends ChangeNotifier {
     _voiceKey = null;
     _workspaceKey = null;
     _workspaceLease = null;
-    _workspaceReplaceRequested = false;
   }
 
   void _handleWorkspaceState() {

@@ -337,22 +337,22 @@ void main() {
       final originalThreadCount = harness.conversationController.threads.length;
 
       await _prepareJobPreview(harness.controller);
-
-      final practiceThreadId =
-          harness.workspaceController.currentPracticeThreadId!;
-      expect(practiceThreadId, isNot(_threadId));
-      expect(harness.controller.plan?.sourceThreadId, practiceThreadId);
-      expect(
-        harness.workspaceController.currentPracticeThreadId,
-        practiceThreadId,
-      );
+      expect(harness.workspaceController.currentPracticeThreadId, isNull);
+      expect(harness.controller.plan?.sourceThreadId, isNull);
       expect(
         harness.conversationController.threads,
-        hasLength(originalThreadCount + 1),
+        hasLength(originalThreadCount),
       );
       expect(harness.conversationController.threadId, isNull);
 
       expect(await harness.controller.startPractice(), isTrue);
+      final practiceThreadId =
+          harness.workspaceController.currentPracticeThreadId!;
+      expect(practiceThreadId, isNot(_threadId));
+      expect(
+        harness.conversationController.threads,
+        hasLength(originalThreadCount + 1),
+      );
       final sessionId = harness.practiceController.practiceSessionId;
       final goalId = harness.conversationController.activeGoalId;
       expect(sessionId, _sessionId);
@@ -384,28 +384,23 @@ void main() {
       await harness.controller.confirm();
 
       expect(await harness.controller.createPreview(), isFalse);
-      final firstLease = harness.workspaceController.currentLease;
-      expect(firstLease, isNotNull);
+      expect(harness.workspaceController.currentLease, isNull);
       expect(harness.conversationController.threadId, homeThreadId);
       expect(
         harness.conversationController.threads,
-        hasLength(originalThreadCount + 1),
+        hasLength(originalThreadCount),
       );
 
       expect(await harness.controller.retry(), isTrue);
 
-      expect(harness.workspaceController.currentLease, firstLease);
+      expect(harness.workspaceController.currentLease, isNull);
       expect(harness.conversationController.threadId, homeThreadId);
-      expect(
-        harness.controller.plan?.sourceThreadId,
-        firstLease?.practiceThreadId,
-      );
+      expect(harness.controller.plan?.sourceThreadId, isNull);
       expect(
         harness.conversationController.threads,
-        hasLength(originalThreadCount + 1),
+        hasLength(originalThreadCount),
       );
-      expect(harness.goalKeys, hasLength(2));
-      expect(harness.goalKeys.toSet(), hasLength(1));
+      expect(harness.goalKeys, isEmpty);
       expect(client.profileKeys, hasLength(2));
       expect(client.profileKeys.toSet(), hasLength(1));
     },
@@ -422,11 +417,12 @@ void main() {
       addTearDown(harness.dispose);
       final homeThreadId = harness.conversationController.threadId;
       await _prepareJobPreview(harness.controller);
-      final lease = harness.workspaceController.currentLease;
-      final practiceThreadId = lease?.practiceThreadId;
+      expect(harness.workspaceController.currentLease, isNull);
       expect(harness.conversationController.threadId, homeThreadId);
 
       expect(await harness.controller.startPractice(), isFalse);
+      final lease = harness.workspaceController.currentLease;
+      final practiceThreadId = lease?.practiceThreadId;
       expect(harness.conversationController.threadId, homeThreadId);
       expect(harness.workspaceController.currentLease, lease);
       expect(harness.workspaceController.currentSessionId, _sessionId);
@@ -474,22 +470,23 @@ void main() {
       await replacement.analyze();
       await replacement.confirm();
 
+      expect(await replacement.createPreview(), isTrue);
+      expect(first.practiceClient.endedSessionIds, isEmpty);
       expect(
-        await replacement.createPreview(replaceCurrentPractice: true),
-        isTrue,
+        first.workspaceController.currentPracticeThreadId,
+        firstPracticeThreadId,
       );
+      expect(first.workspaceController.hasResumable, isTrue);
+      expect(first.conversationController.threadId, homeThreadId);
 
+      expect(await replacement.startPractice(), isTrue);
       final replacementThreadId =
           first.workspaceController.currentPracticeThreadId!;
       expect(first.practiceClient.endedSessionIds, <String>[firstSessionId]);
       expect(replacementThreadId, isNot(firstPracticeThreadId));
       expect(replacementThreadId, isNot(homeThreadId));
-      expect(replacement.plan?.sourceThreadId, replacementThreadId);
-      expect(first.workspaceController.hasResumable, isFalse);
+      expect(replacement.plan?.sourceThreadId, isNull);
       expect(first.conversationController.threads, hasLength(3));
-      expect(first.conversationController.threadId, homeThreadId);
-
-      expect(await replacement.startPractice(), isTrue);
       expect(first.practiceController.practiceSessionId, _replacementSessionId);
       expect(first.workspaceController.currentSessionId, _replacementSessionId);
       expect(replacement.hasResumablePractice, isTrue);
@@ -504,8 +501,7 @@ void main() {
       );
       addTearDown(harness.dispose);
       await _prepareJobPreview(harness.controller);
-      final practiceThreadId =
-          harness.workspaceController.currentPracticeThreadId;
+      expect(harness.workspaceController.currentPracticeThreadId, isNull);
       final originalHomeThreadId = harness.conversationController.threadId;
 
       expect(await harness.conversationController.createThread(), isTrue);
@@ -513,6 +509,8 @@ void main() {
       expect(latestHomeThreadId, isNot(originalHomeThreadId));
 
       expect(await harness.controller.startPractice(), isTrue);
+      final practiceThreadId =
+          harness.workspaceController.currentPracticeThreadId;
       expect(harness.conversationController.threadId, practiceThreadId);
       expect(await harness.controller.parkCurrentPractice(), isTrue);
       expect(harness.conversationController.threadId, latestHomeThreadId);
@@ -1004,13 +1002,9 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   }) async {
     calls.add('plan');
     expect(input.preparationSnapshotId, _snapshotId);
-    return _planWithRevision(
-      1,
-      context: AgentPracticeContext(
-        threadId: input.sourceThreadId!,
-        goalId: input.goalId!,
-      ),
-    );
+    expect(input.sourceThreadId, isNull);
+    expect(input.goalId, isNull);
+    return _planWithRevision(1, context: null);
   }
 
   @override
@@ -1023,6 +1017,9 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   Future<List<PracticePlanSummary>> listPlans({
     required PracticeExperience experience,
   }) async => const <PracticePlanSummary>[];
+
+  @override
+  Future<void> deletePlan(String planId) async {}
 
   @override
   Future<PracticePlan> revisePlan({
@@ -1115,17 +1112,19 @@ JobTarget _target(
 
 PracticePlan _planWithRevision(
   int revision, {
-  AgentPracticeContext context = _context,
+  AgentPracticeContext? context = _context,
 }) {
   return PracticePlan(
     id: _planId,
     userId: _userId,
-    sourceThreadId: context.threadId,
-    goalSnapshot: PreparationGoalSnapshot(
-      id: context.goalId,
-      title: _scene.name,
-      version: 1,
-    ),
+    sourceThreadId: context?.threadId,
+    goalSnapshot: context == null
+        ? null
+        : PreparationGoalSnapshot(
+            id: context.goalId,
+            title: _scene.name,
+            version: 1,
+          ),
     preparationSnapshot: _snapshot,
     sceneSelection: SceneSelectionSnapshot(
       scene: _scene,
