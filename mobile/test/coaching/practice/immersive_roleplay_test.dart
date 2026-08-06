@@ -284,8 +284,8 @@ void main() {
   ) async {
     final controller = await _roleplayController(
       practiceClient: _AsyncReviewPracticeClient(
-        practiceExperience: PracticeExperience.roleplay,
-        sceneCategory: SceneCategory.roleplayTravel,
+        practiceExperience: PracticeExperience.lifeAndTravel,
+        sceneCategory: SceneCategory.lifeTravel,
         followUpAfterAnswer: true,
       ),
     );
@@ -642,8 +642,8 @@ Future<PracticeController> _roleplayController({
       selectedScene ??
       testScene(
         id: 'daily-hotel',
-        experience: PracticeExperience.roleplay,
-        category: SceneCategory.roleplayTravel,
+        experience: PracticeExperience.lifeAndTravel,
+        category: SceneCategory.lifeTravel,
         name: '酒店入住',
         prompt: const ScenePrompt(
           publicSceneBrief: '练习办理入住与需求沟通。',
@@ -751,8 +751,8 @@ final class _ScenePracticeClient implements PracticeClient {
 final class _TranslationPracticeClient
     implements PracticeClient, PracticeQuestionTranslationClient {
   final _delegate = _AsyncReviewPracticeClient(
-    practiceExperience: PracticeExperience.roleplay,
-    sceneCategory: SceneCategory.roleplayTravel,
+    practiceExperience: PracticeExperience.lifeAndTravel,
+    sceneCategory: SceneCategory.lifeTravel,
   );
 
   final String translation = '请介绍一次你解决团队分歧的经历。';
@@ -834,8 +834,8 @@ final class _FailOncePracticeClient implements PracticeClient {
     required String sessionId,
   }) async => _withSceneIdentity(
     await _delegate.restorePractice(sessionId: sessionId),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -847,8 +847,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       sessionId: sessionId,
       clientOperationId: clientOperationId,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -878,8 +878,8 @@ final class _FailOncePracticeClient implements PracticeClient {
       candidateId: candidateId,
       idempotencyKey: idempotencyKey,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 
   @override
@@ -895,16 +895,16 @@ final class _FailOncePracticeClient implements PracticeClient {
       answerText: answerText,
       idempotencyKey: idempotencyKey,
     ),
-    PracticeExperience.roleplay,
-    SceneCategory.roleplayTravel,
+    PracticeExperience.lifeAndTravel,
+    SceneCategory.lifeTravel,
   );
 }
 
 final class _QuestionTipPracticeClient
     implements PracticeClient, PracticeQuestionTipClient {
   final _delegate = FakePracticeClient(
-    practiceExperience: PracticeExperience.roleplay,
-    sceneCategory: SceneCategory.roleplayTravel,
+    practiceExperience: PracticeExperience.lifeAndTravel,
+    sceneCategory: SceneCategory.lifeTravel,
   );
 
   @override
@@ -982,9 +982,9 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
   final bool followUpAfterAnswer;
 
   PracticeExperience get resolvedExperience =>
-      practiceExperience ?? PracticeExperience.roleplay;
+      practiceExperience ?? PracticeExperience.lifeAndTravel;
   SceneCategory get resolvedCategory =>
-      sceneCategory ?? SceneCategory.roleplayTravel;
+      sceneCategory ?? SceneCategory.lifeTravel;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();

@@ -6,7 +6,8 @@ type PracticeExperience string
 const (
 	PracticeExperienceInterview     PracticeExperience = "INTERVIEW"
 	PracticeExperienceIELTSSpeaking PracticeExperience = "IELTS_SPEAKING"
-	PracticeExperienceRoleplay      PracticeExperience = "ROLEPLAY"
+	PracticeExperienceWorkplace     PracticeExperience = "WORKPLACE"
+	PracticeExperienceLifeAndTravel PracticeExperience = "LIFE_AND_TRAVEL"
 )
 
 // SceneCategory identifies the server-authored catalog group within one
@@ -20,10 +21,9 @@ const (
 	SceneCategoryInterviewHiringManager SceneCategory = "INTERVIEW_HIRING_MANAGER"
 	SceneCategoryInterviewCustom        SceneCategory = "INTERVIEW_CUSTOM"
 	SceneCategoryIELTSSpeaking          SceneCategory = "IELTS_SPEAKING"
-	SceneCategoryRoleplayWorkplace      SceneCategory = "ROLEPLAY_WORKPLACE"
-	SceneCategoryRoleplayTravel         SceneCategory = "ROLEPLAY_TRAVEL"
-	SceneCategoryRoleplayDaily          SceneCategory = "ROLEPLAY_DAILY"
-	SceneCategoryRoleplayCustom         SceneCategory = "ROLEPLAY_CUSTOM"
+	SceneCategoryWorkplaceGeneral       SceneCategory = "WORKPLACE_GENERAL"
+	SceneCategoryLifeTravel             SceneCategory = "LIFE_TRAVEL"
+	SceneCategoryLifeDaily              SceneCategory = "LIFE_DAILY"
 )
 
 type SceneStatus string

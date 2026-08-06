@@ -1064,8 +1064,8 @@ void main() {
         id: 'scn_same_title_general_exam',
         name: 'IELTS 口语完整模拟',
         brief: '同名但不是完整模考',
-        experience: PracticeExperience.roleplay,
-        category: SceneCategory.roleplayDaily,
+        experience: PracticeExperience.lifeAndTravel,
+        category: SceneCategory.lifeDaily,
       );
       final practice = _IeltsPracticeClient(initialCompleted: 8);
       final controller = PracticeController(

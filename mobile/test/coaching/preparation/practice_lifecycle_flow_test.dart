@@ -285,9 +285,9 @@ void main() {
 
 Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
   final hubKey = switch (definition.category) {
-    SceneCategory.roleplayWorkplace => const Key('practice-hub-workplace'),
-    SceneCategory.roleplayDaily ||
-    SceneCategory.roleplayTravel => const Key('practice-hub-life'),
+    SceneCategory.workplaceGeneral => const Key('practice-hub-workplace'),
+    SceneCategory.lifeDaily ||
+    SceneCategory.lifeTravel => const Key('practice-hub-life'),
     _ => throw ArgumentError.value(definition.category, 'category'),
   };
   await _tapVisible(tester, find.byKey(hubKey));
@@ -673,8 +673,8 @@ const _hotelSceneId = 'scn_daily_hotel_checkin_issue';
 
 final _progressScene = testScene(
   id: _progressSceneId,
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayWorkplace,
+  experience: PracticeExperience.workplace,
+  category: SceneCategory.workplaceGeneral,
   name: '项目进度同步',
   version: 1,
   prompt: _progressPrompt,
@@ -682,8 +682,8 @@ final _progressScene = testScene(
 
 final _hotelScene = testScene(
   id: _hotelSceneId,
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayTravel,
+  experience: PracticeExperience.lifeAndTravel,
+  category: SceneCategory.lifeTravel,
   name: '酒店入住与问题处理',
   version: 1,
   prompt: _hotelPrompt,

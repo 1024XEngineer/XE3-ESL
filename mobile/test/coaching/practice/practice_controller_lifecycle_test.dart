@@ -74,8 +74,8 @@ void main() {
   test('never confirms a fourth Turn after Practice completion', () async {
     final scene = testScene(
       id: 'daily-review',
-      experience: PracticeExperience.roleplay,
-      category: SceneCategory.roleplayDaily,
+      experience: PracticeExperience.lifeAndTravel,
+      category: SceneCategory.lifeDaily,
       name: 'Daily review',
     );
     final client = _CountingPracticeClient(scene);
@@ -138,8 +138,8 @@ void main() {
   test('restores a completed Practice without a retry state', () async {
     final scene = testScene(
       id: 'daily-restored-review',
-      experience: PracticeExperience.roleplay,
-      category: SceneCategory.roleplayDaily,
+      experience: PracticeExperience.lifeAndTravel,
+      category: SceneCategory.lifeDaily,
       name: 'Daily restored review',
     );
     final practice = _CountingPracticeClient(

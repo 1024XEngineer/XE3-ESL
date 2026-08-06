@@ -19,8 +19,8 @@ func TestGeneralSceneEngineProducesGroundedResult(t *testing.T) {
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneOverseasDaily,
-		scene.PracticeExperienceRoleplay,
-		scene.SceneCategoryRoleplayTravel,
+		scene.PracticeExperienceLifeAndTravel,
+		scene.SceneCategoryLifeTravel,
 		scene.PracticeModeFullSimulation,
 		"I need to change my room because the air conditioner is not working.",
 	)
@@ -32,8 +32,8 @@ func TestGeneralSceneEngineProducesGroundedResult(t *testing.T) {
 	}
 	if provider.calls != 1 ||
 		provider.input.SceneType != evaluation.SceneOverseasDaily ||
-		provider.input.PracticeExperience != string(scene.PracticeExperienceRoleplay) ||
-		provider.input.SceneCategory != string(scene.SceneCategoryRoleplayTravel) ||
+		provider.input.PracticeExperience != string(scene.PracticeExperienceLifeAndTravel) ||
+		provider.input.SceneCategory != string(scene.SceneCategoryLifeTravel) ||
 		provider.input.PracticeMode != string(scene.PracticeModeFullSimulation) ||
 		result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional ||
 		len(result.Dimensions) != 4 || len(result.PriorityActions) != 3 ||
@@ -56,8 +56,8 @@ func TestGeneralSceneEngineDoesNotCallProviderForInsufficientEvidence(
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluation.SceneOverseasWorkplace,
-		scene.PracticeExperienceRoleplay,
-		scene.SceneCategoryRoleplayWorkplace,
+		scene.PracticeExperienceWorkplace,
+		scene.SceneCategoryWorkplaceGeneral,
 		scene.PracticeModeFullSimulation,
 		"Okay.",
 	)

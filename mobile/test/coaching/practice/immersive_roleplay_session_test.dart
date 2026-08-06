@@ -489,8 +489,8 @@ Future<void> _activateCreatedPractice(
 
 SceneDefinition _dailyTravelScene(String id) => testScene(
   id: id,
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayDaily,
+  experience: PracticeExperience.lifeAndTravel,
+  category: SceneCategory.lifeDaily,
   name: '旅行对话',
   prompt: const ScenePrompt(
     publicSceneBrief: '练习旅行中的真实交流。',

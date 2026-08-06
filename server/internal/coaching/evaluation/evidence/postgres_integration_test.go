@@ -836,7 +836,7 @@ func installEvidenceAuthorities(
 			EarlyCompletionRule: practice.
 				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 			RetryAllowed: practiceContext.PracticeExperience ==
-				string(practice.PracticeExperienceRoleplay),
+				string(practice.PracticeExperienceLifeAndTravel),
 		},
 		PracticeObjectives: evidenceAuthorityObjectives(
 			practiceContext.PracticeObjectives,

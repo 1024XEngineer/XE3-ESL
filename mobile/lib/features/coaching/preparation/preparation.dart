@@ -1127,12 +1127,9 @@ List<SceneDefinition> _scenesForHub(
           _PracticeHub.ielts =>
             scene.experience == PracticeExperience.ieltsSpeaking,
           _PracticeHub.workplace =>
-            scene.experience == PracticeExperience.roleplay &&
-                scene.category == SceneCategory.roleplayWorkplace,
+            scene.experience == PracticeExperience.workplace,
           _PracticeHub.life =>
-            scene.experience == PracticeExperience.roleplay &&
-                (scene.category == SceneCategory.roleplayDaily ||
-                    scene.category == SceneCategory.roleplayTravel),
+            scene.experience == PracticeExperience.lifeAndTravel,
         };
       })
       .toList(growable: false);

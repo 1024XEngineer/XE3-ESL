@@ -11,15 +11,15 @@ void main() {
     );
     expect(
       testScene(
-        experience: PracticeExperience.roleplay,
-        category: SceneCategory.roleplayWorkplace,
+        experience: PracticeExperience.workplace,
+        category: SceneCategory.workplaceGeneral,
       ).presentationMode,
       ScenePresentationMode.immersiveRoleplay,
     );
     expect(
       testScene(
-        experience: PracticeExperience.roleplay,
-        category: SceneCategory.roleplayDaily,
+        experience: PracticeExperience.lifeAndTravel,
+        category: SceneCategory.lifeDaily,
       ).presentationMode,
       ScenePresentationMode.immersiveRoleplay,
     );

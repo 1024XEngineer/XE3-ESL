@@ -32,15 +32,15 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
     return [
       _RoleplayFilter.recommended,
       if (widget.scenes.any(
-        (scene) => scene.category == SceneCategory.roleplayWorkplace,
+        (scene) => scene.category == SceneCategory.workplaceGeneral,
       ))
         _RoleplayFilter.workplace,
       if (widget.scenes.any(
-        (scene) => scene.category == SceneCategory.roleplayTravel,
+        (scene) => scene.category == SceneCategory.lifeTravel,
       ))
         _RoleplayFilter.travel,
       if (widget.scenes.any(
-        (scene) => scene.category == SceneCategory.roleplayDaily,
+        (scene) => scene.category == SceneCategory.lifeDaily,
       ))
         _RoleplayFilter.daily,
     ];
@@ -53,15 +53,15 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
         return available.take(6).toList(growable: false);
       case _RoleplayFilter.workplace:
         return available
-            .where((scene) => scene.category == SceneCategory.roleplayWorkplace)
+            .where((scene) => scene.category == SceneCategory.workplaceGeneral)
             .toList(growable: false);
       case _RoleplayFilter.travel:
         return available
-            .where((scene) => scene.category == SceneCategory.roleplayTravel)
+            .where((scene) => scene.category == SceneCategory.lifeTravel)
             .toList(growable: false);
       case _RoleplayFilter.daily:
         return available
-            .where((scene) => scene.category == SceneCategory.roleplayDaily)
+            .where((scene) => scene.category == SceneCategory.lifeDaily)
             .toList(growable: false);
     }
   }
@@ -406,7 +406,7 @@ String _roleplayFilterLabel(_RoleplayFilter filter) {
 })
 _roleplayCardStyle(SceneDefinition scene) {
   return switch (scene.category) {
-    SceneCategory.roleplayWorkplace => (
+    SceneCategory.workplaceGeneral => (
       background: const Color(0xFFE8EBED),
       foreground: const Color(0xFF273238),
       icon: Icons.groups_outlined,
@@ -414,7 +414,7 @@ _roleplayCardStyle(SceneDefinition scene) {
       assetPath: 'assets/images/scenes/workplace-scene.jpg',
       imageAlignment: Alignment.topCenter,
     ),
-    SceneCategory.roleplayTravel => (
+    SceneCategory.lifeTravel => (
       background: const Color(0xFFDDEBF0),
       foreground: const Color(0xFF1D4754),
       icon: Icons.flight_outlined,
@@ -422,7 +422,7 @@ _roleplayCardStyle(SceneDefinition scene) {
       assetPath: 'assets/images/scenes/travel-scene.jpg',
       imageAlignment: Alignment.center,
     ),
-    SceneCategory.roleplayDaily => (
+    SceneCategory.lifeDaily => (
       background: const Color(0xFFF2E8DE),
       foreground: const Color(0xFF4C392B),
       icon: Icons.chat_bubble_outline_rounded,

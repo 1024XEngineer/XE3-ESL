@@ -856,8 +856,8 @@ final _secondInterviewScene = testScene(
 
 final _otherScene = testScene(
   id: 'scn_general_speaking',
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayWorkplace,
+  experience: PracticeExperience.workplace,
+  category: SceneCategory.workplaceGeneral,
   name: 'General speaking practice',
   version: 1,
   prompt: _workplacePrompt,
@@ -873,8 +873,8 @@ final _examScene = testScene(
 
 final _dailyScene = testScene(
   id: 'scn_daily_hotel_checkin_issue',
-  experience: PracticeExperience.roleplay,
-  category: SceneCategory.roleplayTravel,
+  experience: PracticeExperience.lifeAndTravel,
+  category: SceneCategory.lifeTravel,
   name: 'Hotel check-in and issue handling',
   version: 1,
 );
