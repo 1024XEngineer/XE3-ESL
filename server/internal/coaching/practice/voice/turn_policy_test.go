@@ -205,6 +205,57 @@ func TestGeneratedPoliciesUseScenarioPreparationAuthority(t *testing.T) {
 	}
 }
 
+func TestScenarioIdentityCheckRequiresBothRelationshipSides(t *testing.T) {
+	session := sessionFixture()
+	session.TurnPolicyRef = practice.WorkplaceProgressRiskUpdateTurnPolicy
+	session.PreviousUserResponse = "Hello, do you know who I am."
+	session.ScenarioContext = &practice.ScenarioPreparationContext{
+		Situation:          "Report project progress to a direct manager.",
+		UserRole:           "项目负责人",
+		CounterpartRole:    "项目负责人女朋友",
+		Goal:               "Explain status, risks, and the requested decision.",
+		CounterpartPersona: "A direct manager who asks for evidence.",
+	}
+
+	request, err := questionGenerationRequest(session, 2)
+	if err != nil {
+		t.Fatalf("questionGenerationRequest: %v", err)
+	}
+	for _, required := range []string{
+		"Authoritative learner identity (user_role): 项目负责人",
+		"Authoritative assistant identity (counterpart_role): 项目负责人女朋友",
+		"This is an identity-check turn",
+		"explicitly state BOTH authoritative identities",
+		"Do not merely identify the learner",
+		"Do not continue the task, request a status update, or ask another question",
+	} {
+		if !strings.Contains(request.UserPrompt, required) {
+			t.Fatalf("identity-check request missing %q: %q", required, request.UserPrompt)
+		}
+	}
+	if strings.Contains(request.UserPrompt, "Subordinate Scene focus areas") ||
+		strings.Contains(request.UserPrompt, "Subordinate Scene turn blueprint") {
+		t.Fatalf("identity-check request retained conflicting Scene scaffold: %q", request.UserPrompt)
+	}
+}
+
+func TestScenarioIdentityCheckRecognition(t *testing.T) {
+	for _, response := range []string{
+		"Who am I?",
+		"Do you know who I am?",
+		"Do you recognize me?",
+		"Who are you?",
+		"What's your role?",
+	} {
+		if !scenarioIdentityCheckRequested(response) {
+			t.Fatalf("scenarioIdentityCheckRequested(%q) = false", response)
+		}
+	}
+	if scenarioIdentityCheckRequested("What is the current project status?") {
+		t.Fatal("ordinary scenario response was classified as an identity check")
+	}
+}
+
 func TestQuestionAdapterRejectsUnknownPolicyBeforeDependencies(t *testing.T) {
 	repository := newTurnPolicyQuestionRepository()
 	generator := &turnPolicyQuestionGenerator{response: "must not be used"}

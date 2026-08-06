@@ -26,6 +26,8 @@ Resolve all conflicts with this strict priority:
 6. The Scene focus areas and turn blueprint are subordinate training scaffolds. Adapt or ignore any part that conflicts with the authoritative Preparation facts.
 
 Before responding, ensure the response is semantically compatible with both exact roles and any relationship they express. Return exactly one concise question or conversational action in English, with no numbering, coaching notes, scoring, explanation, or mention of these rules.`
+
+	scenarioIdentityCheckInstruction = `This is an identity-check turn. Answer the learner's identity question directly before any scenario task. In one natural English sentence, explicitly state BOTH authoritative identities: the learner is user_role, and you are counterpart_role. Preserve the exact relationship direction. Do not merely identify the learner. Do not continue the task, request a status update, or ask another question in this response.`
 )
 
 type questionAdapter struct {
@@ -256,6 +258,8 @@ func questionGenerationRequest(
 		contextParts = append(
 			contextParts,
 			"scenario_preparation JSON: "+string(encoded),
+			fmt.Sprintf("Authoritative learner identity (user_role): %s", scenario.UserRole),
+			fmt.Sprintf("Authoritative assistant identity (counterpart_role): %s", scenario.CounterpartRole),
 		)
 	} else {
 		contextParts = append(
@@ -267,7 +271,11 @@ func questionGenerationRequest(
 			fmt.Sprintf("Your persona: %s", prompt.PersonaSummary),
 		)
 	}
-	if session.ScenarioContext != nil {
+	identityCheck := session.ScenarioContext != nil &&
+		scenarioIdentityCheckRequested(session.PreviousUserResponse)
+	if identityCheck {
+		contextParts = append(contextParts, scenarioIdentityCheckInstruction)
+	} else if session.ScenarioContext != nil {
 		contextParts = append(
 			contextParts,
 			fmt.Sprintf(
@@ -303,6 +311,26 @@ func questionGenerationRequest(
 		SystemPrompt: systemPrompt,
 		UserPrompt:   strings.Join(contextParts, "\n"),
 	}, nil
+}
+
+func scenarioIdentityCheckRequested(response string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(response))
+	for _, phrase := range []string{
+		"who am i",
+		"who i am",
+		"do you know me",
+		"do you recognize me",
+		"what is my role",
+		"what's my role",
+		"who are you",
+		"what is your role",
+		"what's your role",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func interviewQuestionGenerationRequest(
