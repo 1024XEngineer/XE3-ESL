@@ -31,19 +31,18 @@ const (
 )
 
 type Service struct {
-	repository        Repository
-	messages          MessageReader
-	imageSubmissions  ImageSubmissionRepository
-	manifests         agentcontext.ManifestRepository
-	assembler         *agentcontext.Assembler
-	generator         TextGenerator
-	configuration     Configuration
-	registry          *capability.Registry
-	executor          *capability.Executor
-	assistantEnricher AssistantEnricher
-	loopLimits        LoopLimits
-	logger            *slog.Logger
-	logOptions        LogOptions
+	repository       Repository
+	messages         MessageReader
+	imageSubmissions ImageSubmissionRepository
+	manifests        agentcontext.ManifestRepository
+	assembler        *agentcontext.Assembler
+	generator        TextGenerator
+	configuration    Configuration
+	registry         *capability.Registry
+	executor         *capability.Executor
+	loopLimits       LoopLimits
+	logger           *slog.Logger
+	logOptions       LogOptions
 }
 
 type LoopLimits struct {
@@ -166,18 +165,6 @@ func WithImageSubmissions(repository ImageSubmissionRepository) Option {
 			return errors.New("agent: image submission repository is required")
 		}
 		service.imageSubmissions = repository
-		return nil
-	}
-}
-
-// WithAssistantEnricher installs one optional post-generation enrichment
-// boundary. The concrete Meme coordinator is intentionally not owned by Run.
-func WithAssistantEnricher(enricher AssistantEnricher) Option {
-	return func(service *Service) error {
-		if enricher == nil {
-			return errors.New("agent: assistant enricher is required")
-		}
-		service.assistantEnricher = enricher
 		return nil
 	}
 }
@@ -710,78 +697,17 @@ func (service *Service) process(
 			return failed, failErr
 		}
 	}
-	return service.completeAssistant(
-		ctx,
-		actor,
-		claimed,
-		lastUserContent(request),
-		result,
-	)
-}
-
-func (service *Service) completeAssistant(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	run Run,
-	userContent string,
-	result TextResult,
-) (Run, error) {
-	enrichment := service.enrichAssistant(
-		ctx,
-		actor,
-		run,
-		userContent,
-		result.Content,
-	)
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
 	completed, err := service.repository.Complete(
 		persistContext,
 		actor.UserID,
-		run.ID,
-		run.WorkerLeaseToken,
-		Completion{
-			Content:    result.Content,
-			Result:     result,
-			Enrichment: enrichment,
-		},
+		claimed.ID,
+		claimed.WorkerLeaseToken,
+		result.Content,
+		result,
 	)
 	return completed, err
-}
-
-func (service *Service) enrichAssistant(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	run Run,
-	userContent string,
-	assistantContent string,
-) AssistantEnrichment {
-	if service.assistantEnricher == nil {
-		return AssistantEnrichment{}
-	}
-	request := AssistantEnrichmentRequest{
-		Actor:            actor,
-		RunID:            run.ID,
-		ThreadID:         run.ThreadID,
-		InputMessageID:   run.InputMessageID,
-		UserContent:      userContent,
-		AssistantContent: assistantContent,
-	}
-	if !request.Valid() {
-		service.logAssistantEnrichmentSkipped(run, "invalid_request")
-		return AssistantEnrichment{}
-	}
-	enrichment, err := service.assistantEnricher.Enrich(ctx, request)
-	if err != nil {
-		service.logAssistantEnrichmentSkipped(run, "enricher_error")
-		return AssistantEnrichment{}
-	}
-	if !enrichment.Valid() {
-		service.logAssistantEnrichmentSkipped(run, "invalid_result")
-		return AssistantEnrichment{}
-	}
-	service.logAssistantEnrichmentCompleted(run, len(enrichment.Memes))
-	return enrichment
 }
 
 func (service *Service) generate(

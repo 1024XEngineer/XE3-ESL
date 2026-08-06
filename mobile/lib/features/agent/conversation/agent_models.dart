@@ -1,5 +1,4 @@
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'dart:typed_data';
 
 const agentMaximumImagesPerMessage = 4;
 const agentMaximumImageBytes = 10 * 1024 * 1024;
@@ -120,44 +119,6 @@ final class AgentImageAsset {
   }
 }
 
-final class AgentMessageMeme {
-  const AgentMessageMeme({
-    required this.id,
-    required this.memeId,
-    required this.category,
-    required this.contentType,
-    required this.sizeBytes,
-    required this.width,
-    required this.height,
-    required this.contentPath,
-    this.bytes,
-  });
-
-  final String id;
-  final String memeId;
-  final String category;
-  final String contentType;
-  final int sizeBytes;
-  final int width;
-  final int height;
-  final String contentPath;
-  final Uint8List? bytes;
-
-  bool get isLoaded => bytes != null;
-
-  AgentMessageMeme withBytes(Uint8List value) => AgentMessageMeme(
-    id: id,
-    memeId: memeId,
-    category: category,
-    contentType: contentType,
-    sizeBytes: sizeBytes,
-    width: width,
-    height: height,
-    contentPath: contentPath,
-    bytes: value,
-  );
-}
-
 final class AgentMessage {
   const AgentMessage({
     required this.id,
@@ -168,7 +129,6 @@ final class AgentMessage {
     this.modality = AgentMessageModality.text,
     this.audio,
     this.images = const <AgentImageAsset>[],
-    this.memes = const <AgentMessageMeme>[],
     this.isStreaming = false,
     this.hasFailed = false,
     this.handoffs = const <AgentHandoff>[],
@@ -186,7 +146,6 @@ final class AgentMessage {
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
-  final List<AgentMessageMeme> memes;
   final bool isStreaming;
   final bool hasFailed;
   final List<AgentHandoff> handoffs;
@@ -198,7 +157,6 @@ final class AgentMessage {
     AgentMessageAudio? audio,
     bool clearAudio = false,
     List<AgentImageAsset>? images,
-    List<AgentMessageMeme>? memes,
     bool? isStreaming,
     bool? hasFailed,
     List<AgentHandoff>? handoffs,
@@ -214,7 +172,6 @@ final class AgentMessage {
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
       images: images ?? this.images,
-      memes: memes ?? this.memes,
       isStreaming: isStreaming ?? this.isStreaming,
       hasFailed: hasFailed ?? this.hasFailed,
       handoffs: handoffs ?? this.handoffs,

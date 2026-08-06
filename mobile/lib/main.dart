@@ -7,11 +7,9 @@ import 'package:speakup/features/agent/conversation/conversation_controller.dart
 import 'package:speakup/features/agent/composer/image/image_picker_agent_image_picker.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
-import 'package:speakup/features/agent/conversation/agent_message_meme_client.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/providers/agent/wire_agent_image_client.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
-import 'package:speakup/providers/agent/wire_agent_meme_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/goal/goal_client.dart';
@@ -145,7 +143,6 @@ ProductionAppDependencies createProductionAppDependencies({
   AgentAudioPlayer? agentComposerAudioPlayer,
   AgentAudioPlayer? agentMessageAudioPlayer,
   PracticeMediaClient? practiceMediaClient,
-  AgentMessageMemeClient? agentMessageMemeClient,
   PracticeAudioPlayer? practiceAudioPlayer,
   AvatarSessionTokenClient? avatarSessionTokenClient,
   AvatarControllerFactory? avatarControllerFactory,
@@ -276,12 +273,6 @@ ProductionAppDependencies createProductionAppDependencies({
   final conversationController = ConversationController(
     client: agentClient,
     messageImageClient: agentImageClient,
-    messageMemeClient:
-        agentMessageMemeClient ??
-        WireAgentMessageMemeClient(
-          baseUri: baseUri,
-          credentialProvider: () => authController.currentCredential,
-        ),
   );
   final GoalActivationClient goalActivationClient = goalClient;
   final messageAudioController = AgentMessageAudioController(

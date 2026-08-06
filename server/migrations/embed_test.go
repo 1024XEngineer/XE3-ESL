@@ -91,18 +91,6 @@ func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
 	}
 }
 
-func TestAgentMessageMemeMigrationIsEmbedded(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{
-		"000073_agent_message_memes.up.sql",
-		"000073_agent_message_memes.down.sql",
-	} {
-		if _, err := Files.ReadFile(name); err != nil {
-			t.Fatalf("read Agent Message Meme migration %q: %v", name, err)
-		}
-	}
-}
-
 func TestSpeechFeedbackAcousticProviderBoundaryMigrationIsEmbedded(
 	t *testing.T,
 ) {
