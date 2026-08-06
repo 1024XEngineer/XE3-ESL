@@ -721,14 +721,66 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         const SizedBox(height: 8),
         const Text('检查岗位与简历信息，只需修改不准确的地方。'),
         const SizedBox(height: 18),
-        _SummaryCard(
-          title: candidate.jobTitle,
-          subtitle: candidate.seniority,
-          rows: [
-            ('核心职责', candidate.responsibilities.join('、')),
-            ('核心能力', candidate.coreSkills.join('、')),
-            ('建议重点', candidate.practiceGoals.join('、')),
-          ],
+        Card(
+          key: const Key('job-analysis-editor'),
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '岗位信息',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _Field(
+                  key: const Key('candidate-title-field'),
+                  controller: _candidateTitle,
+                  label: '岗位',
+                  onChanged: (_) =>
+                      controller.updateCandidate(_editedCandidate(candidate)),
+                ),
+                const SizedBox(height: 12),
+                _Field(
+                  key: const Key('candidate-seniority-field'),
+                  controller: _candidateSeniority,
+                  label: '职级',
+                  onChanged: (_) =>
+                      controller.updateCandidate(_editedCandidate(candidate)),
+                ),
+                const SizedBox(height: 12),
+                _Field(
+                  key: const Key('candidate-responsibilities-field'),
+                  controller: _responsibilities,
+                  label: '核心职责（每行一项）',
+                  maxLines: 4,
+                  onChanged: (_) =>
+                      controller.updateCandidate(_editedCandidate(candidate)),
+                ),
+                const SizedBox(height: 12),
+                _Field(
+                  key: const Key('candidate-skills-field'),
+                  controller: _skills,
+                  label: '核心能力（每行一项）',
+                  maxLines: 4,
+                  onChanged: (_) =>
+                      controller.updateCandidate(_editedCandidate(candidate)),
+                ),
+                const SizedBox(height: 12),
+                _Field(
+                  key: const Key('candidate-communication-field'),
+                  controller: _communication,
+                  label: '英语沟通重点（每行一项）',
+                  maxLines: 4,
+                  onChanged: (_) =>
+                      controller.updateCandidate(_editedCandidate(candidate)),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 14),
         _buildResumeSource(),
@@ -768,59 +820,6 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
               ),
           ],
         ),
-        const SizedBox(height: 14),
-        if (controller.step == JobPreparationStep.confirmation)
-          ExpansionTile(
-            key: const Key('job-analysis-editor'),
-            tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-            title: const Text('查看并编辑完整岗位信息'),
-            subtitle: Text(candidate.scopeNotice),
-            children: [
-              _Field(
-                key: const Key('candidate-title-field'),
-                controller: _candidateTitle,
-                label: '岗位',
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-              _Field(
-                key: const Key('candidate-seniority-field'),
-                controller: _candidateSeniority,
-                label: '职级',
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-              _Field(
-                key: const Key('candidate-responsibilities-field'),
-                controller: _responsibilities,
-                label: '核心职责（每行一项）',
-                maxLines: 4,
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-              _Field(
-                key: const Key('candidate-skills-field'),
-                controller: _skills,
-                label: '核心能力（每行一项）',
-                maxLines: 4,
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-              _Field(
-                key: const Key('candidate-communication-field'),
-                controller: _communication,
-                label: '英语沟通重点（每行一项）',
-                maxLines: 4,
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
         if (controller.errorMessage case final message?)
           _ErrorCard(
             message: message,

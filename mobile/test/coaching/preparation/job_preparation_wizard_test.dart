@@ -105,6 +105,17 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('第 2/3 步 · AI 预生成'), findsOneWidget);
+    expect(find.byKey(const Key('candidate-title-field')), findsOneWidget);
+    expect(
+      find.byKey(const Key('candidate-responsibilities-field')),
+      findsOneWidget,
+    );
+    expect(find.text('查看并编辑完整岗位信息'), findsNothing);
+    await tester.enterText(
+      find.byKey(const Key('candidate-title-field')),
+      'Senior backend engineer',
+    );
+    expect(controller.candidate?.jobTitle, 'Senior backend engineer');
   });
 
   testWidgets('automatically treats structured text as a JD', (tester) async {
