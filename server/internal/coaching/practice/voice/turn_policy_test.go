@@ -132,11 +132,11 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 	session := sessionFixture()
 	session.TurnPolicyRef = practice.GenericPracticeTurnPolicy
 	session.ScenarioContext = &practice.ScenarioPreparationContext{
-		Situation:          "Discuss a return at the store.",
-		UserRole:           "店员爸爸",
-		CounterpartRole:    "店员",
-		Goal:               "Resolve the return request.",
-		CounterpartPersona: "A helpful store assistant.",
+		Situation:          "Report project progress to a direct manager.",
+		UserRole:           "项目负责人",
+		CounterpartRole:    "项目负责人的男朋友",
+		Goal:               "Explain status, risks, and the requested decision.",
+		CounterpartPersona: "A direct manager who asks for evidence.",
 	}
 
 	_, err := (&questionAdapter{
@@ -146,11 +146,59 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureQuestion: %v", err)
 	}
-	if !strings.Contains(generator.request.SystemPrompt, "known role and identity") ||
-		!strings.Contains(generator.request.UserPrompt, `"user_role":"店员爸爸"`) ||
-		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"店员"`) ||
-		strings.Contains(generator.request.SystemPrompt, "店员爸爸") {
+	for _, rule := range []string{
+		"counterpart_role is your exact identity and relationship",
+		"overrides any conflicting identity implied by counterpart_persona",
+		"user_role is the learner's exact identity and relationship",
+		"situation and goal are the authoritative setting and objective",
+		"counterpart_persona controls only personality, tone, and interaction style",
+		"Scene focus areas and turn blueprint are subordinate training scaffolds",
+	} {
+		if !strings.Contains(generator.request.SystemPrompt, rule) {
+			t.Fatalf("system prompt missing authority rule %q: %q", rule, generator.request.SystemPrompt)
+		}
+	}
+	if !strings.Contains(generator.request.UserPrompt, `"user_role":"项目负责人"`) ||
+		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"项目负责人的男朋友"`) ||
+		!strings.Contains(generator.request.UserPrompt, `"counterpart_persona":"A direct manager who asks for evidence."`) ||
+		!strings.Contains(generator.request.UserPrompt, "Subordinate Scene focus areas (adapt if conflicting)") ||
+		!strings.Contains(generator.request.UserPrompt, "Subordinate Scene turn blueprint (adapt if conflicting)") ||
+		strings.Contains(generator.request.SystemPrompt, "项目负责人的男朋友") {
 		t.Fatalf("scenario generation request = %#v", generator.request)
+	}
+}
+
+func TestGeneratedPoliciesUseScenarioPreparationAuthority(t *testing.T) {
+	for _, reference := range []string{
+		practice.GenericPracticeTurnPolicy,
+		practice.DailyHotelCheckinIssueTurnPolicy,
+		practice.WorkplaceProgressRiskUpdateTurnPolicy,
+	} {
+		t.Run(reference, func(t *testing.T) {
+			repository := newTurnPolicyQuestionRepository()
+			generator := &turnPolicyQuestionGenerator{response: "What would you like to discuss?"}
+			session := sessionFixture()
+			session.TurnPolicyRef = reference
+			session.ScenarioContext = &practice.ScenarioPreparationContext{
+				Situation:          "A private conversation unrelated to the default Scene.",
+				UserRole:           "the learner's sibling",
+				CounterpartRole:    "the learner's older brother",
+				Goal:               "Resolve a family misunderstanding.",
+				CounterpartPersona: "Direct and evidence-seeking like the default manager.",
+			}
+
+			_, err := (&questionAdapter{
+				repository: repository,
+				generator:  generator,
+			}).EnsureQuestion(context.Background(), persistenceRequestActor(), session, 1)
+			if err != nil {
+				t.Fatalf("EnsureQuestion: %v", err)
+			}
+			if generator.request.SystemPrompt != scenarioQuestionSystemPrompt ||
+				!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"the learner's older brother"`) {
+				t.Fatalf("scenario authority request = %#v", generator.request)
+			}
+		})
 	}
 }
 
