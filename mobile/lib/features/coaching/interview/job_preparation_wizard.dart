@@ -17,6 +17,17 @@ final _jobDescriptionMarkers = RegExp(
   caseSensitive: false,
 );
 
+const _practiceGoalSuggestions = <String>[
+  '英文自我介绍',
+  '日常工作与职责',
+  '项目经历',
+  '技术深挖',
+  '团队协作',
+  '冲突处理',
+  '领导力',
+  '压力与失败复盘',
+];
+
 JobTargetSource _jobTargetSource(String value) {
   if (value.contains('\n') ||
       value.runes.length > 80 ||
@@ -438,6 +449,21 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     );
   }
 
+  void _togglePracticeGoal(JobTargetCandidate candidate, String goal) {
+    final goals = _goals.text
+        .split('\n')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (goals.contains(goal)) {
+      goals.remove(goal);
+    } else {
+      goals.add(goal);
+    }
+    _replaceText(_goals, goals.join('\n'));
+    widget.controller.updateCandidate(_editedCandidate(candidate));
+  }
+
   Future<void> _startPractice() async {
     final started = await widget.controller.startPractice();
     if (started && mounted) {
@@ -669,7 +695,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
                   unawaited(controller.analyze());
                 },
           icon: const Icon(Icons.auto_awesome_outlined),
-          label: Text('生成面试信息'),
+          label: Text('开始'),
           style: _primaryButtonStyle,
         ),
       ],
@@ -687,13 +713,13 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
       children: [
         Text(
-          '面试信息已准备好',
+          'AI 已为你生成初稿',
           style: Theme.of(
             context,
           ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 8),
-        const Text('确认岗位重点并选择是否使用简历，然后生成面试方案。'),
+        const Text('检查岗位与简历信息，只需修改不准确的地方。'),
         const SizedBox(height: 18),
         _SummaryCard(
           title: candidate.jobTitle,
@@ -707,11 +733,47 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         const SizedBox(height: 14),
         _buildResumeSource(),
         const SizedBox(height: 14),
+        Text(
+          '想重点练什么',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 6),
+        const Text('AI 已填入建议重点，也可以选择标签或直接补充要求。'),
+        const SizedBox(height: 12),
+        _Field(
+          key: const Key('job-practice-focus-field'),
+          controller: _goals,
+          label: '重点练习范围',
+          hint: '例如：英文自我介绍、技术深挖；也可补充语言、轮次或面试风格',
+          maxLines: 4,
+          onChanged: (_) =>
+              controller.updateCandidate(_editedCandidate(candidate)),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          key: const Key('job-practice-focus-suggestions'),
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final goal in _practiceGoalSuggestions)
+              FilterChip(
+                key: Key('job-practice-focus-$goal'),
+                label: Text(goal),
+                selected: candidate.practiceGoals.contains(goal),
+                onSelected: controller.isBusy
+                    ? null
+                    : (_) => _togglePracticeGoal(candidate, goal),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
         if (controller.step == JobPreparationStep.confirmation)
           ExpansionTile(
             key: const Key('job-analysis-editor'),
             tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-            title: const Text('查看并编辑岗位分析'),
+            title: const Text('查看并编辑完整岗位信息'),
             subtitle: Text(candidate.scopeNotice),
             children: [
               _Field(
@@ -752,15 +814,6 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
                 key: const Key('candidate-communication-field'),
                 controller: _communication,
                 label: '英语沟通重点（每行一项）',
-                maxLines: 4,
-                onChanged: (_) =>
-                    controller.updateCandidate(_editedCandidate(candidate)),
-              ),
-              const SizedBox(height: 12),
-              _Field(
-                key: const Key('candidate-goals-field'),
-                controller: _goals,
-                label: '建议训练重点（每行一项）',
                 maxLines: 4,
                 onChanged: (_) =>
                     controller.updateCandidate(_editedCandidate(candidate)),
@@ -1003,25 +1056,23 @@ class _StepProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     final index = switch (step) {
       JobPreparationStep.input => 0,
-      JobPreparationStep.confirmation ||
-      JobPreparationStep.setup ||
-      JobPreparationStep.preview => 1,
+      JobPreparationStep.confirmation || JobPreparationStep.setup => 1,
+      JobPreparationStep.preview => 2,
     };
     final title = switch (step) {
       JobPreparationStep.input => '岗位信息',
-      JobPreparationStep.confirmation ||
-      JobPreparationStep.setup ||
-      JobPreparationStep.preview => '确认并开始',
+      JobPreparationStep.confirmation || JobPreparationStep.setup => 'AI 预生成',
+      JobPreparationStep.preview => '确认面试',
     };
     return Semantics(
-      label: '准备进度，第 ${index + 1} 步，共 2 步',
+      label: '准备进度，第 ${index + 1} 步，共 3 步',
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '第 ${index + 1}/2 步 · $title',
+              '第 ${index + 1}/3 步 · $title',
               key: const Key('job-wizard-step-label'),
               style: SpeakUpDesign.meta.copyWith(
                 color: SpeakUpDesign.primary,
@@ -1031,12 +1082,12 @@ class _StepProgress extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: List.generate(
-                2,
+                3,
                 (item) => Expanded(
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     height: 4,
-                    margin: EdgeInsets.only(right: item == 1 ? 0 : 6),
+                    margin: EdgeInsets.only(right: item == 2 ? 0 : 6),
                     decoration: BoxDecoration(
                       color: item <= index
                           ? SpeakUpDesign.primary

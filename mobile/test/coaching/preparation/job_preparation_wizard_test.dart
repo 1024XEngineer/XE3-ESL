@@ -78,7 +78,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.text('第 1/2 步 · 岗位信息'), findsOneWidget);
+    expect(find.text('第 1/3 步 · 岗位信息'), findsOneWidget);
     expect(find.byKey(const Key('job-input-field')), findsOneWidget);
     expect(find.byKey(const Key('job-source-selector')), findsNothing);
     expect(find.byKey(const Key('job-description-field')), findsNothing);
@@ -104,7 +104,7 @@ void main() {
       find.byKey(const Key('job-wizard-confirmation-step')),
       findsOneWidget,
     );
-    expect(find.text('第 2/2 步 · 确认并开始'), findsOneWidget);
+    expect(find.text('第 2/3 步 · AI 预生成'), findsOneWidget);
   });
 
   testWidgets('automatically treats structured text as a JD', (tester) async {
@@ -122,6 +122,34 @@ void main() {
     expect(controller.input.source, JobTargetSource.jobDescription);
     expect(controller.input.jobTitle, isNull);
     expect(controller.input.jobDescription, contains('任职要求'));
+  });
+
+  testWidgets('pre-generated step supports focus text and quick tags', (
+    tester,
+  ) async {
+    final controller = _controller(_WizardClient());
+    addTearDown(controller.dispose);
+    controller.updateInput(_input);
+    await controller.analyze();
+
+    await tester.pumpWidget(
+      MaterialApp(home: JobPreparationWizard(controller: controller)),
+    );
+    await _scrollTo(
+      tester,
+      target: const Key('job-practice-focus-field'),
+      scrollable: const Key('job-wizard-confirmation-step'),
+    );
+
+    expect(find.byKey(const Key('job-practice-focus-field')), findsOneWidget);
+    expect(
+      find.byKey(const Key('job-practice-focus-suggestions')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('job-practice-focus-技术深挖')));
+    await tester.pump();
+
+    expect(controller.candidate?.practiceGoals, contains('技术深挖'));
   });
 
   testWidgets('runs confirmation and preview before one explicit start', (
@@ -178,7 +206,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
     expect(find.byKey(const Key('job-wizard-setup-step')), findsNothing);
-    expect(find.text('第 2/2 步 · 确认并开始'), findsOneWidget);
+    expect(find.text('第 3/3 步 · 确认面试'), findsOneWidget);
     expect(client.sessionCalls, 0);
 
     await _scrollTo(
@@ -288,7 +316,7 @@ void main() {
 
     expect(find.text('临时简历解析失败，可以重试或重新上传。'), findsOneWidget);
     expect(find.text('重试解析'), findsOneWidget);
-    expect(find.text('Backend engineer'), findsWidgets);
+    expect(controller.candidate?.jobTitle, 'Backend engineer');
     await _scrollTo(
       tester,
       target: const Key('confirm-job-analysis-button'),
