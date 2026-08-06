@@ -1,4 +1,4 @@
-package preparation
+package http
 
 import (
 	"context"
@@ -37,9 +37,17 @@ func TestJobTargetHTTPCreateIsStrictPrivateAndActorDerived(t *testing.T) {
 			)
 		}
 		return JobTarget{
-			ID:           "target-1",
-			UserID:       actor.UserID,
-			Input:        request.input(),
+			ID:     "target-1",
+			UserID: actor.UserID,
+			Input: JobTargetInput{
+				Source:              request.Source,
+				JobTitle:            request.JobTitle,
+				JobDescription:      request.JobDescription,
+				Company:             request.Company,
+				Seniority:           request.Seniority,
+				CandidateBackground: request.CandidateBackground,
+				PracticeFocus:       request.PracticeFocus,
+			},
 			InputVersion: 1,
 			Stage:        JobTargetStageDraft,
 		}, false, nil
@@ -372,3 +380,10 @@ func (s *jobTargetHTTPApplicationStub) Discard(
 }
 
 var _ JobTargetHTTPApplication = (*jobTargetHTTPApplicationStub)(nil)
+
+func jobTargetActor() requestcontext.Actor {
+	return requestcontext.Actor{
+		UserID:    "11111111-1111-4111-8111-111111111111",
+		SessionID: "session-1",
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
-	preparationport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service/port"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -44,13 +43,13 @@ func TestPersistenceServiceResolvesTypedScenarioContext(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("CreateProfile = (%t, %v)", replayed, err)
 	}
-	if resolver.command.Input.Scenario != request.Scenario ||
+	if resolver.input.Scenario != request.Scenario ||
 		repository.createdProfile.Context == nil ||
 		repository.createdProfile.Context.Scenario.Situation !=
 			request.Scenario.Situation {
 		t.Fatalf(
 			"resolver command = %#v, create command = %#v",
-			resolver.command,
+			resolver.input,
 			repository.createdProfile,
 		)
 	}
@@ -231,26 +230,29 @@ type profileResumeReaderStub struct {
 }
 
 type profileContextResolverStub struct {
-	command preparationport.ResolveCommand
+	actor requestcontext.Actor
+	input preparationmodel.ContextInput
 }
 
-func (stub *profileContextResolverStub) Resolve(
+func (stub *profileContextResolverStub) ResolveContext(
 	_ context.Context,
-	command preparationport.ResolveCommand,
+	actor requestcontext.Actor,
+	input preparationmodel.ContextInput,
 ) (preparationmodel.ResolvedContext, error) {
-	stub.command = command
-	if command.Input.Scenario == nil {
+	stub.actor = actor
+	stub.input = input
+	if input.Scenario == nil {
 		return preparationmodel.ResolvedContext{}, preparationmodel.ErrInvalidContext
 	}
-	input := command.Input.Scenario
+	scenarioInput := input.Scenario
 	return preparationmodel.ResolvedContext{
 		Kind: preparationmodel.PreparationKindScenario,
 		Scenario: &preparationmodel.ScenarioContextSnapshot{
-			Situation:          input.Situation,
-			UserRole:           input.UserRole,
-			CounterpartRole:    input.CounterpartRole,
-			Goal:               input.Goal,
-			CounterpartPersona: input.CounterpartPersona,
+			Situation:          scenarioInput.Situation,
+			UserRole:           scenarioInput.UserRole,
+			CounterpartRole:    scenarioInput.CounterpartRole,
+			Goal:               scenarioInput.Goal,
+			CounterpartPersona: scenarioInput.CounterpartPersona,
 		},
 	}, nil
 }

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -230,4 +231,4 @@ func writeProfileHTTPError(c *gin.Context, status int, code string) {
 	})
 }
 
-var _ ProfileHTTPApplication = (*preparation.PersistenceService)(nil)
+var _ ProfileHTTPApplication = (*preparationservice.ProfileService)(nil)

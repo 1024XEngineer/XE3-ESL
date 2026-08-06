@@ -1,4 +1,4 @@
-package preparation
+package postgres
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )

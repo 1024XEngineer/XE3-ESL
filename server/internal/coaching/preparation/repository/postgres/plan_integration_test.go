@@ -1,4 +1,4 @@
-package preparation_test
+package postgres_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 )
@@ -29,7 +30,7 @@ func TestPostgresPlanRepositoryPersistsImmutableRevisionsAndExactReplays(
 ) {
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA, preparationUserB)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	actorA := preparationActor(preparationUserA, preparationSessionA)
 	actorB := preparationActor(preparationUserB, preparationSessionB)
 	createCommand := seedPlanCommand(
@@ -249,7 +250,7 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
 	actor := preparationActor(preparationUserA, preparationSessionA)
-	repository := preparation.NewPostgresPlanRepository(pool)
+	repository := preparationpostgres.NewPostgresPlanRepository(pool)
 	command := seedPlanCommand(
 		t,
 		pool,
@@ -537,7 +538,7 @@ func TestDeleteProfileDataStopsAtPracticeSessionPlanReference(t *testing.T) {
 	profileRepository, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA)
 	actor := preparationActor(preparationUserA, preparationSessionA)
-	planRepository := preparation.NewPostgresPlanRepository(pool)
+	planRepository := preparationpostgres.NewPostgresPlanRepository(pool)
 	command := seedPlanCommand(
 		t,
 		pool,
@@ -629,7 +630,7 @@ func TestDeleteProfileDataStopsAtPracticeSessionPlanReference(t *testing.T) {
 func seedPlanCommand(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	profiles *preparation.PostgresProfileRepository,
+	profiles *preparationpostgres.PostgresProfileRepository,
 	userID string,
 	sessionID string,
 	suffix string,

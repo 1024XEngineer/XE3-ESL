@@ -1,4 +1,4 @@
-package preparation
+package service
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -414,6 +415,10 @@ func validCreatePlanRequest(request CreatePlanRequest) bool {
 			validIELTSSelectionShape(*request.IELTSSelection))
 }
 
+func ValidCreatePlanRequest(request CreatePlanRequest) bool {
+	return validCreatePlanRequest(request)
+}
+
 func validRevisePlanRequest(request RevisePlanRequest) bool {
 	return request.ExpectedPlanRevision > 0 &&
 		validUniquePlanIDs(request.SelectedRoleIDs) &&
@@ -421,6 +426,10 @@ func validRevisePlanRequest(request RevisePlanRequest) bool {
 		request.MaxEffectiveTurns > 0 &&
 		(request.IELTSSelection == nil ||
 			validIELTSSelectionShape(*request.IELTSSelection))
+}
+
+func ValidRevisePlanRequest(request RevisePlanRequest) bool {
+	return validRevisePlanRequest(request)
 }
 
 func validPlanPreparationSnapshot(snapshot Snapshot, expectedID string) bool {
@@ -632,6 +641,13 @@ func validPlanIELTSAssignment(
 		equalPlanStrings(selection.Scene.Prompt.TurnBlueprints, blueprints)
 }
 
+func ValidPlanIELTSAssignment(
+	selection scene.SelectionSnapshot,
+	assignment *IELTSAssignmentSnapshot,
+) bool {
+	return validPlanIELTSAssignment(selection, assignment)
+}
+
 func validIELTSAssignmentParts(
 	mode scene.PracticeMode,
 	parts []IELTSAssignmentPartSnapshot,
@@ -790,6 +806,14 @@ func validSelectedPlanOption(
 	}
 }
 
+func ValidSelectedPlanOption(
+	selection scene.SelectionSnapshot,
+	roles []scene.RoleDefinition,
+	option scene.PracticeOption,
+) bool {
+	return validSelectedPlanOption(selection, roles, option)
+}
+
 func buildPlanExecution(
 	policies PolicyResolver,
 	selection scene.SelectionSnapshot,
@@ -912,6 +936,14 @@ func validReturnedPlan(
 		)
 }
 
+func ValidReturnedPlan(
+	plan PracticePlan,
+	actor requestcontext.Actor,
+	expectedID string,
+) bool {
+	return validReturnedPlan(plan, actor, expectedID)
+}
+
 func validPracticeObjectives(objectives []PracticeObjective) bool {
 	if len(objectives) == 0 {
 		return false
@@ -930,6 +962,10 @@ func validPracticeObjectives(objectives []PracticeObjective) bool {
 	return true
 }
 
+func ValidPracticeObjectives(objectives []PracticeObjective) bool {
+	return validPracticeObjectives(objectives)
+}
+
 func validStoredSessionPolicy(policy SessionPolicy) bool {
 	return policy.SuggestedDurationSeconds > 0 &&
 		policy.MinEffectiveTurns > 0 &&
@@ -942,9 +978,17 @@ func validStoredSessionPolicy(policy SessionPolicy) bool {
 			EarlyCompletionCoverageSatisfiedAfterCheckpoint
 }
 
+func ValidStoredSessionPolicy(policy SessionPolicy) bool {
+	return validStoredSessionPolicy(policy)
+}
+
 func validPlanResourceID(value string) bool {
 	return utf8.ValidString(value) && value != "" && len(value) <= 128 &&
 		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+}
+
+func ValidPlanResourceID(value string) bool {
+	return validPlanResourceID(value)
 }
 
 func validUniquePlanIDs(values []string) bool {
@@ -964,9 +1008,17 @@ func validUniquePlanIDs(values []string) bool {
 	return true
 }
 
+func ValidUniquePlanIDs(values []string) bool {
+	return validUniquePlanIDs(values)
+}
+
 func validPlanText(value string) bool {
 	return utf8.ValidString(value) && value != "" &&
 		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+}
+
+func ValidPlanText(value string) bool {
+	return validPlanText(value)
 }
 
 func equalPlanStrings(left, right []string) bool {
@@ -989,6 +1041,10 @@ func cloneGoalSnapshot(source *GoalSnapshot) *GoalSnapshot {
 	return &result
 }
 
+func CloneGoalSnapshot(source *GoalSnapshot) *GoalSnapshot {
+	return cloneGoalSnapshot(source)
+}
+
 func clonePlanPreparationSnapshot(source Snapshot) Snapshot {
 	result := source
 	result.JobTargetInputSnapshot = cloneSnapshotJobTargetInput(
@@ -998,6 +1054,10 @@ func clonePlanPreparationSnapshot(source Snapshot) Snapshot {
 		source.JobTargetCandidateSnapshot,
 	)
 	return result
+}
+
+func ClonePlanPreparationSnapshot(source Snapshot) Snapshot {
+	return clonePlanPreparationSnapshot(source)
 }
 
 func clonePlanSceneSelection(
@@ -1037,6 +1097,10 @@ func clonePlanObjectives(source []PracticeObjective) []PracticeObjective {
 	return append([]PracticeObjective(nil), source...)
 }
 
+func ClonePlanObjectives(source []PracticeObjective) []PracticeObjective {
+	return clonePlanObjectives(source)
+}
+
 func cloneIELTSAssignment(
 	source *IELTSAssignmentSnapshot,
 ) *IELTSAssignmentSnapshot {
@@ -1054,6 +1118,12 @@ func cloneIELTSAssignment(
 	return &result
 }
 
+func CloneIELTSAssignment(
+	source *IELTSAssignmentSnapshot,
+) *IELTSAssignmentSnapshot {
+	return cloneIELTSAssignment(source)
+}
+
 func clonePracticePlan(source PracticePlan) PracticePlan {
 	result := source
 	result.GoalSnapshot = cloneGoalSnapshot(source.GoalSnapshot)
@@ -1064,6 +1134,10 @@ func clonePracticePlan(source PracticePlan) PracticePlan {
 	result.PracticeObjectives = clonePlanObjectives(source.PracticeObjectives)
 	result.IELTSAssignment = cloneIELTSAssignment(source.IELTSAssignment)
 	return result
+}
+
+func ClonePracticePlan(source PracticePlan) PracticePlan {
+	return clonePracticePlan(source)
 }
 
 func clonePlanStrings(values []string) []string {

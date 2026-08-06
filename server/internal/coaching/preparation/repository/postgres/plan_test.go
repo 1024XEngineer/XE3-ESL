@@ -1,4 +1,4 @@
-package preparation
+package postgres
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -53,6 +55,49 @@ func TestPostgresPlanRepositoryRejectsInvalidBoundaryInput(t *testing.T) {
 		1,
 	); !errors.Is(err, ErrPlanNotFound) {
 		t.Fatalf("ReadExecutablePlan error = %v", err)
+	}
+}
+
+func planSelectionFixture() scene.SelectionSnapshot {
+	definition := scene.SceneDefinition{
+		ID:         "scene-1",
+		Experience: scene.PracticeExperienceInterview,
+		Category:   scene.SceneCategoryInterviewProfessional,
+		Name:       "Interview",
+		Version:    2,
+		Status:     scene.SceneStatusActive,
+		Prompt: scene.ScenePrompt{
+			PublicSceneBrief: "Interview practice",
+			PracticeGoal:     "Give clear answers",
+			UserRole:         "Candidate",
+			AIRole:           "Interviewer",
+			PersonaSummary:   "A structured interviewer.",
+			FocusAreas:       []string{"clarity", "evidence"},
+			TurnBlueprints:   []string{"one", "two", "three", "four"},
+		},
+		Roles: []scene.RoleDefinition{{
+			ID:          "role-1",
+			SceneID:     "scene-1",
+			Type:        "INTERVIEWER",
+			DisplayName: "Interviewer",
+			PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+				ID: "clarity", Description: "Explain clearly.",
+			}},
+		}},
+		PracticeOptions: []scene.PracticeOption{{
+			ID:                       "option-full",
+			SceneID:                  "scene-1",
+			Mode:                     scene.PracticeModeFullSimulation,
+			SuggestedDurationSeconds: 600,
+			TurnPolicyRef:            "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef:         "generic.practice.session.v1",
+			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
+		}},
+	}
+	return scene.SelectionSnapshot{
+		Scene:            definition,
+		SelectedRoleIDs:  []string{"role-1"},
+		PracticeOptionID: "option-full",
 	}
 }
 

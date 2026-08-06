@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	preparationmodel "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/model"
-	preparationport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service/port"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -148,9 +147,10 @@ type ResourceIDGenerator interface {
 }
 
 type ContextResolver interface {
-	Resolve(
+	ResolveContext(
 		context.Context,
-		preparationport.ResolveCommand,
+		requestcontext.Actor,
+		preparationmodel.ContextInput,
 	) (preparationmodel.ResolvedContext, error)
 }
 
@@ -255,10 +255,7 @@ func (s *PersistenceService) CreateProfile(
 		default:
 			return Profile{}, false, ErrProfileInvalid
 		}
-		resolved, err := s.contexts.Resolve(ctx, preparationport.ResolveCommand{
-			Actor: actor,
-			Input: input,
-		})
+		resolved, err := s.contexts.ResolveContext(ctx, actor, input)
 		if err != nil {
 			return Profile{}, false, ErrProfileInvalid
 		}
@@ -439,12 +436,20 @@ func targetedPreparationSnapshot(snapshot Snapshot) bool {
 		snapshot.JobTargetCandidateSnapshot != nil
 }
 
+func TargetedPreparationSnapshot(snapshot Snapshot) bool {
+	return targetedPreparationSnapshot(snapshot)
+}
+
 func cloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
 	if input == nil {
 		return nil
 	}
 	result := *input
 	return &result
+}
+
+func CloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
+	return cloneSnapshotJobTargetInput(input)
 }
 
 func cloneSnapshotJobTargetCandidate(
@@ -455,6 +460,12 @@ func cloneSnapshotJobTargetCandidate(
 	}
 	result := cloneJobTargetCandidate(*candidate)
 	return &result
+}
+
+func CloneSnapshotJobTargetCandidate(
+	candidate *JobTargetCandidate,
+) *JobTargetCandidate {
+	return cloneSnapshotJobTargetCandidate(candidate)
 }
 
 func validOptionalPreparationText(value string, maxLength int) bool {
@@ -485,6 +496,10 @@ func validCanonicalPath(value string) bool {
 		len(value) <= 1024 &&
 		!strings.ContainsRune(value, '\x00') &&
 		strings.TrimSpace(value) == value
+}
+
+func ValidCanonicalPath(value string) bool {
+	return validCanonicalPath(value)
 }
 
 func validIdempotencyKey(value string) bool {
