@@ -78,25 +78,21 @@ void main() {
     );
 
     expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.text('第 1/4 步 · 岗位信息'), findsOneWidget);
-    expect(find.byKey(const Key('job-description-field')), findsOneWidget);
+    expect(find.text('第 1/2 步 · 岗位信息'), findsOneWidget);
+    expect(find.byKey(const Key('job-input-field')), findsOneWidget);
+    expect(find.byKey(const Key('job-source-selector')), findsNothing);
+    expect(find.byKey(const Key('job-description-field')), findsNothing);
     expect(find.byKey(const Key('job-title-field')), findsNothing);
-
     expect(find.byKey(const Key('job-company-field')), findsNothing);
     expect(find.byKey(const Key('job-background-field')), findsNothing);
     expect(find.byKey(const Key('job-goal-field')), findsNothing);
 
-    await tester.tap(find.text('职位名称'));
-    await tester.pump();
-
-    expect(find.byKey(const Key('job-title-field')), findsOneWidget);
-    expect(find.byKey(const Key('job-description-field')), findsNothing);
-    expect(find.byKey(const Key('job-company-field')), findsNothing);
-
     await tester.enterText(
-      find.byKey(const Key('job-title-field')),
+      find.byKey(const Key('job-input-field')),
       'Backend engineer',
     );
+    expect(controller.input.source, JobTargetSource.quickStart);
+    expect(controller.input.jobTitle, 'Backend engineer');
     await _scrollTo(
       tester,
       target: const Key('analyze-job-button'),
@@ -108,6 +104,24 @@ void main() {
       find.byKey(const Key('job-wizard-confirmation-step')),
       findsOneWidget,
     );
+    expect(find.text('第 2/2 步 · 确认并开始'), findsOneWidget);
+  });
+
+  testWidgets('automatically treats structured text as a JD', (tester) async {
+    final controller = _controller(_WizardClient());
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: JobPreparationWizard(controller: controller)),
+    );
+    await tester.enterText(
+      find.byKey(const Key('job-input-field')),
+      '岗位职责：负责 Go 服务开发\n任职要求：熟悉 PostgreSQL',
+    );
+
+    expect(controller.input.source, JobTargetSource.jobDescription);
+    expect(controller.input.jobTitle, isNull);
+    expect(controller.input.jobDescription, contains('任职要求'));
   });
 
   testWidgets('runs confirmation and preview before one explicit start', (
@@ -140,7 +154,7 @@ void main() {
       ),
     );
     await tester.enterText(
-      find.byKey(const Key('job-description-field')),
+      find.byKey(const Key('job-input-field')),
       'Build reliable Go APIs and explain system design trade-offs.',
     );
     await _scrollTo(
@@ -162,16 +176,9 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
     await tester.pump();
-    expect(find.byKey(const Key('job-wizard-setup-step')), findsOneWidget);
-
-    await _scrollTo(
-      tester,
-      target: const Key('create-plan-preview-button'),
-      scrollable: const Key('job-wizard-setup-step'),
-    );
-    await tester.tap(find.byKey(const Key('create-plan-preview-button')));
-    await tester.pump();
     expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
+    expect(find.byKey(const Key('job-wizard-setup-step')), findsNothing);
+    expect(find.text('第 2/2 步 · 确认并开始'), findsOneWidget);
     expect(client.sessionCalls, 0);
 
     await _scrollTo(
@@ -291,7 +298,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.resumeSelection, isNull);
-    expect(find.byKey(const Key('job-wizard-setup-step')), findsOneWidget);
+    expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
   });
 
   testWidgets('temporary upload becomes the selected parsed resume', (
@@ -381,10 +388,10 @@ void main() {
     );
     await _scrollTo(
       tester,
-      target: const Key('create-plan-preview-button'),
-      scrollable: const Key('job-wizard-setup-step'),
+      target: const Key('confirm-job-analysis-button'),
+      scrollable: const Key('job-wizard-confirmation-step'),
     );
-    await tester.tap(find.byKey(const Key('create-plan-preview-button')));
+    await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
     await tester.pumpAndSettle();
 
     expect(client.snapshotCalls, 1);
@@ -456,9 +463,7 @@ void main() {
         child: MaterialApp(home: JobPreparationWizard(controller: controller)),
       ),
     );
-    await tester.tap(find.text('职位名称'));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('job-title-field')));
+    await tester.tap(find.byKey(const Key('job-input-field')));
     await tester.pump();
 
     expect(tester.takeException(), isNull);
