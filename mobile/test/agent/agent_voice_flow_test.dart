@@ -168,10 +168,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.descendant(
-          of: voiceBubble,
-          matching: find.byIcon(Icons.graphic_eq_rounded),
-        ),
+        find.byKey(Key('agent-user-voice-progress-${voiceMessage.id}')),
         findsOneWidget,
       );
       expect(
