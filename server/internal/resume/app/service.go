@@ -21,6 +21,8 @@ const (
 	MaxResumesPerUser = 3
 	// DefaultMaximumFileBytes 是 Resume API 接受的 PDF 最大字节数。
 	DefaultMaximumFileBytes int64 = 10 * 1024 * 1024
+	// TemporaryResumeLifetime bounds abandoned interview-only uploads.
+	TemporaryResumeLifetime = 24 * time.Hour
 )
 
 // ServiceConfiguration 保存应用服务的文件和授权地址边界。
@@ -69,6 +71,24 @@ func (s *Service) Create(
 	actor requestcontext.Actor,
 	command CreateCommand,
 ) (resume.Resume, error) {
+	return s.create(ctx, actor, command, false)
+}
+
+// CreateTemporary creates an interview-only resume excluded from the saved quota.
+func (s *Service) CreateTemporary(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command CreateCommand,
+) (resume.Resume, error) {
+	return s.create(ctx, actor, command, true)
+}
+
+func (s *Service) create(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command CreateCommand,
+	temporary bool,
+) (resume.Resume, error) {
 	if !validServiceCall(s, ctx, actor) || !validTitle(command.Title) ||
 		!validIdempotencyKey(command.IdempotencyKey) {
 		return resume.Resume{}, InvalidResumeError()
@@ -102,6 +122,11 @@ func (s *Service) Create(
 		Version:          1,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+		Temporary:        temporary,
+	}
+	if temporary {
+		expiresAt := now.Add(TemporaryResumeLifetime)
+		item.ExpiresAt = &expiresAt
 	}
 	if err := s.repository.CreateWithinLimit(ctx, item, MaxResumesPerUser); err != nil {
 		if existing, ok := s.replayedCreate(ctx, actor.UserID, item, err); ok {
@@ -124,6 +149,54 @@ func (s *Service) Create(
 		return resume.Resume{}, err
 	}
 	return s.repository.FindByOwnerAndID(ctx, actor.UserID, resumeID)
+}
+
+// GetTemporary returns only an unexpired interview-only resume.
+func (s *Service) GetTemporary(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	resumeID string,
+) (Detail, error) {
+	detail, err := s.Get(ctx, actor, resumeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	if !validTemporary(detail.Resume, s.now()) {
+		return Detail{}, ResumeNotFoundError()
+	}
+	return detail, nil
+}
+
+// RetryTemporaryParse retries parsing only for an unexpired temporary resume.
+func (s *Service) RetryTemporaryParse(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	resumeID string,
+) (resume.Resume, error) {
+	if _, err := s.GetTemporary(ctx, actor, resumeID); err != nil {
+		return resume.Resume{}, err
+	}
+	return s.RetryParse(ctx, actor, resumeID)
+}
+
+// DeleteTemporary deletes only an interview-only resume.
+func (s *Service) DeleteTemporary(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command DeleteCommand,
+) error {
+	if !validServiceCall(s, ctx, actor) || !validUUID(command.ResumeID) ||
+		command.ExpectedVersion < 1 {
+		return ResumeNotFoundError()
+	}
+	item, err := s.repository.FindByOwnerAndID(ctx, actor.UserID, command.ResumeID)
+	if err != nil {
+		return err
+	}
+	if !item.Temporary {
+		return ResumeNotFoundError()
+	}
+	return s.Delete(ctx, actor, command)
 }
 
 // List 列出当前认证用户拥有的活动简历。
@@ -356,6 +429,10 @@ func (s *Service) replayedCreate(
 func (s *Service) abortCreate(ctx context.Context, ownerUserID string, resumeID string, objectKey string) {
 	_ = s.storage.Delete(ctx, objectKey)
 	_ = s.repository.AbortCreate(ctx, ownerUserID, resumeID)
+}
+
+func validTemporary(item resume.Resume, now time.Time) bool {
+	return item.Temporary && item.ExpiresAt != nil && item.ExpiresAt.After(now.UTC())
 }
 
 // readValidatedPDF 双重校验上传大小、声明摘要和 PDF 文件魔数。

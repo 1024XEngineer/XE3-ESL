@@ -87,6 +87,34 @@ void main() {
     expect(client.sessionKeys, hasLength(1));
   });
 
+  test(
+    'selected resume revision is bound to the preparation profile',
+    () async {
+      final client = _FakeJobPreparationClient();
+      final controller = _controller(client);
+      addTearDown(controller.dispose);
+      controller.updateInput(_input);
+      await controller.analyze();
+      await controller.confirm();
+      controller.selectResume(
+        const JobPreparationResumeSelection(
+          resumeId: '70000000-0000-4000-8000-000000000007',
+          revision: 3,
+          resourceVersion: 5,
+          temporary: false,
+          title: 'Backend resume',
+        ),
+      );
+
+      expect(await controller.createPreview(), isTrue);
+      expect(
+        client.lastProfileInput?.resumeId,
+        '70000000-0000-4000-8000-000000000007',
+      );
+      expect(client.lastProfileInput?.resumeRevision, 3);
+    },
+  );
+
   test('voice retry never creates a second committed Session', () async {
     final client = _FakeJobPreparationClient();
     var voiceCalls = 0;
@@ -850,6 +878,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   final List<String> analysisKeys = <String>[];
   final List<String> profileKeys = <String>[];
   final List<String> sessionKeys = <String>[];
+  CreatePreparationProfileInput? lastProfileInput;
   int clearCount = 0;
   int _createAttempts = 0;
   int _analysisAttempts = 0;
@@ -943,6 +972,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   }) async {
     calls.add('profile');
     profileKeys.add(idempotencyKey);
+    lastProfileInput = input;
     _profileAttempts++;
     if (failFirstProfile && _profileAttempts == 1) {
       throw const JobPreparationException(

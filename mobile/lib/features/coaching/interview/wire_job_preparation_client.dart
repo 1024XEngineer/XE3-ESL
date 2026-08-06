@@ -236,7 +236,8 @@ final class WireJobPreparationClient implements JobPreparationClient {
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
         'background_summary': input.backgroundSummary,
-        'resume_ref': ?input.resumeRef,
+        'resume_id': ?input.resumeId,
+        'resume_revision': ?input.resumeRevision,
         'job_description_ref': ?input.jobDescriptionRef,
         'job_target_id': ?input.jobTargetId,
         'job_target_confirmation_version': ?input.jobTargetConfirmationVersion,
@@ -250,7 +251,8 @@ final class WireJobPreparationClient implements JobPreparationClient {
       decode: (body) {
         final profile = decodePreparationProfileBody(body);
         if (profile.backgroundSummary != input.backgroundSummary ||
-            profile.resumeRef != input.resumeRef ||
+            profile.resumeId != input.resumeId ||
+            profile.resumeRevision != input.resumeRevision ||
             profile.jobDescriptionRef != input.jobDescriptionRef ||
             profile.jobTargetId != input.jobTargetId ||
             profile.jobTargetConfirmationVersion !=
@@ -1429,8 +1431,18 @@ Never _invalidResponse([JobPreparationOperationStage? stage]) {
 
 void _requireProfileInput(CreatePreparationProfileInput input) {
   _requireText(input.backgroundSummary, maxBytes: 64 * 1024);
-  if (input.resumeRef case final value?) {
-    _requireText(value, maxBytes: 16 * 1024);
+  final hasResume = input.resumeId != null;
+  if (hasResume != (input.resumeRevision != null)) {
+    throw const JobPreparationException(
+      kind: JobPreparationFailureKind.invalidRequest,
+      stage: JobPreparationOperationStage.profile,
+    );
+  }
+  if (input.resumeId case final value?) {
+    _requireResourceId(value);
+  }
+  if (input.resumeRevision case final value?) {
+    _requireVersion(value);
   }
   if (input.jobDescriptionRef case final value?) {
     _requireText(value, maxBytes: 16 * 1024);

@@ -71,6 +71,19 @@ func (w *ParseWorker) ProcessNext(ctx context.Context) (bool, error) {
 		ctx == nil || ctx.Err() != nil {
 		return false, InvalidResumeError()
 	}
+	expired, found, err := w.repository.ClaimExpiredTemporary(ctx, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	if found {
+		if err := w.storage.Delete(ctx, expired.ObjectKey); err != nil {
+			return true, RepositoryError(err)
+		}
+		if err := w.repository.MarkDeleted(ctx, expired.OwnerUserID, expired.ID); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
 	claimed, found, err := w.repository.ClaimNextQueuedParse(ctx)
 	if err != nil || !found {
 		return false, err

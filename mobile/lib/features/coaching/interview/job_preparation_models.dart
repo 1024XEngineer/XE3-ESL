@@ -77,6 +77,22 @@ final class JobTargetInput {
   );
 }
 
+final class JobPreparationResumeSelection {
+  const JobPreparationResumeSelection({
+    required this.resumeId,
+    required this.revision,
+    required this.resourceVersion,
+    required this.temporary,
+    required this.title,
+  });
+
+  final String resumeId;
+  final int revision;
+  final int resourceVersion;
+  final bool temporary;
+  final String title;
+}
+
 final class JobTargetCatalogRecommendation {
   const JobTargetCatalogRecommendation({
     required this.sceneId,

@@ -83,14 +83,16 @@ func (r *GormRepository) CreateWithinLimit(
 			Take(&owner).Error; err != nil {
 			return mapGormError(err)
 		}
-		var count int64
-		if err := tx.Model(&resumeRecord{}).
-			Where("owner_user_id = ?", item.OwnerUserID).
-			Count(&count).Error; err != nil {
-			return mapGormError(err)
-		}
-		if count >= int64(maximum) {
-			return app.ResumeLimitExceededError()
+		if !item.Temporary {
+			var count int64
+			if err := tx.Model(&resumeRecord{}).
+				Where("owner_user_id = ? AND is_temporary = FALSE", item.OwnerUserID).
+				Count(&count).Error; err != nil {
+				return mapGormError(err)
+			}
+			if count >= int64(maximum) {
+				return app.ResumeLimitExceededError()
+			}
 		}
 		if err := tx.Create(&record).Error; err != nil {
 			return mapGormError(err)
@@ -136,7 +138,7 @@ func (r *GormRepository) ListByOwner(
 		return nil, app.InvalidResumeError()
 	}
 	database := r.database.WithContext(ctx).
-		Where("owner_user_id = ?", ownerUserID)
+		Where("owner_user_id = ? AND is_temporary = FALSE", ownerUserID)
 	if query.Cursor != "" {
 		database = database.Where("resume_id < ?", query.Cursor)
 	}
@@ -516,6 +518,52 @@ func (r *GormRepository) ClaimNextQueuedParse(
 	return claimed, found, nil
 }
 
+// ClaimExpiredTemporary locks one expired temporary resume and marks its file for deletion.
+func (r *GormRepository) ClaimExpiredTemporary(
+	ctx context.Context,
+	now time.Time,
+) (resume.Resume, bool, error) {
+	if r == nil || r.database == nil || ctx == nil || now.IsZero() {
+		return resume.Resume{}, false, app.InvalidResumeError()
+	}
+	var claimed resume.Resume
+	found := false
+	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var record resumeRecord
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("is_temporary = TRUE AND expires_at <= ?", now.UTC()).
+			Where("file_status IN ?", []string{string(resume.FileAvailable), string(resume.FileDeleting)}).
+			Order("expires_at, resume_id").
+			Take(&record).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return mapGormError(err)
+		}
+		if record.FileStatus != string(resume.FileDeleting) {
+			if err := tx.Model(&record).Clauses(clause.Returning{}).Updates(map[string]any{
+				"file_status": string(resume.FileDeleting),
+				"version":     gorm.Expr("version + 1"),
+				"updated_at":  nextResumeTimestamp(),
+			}).Error; err != nil {
+				return mapGormError(err)
+			}
+		}
+		mapped, err := resumeFromRecord(record)
+		if err != nil {
+			return app.RepositoryError(err)
+		}
+		claimed = mapped
+		found = true
+		return nil
+	})
+	if err != nil {
+		return resume.Resume{}, false, mapTransactionError(err)
+	}
+	return claimed, found, nil
+}
+
 // CompleteParse 保存解析修订并把简历标记为解析完成。
 func (r *GormRepository) CompleteParse(
 	ctx context.Context,
@@ -713,6 +761,8 @@ func validWriteInput(
 
 // validNewResume 校验新建持久化记录的必要不变量。
 func validNewResume(item resume.Resume) bool {
+	temporaryValid := (!item.Temporary && item.ExpiresAt == nil) ||
+		(item.Temporary && item.ExpiresAt != nil && item.ExpiresAt.After(item.CreatedAt))
 	return validUUID(item.ID) && validUUID(item.OwnerUserID) && validTitle(item.Title) &&
 		validFileMetadata(
 			item.OriginalFilename,
@@ -722,7 +772,8 @@ func validNewResume(item resume.Resume) bool {
 			item.ObjectKey,
 		) && item.FileStatus == resume.FileUploading &&
 		item.ParseStatus == resume.ParseQueued && item.ParseFailureCode == "" &&
-		item.CurrentRevision == 0 && (item.Version == 0 || item.Version == 1)
+		item.CurrentRevision == 0 && temporaryValid &&
+		(item.Version == 0 || item.Version == 1)
 }
 
 // validFileMetadata 校验 PDF 元数据是否满足迁移约束。

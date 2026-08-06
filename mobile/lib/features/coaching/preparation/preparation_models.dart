@@ -26,7 +26,8 @@ final class PreparationProfile {
     required this.backgroundSummary,
     required this.version,
     required this.updatedAt,
-    this.resumeRef,
+    this.resumeId,
+    this.resumeRevision,
     this.jobDescriptionRef,
     this.jobTargetId,
     this.jobTargetConfirmationVersion,
@@ -34,7 +35,8 @@ final class PreparationProfile {
 
   final String id;
   final String userId;
-  final String? resumeRef;
+  final String? resumeId;
+  final int? resumeRevision;
   final String? jobDescriptionRef;
   final String backgroundSummary;
   final String? jobTargetId;
@@ -176,14 +178,16 @@ final class PracticePlan {
 final class CreatePreparationProfileInput {
   const CreatePreparationProfileInput({
     required this.backgroundSummary,
-    this.resumeRef,
+    this.resumeId,
+    this.resumeRevision,
     this.jobDescriptionRef,
     this.jobTargetId,
     this.jobTargetConfirmationVersion,
   });
 
   final String backgroundSummary;
-  final String? resumeRef;
+  final String? resumeId;
+  final int? resumeRevision;
   final String? jobDescriptionRef;
   final String? jobTargetId;
   final int? jobTargetConfirmationVersion;

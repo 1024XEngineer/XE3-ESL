@@ -30,6 +30,16 @@ type resumeListResponse struct {
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
+type temporaryResumeResponse struct {
+	resumeResponse
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type temporaryResumeDetailResponse struct {
+	Resume          temporaryResumeResponse `json:"resume"`
+	CurrentRevision *resumeRevisionResponse `json:"current_revision,omitempty"`
+}
+
 // contentURLResponse 表示原始 PDF 的短时读取地址和过期时间。
 type contentURLResponse struct {
 	URL       string    `json:"url"`
@@ -61,6 +71,23 @@ func newResumeResponse(item resume.Resume) resumeResponse {
 		CurrentRevision: item.CurrentRevision, Version: item.Version,
 		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, DeletedAt: item.DeletedAt,
 	}
+}
+
+func newTemporaryResumeResponse(item resume.Resume) temporaryResumeResponse {
+	response := temporaryResumeResponse{resumeResponse: newResumeResponse(item)}
+	if item.ExpiresAt != nil {
+		response.ExpiresAt = item.ExpiresAt.UTC()
+	}
+	return response
+}
+
+func newTemporaryDetailResponse(detail app.Detail) temporaryResumeDetailResponse {
+	response := temporaryResumeDetailResponse{Resume: newTemporaryResumeResponse(detail.Resume)}
+	if detail.Revision != nil {
+		revision := newRevisionResponse(*detail.Revision)
+		response.CurrentRevision = &revision
+	}
+	return response
 }
 
 // newRevisionResponse 把修订领域对象投影为公开响应。

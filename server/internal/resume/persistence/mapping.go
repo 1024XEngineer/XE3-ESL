@@ -22,6 +22,8 @@ func resumeToRecord(item resume.Resume) resumeRecord {
 		ObjectKey:        item.ObjectKey,
 		FileStatus:       string(item.FileStatus),
 		ParseStatus:      string(item.ParseStatus),
+		Temporary:        item.Temporary,
+		ExpiresAt:        item.ExpiresAt,
 		Version:          item.Version,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
@@ -64,6 +66,8 @@ func resumeFromRecord(record resumeRecord) (resume.Resume, error) {
 		ObjectKey:        record.ObjectKey,
 		FileStatus:       fileStatus,
 		ParseStatus:      parseStatus,
+		Temporary:        record.Temporary,
+		ExpiresAt:        record.ExpiresAt,
 		Version:          record.Version,
 		CreatedAt:        record.CreatedAt.UTC(),
 		UpdatedAt:        record.UpdatedAt.UTC(),
@@ -73,6 +77,10 @@ func resumeFromRecord(record resumeRecord) (resume.Resume, error) {
 	}
 	if record.CurrentRevision != nil {
 		item.CurrentRevision = *record.CurrentRevision
+	}
+	if item.ExpiresAt != nil {
+		expiresAt := item.ExpiresAt.UTC()
+		item.ExpiresAt = &expiresAt
 	}
 	if record.DeletedAt.Valid {
 		deletedAt := record.DeletedAt.Time.UTC()

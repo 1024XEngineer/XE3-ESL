@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
@@ -45,6 +46,10 @@ func (query *RevisionQuery) ReadOwnedRevision(
 	}
 	if detail.Resume.ID != resumeID ||
 		detail.Resume.OwnerUserID != actor.UserID {
+		return resume.Revision{}, ResumeNotFoundError()
+	}
+	if detail.Resume.Temporary &&
+		(detail.Resume.ExpiresAt == nil || !detail.Resume.ExpiresAt.After(time.Now().UTC())) {
 		return resume.Revision{}, ResumeNotFoundError()
 	}
 	if detail.Resume.CurrentRevision != revision {

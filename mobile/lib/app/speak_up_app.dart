@@ -389,6 +389,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             JobPreparationWizard(
               controller: widget.jobPreparationController!,
               catalogController: widget.preparationController,
+              resumeController: widget.resumeController,
               onPracticeStarted: () => _navigatorKey.currentState
                   ?.pushReplacementNamed(AppRoutes.practice),
             ),
