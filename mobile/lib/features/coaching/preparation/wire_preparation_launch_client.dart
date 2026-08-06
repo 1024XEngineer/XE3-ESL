@@ -87,6 +87,8 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       path: '/v1/preparation-profiles',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
+        'kind': ?input.kind?.wireValue,
+        'scenario': ?_scenarioInputJson(input.scenario),
         'background_summary': input.backgroundSummary,
         'resume_id': ?input.resumeId,
         'resume_revision': ?input.resumeRevision,
@@ -101,6 +103,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       decode: () {
         final profile = decodePreparationProfileBody(response.body);
         if (profile.backgroundSummary != input.backgroundSummary ||
+            profile.context != input.scenario ||
             profile.resumeId != input.resumeId ||
             profile.resumeRevision != input.resumeRevision ||
             profile.jobDescriptionRef != input.jobDescriptionRef ||
@@ -878,6 +881,32 @@ void _requireBackground(String value) {
 
 void _requireProfileInput(CreatePreparationProfileInput input) {
   _requireBackground(input.backgroundSummary);
+  switch (input.kind) {
+    case null:
+      if (input.scenario != null) {
+        throw const PreparationLaunchException(
+          kind: PreparationLaunchFailureKind.invalidRequest,
+          stage: PreparationLaunchStage.profile,
+        );
+      }
+    case PreparationKind.scenario:
+      final scenario = input.scenario;
+      if (scenario == null ||
+          input.resumeId != null ||
+          input.jobDescriptionRef != null ||
+          input.jobTargetId != null) {
+        throw const PreparationLaunchException(
+          kind: PreparationLaunchFailureKind.invalidRequest,
+          stage: PreparationLaunchStage.profile,
+        );
+      }
+      _requireScenarioContext(scenario);
+    case PreparationKind.interview:
+      throw const PreparationLaunchException(
+        kind: PreparationLaunchFailureKind.invalidRequest,
+        stage: PreparationLaunchStage.profile,
+      );
+  }
   final hasResume = input.resumeId != null;
   if (hasResume != (input.resumeRevision != null)) {
     throw const PreparationLaunchException(
@@ -914,6 +943,29 @@ void _requireProfileInput(CreatePreparationProfileInput input) {
     );
   }
 }
+
+void _requireScenarioContext(ScenarioPreparationContext context) {
+  for (final value in <String>[
+    context.situation,
+    context.userRole,
+    context.counterpartRole,
+    context.goal,
+    context.counterpartPersona,
+  ]) {
+    _requireText(value, 16 * 1024);
+  }
+}
+
+Map<String, Object?>? _scenarioInputJson(ScenarioPreparationContext? context) =>
+    context == null
+    ? null
+    : <String, Object?>{
+        'situation': context.situation,
+        'user_role': context.userRole,
+        'counterpart_role': context.counterpartRole,
+        'goal': context.goal,
+        'counterpart_persona': context.counterpartPersona,
+      };
 
 void _requirePlanInput(CreatePreparationPlanInput input) {
   if (input.sourceThreadId case final value?) {

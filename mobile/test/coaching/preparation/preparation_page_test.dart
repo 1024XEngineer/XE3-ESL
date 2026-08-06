@@ -308,6 +308,99 @@ void main() {
     expect(launchController.bootstrap?.maxEffectiveTurns, 6);
   });
 
+  testWidgets('ordinary scene requires five-field Preparation before launch', (
+    tester,
+  ) async {
+    final preparationController = PreparationController(
+      client: _MultiSceneClient(),
+    );
+    final launchClient = _PageLaunchClient();
+    var navigations = 0;
+    final launchController = PreparationLaunchController(
+      client: launchClient,
+      contextProvider: () => _pageContext,
+      threadIdProvider: () => _pageContext.threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _pageContext,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-scenario-widget-key',
+    );
+    addTearDown(preparationController.dispose);
+    addTearDown(launchController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: preparationController,
+          launchController: launchController,
+          onPracticeStarted: () => navigations++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openFamily(tester, 'WORKPLACE');
+    await tester.tap(
+      find.byKey(const Key('catalog-scene-scn_general_speaking')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('scenario-preparation-form')), findsOneWidget);
+    expect(launchClient.calls, isEmpty);
+    expect(find.text('情景描述'), findsOneWidget);
+    expect(find.text('我的身份'), findsOneWidget);
+    expect(find.text('对方身份'), findsOneWidget);
+    expect(find.text('我的目标'), findsOneWidget);
+    expect(find.text('对方人设'), findsOneWidget);
+
+    final situation = find.descendant(
+      of: find.byKey(const Key('scenario-situation')),
+      matching: find.byType(TextFormField),
+    );
+    final goal = find.descendant(
+      of: find.byKey(const Key('scenario-goal')),
+      matching: find.byType(TextFormField),
+    );
+    expect(
+      tester.widget<TextFormField>(situation).controller?.text,
+      _workplacePrompt.publicSceneBrief,
+    );
+    await tester.enterText(situation, 'Report a delayed workplace project.');
+    await tester.enterText(goal, 'Agree on a clear recovery plan.');
+
+    final submit = find.byKey(const Key('scenario-preparation-submit'));
+    await tester.scrollUntilVisible(
+      submit,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+
+    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+    expect(navigations, 1);
+    expect(launchClient.lastProfileInput?.kind, PreparationKind.scenario);
+    expect(
+      launchClient.lastProfileInput?.scenario,
+      const ScenarioPreparationContext(
+        situation: 'Report a delayed workplace project.',
+        userRole: 'Project owner',
+        counterpartRole: 'Stakeholder',
+        goal: 'Agree on a clear recovery plan.',
+        counterpartPersona: 'Direct and supportive.',
+      ),
+    );
+  });
+
   testWidgets('direct start reports a missing practice context in place', (
     tester,
   ) async {
@@ -696,6 +789,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
   final bool failFirstProfile;
   final calls = <String>[];
   PreparationLaunchSelection? selection;
+  CreatePreparationProfileInput? lastProfileInput;
   PreparationSnapshot? _snapshot;
 
   @override
@@ -707,6 +801,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     calls.add('profile');
+    lastProfileInput = input;
     if (failFirstProfile &&
         calls.where((call) => call == 'profile').length == 1) {
       throw const PreparationLaunchException(
@@ -719,6 +814,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       id: 'profile-1',
       userId: 'user-1',
       backgroundSummary: input.backgroundSummary,
+      context: input.scenario,
       version: 1,
       updatedAt: DateTime.utc(2026, 7, 26),
     );
@@ -736,6 +832,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       sourceProfileId: profileId,
       sourceVersion: sourceVersion,
       backgroundSnapshot: 'Backend engineer preparing a technical interview.',
+      context: lastProfileInput?.scenario,
       createdAt: DateTime.utc(2026, 7, 26),
     );
     _snapshot = snapshot;

@@ -19,6 +19,83 @@ final class AgentPracticeContext {
   int get hashCode => Object.hash(threadId, goalId);
 }
 
+enum PreparationKind {
+  interview('interview'),
+  scenario('scenario');
+
+  const PreparationKind(this.wireValue);
+
+  final String wireValue;
+}
+
+sealed class PreparationContext {
+  const PreparationContext(this.kind);
+
+  final PreparationKind kind;
+}
+
+final class ScenarioPreparationContext extends PreparationContext {
+  const ScenarioPreparationContext({
+    required this.situation,
+    required this.userRole,
+    required this.counterpartRole,
+    required this.goal,
+    required this.counterpartPersona,
+  }) : super(PreparationKind.scenario);
+
+  final String situation;
+  final String userRole;
+  final String counterpartRole;
+  final String goal;
+  final String counterpartPersona;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScenarioPreparationContext &&
+      other.situation == situation &&
+      other.userRole == userRole &&
+      other.counterpartRole == counterpartRole &&
+      other.goal == goal &&
+      other.counterpartPersona == counterpartPersona;
+
+  @override
+  int get hashCode => Object.hash(
+    situation,
+    userRole,
+    counterpartRole,
+    goal,
+    counterpartPersona,
+  );
+}
+
+final class PreparationResumeReference {
+  const PreparationResumeReference({
+    required this.resumeId,
+    required this.revision,
+  });
+
+  final String resumeId;
+  final int revision;
+}
+
+final class PreparationJobTargetReference {
+  const PreparationJobTargetReference({
+    required this.jobTargetId,
+    required this.confirmationVersion,
+  });
+
+  final String jobTargetId;
+  final int confirmationVersion;
+}
+
+final class InterviewPreparationContext extends PreparationContext {
+  const InterviewPreparationContext({required this.jobTarget, this.resume})
+    : super(PreparationKind.interview);
+
+  final PreparationResumeReference? resume;
+  final PreparationJobTargetReference jobTarget;
+}
+
 final class PreparationProfile {
   const PreparationProfile({
     required this.id,
@@ -31,6 +108,7 @@ final class PreparationProfile {
     this.jobDescriptionRef,
     this.jobTargetId,
     this.jobTargetConfirmationVersion,
+    this.context,
   });
 
   final String id;
@@ -41,6 +119,7 @@ final class PreparationProfile {
   final String backgroundSummary;
   final String? jobTargetId;
   final int? jobTargetConfirmationVersion;
+  final PreparationContext? context;
   final int version;
   final DateTime updatedAt;
 }
@@ -58,6 +137,7 @@ final class PreparationSnapshot {
     this.jobTargetCandidate,
     this.resumeSnapshot,
     this.jobDescriptionSnapshot,
+    this.context,
   });
 
   final String id;
@@ -69,6 +149,7 @@ final class PreparationSnapshot {
   final JobTargetCandidate? jobTargetCandidate;
   final String? resumeSnapshot;
   final String? jobDescriptionSnapshot;
+  final PreparationContext? context;
   final String backgroundSnapshot;
   final DateTime createdAt;
 }
@@ -183,7 +264,17 @@ final class CreatePreparationProfileInput {
     this.jobDescriptionRef,
     this.jobTargetId,
     this.jobTargetConfirmationVersion,
+    this.kind,
+    this.scenario,
   });
+
+  factory CreatePreparationProfileInput.scenario({
+    required ScenarioPreparationContext context,
+  }) => CreatePreparationProfileInput(
+    backgroundSummary: context.situation,
+    kind: PreparationKind.scenario,
+    scenario: context,
+  );
 
   final String backgroundSummary;
   final String? resumeId;
@@ -191,6 +282,8 @@ final class CreatePreparationProfileInput {
   final String? jobDescriptionRef;
   final String? jobTargetId;
   final int? jobTargetConfirmationVersion;
+  final PreparationKind? kind;
+  final ScenarioPreparationContext? scenario;
 }
 
 final class CreatePreparationPlanInput {

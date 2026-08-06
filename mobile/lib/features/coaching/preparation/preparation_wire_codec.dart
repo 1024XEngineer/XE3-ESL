@@ -28,6 +28,7 @@ PreparationProfile decodePreparationProfile(Object? value) {
       'updated_at',
     },
     optional: const <String>{
+      'preparation_context',
       'resume_id',
       'resume_revision',
       'job_description_ref',
@@ -59,6 +60,9 @@ PreparationProfile decodePreparationProfile(Object? value) {
     jobTargetConfirmationVersion: hasJobTarget
         ? _version(object['job_target_confirmation_version'])
         : null,
+    context: object.containsKey('preparation_context')
+        ? _preparationContext(object['preparation_context'])
+        : null,
     version: _version(object['version']),
     updatedAt: _dateTime(object['updated_at']),
   );
@@ -89,6 +93,7 @@ PreparationSnapshot decodePreparationSnapshot(
       'created_at',
     },
     optional: const <String>{
+      'preparation_context',
       'source_job_target_id',
       'source_job_target_confirmation_version',
       'job_target_input_snapshot',
@@ -138,11 +143,87 @@ PreparationSnapshot decodePreparationSnapshot(
     jobDescriptionSnapshot: object.containsKey('job_description_snapshot')
         ? _text(object['job_description_snapshot'], maximumBytes: 64 * 1024)
         : null,
+    context: object.containsKey('preparation_context')
+        ? _preparationContext(object['preparation_context'])
+        : null,
     backgroundSnapshot: _text(
       object['background_snapshot'],
       maximumBytes: 64 * 1024,
     ),
     createdAt: _dateTime(object['created_at']),
+  );
+}
+
+PreparationContext _preparationContext(Object? value) {
+  if (value is! Map<String, Object?> || value['kind'] is! String) {
+    throw const PreparationWireFormatException();
+  }
+  return switch (value['kind']) {
+    'scenario' => _scenarioPreparationContext(value),
+    'interview' => _interviewPreparationContext(value),
+    _ => throw const PreparationWireFormatException(),
+  };
+}
+
+ScenarioPreparationContext _scenarioPreparationContext(
+  Map<String, Object?> value,
+) {
+  final context = _object(value, required: const <String>{'kind', 'scenario'});
+  final scenario = _object(
+    context['scenario'],
+    required: const <String>{
+      'situation',
+      'user_role',
+      'counterpart_role',
+      'goal',
+      'counterpart_persona',
+    },
+  );
+  return ScenarioPreparationContext(
+    situation: _text(scenario['situation'], maximumBytes: 16 * 1024),
+    userRole: _text(scenario['user_role'], maximumBytes: 16 * 1024),
+    counterpartRole: _text(
+      scenario['counterpart_role'],
+      maximumBytes: 16 * 1024,
+    ),
+    goal: _text(scenario['goal'], maximumBytes: 16 * 1024),
+    counterpartPersona: _text(
+      scenario['counterpart_persona'],
+      maximumBytes: 16 * 1024,
+    ),
+  );
+}
+
+InterviewPreparationContext _interviewPreparationContext(
+  Map<String, Object?> value,
+) {
+  final context = _object(value, required: const <String>{'kind', 'interview'});
+  final interview = _object(
+    context['interview'],
+    required: const <String>{'job_target'},
+    optional: const <String>{'resume'},
+  );
+  final target = _object(
+    interview['job_target'],
+    required: const <String>{'job_target_id', 'confirmation_version'},
+  );
+  final resume = interview.containsKey('resume')
+      ? _object(
+          interview['resume'],
+          required: const <String>{'resume_id', 'revision'},
+        )
+      : null;
+  return InterviewPreparationContext(
+    resume: resume == null
+        ? null
+        : PreparationResumeReference(
+            resumeId: _resourceId(resume['resume_id']),
+            revision: _version(resume['revision']),
+          ),
+    jobTarget: PreparationJobTargetReference(
+      jobTargetId: _resourceId(target['job_target_id']),
+      confirmationVersion: _version(target['confirmation_version']),
+    ),
   );
 }
 

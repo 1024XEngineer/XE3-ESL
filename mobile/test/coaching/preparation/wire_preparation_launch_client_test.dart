@@ -112,6 +112,42 @@ void main() {
     },
   );
 
+  test('sends and decodes a typed scenario Preparation context', () async {
+    final profileResponse = _profileJson()
+      ..['preparation_context'] = _scenarioContextJson();
+    final snapshotResponse = _snapshotJson()
+      ..['preparation_context'] = _scenarioContextJson();
+    final transport = _QueueTransport([
+      _response(profileResponse),
+      _response(snapshotResponse),
+    ]);
+    final client = _client(transport);
+
+    final profile = await client.createProfile(
+      input: CreatePreparationProfileInput.scenario(context: _scenarioContext),
+      idempotencyKey: 'scenario-profile-key',
+    );
+    final snapshot = await client.createSnapshot(
+      profileId: profile.id,
+      sourceVersion: profile.version,
+      idempotencyKey: 'scenario-snapshot-key',
+    );
+
+    expect(jsonDecode(transport.calls.first.body!), {
+      'kind': 'scenario',
+      'scenario': {
+        'situation': _background,
+        'user_role': 'Project owner',
+        'counterpart_role': 'Stakeholder',
+        'goal': 'Explain progress and risk clearly.',
+        'counterpart_persona': 'Direct and evidence seeking.',
+      },
+      'background_summary': _background,
+    });
+    expect(profile.context, _scenarioContext);
+    expect(snapshot.context, _scenarioContext);
+  });
+
   test('accepts the complete canonical selection in a created Plan', () async {
     final response = _planJson();
     final client = _client(_QueueTransport([_response(response)]));
@@ -651,6 +687,17 @@ Map<String, Object?> _snapshotJson() => {
   'created_at': _time,
 };
 
+Map<String, Object?> _scenarioContextJson() => <String, Object?>{
+  'kind': 'scenario',
+  'scenario': <String, Object?>{
+    'situation': _background,
+    'user_role': 'Project owner',
+    'counterpart_role': 'Stakeholder',
+    'goal': 'Explain progress and risk clearly.',
+    'counterpart_persona': 'Direct and evidence seeking.',
+  },
+};
+
 Map<String, Object?> _planJson({
   PreparationLaunchSelection selection = _selection,
 }) {
@@ -942,6 +989,13 @@ const _fullOptionId = 'option-full';
 const _ieltsSceneId = 'scn_ielts_speaking_test';
 const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
 const _background = 'Backend engineer preparing a technical interview.';
+const _scenarioContext = ScenarioPreparationContext(
+  situation: _background,
+  userRole: 'Project owner',
+  counterpartRole: 'Stakeholder',
+  goal: 'Explain progress and risk clearly.',
+  counterpartPersona: 'Direct and evidence seeking.',
+);
 
 const _technicalRole = RoleDefinition(
   id: _roleId,
