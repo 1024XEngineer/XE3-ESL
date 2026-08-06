@@ -434,9 +434,13 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                           ? null
                           : widget.avatarSurfaceBuilder,
                       statusLabel: widget.avatarStatusLabel,
-                      latestAssistantMessage: _latestAssistantMessage(
-                        widget.practiceController.practiceMessages,
-                      ),
+                      latestAssistantMessage:
+                          widget.practiceController.practiceExperience ==
+                              PracticeExperience.interview
+                          ? null
+                          : _latestAssistantMessage(
+                              widget.practiceController.practiceMessages,
+                            ),
                       exitInFlight: _exitInFlight,
                       onExit: _requestExit,
                     );

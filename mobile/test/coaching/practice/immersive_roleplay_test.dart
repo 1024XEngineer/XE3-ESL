@@ -97,6 +97,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('hides the duplicate avatar subtitle for interviews', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = await _roleplayController(
+      selectedScene: testScenes.first,
+    );
+    addTearDown(controller.dispose);
+    final question = controller.currentQuestion!.text;
+
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('immersive-avatar-region')), findsOneWidget);
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
+    expect(find.text(question), findsOneWidget);
+    expect(find.byKey(const Key('immersive-conversation-history')), findsOne);
+    expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('translates a roleplay question once and toggles the read aid', (
     tester,
   ) async {
@@ -611,29 +636,30 @@ void main() {
 
 Future<PracticeController> _roleplayController({
   PracticeClient? practiceClient,
+  SceneDefinition? selectedScene,
 }) async {
-  const practiceExperience = PracticeExperience.roleplay;
-  const sceneCategory = SceneCategory.roleplayTravel;
-  final scene = testScene(
-    id: 'daily-hotel',
-    experience: practiceExperience,
-    category: sceneCategory,
-    name: '酒店入住',
-    prompt: const ScenePrompt(
-      publicSceneBrief: '练习办理入住与需求沟通。',
-      practiceGoal: 'Complete the hotel check-in conversation.',
-      userRole: 'Guest',
-      aiRole: 'Receptionist',
-      personaSummary: 'Professional and helpful.',
-      focusAreas: <String>['check_in'],
-      turnBlueprints: <String>['Confirm the booking.'],
-    ),
-  );
+  final scene =
+      selectedScene ??
+      testScene(
+        id: 'daily-hotel',
+        experience: PracticeExperience.roleplay,
+        category: SceneCategory.roleplayTravel,
+        name: '酒店入住',
+        prompt: const ScenePrompt(
+          publicSceneBrief: '练习办理入住与需求沟通。',
+          practiceGoal: 'Complete the hotel check-in conversation.',
+          userRole: 'Guest',
+          aiRole: 'Receptionist',
+          personaSummary: 'Professional and helpful.',
+          focusAreas: <String>['check_in'],
+          turnBlueprints: <String>['Confirm the booking.'],
+        ),
+      );
   final resolvedPracticeClient =
       practiceClient ??
       _ScenePracticeClient(
-        practiceExperience: practiceExperience,
-        sceneCategory: sceneCategory,
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
       );
   final controller = PracticeController(client: resolvedPracticeClient);
   await controller.activateCreatedPractice(
