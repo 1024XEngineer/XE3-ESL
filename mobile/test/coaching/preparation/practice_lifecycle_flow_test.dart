@@ -125,7 +125,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
-      await _openScene(tester, _progressScene.id);
+      await _openScene(tester, _progressScene);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       final firstPracticeThreadId = conversationController.threadId!;
@@ -230,7 +230,7 @@ void main() {
       await tester.pump();
       expect(practiceController.hasActivePractice, isTrue);
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
-      await _openScene(tester, _progressScene.id);
+      await _openScene(tester, _progressScene);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(conversationController.threadId, firstPracticeThreadId);
@@ -243,7 +243,7 @@ void main() {
       expect(conversationController.threadId, homeThreadId);
 
       expect(find.byKey(const Key('practice-continuation')), findsNothing);
-      await _openScene(tester, _progressScene.id);
+      await _openScene(tester, _progressScene);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(find.text('开始新的练习？'), findsNothing);
@@ -253,7 +253,7 @@ void main() {
       await _leavePractice(tester);
       expect(conversationController.threadId, homeThreadId);
 
-      await _openScene(tester, _hotelScene.id);
+      await _openScene(tester, _hotelScene);
 
       expect(find.text('开始新的练习？'), findsOneWidget);
       expect(find.text('开始“${_hotelScene.name}”'), findsOneWidget);
@@ -283,9 +283,15 @@ void main() {
   );
 }
 
-Future<void> _openScene(WidgetTester tester, String sceneId) async {
-  await _tapVisible(tester, find.byKey(const Key('practice-hub-roleplay')));
-  final scene = find.byKey(Key('catalog-scene-$sceneId'));
+Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
+  final hubKey = switch (definition.category) {
+    SceneCategory.roleplayWorkplace => const Key('practice-hub-workplace'),
+    SceneCategory.roleplayDaily ||
+    SceneCategory.roleplayTravel => const Key('practice-hub-life'),
+    _ => throw ArgumentError.value(definition.category, 'category'),
+  };
+  await _tapVisible(tester, find.byKey(hubKey));
+  final scene = find.byKey(Key('catalog-scene-${definition.id}'));
   expect(scene, findsOneWidget);
   await tester.ensureVisible(scene);
   await tester.pumpAndSettle();

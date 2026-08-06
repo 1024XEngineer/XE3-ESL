@@ -10,7 +10,7 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart'
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 
 void main() {
-  testWidgets('shows exactly the three product-level practice entries', (
+  testWidgets('shows exactly the four product-level practice entries', (
     tester,
   ) async {
     final controller = PreparationController(client: _HubFixtureClient());
@@ -32,7 +32,8 @@ void main() {
 
     expect(find.byKey(const Key('practice-hub-interview')), findsOneWidget);
     expect(find.byKey(const Key('practice-hub-exam')), findsOneWidget);
-    expect(find.byKey(const Key('practice-hub-roleplay')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hub-workplace')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hub-life')), findsOneWidget);
     expect(find.byKey(const Key('practice-continuation')), findsNothing);
     expect(find.text('最近练习'), findsNothing);
     expect(find.byKey(const Key('preparation-family-INTERVIEW')), findsNothing);
@@ -119,28 +120,38 @@ void main() {
     expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
   });
 
-  testWidgets('combines workplace and daily templates in AI roleplay', (
+  testWidgets('separates workplace from life and travel scenes', (
     tester,
   ) async {
     final controller = PreparationController(client: _HubFixtureClient());
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
 
-    await _openModule(tester, const Key('practice-hub-roleplay'));
+    await _openModule(tester, const Key('practice-hub-workplace'));
 
-    expect(find.text('情景对话'), findsOneWidget);
+    expect(find.text('职场英语'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsOneWidget);
-    expect(find.text('酒店入住与问题处理'), findsOneWidget);
-    expect(find.byKey(const Key('roleplay-filter-workplace')), findsOneWidget);
-    expect(find.byKey(const Key('roleplay-filter-travel')), findsOneWidget);
+    expect(find.text('酒店入住与问题处理'), findsNothing);
+    expect(find.byKey(const Key('roleplay-filter-workplace')), findsNothing);
     expect(find.text('英文自我介绍'), findsNothing);
     expect(find.text('IELTS 口语完整模拟'), findsNothing);
     expect(find.text('自定义职场沟通'), findsNothing);
     expect(find.text('自定义日常交流'), findsNothing);
     expect(find.byKey(const Key('roleplay-custom-reserved')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+    await _openModule(tester, const Key('practice-hub-life'));
+
+    expect(find.text('生活与旅行'), findsOneWidget);
+    expect(find.text('酒店入住与问题处理'), findsOneWidget);
+    expect(find.text('餐厅点餐'), findsOneWidget);
+    expect(find.text('进度与风险汇报'), findsNothing);
+    expect(find.byKey(const Key('roleplay-filter-travel')), findsOneWidget);
+    expect(find.byKey(const Key('roleplay-filter-workplace')), findsNothing);
   });
 
-  testWidgets('keeps the three entries usable at 320px and 3x text', (
+  testWidgets('keeps the four entries usable at 320px and 3x text', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 568);
@@ -156,7 +167,8 @@ void main() {
     for (final entryData in const [
       (key: Key('practice-hub-interview'), title: '英文面试'),
       (key: Key('practice-hub-exam'), title: 'IELTS 口语'),
-      (key: Key('practice-hub-roleplay'), title: '情景对话'),
+      (key: Key('practice-hub-workplace'), title: '职场英语'),
+      (key: Key('practice-hub-life'), title: '生活与旅行'),
     ]) {
       final entry = find.byKey(entryData.key);
       await tester.scrollUntilVisible(
@@ -204,7 +216,7 @@ void main() {
     await tester.tap(back);
     await tester.pumpAndSettle();
 
-    await _openModule(tester, const Key('practice-hub-roleplay'));
+    await _openModule(tester, const Key('practice-hub-life'));
     final roleplayScene = find.byKey(
       const Key('catalog-scene-scn_daily_hotel_checkin_issue'),
     );
@@ -227,7 +239,7 @@ void main() {
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
 
-    final entry = find.byKey(const Key('practice-hub-roleplay'));
+    final entry = find.byKey(const Key('practice-hub-workplace'));
     await tester.scrollUntilVisible(
       entry,
       180,
@@ -243,12 +255,12 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('practice-hub-title-roleplay')).hitTestable(),
+      find.byKey(const Key('practice-hub-title-workplace')).hitTestable(),
       findsOneWidget,
     );
   });
 
-  testWidgets('keeps exam and roleplay modules usable in landscape', (
+  testWidgets('keeps exam and workplace modules usable in landscape', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(844, 390);
@@ -266,8 +278,8 @@ void main() {
         scene: Key('catalog-scene-scene_ielts_speaking-part1'),
       ),
       (
-        entry: Key('practice-hub-roleplay'),
-        title: Key('practice-hub-title-roleplay'),
+        entry: Key('practice-hub-workplace'),
+        title: Key('practice-hub-title-workplace'),
         scene: Key('catalog-scene-scn_workplace_progress_risk_update'),
       ),
     ]) {
@@ -320,7 +332,8 @@ void main() {
       for (final entryData in const [
         (key: Key('practice-hub-interview'), label: '英文面试。模拟面试与轮次专项练习'),
         (key: Key('practice-hub-exam'), label: 'IELTS 口语。Part 1、2、3 与完整模考'),
-        (key: Key('practice-hub-roleplay'), label: '情景对话。工作、旅行与日常英语实战'),
+        (key: Key('practice-hub-workplace'), label: '职场英语。会议、协作与客户沟通'),
+        (key: Key('practice-hub-life'), label: '生活与旅行。日常交流与出行场景实战'),
       ]) {
         final entry = find.byKey(entryData.key);
         await tester.scrollUntilVisible(
@@ -515,6 +528,14 @@ final _hubScenes = <SceneDefinition>[
     category: SceneCategory.roleplayTravel,
     name: '酒店入住与问题处理',
     prompt: _hubPrompt('办理入住并解决一个房间问题。'),
+    version: 1,
+  ),
+  testScene(
+    id: 'scn_daily_restaurant_ordering',
+    experience: PracticeExperience.roleplay,
+    category: SceneCategory.roleplayDaily,
+    name: '餐厅点餐',
+    prompt: _hubPrompt('练习点餐、确认需求与礼貌沟通。'),
     version: 1,
   ),
 ];

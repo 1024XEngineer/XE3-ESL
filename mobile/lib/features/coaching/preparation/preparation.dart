@@ -17,7 +17,7 @@ import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dar
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 
-enum _PracticeHub { interview, ielts, roleplay }
+enum _PracticeHub { interview, ielts, workplace, life }
 
 enum _ExistingPracticeAction { continuePractice, replace }
 
@@ -579,15 +579,26 @@ class _PreparationPageState extends State<PreparationPage> {
           ),
           const SizedBox(height: 12),
           _PracticeHubEntry(
-            key: const Key('practice-hub-roleplay'),
-            title: '情景对话',
-            description: '工作、旅行与日常英语实战',
-            icon: Icons.record_voice_over_outlined,
+            key: const Key('practice-hub-workplace'),
+            title: '职场英语',
+            description: '会议、协作与客户沟通',
+            icon: Icons.business_center_outlined,
             accentColor: PreparationDesign.roleplay,
             tintColor: PreparationDesign.roleplayTint,
-            assetPath: 'assets/images/scenes/daily-tutor.jpg',
+            assetPath: 'assets/images/scenes/workplace-scene.jpg',
             onPressed: () =>
-                setState(() => _selectedHub = _PracticeHub.roleplay),
+                setState(() => _selectedHub = _PracticeHub.workplace),
+          ),
+          const SizedBox(height: 12),
+          _PracticeHubEntry(
+            key: const Key('practice-hub-life'),
+            title: '生活与旅行',
+            description: '日常交流与出行场景实战',
+            icon: Icons.travel_explore_outlined,
+            accentColor: PreparationDesign.roleplay,
+            tintColor: PreparationDesign.roleplayTint,
+            assetPath: 'assets/images/scenes/travel-scene.jpg',
+            onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
           ),
         ],
       ],
@@ -671,6 +682,9 @@ class _PreparationPageState extends State<PreparationPage> {
             )
         else
           RoleplayCatalog(
+            title: _practiceHubLabel(hub),
+            description: _roleplayHubDescription(hub),
+            titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
             onScenePressed: (scene) =>
                 unawaited(_startSceneDirectly(controller, scene)),
@@ -762,14 +776,26 @@ class _PreparationPageState extends State<PreparationPage> {
         ),
         const SizedBox(height: 12),
         _PracticeHubEntry(
-          key: const Key('practice-hub-roleplay'),
-          title: '情景对话',
-          description: '工作、旅行与日常英语实战',
-          icon: Icons.record_voice_over_outlined,
+          key: const Key('practice-hub-workplace'),
+          title: '职场英语',
+          description: '会议、协作与客户沟通',
+          icon: Icons.business_center_outlined,
           accentColor: PreparationDesign.roleplay,
           tintColor: PreparationDesign.roleplayTint,
-          assetPath: 'assets/images/scenes/daily-tutor.jpg',
-          onPressed: () => setState(() => _selectedHub = _PracticeHub.roleplay),
+          assetPath: 'assets/images/scenes/workplace-scene.jpg',
+          onPressed: () =>
+              setState(() => _selectedHub = _PracticeHub.workplace),
+        ),
+        const SizedBox(height: 12),
+        _PracticeHubEntry(
+          key: const Key('practice-hub-life'),
+          title: '生活与旅行',
+          description: '日常交流与出行场景实战',
+          icon: Icons.travel_explore_outlined,
+          accentColor: PreparationDesign.roleplay,
+          tintColor: PreparationDesign.roleplayTint,
+          assetPath: 'assets/images/scenes/travel-scene.jpg',
+          onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
         ),
       ],
     );
@@ -1076,7 +1102,16 @@ String _practiceHubLabel(_PracticeHub hub) {
   return switch (hub) {
     _PracticeHub.interview => '英文面试',
     _PracticeHub.ielts => 'IELTS 口语',
-    _PracticeHub.roleplay => '情景对话',
+    _PracticeHub.workplace => '职场英语',
+    _PracticeHub.life => '生活与旅行',
+  };
+}
+
+String _roleplayHubDescription(_PracticeHub hub) {
+  return switch (hub) {
+    _PracticeHub.workplace => '练习会议、协作、汇报与客户沟通。',
+    _PracticeHub.life => '练习日常交流、旅行与生活问题处理。',
+    _ => throw StateError('Roleplay description requires a Roleplay hub.'),
   };
 }
 
@@ -1091,8 +1126,13 @@ List<SceneDefinition> _scenesForHub(
             scene.experience == PracticeExperience.interview,
           _PracticeHub.ielts =>
             scene.experience == PracticeExperience.ieltsSpeaking,
-          _PracticeHub.roleplay =>
-            scene.experience == PracticeExperience.roleplay,
+          _PracticeHub.workplace =>
+            scene.experience == PracticeExperience.roleplay &&
+                scene.category == SceneCategory.roleplayWorkplace,
+          _PracticeHub.life =>
+            scene.experience == PracticeExperience.roleplay &&
+                (scene.category == SceneCategory.roleplayDaily ||
+                    scene.category == SceneCategory.roleplayTravel),
         };
       })
       .toList(growable: false);
