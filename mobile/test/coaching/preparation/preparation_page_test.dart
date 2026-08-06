@@ -19,7 +19,8 @@ Future<void> _openFamily(WidgetTester tester, String family) async {
   final hubKey = switch (family) {
     'INTERVIEW' => 'practice-hub-interview',
     'EXAM' => 'practice-hub-exam',
-    'WORKPLACE' || 'DAILY' => 'practice-hub-roleplay',
+    'WORKPLACE' => 'practice-hub-workplace',
+    'DAILY' => 'practice-hub-life',
     _ => throw ArgumentError.value(family, 'family'),
   };
   final hub = find.byKey(Key(hubKey));
@@ -174,7 +175,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('groups the catalog into three product directions', (
+  testWidgets('groups the catalog into four product directions', (
     tester,
   ) async {
     final controller = PreparationController(client: _FourFamilyClient());
@@ -188,7 +189,8 @@ void main() {
     for (final hub in const [
       'practice-hub-interview',
       'practice-hub-exam',
-      'practice-hub-roleplay',
+      'practice-hub-workplace',
+      'practice-hub-life',
     ]) {
       final entry = find.byKey(Key(hub));
       await tester.scrollUntilVisible(

@@ -7,11 +7,17 @@ enum _RoleplayFilter { recommended, workplace, travel, daily }
 
 class RoleplayCatalog extends StatefulWidget {
   const RoleplayCatalog({
+    required this.title,
+    required this.description,
+    required this.titleKey,
     required this.scenes,
     required this.onScenePressed,
     super.key,
   });
 
+  final String title;
+  final String description;
+  final Key titleKey;
   final List<SceneDefinition> scenes;
   final ValueChanged<SceneDefinition> onScenePressed;
 
@@ -21,6 +27,24 @@ class RoleplayCatalog extends StatefulWidget {
 
 class _RoleplayCatalogState extends State<RoleplayCatalog> {
   _RoleplayFilter _filter = _RoleplayFilter.recommended;
+
+  List<_RoleplayFilter> get _availableFilters {
+    return [
+      _RoleplayFilter.recommended,
+      if (widget.scenes.any(
+        (scene) => scene.category == SceneCategory.roleplayWorkplace,
+      ))
+        _RoleplayFilter.workplace,
+      if (widget.scenes.any(
+        (scene) => scene.category == SceneCategory.roleplayTravel,
+      ))
+        _RoleplayFilter.travel,
+      if (widget.scenes.any(
+        (scene) => scene.category == SceneCategory.roleplayDaily,
+      ))
+        _RoleplayFilter.daily,
+    ];
+  }
 
   List<SceneDefinition> get _visibleScenes {
     final available = widget.scenes;
@@ -51,40 +75,46 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _RoleplayModuleHeader(),
-        const SizedBox(height: 20),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final filter in _RoleplayFilter.values)
-              ChoiceChip(
-                key: Key('roleplay-filter-${filter.name}'),
-                label: Text(_roleplayFilterLabel(filter)),
-                selected: _filter == filter,
-                onSelected: (_) => setState(() => _filter = filter),
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                side: BorderSide(
-                  color: _filter == filter
-                      ? PreparationDesign.roleplay
-                      : PreparationDesign.border,
-                ),
-                selectedColor: PreparationDesign.roleplay,
-                backgroundColor: PreparationDesign.surface,
-                labelStyle: TextStyle(
-                  color: _filter == filter
-                      ? Colors.white
-                      : PreparationDesign.secondary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-                shape: const StadiumBorder(),
-              ),
-          ],
+        _RoleplayModuleHeader(
+          title: widget.title,
+          description: widget.description,
+          titleKey: widget.titleKey,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
+        if (_availableFilters.length > 2) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final filter in _availableFilters)
+                ChoiceChip(
+                  key: Key('roleplay-filter-${filter.name}'),
+                  label: Text(_roleplayFilterLabel(filter)),
+                  selected: _filter == filter,
+                  onSelected: (_) => setState(() => _filter = filter),
+                  showCheckmark: false,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  side: BorderSide(
+                    color: _filter == filter
+                        ? PreparationDesign.roleplay
+                        : PreparationDesign.border,
+                  ),
+                  selectedColor: PreparationDesign.roleplay,
+                  backgroundColor: PreparationDesign.surface,
+                  labelStyle: TextStyle(
+                    color: _filter == filter
+                        ? Colors.white
+                        : PreparationDesign.secondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
         if (visibleScenes.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 36),
@@ -107,7 +137,15 @@ class _RoleplayCatalogState extends State<RoleplayCatalog> {
 }
 
 class _RoleplayModuleHeader extends StatelessWidget {
-  const _RoleplayModuleHeader();
+  const _RoleplayModuleHeader({
+    required this.title,
+    required this.description,
+    required this.titleKey,
+  });
+
+  final String title;
+  final String description;
+  final Key titleKey;
 
   @override
   Widget build(BuildContext context) {
@@ -121,14 +159,14 @@ class _RoleplayModuleHeader extends StatelessWidget {
               Semantics(
                 header: true,
                 container: true,
-                child: const Text(
-                  '情景对话',
-                  key: Key('practice-hub-title-roleplay'),
+                child: Text(
+                  title,
+                  key: titleKey,
                   style: PreparationDesign.pageTitle,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text('选一个真实场景，马上开口。', style: PreparationDesign.body),
+              Text(description, style: PreparationDesign.body),
             ],
           ),
         ),
