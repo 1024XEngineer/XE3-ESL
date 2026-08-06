@@ -591,6 +591,8 @@ func (r CreateJobTargetRequest) input() JobTargetInput {
 	}
 }
 
+func (r CreateJobTargetRequest) Input() JobTargetInput { return r.input() }
+
 func (r UpdateJobTargetRequest) input() JobTargetInput {
 	return JobTargetInput{
 		Source:              r.Source,
@@ -602,6 +604,8 @@ func (r UpdateJobTargetRequest) input() JobTargetInput {
 		PracticeFocus:       r.PracticeFocus,
 	}
 }
+
+func (r UpdateJobTargetRequest) Input() JobTargetInput { return r.input() }
 
 func newJobTargetIntent(
 	method string,
@@ -673,6 +677,10 @@ func validJobTargetInput(input JobTargetInput) bool {
 			maxJobTargetFocusBytes,
 			false,
 		)
+}
+
+func ValidJobTargetInput(input JobTargetInput) bool {
+	return validJobTargetInput(input)
 }
 
 func validJobTargetText(value string, maxBytes int, required bool) bool {
@@ -762,6 +770,13 @@ func validJobTargetCandidateShape(
 		validJobTargetCandidateJSONSize(candidate)
 }
 
+func ValidJobTargetCandidateShape(
+	candidate JobTargetCandidate,
+	source JobTargetSource,
+) bool {
+	return validJobTargetCandidateShape(candidate, source)
+}
+
 func validJobTargetCandidateList(values []string) bool {
 	if len(values) == 0 || len(values) > maxJobTargetCandidateItems {
 		return false
@@ -792,7 +807,15 @@ func validJobTargetCandidateJSONSize(
 		len(encoded) <= maxJobTargetCandidateJSONBytes
 }
 
+func ValidJobTargetCandidateJSONSize(candidate JobTargetCandidate) bool {
+	return validJobTargetCandidateJSONSize(candidate)
+}
+
 var stableJobTargetCategoryPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+func ValidStableJobTargetCategory(value string) bool {
+	return stableJobTargetCategoryPattern.MatchString(value)
+}
 
 func jobTargetParserErrorCategory(err error) string {
 	var stable StableJobTargetParserError
@@ -828,4 +851,8 @@ func cloneJobTargetCandidate(source JobTargetCandidate) JobTargetCandidate {
 		source.CatalogRecommendation.SelectedRoleIDs...,
 	)
 	return result
+}
+
+func CloneJobTargetCandidate(source JobTargetCandidate) JobTargetCandidate {
+	return cloneJobTargetCandidate(source)
 }

@@ -66,12 +66,12 @@ void main() {
       expect(find.textContaining('评分'), findsNothing);
       expect(find.text('I managed'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('inline-language-correction')));
+      await tester.tap(find.byKey(const Key('inline-language-optimize')));
       await tester.pumpAndSettle();
-      expect(find.text('I managed'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('inline-language-polish')));
-      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('inline-language-correction-diff')),
+        findsOneWidget,
+      );
       expect(find.text('I handled the release successfully.'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -108,13 +108,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('纠错'), findsOneWidget);
+      expect(find.text('优化'), findsOneWidget);
       expect(find.text('I managed'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('inline-language-correction')));
+      await tester.tap(find.byKey(const Key('inline-language-optimize')));
       await tester.pump();
 
-      expect(find.text('I managed'), findsOneWidget);
+      expect(
+        find.byKey(const Key('inline-language-correction-diff')),
+        findsOneWidget,
+      );
       final retryAction = find.byKey(
         const Key('speech-feedback-repractice-item_practice_001'),
       );
@@ -506,8 +509,8 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
 
 PracticeSessionSnapshot _practiceSnapshot(
   String statusUrl, {
-  PracticeExperience practiceExperience = PracticeExperience.roleplay,
-  SceneCategory sceneCategory = SceneCategory.roleplayWorkplace,
+  PracticeExperience practiceExperience = PracticeExperience.workplace,
+  SceneCategory sceneCategory = SceneCategory.workplaceGeneral,
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';

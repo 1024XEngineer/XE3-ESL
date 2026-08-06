@@ -16,6 +16,14 @@ typedef AgentVoiceMessagesCommitted =
     void Function(Iterable<AgentMessage> messages);
 typedef AgentVoiceAssistantCommitted =
     FutureOr<void> Function(AgentMessage message);
+typedef AgentVoiceAssistantStreamStarted =
+    Future<void> Function(String transientMessageId);
+typedef AgentVoiceAssistantStreamDelta =
+    void Function(String transientMessageId, String delta);
+typedef AgentVoiceAssistantStreamCompleted =
+    void Function(String transientMessageId, AgentMessage message);
+typedef AgentVoiceAssistantStreamFailed =
+    void Function(String transientMessageId);
 typedef AgentVoiceStreamMessageChanged =
     void Function(String? previousMessageId, AgentMessage message);
 
@@ -27,6 +35,10 @@ final class AgentVoiceController extends ChangeNotifier
     required this.audioPlayer,
     required this.onMessagesCommitted,
     this.onAssistantCommitted,
+    this.onAssistantStreamStarted,
+    this.onAssistantStreamDelta,
+    this.onAssistantStreamCompleted,
+    this.onAssistantStreamFailed,
     this.onStreamMessageChanged,
     required this.idFactory,
     this.clock = DateTime.now,
@@ -53,6 +65,10 @@ final class AgentVoiceController extends ChangeNotifier
   final AgentAudioPlayer audioPlayer;
   final AgentVoiceMessagesCommitted onMessagesCommitted;
   final AgentVoiceAssistantCommitted? onAssistantCommitted;
+  final AgentVoiceAssistantStreamStarted? onAssistantStreamStarted;
+  final AgentVoiceAssistantStreamDelta? onAssistantStreamDelta;
+  final AgentVoiceAssistantStreamCompleted? onAssistantStreamCompleted;
+  final AgentVoiceAssistantStreamFailed? onAssistantStreamFailed;
   final AgentVoiceStreamMessageChanged? onStreamMessageChanged;
   final AgentVoiceIdFactory idFactory;
   final AgentVoiceControllerClock clock;
@@ -818,6 +834,10 @@ final class AgentVoiceController extends ChangeNotifier
                 isStreaming: true,
               ),
             );
+            final streamStarted = onAssistantStreamStarted;
+            if (streamStarted != null) {
+              await streamStarted(transientAssistantId);
+            }
           case AgentVoiceAssistantDelta(:final delta):
             final messageId = transientAssistantId;
             if (messageId == null) {
@@ -833,6 +853,7 @@ final class AgentVoiceController extends ChangeNotifier
                 isStreaming: true,
               ),
             );
+            onAssistantStreamDelta?.call(messageId, delta);
           case AgentVoiceRunCompleted(:final run):
             _pendingRun = run;
             final messageId = run.assistantMessageId;
@@ -854,6 +875,7 @@ final class AgentVoiceController extends ChangeNotifier
             if (transientId == null) {
               onMessagesCommitted(<AgentMessage>[assistant]);
             } else {
+              onAssistantStreamCompleted?.call(transientId, assistant);
               _changeStreamMessage(transientId, assistant);
             }
             _resetWorkflowPresentation();
@@ -870,6 +892,7 @@ final class AgentVoiceController extends ChangeNotifier
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
         if (transientAssistantId case final messageId?) {
+          onAssistantStreamFailed?.call(messageId);
           _changeStreamMessage(
             messageId,
             AgentMessage(

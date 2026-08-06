@@ -13,13 +13,13 @@ class PreparationCatalogAvatarPreview extends StatelessWidget {
         dimension: size,
         child: DecoratedBox(
           decoration: const BoxDecoration(
-            color: PreparationDesign.roleplayTint,
+            color: PreparationDesign.scenarioTint,
             shape: BoxShape.circle,
           ),
           child: Icon(
             Icons.record_voice_over_outlined,
             size: size * 0.46,
-            color: PreparationDesign.roleplay,
+            color: PreparationDesign.scenario,
           ),
         ),
       ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -6,13 +7,16 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/design/voice_composer_dock.dart';
 
 final class InlineLanguageSuggestion {
-  const InlineLanguageSuggestion({required this.text, this.explanation});
+  const InlineLanguageSuggestion({
+    required this.text,
+    this.originalText,
+    this.explanation,
+  });
 
   final String text;
+  final String? originalText;
   final String? explanation;
 }
-
-enum _InlineLanguageFeedbackSection { correction, polish }
 
 /// Shared lightweight feedback used inside Agent and Scene message bubbles.
 class InlineLanguageFeedback extends StatefulWidget {
@@ -48,56 +52,34 @@ class InlineLanguageFeedback extends StatefulWidget {
 }
 
 class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
-  _InlineLanguageFeedbackSection? _expanded;
+  bool _expanded = false;
 
   @override
   void didUpdateWidget(covariant InlineLanguageFeedback oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_expanded == _InlineLanguageFeedbackSection.correction &&
-        widget.correction == null) {
-      _expanded = null;
-    }
-    if (_expanded == _InlineLanguageFeedbackSection.polish &&
-        widget.polish == null) {
-      _expanded = null;
+    if (widget.correction == null && widget.polish == null) {
+      _expanded = false;
     }
   }
 
-  void _toggle(_InlineLanguageFeedbackSection section) {
-    setState(() => _expanded = _expanded == section ? null : section);
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
   }
 
   @override
   Widget build(BuildContext context) {
-    final suggestion = switch (_expanded) {
-      _InlineLanguageFeedbackSection.correction => widget.correction,
-      _InlineLanguageFeedbackSection.polish => widget.polish,
-      null => null,
-    };
-    final footer = switch (_expanded) {
-      _InlineLanguageFeedbackSection.correction => widget.correctionFooter,
-      _InlineLanguageFeedbackSection.polish => widget.polishFooter,
-      null => null,
-    };
+    final hasFeedback = widget.correction != null || widget.polish != null;
+    final spokenSuggestion = widget.polish ?? widget.correction;
     final actions = <Widget>[
       if (widget.leading != null) widget.leading!,
-      if (widget.correction != null)
+      if (hasFeedback)
         _InlineFeedbackAction(
-          key: const Key('inline-language-correction'),
-          icon: Icons.edit_outlined,
-          label: '纠错',
-          selected: _expanded == _InlineLanguageFeedbackSection.correction,
-          color: widget.foregroundColor,
-          onPressed: () => _toggle(_InlineLanguageFeedbackSection.correction),
-        ),
-      if (widget.polish != null)
-        _InlineFeedbackAction(
-          key: const Key('inline-language-polish'),
+          key: const Key('inline-language-optimize'),
           icon: Icons.auto_awesome_outlined,
-          label: '润色',
-          selected: _expanded == _InlineLanguageFeedbackSection.polish,
+          label: '优化',
+          selected: _expanded,
           color: widget.foregroundColor,
-          onPressed: () => _toggle(_InlineLanguageFeedbackSection.polish),
+          onPressed: _toggle,
         ),
     ];
     return Column(
@@ -117,36 +99,61 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
             if (widget.trailing != null) widget.trailing!,
           ],
         ),
-        if (suggestion != null) ...[
+        if (_expanded && hasFeedback) ...[
           const SizedBox(height: SpeakUpDesign.space8),
-          Text(
-            _expanded == _InlineLanguageFeedbackSection.correction
-                ? '建议改为'
-                : '更自然的表达',
-            style: SpeakUpDesign.meta.copyWith(
+          if (widget.correction case final correction?) ...[
+            _InlineFeedbackHeading(label: '纠错', color: widget.foregroundColor),
+            const SizedBox(height: SpeakUpDesign.space4),
+            _InlineCorrectionDiff(
+              originalText: correction.originalText!,
+              correctedText: correction.text,
+              textColor: widget.textColor,
+            ),
+            if (correction.explanation case final explanation?
+                when explanation.trim().isNotEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space4),
+              Text(
+                explanation,
+                key: const Key('inline-language-correction-explanation'),
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+            if (widget.correctionFooter case final footer?) ...[
+              const SizedBox(height: SpeakUpDesign.space4),
+              footer,
+            ],
+          ],
+          if (widget.polish case final polish?) ...[
+            if (widget.correction != null)
+              const SizedBox(height: SpeakUpDesign.space12),
+            _InlineFeedbackHeading(
+              label: '更自然的表达',
               color: widget.foregroundColor,
-              fontWeight: FontWeight.w700,
             ),
-          ),
-          const SizedBox(height: SpeakUpDesign.space4),
-          Text(
-            suggestion.text,
-            key: const Key('inline-language-suggestion-text'),
-            style: SpeakUpDesign.body.copyWith(
-              color: widget.textColor,
-              height: 1.45,
-            ),
-          ),
-          if (suggestion.explanation case final explanation?
-              when explanation.trim().isNotEmpty) ...[
             const SizedBox(height: SpeakUpDesign.space4),
             Text(
-              explanation,
-              key: const Key('inline-language-suggestion-explanation'),
-              style: SpeakUpDesign.meta,
+              polish.text,
+              key: const Key('inline-language-polish-text'),
+              style: SpeakUpDesign.body.copyWith(
+                color: widget.textColor,
+                height: 1.45,
+              ),
             ),
+            if (polish.explanation case final explanation?
+                when explanation.trim().isNotEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space4),
+              Text(
+                explanation,
+                key: const Key('inline-language-polish-explanation'),
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+            if (widget.polishFooter case final footer?) ...[
+              const SizedBox(height: SpeakUpDesign.space4),
+              footer,
+            ],
           ],
-          if (widget.onSpeakSuggestion != null) ...[
+          if (widget.onSpeakSuggestion != null && spokenSuggestion != null) ...[
             const SizedBox(height: SpeakUpDesign.space4),
             _InlineFeedbackAction(
               key: const Key('inline-language-suggestion-play'),
@@ -158,17 +165,196 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
               color: widget.foregroundColor,
               onPressed: widget.suggestionLoading
                   ? null
-                  : () => widget.onSpeakSuggestion!(suggestion.text),
+                  : () => widget.onSpeakSuggestion!(spokenSuggestion.text),
             ),
-          ],
-          if (footer != null) ...[
-            const SizedBox(height: SpeakUpDesign.space4),
-            footer,
           ],
         ],
       ],
     );
   }
+}
+
+class _InlineFeedbackHeading extends StatelessWidget {
+  const _InlineFeedbackHeading({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: SpeakUpDesign.meta.copyWith(
+        color: color,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _InlineCorrectionDiff extends StatelessWidget {
+  const _InlineCorrectionDiff({
+    required this.originalText,
+    required this.correctedText,
+    required this.textColor,
+  });
+
+  final String originalText;
+  final String correctedText;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          for (final part in _correctionDiff(originalText, correctedText))
+            TextSpan(
+              text: part.text,
+              style: switch (part.change) {
+                _CorrectionChange.unchanged => TextStyle(color: textColor),
+                _CorrectionChange.removed => const TextStyle(
+                  color: SpeakUpDesign.error,
+                  decoration: TextDecoration.lineThrough,
+                  decorationColor: SpeakUpDesign.error,
+                  decorationThickness: 1.5,
+                ),
+                _CorrectionChange.added => const TextStyle(
+                  color: SpeakUpDesign.success,
+                  fontWeight: FontWeight.w600,
+                ),
+              },
+            ),
+        ],
+      ),
+      key: const Key('inline-language-correction-diff'),
+      style: SpeakUpDesign.body.copyWith(height: 1.55),
+    );
+  }
+}
+
+enum _CorrectionChange { unchanged, removed, added }
+
+final class _CorrectionPart {
+  const _CorrectionPart(this.text, this.change);
+
+  final String text;
+  final _CorrectionChange change;
+}
+
+final class _CorrectionToken {
+  const _CorrectionToken(this.leading, this.value);
+
+  final String leading;
+  final String value;
+}
+
+List<_CorrectionPart> _correctionDiff(String original, String corrected) {
+  final before = _correctionTokens(_englishCorrectionReference(original));
+  final after = _correctionTokens(corrected.trim());
+  final width = after.length + 1;
+  final lengths = Uint16List((before.length + 1) * width);
+  for (var beforeIndex = before.length - 1; beforeIndex >= 0; beforeIndex--) {
+    for (var afterIndex = after.length - 1; afterIndex >= 0; afterIndex--) {
+      final index = beforeIndex * width + afterIndex;
+      lengths[index] = before[beforeIndex].value == after[afterIndex].value
+          ? lengths[(beforeIndex + 1) * width + afterIndex + 1] + 1
+          : lengths[(beforeIndex + 1) * width + afterIndex] >=
+                lengths[beforeIndex * width + afterIndex + 1]
+          ? lengths[(beforeIndex + 1) * width + afterIndex]
+          : lengths[beforeIndex * width + afterIndex + 1];
+    }
+  }
+
+  final parts = <_CorrectionPart>[];
+  var beforeIndex = 0;
+  var afterIndex = 0;
+  while (beforeIndex < before.length || afterIndex < after.length) {
+    if (beforeIndex < before.length &&
+        afterIndex < after.length &&
+        before[beforeIndex].value == after[afterIndex].value) {
+      _appendCorrectionPart(
+        parts,
+        before[beforeIndex],
+        _CorrectionChange.unchanged,
+      );
+      beforeIndex++;
+      afterIndex++;
+      continue;
+    }
+    final remove =
+        beforeIndex < before.length &&
+        (afterIndex == after.length ||
+            lengths[(beforeIndex + 1) * width + afterIndex] >=
+                lengths[beforeIndex * width + afterIndex + 1]);
+    if (remove) {
+      _appendCorrectionPart(
+        parts,
+        before[beforeIndex++],
+        _CorrectionChange.removed,
+      );
+    } else {
+      _appendCorrectionPart(
+        parts,
+        after[afterIndex++],
+        _CorrectionChange.added,
+      );
+    }
+  }
+  return parts;
+}
+
+void _appendCorrectionPart(
+  List<_CorrectionPart> parts,
+  _CorrectionToken token,
+  _CorrectionChange change,
+) {
+  var text = '${token.leading}${token.value}';
+  if (parts.isNotEmpty &&
+      token.leading.isEmpty &&
+      _wordCorrectionToken(parts.last.text) &&
+      _wordCorrectionToken(token.value)) {
+    text = ' $text';
+  }
+  if (parts.isNotEmpty && parts.last.change == change) {
+    final previous = parts.removeLast();
+    parts.add(_CorrectionPart('${previous.text}$text', change));
+    return;
+  }
+  parts.add(_CorrectionPart(text, change));
+}
+
+List<_CorrectionToken> _correctionTokens(String value) {
+  final matches = RegExp(
+    r"\s+|[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*|[^\s]",
+  ).allMatches(value);
+  final tokens = <_CorrectionToken>[];
+  var leading = '';
+  for (final match in matches) {
+    final token = match.group(0)!;
+    if (token.trim().isEmpty) {
+      leading = token;
+      continue;
+    }
+    tokens.add(_CorrectionToken(leading, token));
+    leading = '';
+  }
+  return tokens;
+}
+
+String _englishCorrectionReference(String value) {
+  return value
+      .replaceAll(RegExp(r'[^\x20-\x7E]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'^[,;:!?\-.\s]+|[,;:!?\-.\s]+$'), '');
+}
+
+bool _wordCorrectionToken(String value) {
+  final trimmed = value.trim();
+  return trimmed.isNotEmpty &&
+      RegExp(r'^[A-Za-z0-9]').hasMatch(trimmed) &&
+      RegExp(r'[A-Za-z0-9]$').hasMatch(trimmed);
 }
 
 class _InlineFeedbackAction extends StatelessWidget {

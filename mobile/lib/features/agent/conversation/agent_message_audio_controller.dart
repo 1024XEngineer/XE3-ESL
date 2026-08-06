@@ -14,6 +14,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     required this.conversationController,
     required this.client,
     required this.audioPlayer,
+    this.assistantSpeechClient,
   }) {
     _positionSubscription = audioPlayer.onPosition.listen(_handlePosition);
     _completionSubscription = audioPlayer.onComplete.listen((_) {
@@ -27,6 +28,7 @@ final class AgentMessageAudioController extends ChangeNotifier
   final ConversationController conversationController;
   final AgentMessageAudioClient client;
   final AgentAudioPlayer audioPlayer;
+  final AgentAssistantSpeechClient? assistantSpeechClient;
 
   String? _threadId;
   Set<String> _visibleMessageIds = <String>{};
@@ -48,6 +50,9 @@ final class AgentMessageAudioController extends ChangeNotifier
   Future<void>? _cleanupFuture;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<void>? _completionSubscription;
+  _LiveAssistantSpeech? _liveAssistantSpeech;
+  Object? _liveSpeechStartToken;
+  String? _liveSpeechCommittedMessageId;
 
   String? get threadId => _threadId;
   double get speechSpeed => _speechSpeed;
@@ -72,23 +77,103 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (message.role != AgentMessageRole.assistant) {
       return Future<void>.value();
     }
+    if (_liveAssistantSpeech != null ||
+        _liveSpeechCommittedMessageId == message.id) {
+      return Future<void>.value();
+    }
     return _toggleMessagePlayback(message);
   }
 
-  Future<void> stopPlayback() {
+  Future<void> startLiveAssistantSpeech({
+    required String transientMessageId,
+  }) async {
+    final threadId = _threadId;
+    if (_disposed ||
+        threadId == null ||
+        transientMessageId.isEmpty ||
+        assistantSpeechClient == null ||
+        audioPlayer is! AgentPCMStreamPlayer) {
+      return;
+    }
+    await _startLiveAssistantSpeech(threadId, transientMessageId);
+  }
+
+  void appendLiveAssistantSpeech({
+    required String transientMessageId,
+    required String delta,
+  }) {
+    final live = _liveAssistantSpeech;
+    if (_disposed ||
+        live == null ||
+        live.inputClosed ||
+        live.messageId != transientMessageId ||
+        delta.isEmpty) {
+      return;
+    }
+    _appendLiveAssistantText(live, live.observedText + delta);
+  }
+
+  void completeLiveAssistantSpeech({
+    required String transientMessageId,
+    required AgentMessage message,
+  }) {
+    final live = _liveAssistantSpeech;
+    if (_disposed ||
+        live == null ||
+        live.inputClosed ||
+        live.messageId != transientMessageId ||
+        message.role != AgentMessageRole.assistant ||
+        message.hasFailed) {
+      return;
+    }
+    live.messageId = message.id;
+    _liveSpeechCommittedMessageId = message.id;
+    if (_playingMessageId == transientMessageId) {
+      _playingMessageId = message.id;
+    }
+    if (_loadingMessageId == transientMessageId) {
+      _loadingMessageId = message.id;
+    }
+    if (!message.text.startsWith(live.observedText)) {
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Committed assistant text does not match streamed text.'),
+      );
+      return;
+    }
+    _appendLiveAssistantText(live, message.text);
+    live.inputClosed = true;
+    unawaited(live.segments.close());
+  }
+
+  void failLiveAssistantSpeech({required String transientMessageId}) {
+    final live = _liveAssistantSpeech;
+    if (live == null || live.messageId != transientMessageId) {
+      return;
+    }
+    unawaited(_cancelLiveAssistantSpeech());
+  }
+
+  Future<void> stopPlayback() async {
     if (_disposed) {
-      return Future<void>.value();
+      return;
     }
     _generation++;
+    await _cancelLiveAssistantSpeech();
     _resetPlaybackPresentation();
     notifyListeners();
-    return audioPlayer.stop();
+    await audioPlayer.stop();
   }
 
   Future<void> _toggleMessagePlayback(
     AgentMessage message, {
     String? previewText,
   }) {
+    if (_liveAssistantSpeech != null) {
+      return _cancelLiveAssistantSpeech().then(
+        (_) => _toggleMessagePlayback(message, previewText: previewText),
+      );
+    }
     if (!_visibleMessageIds.contains(message.id) ||
         _threadId == null ||
         _disposed ||
@@ -184,6 +269,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     _speechSpeed = speeds[(index + 1) % speeds.length];
     if (_playingMessageId != null) {
       _generation++;
+      unawaited(_cancelLiveAssistantSpeech());
       _resetPlaybackPresentation();
       unawaited(audioPlayer.stop());
     }
@@ -269,6 +355,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     }
     _accountEpoch++;
     _generation++;
+    await _cancelLiveAssistantSpeech();
     _threadId = null;
     _visibleMessageIds = <String>{};
     _visibleMessageAudioIds = <String, String?>{};
@@ -295,6 +382,7 @@ final class AgentMessageAudioController extends ChangeNotifier
       return;
     }
     _generation++;
+    unawaited(_cancelLiveAssistantSpeech());
     _resetPlaybackPresentation(clearError: false);
     notifyListeners();
     unawaited(audioPlayer.stop());
@@ -310,6 +398,7 @@ final class AgentMessageAudioController extends ChangeNotifier
     conversationController.removeListener(_syncConversation);
     _accountEpoch++;
     _generation++;
+    unawaited(_cancelLiveAssistantSpeech());
     unawaited(_positionSubscription?.cancel());
     unawaited(_completionSubscription?.cancel());
     unawaited(audioPlayer.dispose());
@@ -331,6 +420,8 @@ final class AgentMessageAudioController extends ChangeNotifier
     };
     if (nextThreadId != _threadId) {
       _generation++;
+      unawaited(_cancelLiveAssistantSpeech());
+      _liveSpeechCommittedMessageId = null;
       _threadId = nextThreadId;
       _visibleMessageIds = messageIds;
       _visibleMessageAudioIds = messageAudioIds;
@@ -356,8 +447,199 @@ final class AgentMessageAudioController extends ChangeNotifier
     if (_disposed) {
       return;
     }
+    final live = _liveAssistantSpeech;
+    if (live != null && live.playing) {
+      live.playing = false;
+      if (live.remoteCompleted) {
+        _finishLiveAssistantSpeech(live);
+      }
+      return;
+    }
     _resetPlaybackPresentation(clearError: false);
     notifyListeners();
+  }
+
+  Future<void> _startLiveAssistantSpeech(
+    String threadId,
+    String messageId,
+  ) async {
+    final startToken = Object();
+    _liveSpeechStartToken = startToken;
+    await _cancelLiveAssistantSpeech(preserveStartToken: true);
+    if (_disposed ||
+        _threadId != threadId ||
+        !identical(_liveSpeechStartToken, startToken)) {
+      return;
+    }
+    _liveSpeechStartToken = null;
+    final speechClient = assistantSpeechClient;
+    if (speechClient == null || audioPlayer is! AgentPCMStreamPlayer) {
+      return;
+    }
+    final live = _LiveAssistantSpeech(threadId: threadId, messageId: messageId);
+    _liveAssistantSpeech = live;
+    _liveSpeechCommittedMessageId = null;
+    _loadingMessageId = messageId;
+    _playingMessageId = null;
+    _messagePlaybackUsesPreview = false;
+    _errorMessage = null;
+    _errorMessageId = null;
+    notifyListeners();
+    live.subscription = speechClient
+        .streamAssistantSpeech(
+          threadId: threadId,
+          segments: live.segments.stream,
+        )
+        .listen(
+          (segment) => _handleLiveAssistantAudio(live, segment),
+          onError: (Object error, StackTrace _) {
+            _failLiveAssistantSpeech(live, error);
+          },
+          onDone: () {
+            if (!identical(_liveAssistantSpeech, live)) {
+              return;
+            }
+            live.remoteCompleted = true;
+            if (!live.playing) {
+              _finishLiveAssistantSpeech(live);
+              return;
+            }
+            live.playbackOperation = live.playbackOperation
+                .then(
+                  (_) =>
+                      (audioPlayer as AgentPCMStreamPlayer).finishPCMStream(),
+                )
+                .catchError((Object error) {
+                  _failLiveAssistantSpeech(live, error);
+                });
+          },
+        );
+  }
+
+  void _appendLiveAssistantText(_LiveAssistantSpeech live, String text) {
+    if (!identical(_liveAssistantSpeech, live) ||
+        live.inputClosed ||
+        !text.startsWith(live.observedText)) {
+      return;
+    }
+    final delta = text.substring(live.observedText.length);
+    live.observedText = text;
+    if (delta.isEmpty) {
+      return;
+    }
+    if (live.nextSequence > 1024) {
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Assistant speech text chunk limit exceeded.'),
+      );
+      return;
+    }
+    final spoken = _cleanAssistantSpeechDelta(delta);
+    if (spoken.trim().isEmpty) {
+      return;
+    }
+    live.segments.add(
+      AgentAssistantSpeechTextSegment(
+        sequence: live.nextSequence++,
+        text: spoken,
+      ),
+    );
+  }
+
+  void _handleLiveAssistantAudio(
+    _LiveAssistantSpeech live,
+    AgentAssistantSpeechAudioSegment segment,
+  ) {
+    final sameSegment = segment.sequence == live.audioSequence;
+    final nextSegment = segment.sequence == live.audioSequence + 1;
+    final validChunk = sameSegment
+        ? segment.chunkIndex == live.nextChunkIndex
+        : nextSegment && segment.chunkIndex == 1;
+    if (!identical(_liveAssistantSpeech, live) || !validChunk) {
+      segment.audio.fillRange(0, segment.audio.length, 0);
+      _failLiveAssistantSpeech(
+        live,
+        StateError('Assistant speech audio sequence is invalid.'),
+      );
+      return;
+    }
+    if (nextSegment) {
+      live.audioSequence = segment.sequence;
+      live.nextChunkIndex = 1;
+    }
+    live.nextChunkIndex++;
+    final audio = segment.audio;
+    final streamPlayer = audioPlayer as AgentPCMStreamPlayer;
+    if (!live.playing) {
+      live.playing = true;
+      _loadingMessageId = null;
+      _playingMessageId = live.messageId;
+      _playbackPosition = Duration.zero;
+      notifyListeners();
+    }
+    live.playbackOperation = live.playbackOperation
+        .then((_) async {
+          if (!identical(_liveAssistantSpeech, live)) {
+            return;
+          }
+          if (!live.playerStarted) {
+            live.playerStarted = true;
+            await streamPlayer.startPCMStream(speed: _speechSpeed);
+          }
+          await streamPlayer.appendPCM(audio);
+        })
+        .catchError((Object error) {
+          _failLiveAssistantSpeech(live, error);
+        })
+        .whenComplete(() {
+          audio.fillRange(0, audio.length, 0);
+        });
+  }
+
+  void _finishLiveAssistantSpeech(_LiveAssistantSpeech live) {
+    if (!identical(_liveAssistantSpeech, live)) {
+      return;
+    }
+    _liveAssistantSpeech = null;
+    _loadingMessageId = null;
+    _playingMessageId = null;
+    _playbackPosition = Duration.zero;
+    notifyListeners();
+  }
+
+  void _failLiveAssistantSpeech(_LiveAssistantSpeech live, Object error) {
+    if (!identical(_liveAssistantSpeech, live)) {
+      return;
+    }
+    final messageId = live.messageId;
+    unawaited(_cancelLiveAssistantSpeech());
+    _loadingMessageId = null;
+    _playingMessageId = null;
+    _errorMessageId = messageId;
+    _errorMessage = '实时朗读中断，可点击朗读重新播放。';
+    notifyListeners();
+    unawaited(_clearOnAuthenticationFailure(error));
+  }
+
+  Future<void> _cancelLiveAssistantSpeech({
+    bool preserveStartToken = false,
+  }) async {
+    if (!preserveStartToken) {
+      _liveSpeechStartToken = null;
+    }
+    final live = _liveAssistantSpeech;
+    if (live == null) {
+      return;
+    }
+    _liveAssistantSpeech = null;
+    if (!live.inputClosed) {
+      live.inputClosed = true;
+      await live.segments.close();
+    }
+    await live.subscription?.cancel();
+    if (live.playerStarted) {
+      await audioPlayer.stop();
+    }
   }
 
   void _fenceUnavailableMedia() {
@@ -495,4 +777,29 @@ final class _MessageAudioFence {
   final String threadId;
   final String messageId;
   final String? audioId;
+}
+
+final class _LiveAssistantSpeech {
+  _LiveAssistantSpeech({required this.threadId, required this.messageId});
+
+  final String threadId;
+  String messageId;
+  final StreamController<AgentAssistantSpeechTextSegment> segments =
+      StreamController<AgentAssistantSpeechTextSegment>();
+  StreamSubscription<AgentAssistantSpeechAudioSegment>? subscription;
+  String observedText = '';
+  int nextSequence = 1;
+  int audioSequence = 0;
+  int nextChunkIndex = 1;
+  bool inputClosed = false;
+  bool remoteCompleted = false;
+  bool playing = false;
+  bool playerStarted = false;
+  Future<void> playbackOperation = Future<void>.value();
+}
+
+String _cleanAssistantSpeechDelta(String value) {
+  return value
+      .replaceAll(RegExp(r'[`*_#>]'), '')
+      .replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '');
 }

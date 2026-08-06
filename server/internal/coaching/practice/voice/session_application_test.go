@@ -12,8 +12,8 @@ import (
 func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
 	translator := &questionTranslatorStub{content: "接下来发生了什么？"}
 	allowed := sessionFixture()
-	allowed.PracticeExperience = "ROLEPLAY"
-	allowed.SceneCategory = "ROLEPLAY_DAILY"
+	allowed.PracticeExperience = "LIFE_AND_TRAVEL"
+	allowed.SceneCategory = "LIFE_DAILY"
 	application := translationApplication(
 		t,
 		sessionPortStub{session: allowed},

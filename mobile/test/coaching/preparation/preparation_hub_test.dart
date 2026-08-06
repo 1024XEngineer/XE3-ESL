@@ -120,12 +120,12 @@ void main() {
     expect(find.text('职场英语'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsOneWidget);
     expect(find.text('酒店入住与问题处理'), findsNothing);
-    expect(find.byKey(const Key('roleplay-filter-workplace')), findsNothing);
+    expect(find.byKey(const Key('scenario-filter-workplace')), findsNothing);
     expect(find.text('英文自我介绍'), findsNothing);
     expect(find.text('IELTS 口语完整模拟'), findsNothing);
     expect(find.text('自定义职场沟通'), findsNothing);
     expect(find.text('自定义日常交流'), findsNothing);
-    expect(find.byKey(const Key('roleplay-custom-reserved')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-custom-reserved')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
     await tester.pumpAndSettle();
@@ -135,8 +135,8 @@ void main() {
     expect(find.text('酒店入住与问题处理'), findsOneWidget);
     expect(find.text('餐厅点餐'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsNothing);
-    expect(find.byKey(const Key('roleplay-filter-travel')), findsOneWidget);
-    expect(find.byKey(const Key('roleplay-filter-workplace')), findsNothing);
+    expect(find.byKey(const Key('scenario-filter-travel')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-filter-workplace')), findsNothing);
   });
 
   testWidgets('keeps the four entries usable at 320px and 3x text', (
@@ -170,7 +170,7 @@ void main() {
     }
   });
 
-  testWidgets('keeps interview and roleplay cards usable at 3x text', (
+  testWidgets('keeps interview and scenario cards usable at 3x text', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 568);
@@ -205,16 +205,16 @@ void main() {
     await tester.pumpAndSettle();
 
     await _openModule(tester, const Key('practice-hub-life'));
-    final roleplayScene = find.byKey(
+    final scenarioScene = find.byKey(
       const Key('catalog-scene-scn_daily_hotel_checkin_issue'),
     );
     await tester.scrollUntilVisible(
-      roleplayScene,
+      scenarioScene,
       180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    expect(roleplayScene.hitTestable(), findsOneWidget);
+    expect(scenarioScene.hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -504,24 +504,24 @@ final _hubScenes = <SceneDefinition>[
   ),
   testScene(
     id: 'scn_workplace_progress_risk_update',
-    experience: PracticeExperience.roleplay,
-    category: SceneCategory.roleplayWorkplace,
+    experience: PracticeExperience.workplace,
+    category: SceneCategory.workplaceGeneral,
     name: '进度与风险汇报',
     prompt: _hubPrompt('向直属领导汇报进展、风险和支持请求。'),
     version: 1,
   ),
   testScene(
     id: 'scn_daily_hotel_checkin_issue',
-    experience: PracticeExperience.roleplay,
-    category: SceneCategory.roleplayTravel,
+    experience: PracticeExperience.lifeAndTravel,
+    category: SceneCategory.lifeTravel,
     name: '酒店入住与问题处理',
     prompt: _hubPrompt('办理入住并解决一个房间问题。'),
     version: 1,
   ),
   testScene(
     id: 'scn_daily_restaurant_ordering',
-    experience: PracticeExperience.roleplay,
-    category: SceneCategory.roleplayDaily,
+    experience: PracticeExperience.lifeAndTravel,
+    category: SceneCategory.lifeDaily,
     name: '餐厅点餐',
     prompt: _hubPrompt('练习点餐、确认需求与礼貌沟通。'),
     version: 1,

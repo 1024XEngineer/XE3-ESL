@@ -339,7 +339,7 @@ func run() int {
 			evaluationSpeechFeedbackGenerator,
 			bootstrap.SpeechFeedbackConfiguration{
 				Provider:      textConfig.Provider,
-				Model:         textConfig.Model,
+				Model:         textConfig.SpeechFeedbackModel,
 				LeaseDuration: speechFeedbackLease,
 				Acoustics:     speechFeedbackAcoustics,
 			},
@@ -377,6 +377,7 @@ func run() int {
 			bootstrap.VoiceConfiguration{
 				Recognizer:             recognizer,
 				Synthesizer:            synthesizer,
+				AssistantSpeech:        synthesizer,
 				PracticeRecognizer:     practiceRecognizer,
 				PracticeSynthesizer:    practiceSynthesizer,
 				QuestionGenerator:      practiceQuestions,

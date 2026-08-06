@@ -27,6 +27,10 @@ final class ComposerController extends ChangeNotifier {
     AgentVoiceRecorder? voiceRecorder,
     AgentAudioPlayer? draftAudioPlayer,
     this.onAssistantCommitted,
+    this.onAssistantStreamStarted,
+    this.onAssistantStreamDelta,
+    this.onAssistantStreamCompleted,
+    this.onAssistantStreamFailed,
     ComposerClientIdFactory? clientIdFactory,
   }) : _clientIdFactory = clientIdFactory ?? _createSecureComposerId {
     if (voiceClient != null) {
@@ -43,6 +47,10 @@ final class ComposerController extends ChangeNotifier {
         onStreamMessageChanged:
             conversationController.changeComposerStreamMessage,
         onAssistantCommitted: onAssistantCommitted,
+        onAssistantStreamStarted: onAssistantStreamStarted,
+        onAssistantStreamDelta: onAssistantStreamDelta,
+        onAssistantStreamCompleted: onAssistantStreamCompleted,
+        onAssistantStreamFailed: onAssistantStreamFailed,
         idFactory: _newId,
       )..addListener(_relayVoiceState);
     }
@@ -54,6 +62,10 @@ final class ComposerController extends ChangeNotifier {
   final AgentImageClient? imageClient;
   final AgentImagePicker? imagePicker;
   final AgentVoiceAssistantCommitted? onAssistantCommitted;
+  final AgentVoiceAssistantStreamStarted? onAssistantStreamStarted;
+  final AgentVoiceAssistantStreamDelta? onAssistantStreamDelta;
+  final AgentVoiceAssistantStreamCompleted? onAssistantStreamCompleted;
+  final AgentVoiceAssistantStreamFailed? onAssistantStreamFailed;
   final ComposerClientIdFactory _clientIdFactory;
 
   AgentVoiceController? _voiceController;

@@ -84,9 +84,6 @@ final class PreparationLaunchController extends ChangeNotifier {
   String? get resumableSceneId => workspaceController?.currentSceneId;
   String? get resumablePracticeExperience =>
       workspaceController?.currentPracticeExperience;
-  ScenePresentationMode get resumablePresentationMode =>
-      workspaceController?.currentPresentationMode ??
-      ScenePresentationMode.standard;
   String? get resumableSessionId => workspaceController?.currentSessionId;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
   bool get canRetryWorkspaceActivation =>
@@ -135,11 +132,22 @@ final class PreparationLaunchController extends ChangeNotifier {
   Future<bool> start(
     PreparationLaunchSelection selection, {
     bool replaceCurrentPractice = false,
+    ScenarioPreparationContext? scenarioContext,
   }) {
     if (_disposed || isStarting) {
       return Future<bool>.value(false);
     }
-    final background = _backgroundSummary.trim();
+    final background =
+        scenarioContext?.situation.trim() ?? _backgroundSummary.trim();
+    if (scenarioContext != null && !_validScenarioContext(scenarioContext)) {
+      _errorMessage = '请完整填写本次场景信息后再开始练习。';
+      _stage = PreparationLaunchStage.profile;
+      if (!_hasCommittedOrAmbiguousCreate) {
+        _retry = null;
+      }
+      notifyListeners();
+      return Future<bool>.value(false);
+    }
     if (!_validBackground(background)) {
       _errorMessage = background.isEmpty
           ? '请先补充你的背景与本次练习目标。'
@@ -169,6 +177,7 @@ final class PreparationLaunchController extends ChangeNotifier {
             !existing.matches(
               selection: selection,
               backgroundSummary: background,
+              scenarioContext: scenarioContext,
               threadId: threadId,
             ))) {
       _errorMessage = '练习已经创建，请先重试连接原练习。';
@@ -181,12 +190,14 @@ final class PreparationLaunchController extends ChangeNotifier {
             existing.matches(
               selection: selection,
               backgroundSummary: background,
+              scenarioContext: scenarioContext,
               threadId: threadId,
             )
         ? existing
         : _LaunchAttempt(
             selection: selection,
             backgroundSummary: background,
+            scenarioContext: scenarioContext,
             threadId: threadId,
             workspaceOperationId: _newId('practice-workspace'),
             workspaceLease: null,
@@ -328,9 +339,13 @@ final class PreparationLaunchController extends ChangeNotifier {
       _stage = PreparationLaunchStage.profile;
       notifyListeners();
       final profile = await client.createProfile(
-        input: CreatePreparationProfileInput(
-          backgroundSummary: activeAttempt.backgroundSummary,
-        ),
+        input: activeAttempt.scenarioContext == null
+            ? CreatePreparationProfileInput(
+                backgroundSummary: activeAttempt.backgroundSummary,
+              )
+            : CreatePreparationProfileInput.scenario(
+                context: activeAttempt.scenarioContext!,
+              ),
         idempotencyKey: activeAttempt.profileKey,
       );
       _requireCurrent(operationEpoch, activeContext);
@@ -547,6 +562,7 @@ final class _LaunchAttempt {
   const _LaunchAttempt({
     required this.selection,
     required this.backgroundSummary,
+    required this.scenarioContext,
     required this.threadId,
     required this.workspaceOperationId,
     required this.workspaceLease,
@@ -562,6 +578,7 @@ final class _LaunchAttempt {
 
   final PreparationLaunchSelection selection;
   final String backgroundSummary;
+  final ScenarioPreparationContext? scenarioContext;
   final String? threadId;
   final String workspaceOperationId;
   final PracticeWorkspaceLease? workspaceLease;
@@ -577,16 +594,19 @@ final class _LaunchAttempt {
   bool matches({
     required PreparationLaunchSelection selection,
     required String backgroundSummary,
+    required ScenarioPreparationContext? scenarioContext,
     required String? threadId,
   }) =>
       this.selection == selection &&
       this.backgroundSummary == backgroundSummary &&
+      this.scenarioContext == scenarioContext &&
       (this.threadId == threadId || threadId == null);
 
   _LaunchAttempt withWorkspaceLease(PracticeWorkspaceLease value) {
     return _LaunchAttempt(
       selection: selection,
       backgroundSummary: backgroundSummary,
+      scenarioContext: scenarioContext,
       threadId: value.practiceThreadId,
       workspaceOperationId: workspaceOperationId,
       workspaceLease: value,
@@ -605,6 +625,7 @@ final class _LaunchAttempt {
     return _LaunchAttempt(
       selection: selection,
       backgroundSummary: backgroundSummary,
+      scenarioContext: scenarioContext,
       threadId: threadId,
       workspaceOperationId: workspaceOperationId,
       workspaceLease: workspaceLease,
@@ -636,6 +657,21 @@ bool _validBackground(String value) =>
     value.trim() == value &&
     !value.contains('\u0000') &&
     utf8.encode(value).length <= 64 * 1024;
+
+bool _validScenarioContext(ScenarioPreparationContext context) =>
+    <String>[
+      context.situation,
+      context.userRole,
+      context.counterpartRole,
+      context.goal,
+      context.counterpartPersona,
+    ].every(
+      (value) =>
+          value.isNotEmpty &&
+          value.trim() == value &&
+          !value.contains('\u0000') &&
+          utf8.encode(value).length <= 16 * 1024,
+    );
 
 String _messageFor(PreparationLaunchException error) {
   return switch (error.kind) {

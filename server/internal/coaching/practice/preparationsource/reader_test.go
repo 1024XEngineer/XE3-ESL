@@ -27,8 +27,8 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 		t.Fatalf("daily policy ref projection = %#v", projection.SessionPolicy)
 	}
 
-	plan.SceneSelection.Scene.Experience = scene.PracticeExperienceRoleplay
-	plan.SceneSelection.Scene.Category = scene.SceneCategoryRoleplayDaily
+	plan.SceneSelection.Scene.Experience = scene.PracticeExperienceLifeAndTravel
+	plan.SceneSelection.Scene.Category = scene.SceneCategoryLifeDaily
 	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.InterviewPracticeSessionPolicy
 	plan.SessionPolicy.RetryAllowed = false
@@ -134,8 +134,8 @@ func confirmedPlanFixture() preparation.PracticePlan {
 		SceneSelection: scene.SelectionSnapshot{
 			Scene: scene.SceneDefinition{
 				ID:         "scene-1",
-				Experience: scene.PracticeExperienceRoleplay,
-				Category:   scene.SceneCategoryRoleplayDaily,
+				Experience: scene.PracticeExperienceLifeAndTravel,
+				Category:   scene.SceneCategoryLifeDaily,
 				Name:       "Scene",
 				Version:    1,
 				Status:     scene.SceneStatusActive,

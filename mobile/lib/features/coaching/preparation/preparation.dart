@@ -8,7 +8,7 @@ import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/roleplay/roleplay_catalog.dart';
+import 'package:speakup/features/coaching/scenario/scenario_catalog.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
@@ -17,6 +17,8 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/scenario_preparation_form.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
@@ -59,6 +61,8 @@ class _PreparationPageState extends State<PreparationPage> {
   _PracticeHub? _selectedHub;
   PracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
+  bool _scenarioFormVisible = false;
+  bool _scenarioReplaceCurrentPractice = false;
   bool _handlingIeltsNavigation = false;
 
   @override
@@ -182,6 +186,7 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    ScenarioPreparationContext? scenarioContext,
   }) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
@@ -197,7 +202,7 @@ class _PreparationPageState extends State<PreparationPage> {
         option == null) {
       return;
     }
-    if (launch.backgroundSummary.trim().isEmpty) {
+    if (scenarioContext == null && launch.backgroundSummary.trim().isEmpty) {
       launch.updateBackgroundSummary('默认示例：${detail.prompt.publicSceneBrief}');
     }
     final started = await launch.start(
@@ -208,6 +213,7 @@ class _PreparationPageState extends State<PreparationPage> {
         ieltsSelection: ieltsSelection,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
+      scenarioContext: scenarioContext,
     );
     if (started && mounted) {
       final bootstrap = launch.bootstrap;
@@ -223,6 +229,7 @@ class _PreparationPageState extends State<PreparationPage> {
         _selectedHub = null;
         _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
+        _scenarioFormVisible = false;
       });
       widget.onPracticeStarted?.call();
     }
@@ -249,6 +256,7 @@ class _PreparationPageState extends State<PreparationPage> {
         _selectedHub = null;
         _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
+        _scenarioFormVisible = false;
       });
       widget.onPracticeStarted?.call();
     }
@@ -260,6 +268,7 @@ class _PreparationPageState extends State<PreparationPage> {
     PracticeMode? practiceMode,
     IeltsPracticeSelection? ieltsSelection,
     bool forceReplaceCurrentPractice = false,
+    bool requireScenarioPreparation = false,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -308,10 +317,29 @@ class _PreparationPageState extends State<PreparationPage> {
       controller.showSceneList();
       return;
     }
+    if (requireScenarioPreparation) {
+      setState(() {
+        _scenarioFormVisible = true;
+        _scenarioReplaceCurrentPractice = replaceCurrentPractice;
+      });
+      return;
+    }
     _launchingIeltsSelection = ieltsSelection;
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+    );
+  }
+
+  Future<void> _submitScenarioPreparation(
+    ScenarioPreparationContext context,
+  ) async {
+    setState(() {
+      _scenarioFormVisible = false;
+    });
+    await _startPractice(
+      replaceCurrentPractice: _scenarioReplaceCurrentPractice,
+      scenarioContext: context,
     );
   }
 
@@ -439,6 +467,10 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       launch?.selectionChanged();
       controller?.showSceneList();
+      setState(() {
+        _scenarioFormVisible = false;
+        _scenarioReplaceCurrentPractice = false;
+      });
       return;
     }
     if (_selectedHub != null) {
@@ -496,6 +528,19 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildCatalog(PreparationController controller) {
     final selectedScene = controller.selectedScene;
     if (selectedScene != null) {
+      if (_scenarioFormVisible &&
+          (selectedScene.experience == PracticeExperience.workplace ||
+              selectedScene.experience == PracticeExperience.lifeAndTravel)) {
+        return ScenarioPreparationForm(
+          key: ValueKey(
+            'scenario-preparation-${selectedScene.id}-${selectedScene.version}',
+          ),
+          scene: selectedScene,
+          hasPrimaryNavigation: !widget.showBackButton,
+          onBack: () => _handleBack(controller),
+          onSubmit: _submitScenarioPreparation,
+        );
+      }
       return _SceneLaunchStatus(
         controller: controller,
         scene: selectedScene,
@@ -598,8 +643,8 @@ class _PreparationPageState extends State<PreparationPage> {
             title: '职场英语',
             description: '会议、协作与客户沟通',
             icon: Icons.business_center_outlined,
-            accentColor: PreparationDesign.roleplay,
-            tintColor: PreparationDesign.roleplayTint,
+            accentColor: PreparationDesign.scenario,
+            tintColor: PreparationDesign.scenarioTint,
             assetPath: 'assets/images/scenes/workplace-scene.jpg',
             onPressed: () =>
                 setState(() => _selectedHub = _PracticeHub.workplace),
@@ -610,8 +655,8 @@ class _PreparationPageState extends State<PreparationPage> {
             title: '生活与旅行',
             description: '日常交流与出行场景实战',
             icon: Icons.travel_explore_outlined,
-            accentColor: PreparationDesign.roleplay,
-            tintColor: PreparationDesign.roleplayTint,
+            accentColor: PreparationDesign.scenario,
+            tintColor: PreparationDesign.scenarioTint,
             assetPath: 'assets/images/scenes/travel-scene.jpg',
             onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
           ),
@@ -703,13 +748,18 @@ class _PreparationPageState extends State<PreparationPage> {
               ),
             )
         else
-          RoleplayCatalog(
+          ScenarioCatalog(
             title: _practiceHubLabel(hub),
-            description: _roleplayHubDescription(hub),
+            description: _scenarioHubDescription(hub),
             titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
-            onScenePressed: (scene) =>
-                unawaited(_startSceneDirectly(controller, scene)),
+            onScenePressed: (scene) => unawaited(
+              _startSceneDirectly(
+                controller,
+                scene,
+                requireScenarioPreparation: true,
+              ),
+            ),
           ),
       ],
     );
@@ -801,8 +851,8 @@ class _PreparationPageState extends State<PreparationPage> {
           title: '职场英语',
           description: '会议、协作与客户沟通',
           icon: Icons.business_center_outlined,
-          accentColor: PreparationDesign.roleplay,
-          tintColor: PreparationDesign.roleplayTint,
+          accentColor: PreparationDesign.scenario,
+          tintColor: PreparationDesign.scenarioTint,
           assetPath: 'assets/images/scenes/workplace-scene.jpg',
           onPressed: () =>
               setState(() => _selectedHub = _PracticeHub.workplace),
@@ -813,8 +863,8 @@ class _PreparationPageState extends State<PreparationPage> {
           title: '生活与旅行',
           description: '日常交流与出行场景实战',
           icon: Icons.travel_explore_outlined,
-          accentColor: PreparationDesign.roleplay,
-          tintColor: PreparationDesign.roleplayTint,
+          accentColor: PreparationDesign.scenario,
+          tintColor: PreparationDesign.scenarioTint,
           assetPath: 'assets/images/scenes/travel-scene.jpg',
           onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
         ),
@@ -1128,11 +1178,11 @@ String _practiceHubLabel(_PracticeHub hub) {
   };
 }
 
-String _roleplayHubDescription(_PracticeHub hub) {
+String _scenarioHubDescription(_PracticeHub hub) {
   return switch (hub) {
     _PracticeHub.workplace => '练习会议、协作、汇报与客户沟通。',
     _PracticeHub.life => '练习日常交流、旅行与生活问题处理。',
-    _ => throw StateError('Roleplay description requires a Roleplay hub.'),
+    _ => throw StateError('Scenario description requires a Scenario hub.'),
   };
 }
 
@@ -1148,12 +1198,9 @@ List<SceneDefinition> _scenesForHub(
           _PracticeHub.ielts =>
             scene.experience == PracticeExperience.ieltsSpeaking,
           _PracticeHub.workplace =>
-            scene.experience == PracticeExperience.roleplay &&
-                scene.category == SceneCategory.roleplayWorkplace,
+            scene.experience == PracticeExperience.workplace,
           _PracticeHub.life =>
-            scene.experience == PracticeExperience.roleplay &&
-                (scene.category == SceneCategory.roleplayDaily ||
-                    scene.category == SceneCategory.roleplayTravel),
+            scene.experience == PracticeExperience.lifeAndTravel,
         };
       })
       .toList(growable: false);

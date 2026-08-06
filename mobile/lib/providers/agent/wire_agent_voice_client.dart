@@ -74,7 +74,8 @@ final class WireAgentVoiceClient
         AgentVoiceClient,
         AgentVoiceStreamingClient,
         AgentVoiceRealtimeInputClient,
-        AgentMessageAudioClient {
+        AgentMessageAudioClient,
+        AgentAssistantSpeechClient {
   factory WireAgentVoiceClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -83,6 +84,7 @@ final class WireAgentVoiceClient
     AgentVoiceWireTransport? signedAudioTransport,
     AgentVoiceWireTransportFactory? transportFactory,
     AuthenticatedWebSocketConnector? realtimeConnector,
+    AuthenticatedWebSocketConnector? assistantSpeechConnector,
     AgentVoiceNow? now,
     Duration requestTimeout = const Duration(seconds: 75),
   }) {
@@ -116,6 +118,16 @@ final class WireAgentVoiceClient
         invalidateSession: invalidateSession,
         trustedBaseUri: _webSocketBaseUri(baseUri),
       ),
+      SessionAuthenticatedWebSocketConnector(
+        connector:
+            assistantSpeechConnector ??
+            IoAuthenticatedWebSocketConnector(
+              protocols: const <String>[_assistantSpeechWebSocketProtocol],
+            ),
+        credentialProvider: credentialProvider,
+        invalidateSession: invalidateSession,
+        trustedBaseUri: _webSocketBaseUri(baseUri),
+      ),
       requestTimeout,
       now ?? _utcNow,
     );
@@ -132,6 +144,7 @@ final class WireAgentVoiceClient
     this._ownsSignedAudioTransport,
     this._transportFactory,
     this._realtimeConnector,
+    this._assistantSpeechConnector,
     this._requestTimeout,
     this._now,
   );
@@ -141,6 +154,8 @@ final class WireAgentVoiceClient
   static const _maximumPlaybackLifetime = Duration(minutes: 2);
   static const _maximumLocalClockSkew = Duration(seconds: 30);
   static const _voiceInputWebSocketProtocol = 'speakup.voice-input.v1';
+  static const _assistantSpeechWebSocketProtocol =
+      'speakup.assistant-speech.v1';
 
   final Uri _baseUri;
   final TrustedIdentityHttpOrigin _trustedOrigin;
@@ -152,6 +167,7 @@ final class WireAgentVoiceClient
   final bool _ownsSignedAudioTransport;
   final AgentVoiceWireTransportFactory _transportFactory;
   final SessionAuthenticatedWebSocketConnector _realtimeConnector;
+  final SessionAuthenticatedWebSocketConnector _assistantSpeechConnector;
   final Duration _requestTimeout;
   final AgentVoiceNow _now;
 
@@ -347,6 +363,116 @@ final class WireAgentVoiceClient
     } on FormatException {
       throw _invalidResponse();
     } finally {
+      await connection?.socket.close();
+    }
+  }
+
+  @override
+  Stream<AgentAssistantSpeechAudioSegment> streamAssistantSpeech({
+    required String threadId,
+    required Stream<AgentAssistantSpeechTextSegment> segments,
+  }) async* {
+    _requireUuid(threadId);
+    final generation = _accountGeneration;
+    final uri = _webSocketBaseUri(_baseUri).resolve(
+      '/v1/agent-threads/${Uri.encodeComponent(threadId)}/assistant-speech/realtime',
+    );
+    SessionAuthenticatedWebSocketConnection? connection;
+    StreamIterator<dynamic>? messages;
+    try {
+      connection = await _assistantSpeechConnector.connect(uri: uri);
+      _requireGeneration(generation);
+      messages = StreamIterator<dynamic>(connection.socket);
+      final ready = await _nextAssistantSpeechMessage(messages);
+      _requireAssistantSpeechEvent(ready, 'stream.ready');
+      final outgoing = StreamIterator<AgentAssistantSpeechTextSegment>(
+        segments,
+      );
+      Object? sendingError;
+      StackTrace? sendingStackTrace;
+      var stopSending = false;
+      final sending =
+          () async {
+            var expectedSequence = 1;
+            while (!stopSending && await outgoing.moveNext()) {
+              _requireGeneration(generation);
+              final segment = outgoing.current;
+              if (segment.sequence != expectedSequence ||
+                  segment.text.trim().isEmpty ||
+                  segment.text.runes.length > 800 ||
+                  expectedSequence > 1024) {
+                throw const AgentClientException(
+                  kind: AgentClientFailureKind.invalidRequest,
+                );
+              }
+              connection!.socket.add(
+                jsonEncode(<String, Object>{
+                  'type': 'segment',
+                  'sequence': segment.sequence,
+                  'text': segment.text,
+                }),
+              );
+              expectedSequence++;
+            }
+            if (!stopSending) {
+              connection!.socket.add(
+                jsonEncode(const <String, String>{'type': 'finish'}),
+              );
+            }
+          }().onError((Object error, StackTrace stackTrace) async {
+            sendingError = error;
+            sendingStackTrace = stackTrace;
+            await connection?.socket.close();
+          });
+      var chunkIndex = 0;
+      var receivedBytes = 0;
+      try {
+        while (true) {
+          final message = await _nextAssistantSpeechMessage(messages);
+          if (message is String) {
+            _requireAssistantSpeechEvent(message, 'stream.completed');
+            if (chunkIndex == 0) {
+              throw _invalidResponse();
+            }
+            await sending;
+            break;
+          }
+          if (message is! List<int> ||
+              message.isEmpty ||
+              message.length.isOdd) {
+            throw _invalidResponse();
+          }
+          receivedBytes += message.length;
+          if (receivedBytes > _maximumAudioBytes) {
+            throw _invalidResponse();
+          }
+          yield AgentAssistantSpeechAudioSegment(
+            sequence: 1,
+            chunkIndex: ++chunkIndex,
+            audio: Uint8List.fromList(message),
+          );
+        }
+      } catch (_) {
+        if (sendingError != null) {
+          Error.throwWithStackTrace(sendingError!, sendingStackTrace!);
+        }
+        rethrow;
+      } finally {
+        stopSending = true;
+        await outgoing.cancel();
+        await sending;
+      }
+    } on AuthenticatedWebSocketException catch (error) {
+      throw AgentClientException(
+        kind: error.invalidatesAuthentication
+            ? AgentClientFailureKind.authenticationRequired
+            : AgentClientFailureKind.network,
+        retryable: !error.invalidatesAuthentication,
+      );
+    } on FormatException {
+      throw _invalidResponse();
+    } finally {
+      await messages?.cancel();
       await connection?.socket.close();
     }
   }
@@ -2208,6 +2334,71 @@ DateTime? _optionalDateTime(Map<String, Object?> object, String key) {
     return null;
   }
   return _strictDateTime(object[key]);
+}
+
+Future<dynamic> _nextAssistantSpeechMessage(
+  StreamIterator<dynamic> messages,
+) async {
+  if (!await messages.moveNext()) {
+    throw const AgentClientException(
+      kind: AgentClientFailureKind.network,
+      retryable: true,
+    );
+  }
+  return messages.current;
+}
+
+void _requireAssistantSpeechEvent(dynamic message, String expected) {
+  if (message is! String) {
+    throw _invalidResponse();
+  }
+  final envelope = _strictObject(
+    jsonDecode(message),
+    allowed: const <String>{'type', 'data'},
+    required: const <String>{'type', 'data'},
+  );
+  final type = _strictString(envelope['type'], min: 1, max: 64);
+  final data = _strictObject(
+    envelope['data'],
+    allowed: switch (type) {
+      'stream.ready' => const <String>{
+        'content_type',
+        'sample_rate',
+        'channel_count',
+        'bits_per_sample',
+      },
+      'stream.failed' => const <String>{'kind', 'retryable'},
+      _ => const <String>{},
+    },
+    required: switch (type) {
+      'stream.ready' => const <String>{
+        'content_type',
+        'sample_rate',
+        'channel_count',
+        'bits_per_sample',
+      },
+      'stream.failed' => const <String>{'kind', 'retryable'},
+      _ => const <String>{},
+    },
+  );
+  if (type == 'stream.failed') {
+    throw AgentClientException(
+      kind: AgentClientFailureKind.network,
+      errorCode: _strictString(data['kind'], min: 1, max: 64),
+      retryable: data['retryable'] == true,
+    );
+  }
+  if (type != expected) {
+    throw _invalidResponse();
+  }
+  if (type == 'stream.ready') {
+    if (_strictString(data['content_type'], min: 1, max: 32) != 'audio/pcm' ||
+        _strictInt(data['sample_rate'], min: 8000, max: 48000) != 24000 ||
+        _strictInt(data['channel_count'], min: 1, max: 2) != 1 ||
+        _strictInt(data['bits_per_sample'], min: 8, max: 32) != 16) {
+      throw _invalidResponse();
+    }
+  }
 }
 
 void _requireUuid(String value) {

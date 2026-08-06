@@ -29,8 +29,8 @@ func TestProjectGeneralSceneFormalReportPreservesGroundedResult(t *testing.T) {
 	}
 	if !formal.Valid() ||
 		formal.SceneType != evaluation.SceneOverseasDaily ||
-		formal.PracticeExperience != string(scene.PracticeExperienceRoleplay) ||
-		formal.SceneCategory != string(scene.SceneCategoryRoleplayTravel) ||
+		formal.PracticeExperience != string(scene.PracticeExperienceLifeAndTravel) ||
+		formal.SceneCategory != string(scene.SceneCategoryLifeTravel) ||
 		formal.PracticeMode != string(scene.PracticeModeFullSimulation) ||
 		formal.ScoreabilityStatus != ReportScoreabilityProvisional ||
 		len(formal.Dimensions) != len(scoring.GeneralSceneDimensions()) {
@@ -137,9 +137,9 @@ func generalSceneReportTestSnapshot(
 		t.Fatalf("decode general Scene report fixture: %v", err)
 	}
 	payload.PracticeContext.PracticeExperience =
-		string(scene.PracticeExperienceRoleplay)
+		string(scene.PracticeExperienceLifeAndTravel)
 	payload.PracticeContext.SceneCategory =
-		string(scene.SceneCategoryRoleplayTravel)
+		string(scene.SceneCategoryLifeTravel)
 	payload.PracticeContext.PracticeMode =
 		string(scene.PracticeModeFullSimulation)
 	payload.PracticeContext.PracticeOption.Mode =

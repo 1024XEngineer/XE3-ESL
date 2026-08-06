@@ -14,7 +14,7 @@ import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/goal/goal_client.dart';
 import 'package:speakup/features/coaching/goal/wire_goal_client.dart';
-import 'package:speakup/features/coaching/roleplay/immersive_roleplay_session.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_practice_history_store.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
@@ -279,6 +279,7 @@ ProductionAppDependencies createProductionAppDependencies({
     conversationController: conversationController,
     client: agentVoiceClient,
     audioPlayer: agentMessageAudioPlayer ?? AudioplayersAgentAudioPlayer(),
+    assistantSpeechClient: agentVoiceClient,
   );
   final composerController = ComposerController(
     conversationController: conversationController,
@@ -288,7 +289,20 @@ ProductionAppDependencies createProductionAppDependencies({
     voiceRecorder: agentVoiceRecorder ?? IosAgentVoiceRecorder(),
     draftAudioPlayer:
         agentComposerAudioPlayer ?? AudioplayersAgentAudioPlayer(),
-    onAssistantCommitted: messageAudioController.playCommittedAssistant,
+    onAssistantStreamStarted: (transientMessageId) => messageAudioController
+        .startLiveAssistantSpeech(transientMessageId: transientMessageId),
+    onAssistantStreamDelta: (transientMessageId, delta) =>
+        messageAudioController.appendLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          delta: delta,
+        ),
+    onAssistantStreamCompleted: (transientMessageId, message) =>
+        messageAudioController.completeLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          message: message,
+        ),
+    onAssistantStreamFailed: (transientMessageId) => messageAudioController
+        .failLiveAssistantSpeech(transientMessageId: transientMessageId),
   );
   final practiceController = PracticeController(
     client: practiceClient,

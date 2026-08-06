@@ -119,6 +119,42 @@ void main() {
     },
   );
 
+  test('freezes a typed scenario context into Profile creation', () async {
+    final client = _LaunchClient();
+    final controller = PreparationLaunchController(
+      client: client,
+      contextProvider: () => _context,
+      threadIdProvider: () => _threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _context,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-scenario-key',
+    );
+    addTearDown(controller.dispose);
+
+    expect(
+      await controller.start(
+        _scenarioSelection,
+        scenarioContext: _scenarioContext,
+      ),
+      isTrue,
+    );
+
+    expect(client.lastProfileInput?.kind, PreparationKind.scenario);
+    expect(client.lastProfileInput?.scenario, _scenarioContext);
+    expect(client.lastProfileInput?.backgroundSummary, _background);
+  });
+
   test('passes the IELTS selection to Plan creation', () async {
     final scene = testScene(
       id: 'scn_ielts_speaking',
@@ -888,6 +924,7 @@ final class _LaunchClient implements PreparationLaunchClient {
   final planKeys = <String>[];
   final sessionKeys = <String>[];
   CreatePreparationPlanInput? lastPlanInput;
+  CreatePreparationProfileInput? lastProfileInput;
   int clearCalls = 0;
   int _sessionCalls = 0;
 
@@ -898,6 +935,7 @@ final class _LaunchClient implements PreparationLaunchClient {
   }) async {
     calls.add('profile');
     profileKeys.add(idempotencyKey);
+    lastProfileInput = input;
     expect(input.backgroundSummary, _background);
     return profileCompleter?.future ?? _profile;
   }
@@ -973,6 +1011,13 @@ const _snapshotId = 'preparation-snapshot-1';
 const _planId = 'plan-1';
 const _sessionId = 'session-1';
 const _background = 'Backend engineer preparing a technical interview.';
+const _scenarioContext = ScenarioPreparationContext(
+  situation: _background,
+  userRole: 'Project owner',
+  counterpartRole: 'Stakeholder',
+  goal: 'Explain progress and risk clearly.',
+  counterpartPersona: 'Direct and evidence seeking.',
+);
 
 const _context = AgentPracticeContext(threadId: _threadId, goalId: _goalId);
 
@@ -1022,6 +1067,28 @@ final _selection = PreparationLaunchSelection(
   scene: _selectionScene,
   selectedRoleIds: const <String>['role-1'],
   practiceOptionId: 'option-1',
+);
+
+final _scenarioScene = testScene(
+  id: 'scene-scenario',
+  experience: PracticeExperience.workplace,
+  category: SceneCategory.workplaceGeneral,
+  name: 'Workplace update',
+  prompt: const ScenePrompt(
+    publicSceneBrief: _background,
+    practiceGoal: 'Explain progress and risk clearly.',
+    userRole: 'Project owner',
+    aiRole: 'Stakeholder',
+    personaSummary: 'Direct and evidence seeking.',
+    focusAreas: <String>['clarity'],
+    turnBlueprints: <String>['Ask for the current status.'],
+  ),
+);
+
+final _scenarioSelection = PreparationLaunchSelection.fromCatalog(
+  scene: _scenarioScene,
+  role: _scenarioScene.roles.single,
+  option: _scenarioScene.practiceOptions.single,
 );
 
 final _profile = PreparationProfile(

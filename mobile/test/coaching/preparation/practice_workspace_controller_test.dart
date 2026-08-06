@@ -113,10 +113,6 @@ void main() {
 
       expect(restoredWorkspace.currentTitle, '招聘初筛');
       expect(restoredWorkspace.currentSceneId, 'interview-screening');
-      expect(
-        restoredWorkspace.currentPresentationMode,
-        ScenePresentationMode.immersiveRoleplay,
-      );
       expect(restoredWorkspace.hasResumable, isTrue);
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
       expect(harness.conversation.threadId, launched.lease.practiceThreadId);
@@ -213,7 +209,7 @@ void main() {
   );
 
   test(
-    'roleplay presentation survives parking and cold workspace restore',
+    'scenario presentation survives parking and cold workspace restore',
     () async {
       final store = _InspectableRecordStore();
       final harness = await _createHarness();
@@ -227,17 +223,13 @@ void main() {
       await _launchPractice(
         harness: harness,
         workspace: firstWorkspace,
-        operationId: 'launch-roleplay-operation',
+        operationId: 'launch-scenario-operation',
         sceneId: 'daily-hotel',
         sceneTitle: '酒店入住',
-        sessionId: 'practice-roleplay-session',
-        practiceExperience: PracticeExperience.roleplay,
+        sessionId: 'practice-scenario-session',
+        practiceExperience: PracticeExperience.lifeAndTravel,
       );
-      expect(firstWorkspace.currentPracticeExperience, 'ROLEPLAY');
-      expect(
-        firstWorkspace.currentPresentationMode,
-        ScenePresentationMode.immersiveRoleplay,
-      );
+      expect(firstWorkspace.currentPracticeExperience, 'LIFE_AND_TRAVEL');
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
       firstWorkspace.dispose();
 
@@ -249,15 +241,14 @@ void main() {
       addTearDown(restoredWorkspace.dispose);
       await restoredWorkspace.activateAccount('account-1');
 
-      expect(restoredWorkspace.currentPracticeExperience, 'ROLEPLAY');
-      expect(
-        restoredWorkspace.currentPresentationMode,
-        ScenePresentationMode.immersiveRoleplay,
-      );
+      expect(restoredWorkspace.currentPracticeExperience, 'LIFE_AND_TRAVEL');
       final record = jsonDecode((await store.read('account-1'))!);
       expect(
         record,
-        containsPair('scene', containsPair('practice_experience', 'ROLEPLAY')),
+        containsPair(
+          'scene',
+          containsPair('practice_experience', 'LIFE_AND_TRAVEL'),
+        ),
       );
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
       expect(restoredWorkspace.currentSceneId, 'daily-hotel');
@@ -1079,7 +1070,8 @@ Future<_LaunchedPractice> _launchPractice({
   final category = switch (practiceExperience) {
     PracticeExperience.interview => SceneCategory.interviewRecruiter,
     PracticeExperience.ieltsSpeaking => SceneCategory.ieltsSpeaking,
-    PracticeExperience.roleplay => SceneCategory.roleplayTravel,
+    PracticeExperience.workplace => SceneCategory.workplaceGeneral,
+    PracticeExperience.lifeAndTravel => SceneCategory.lifeTravel,
   };
   final scene = testScene(
     id: sceneId,

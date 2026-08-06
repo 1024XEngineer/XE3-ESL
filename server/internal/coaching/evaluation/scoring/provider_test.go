@@ -234,8 +234,8 @@ func TestGeneralSceneTextProviderUsesEvaluationContract(t *testing.T) {
 			SchemaVersion:        GeneralSceneProviderSchemaVersion,
 			PromptVersion:        GeneralScenePromptVersion,
 			SceneType:            evaluation.SceneOverseasDaily,
-			PracticeExperience:   "ROLEPLAY",
-			SceneCategory:        "ROLEPLAY_DAILY",
+			PracticeExperience:   "LIFE_AND_TRAVEL",
+			SceneCategory:        "LIFE_DAILY",
 			PracticeMode:         "FULL_SIMULATION",
 			AssessableDimensions: GeneralSceneDimensions(),
 			Opportunities: []GeneralSceneOpportunity{{

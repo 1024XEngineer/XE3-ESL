@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
@@ -80,8 +81,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.InterviewProjectDeepDiveTurnPolicy
-		session.PracticeExperience = "ROLEPLAY"
-		session.SceneCategory = "ROLEPLAY_DAILY"
+		session.PracticeExperience = "LIFE_AND_TRAVEL"
+		session.SceneCategory = "LIFE_DAILY"
 		session.EffectiveTurns = 1
 		session.PreviousQuestion = "What did you deliver?"
 		session.PreviousUserResponse = "I led the launch."
@@ -107,8 +108,8 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		generator := &turnPolicyQuestionGenerator{response: "must not be used"}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.IELTSSpeakingPart1TurnPolicy
-		session.PracticeExperience = "ROLEPLAY"
-		session.SceneCategory = "ROLEPLAY_DAILY"
+		session.PracticeExperience = "LIFE_AND_TRAVEL"
+		session.SceneCategory = "LIFE_DAILY"
 		session.Prompt.TurnBlueprints = []string{"Part 1: What do you do?"}
 
 		question, err := (&questionAdapter{
@@ -122,6 +123,36 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 			t.Fatalf("IELTS question = %#v, generator calls = %d", question, generator.calls)
 		}
 	})
+}
+
+func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
+	repository := newTurnPolicyQuestionRepository()
+	generator := &turnPolicyQuestionGenerator{
+		response: "Dad, what brings you to the store today?",
+	}
+	session := sessionFixture()
+	session.TurnPolicyRef = practice.GenericPracticeTurnPolicy
+	session.ScenarioContext = &practice.ScenarioPreparationContext{
+		Situation:          "Discuss a return at the store.",
+		UserRole:           "店员爸爸",
+		CounterpartRole:    "店员",
+		Goal:               "Resolve the return request.",
+		CounterpartPersona: "A helpful store assistant.",
+	}
+
+	_, err := (&questionAdapter{
+		repository: repository,
+		generator:  generator,
+	}).EnsureQuestion(context.Background(), persistenceRequestActor(), session, 1)
+	if err != nil {
+		t.Fatalf("EnsureQuestion: %v", err)
+	}
+	if !strings.Contains(generator.request.SystemPrompt, "known role and identity") ||
+		!strings.Contains(generator.request.UserPrompt, `"user_role":"店员爸爸"`) ||
+		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"店员"`) ||
+		strings.Contains(generator.request.SystemPrompt, "店员爸爸") {
+		t.Fatalf("scenario generation request = %#v", generator.request)
+	}
 }
 
 func TestQuestionAdapterRejectsUnknownPolicyBeforeDependencies(t *testing.T) {
@@ -234,6 +265,29 @@ func TestMapPracticeSessionCopiesFrozenIELTSParts(t *testing.T) {
 	if mapped.IELTSAssignment == nil ||
 		mapped.IELTSAssignment.Parts[0].TurnBlueprints[0] != blueprints[0] {
 		t.Fatalf("mapped IELTS assignment = %#v", mapped.IELTSAssignment)
+	}
+}
+
+func TestMapPracticeSessionCopiesFrozenScenarioPreparation(t *testing.T) {
+	bootstrap := turnPolicySessionBootstrap(practice.GenericPracticeTurnPolicy)
+	context := &practice.ScenarioPreparationContext{
+		Situation:          "Discuss a return at the store.",
+		UserRole:           "店员爸爸",
+		CounterpartRole:    "店员",
+		Goal:               "Resolve the return request.",
+		CounterpartPersona: "A helpful store assistant.",
+	}
+	bootstrap.Snapshot.Preparation.Kind = "scenario"
+	bootstrap.Snapshot.Preparation.ScenarioContext = context
+
+	mapped, err := mapPracticeSession(bootstrap, "user-1")
+	if err != nil {
+		t.Fatalf("mapPracticeSession: %v", err)
+	}
+	context.UserRole = "changed"
+	if mapped.ScenarioContext == nil ||
+		mapped.ScenarioContext.UserRole != "店员爸爸" {
+		t.Fatalf("ScenarioContext = %#v", mapped.ScenarioContext)
 	}
 }
 
@@ -411,13 +465,15 @@ func (repository *turnPolicyQuestionRepository) ListSessionQuestions(
 type turnPolicyQuestionGenerator struct {
 	response string
 	calls    int
+	request  QuestionGenerationRequest
 }
 
 func (generator *turnPolicyQuestionGenerator) GenerateQuestion(
-	context.Context,
-	QuestionGenerationRequest,
+	_ context.Context,
+	request QuestionGenerationRequest,
 ) (string, error) {
 	generator.calls++
+	generator.request = request
 	return generator.response, nil
 }
 

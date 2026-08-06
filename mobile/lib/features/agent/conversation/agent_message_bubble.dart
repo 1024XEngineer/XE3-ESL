@@ -157,7 +157,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         ),
       );
     }
-    if (message.isStreaming || message.hasFailed) {
+    if (message.hasFailed) {
       return markdown;
     }
     if (audioController == null) {
@@ -180,7 +180,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           children: [
             TextButton.icon(
               key: Key('agent-assistant-tts-${message.id}'),
-              onPressed: () => audioController.toggleMessagePlayback(message),
+              onPressed: message.isStreaming
+                  ? null
+                  : () => audioController.toggleMessagePlayback(message),
               style: TextButton.styleFrom(
                 foregroundColor: SpeakUpDesign.primary,
                 backgroundColor: SpeakUpDesign.surfaceMuted,
