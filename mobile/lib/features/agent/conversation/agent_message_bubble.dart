@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
+import 'package:speakup/design/message_translation.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -15,6 +16,7 @@ final class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.messageAudioController,
+    this.onTranslate,
     this.onHandoff,
     this.onRefreshImage,
     this.correction,
@@ -24,6 +26,7 @@ final class AgentMessageBubble extends StatefulWidget {
 
   final AgentMessage message;
   final AgentMessageAudioController? messageAudioController;
+  final Future<String> Function(AgentMessage message)? onTranslate;
   final ValueChanged<AgentHandoff>? onHandoff;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
@@ -160,75 +163,82 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     if (message.hasFailed) {
       return markdown;
     }
-    if (audioController == null) {
+    if (audioController == null && widget.onTranslate == null) {
       return markdown;
     }
-    final loading = audioController.loadingMessageId == message.id;
-    final playing = audioController.playingMessageId == message.id;
-    final error = audioController.errorMessageId == message.id
-        ? audioController.errorMessage
+    final loading = audioController?.loadingMessageId == message.id;
+    final playing = audioController?.playingMessageId == message.id;
+    final error = audioController?.errorMessageId == message.id
+        ? audioController?.errorMessage
         : null;
+    final actions = <Widget>[];
+    if (audioController != null) {
+      actions.addAll([
+        TextButton.icon(
+          key: Key('agent-assistant-tts-${message.id}'),
+          onPressed: message.isStreaming
+              ? null
+              : () => audioController.toggleMessagePlayback(message),
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.primary,
+            backgroundColor: SpeakUpDesign.surfaceMuted,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          icon: loading
+              ? const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+                  size: 17,
+                ),
+          label: Text(
+            loading
+                ? '加载中'
+                : playing
+                ? '停止朗读'
+                : error == null
+                ? '朗读'
+                : '重试朗读',
+          ),
+        ),
+        TextButton(
+          key: Key('agent-assistant-speed-${message.id}'),
+          onPressed: audioController.cycleSpeechSpeed,
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.secondary,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: Text('${_formatSpeed(audioController.speechSpeed)}×'),
+        ),
+      ]);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         markdown,
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            TextButton.icon(
-              key: Key('agent-assistant-tts-${message.id}'),
-              onPressed: message.isStreaming
-                  ? null
-                  : () => audioController.toggleMessagePlayback(message),
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.primary,
-                backgroundColor: SpeakUpDesign.surfaceMuted,
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                visualDensity: VisualDensity.compact,
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              icon: loading
-                  ? const SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      playing ? Icons.stop_rounded : Icons.volume_up_outlined,
-                      size: 17,
-                    ),
-              label: Text(
-                loading
-                    ? '加载中'
-                    : playing
-                    ? '停止朗读'
-                    : error == null
-                    ? '朗读'
-                    : '重试朗读',
-              ),
-            ),
-            TextButton(
-              key: Key('agent-assistant-speed-${message.id}'),
-              onPressed: audioController.cycleSpeechSpeed,
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.secondary,
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                visualDensity: VisualDensity.compact,
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              child: Text('${_formatSpeed(audioController.speechSpeed)}×'),
-            ),
-          ],
+        MessageTranslationDisclosure(
+          sourceId: message.id,
+          buttonKey: Key('agent-assistant-translate-${message.id}'),
+          contentKey: Key('agent-assistant-translation-${message.id}'),
+          errorKey: Key('agent-assistant-translation-error-${message.id}'),
+          onTranslate: widget.onTranslate == null || message.isStreaming
+              ? null
+              : () => widget.onTranslate!(message),
+          leadingActions: actions,
         ),
         if (error != null) ...[
           const SizedBox(height: 3),

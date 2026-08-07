@@ -12,7 +12,11 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
-final class WireAgentClient implements AgentClient, AgentStreamingTextClient {
+final class WireAgentClient
+    implements
+        AgentClient,
+        AgentStreamingTextClient,
+        AgentMessageTranslationClient {
   factory WireAgentClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -195,6 +199,25 @@ final class WireAgentClient implements AgentClient, AgentStreamingTextClient {
       );
       _requireStatus(response, const <int>{HttpStatus.noContent});
       _requireEmptyBody(response);
+    });
+  }
+
+  @override
+  Future<AgentMessageTranslation> translateMessage({
+    required String messageId,
+  }) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(messageId);
+      final response = await _send(
+        generation: generation,
+        method: 'GET',
+        path: '/v1/agent-messages/$messageId/translation',
+      );
+      _requireStatus(response, const <int>{HttpStatus.ok});
+      return _decodeMessageTranslation(
+        response.body,
+        expectedMessageId: messageId,
+      );
     });
   }
 
@@ -1472,6 +1495,38 @@ _WireThreadPage _decodeThreadPage(String body) {
 
 _WireThread _decodeThread(String body) {
   return _decodeBody(body, _decodeThreadObject);
+}
+
+AgentMessageTranslation _decodeMessageTranslation(
+  String body, {
+  required String expectedMessageId,
+}) {
+  return _decodeBody(body, (value) {
+    final root = _strictObject(
+      value,
+      allowed: const <String>{'message_id', 'target_language', 'translation'},
+      required: const <String>{'message_id', 'target_language', 'translation'},
+    );
+    final messageId = _strictUuid(root['message_id']);
+    final targetLanguage = _strictString(
+      root['target_language'],
+      minLength: 5,
+      maxLength: 5,
+    );
+    final content = _strictString(
+      root['translation'],
+      minLength: 1,
+      maxLength: 8000,
+    );
+    if (messageId != expectedMessageId || targetLanguage != 'zh-CN') {
+      throw const _InvalidAgentResponse();
+    }
+    return AgentMessageTranslation(
+      messageId: messageId,
+      targetLanguage: targetLanguage,
+      content: content,
+    );
+  });
 }
 
 _WireThread _decodeThreadObject(Object? value) {

@@ -7,6 +7,7 @@ import (
 
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 func TestMapPracticeVoiceErrorPreservesStableProviderMetadata(t *testing.T) {
@@ -99,11 +100,11 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 		t.Fatalf("generator error = %v", err)
 	}
 
-	var translator *PracticeVoiceQuestionTranslator
-	if _, err := translator.TranslateQuestion(
+	var translator *Translator
+	if _, err := translator.Translate(
 		context.Background(),
-		practicevoice.QuestionTranslationRequest{},
-	); !isPracticeVoiceConfigurationError(err) {
+		sharedtranslation.Request{},
+	); !isTranslationConfigurationError(err) {
 		t.Fatalf("translator error = %v", err)
 	}
 
@@ -114,6 +115,12 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 	); !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("Tip generator error = %v", err)
 	}
+}
+
+func isTranslationConfigurationError(err error) bool {
+	var providerError *sharedtranslation.ProviderError
+	return errors.As(err, &providerError) &&
+		providerError.Kind == sharedtranslation.ProviderErrorConfiguration
 }
 
 func isPracticeVoiceConfigurationError(err error) bool {

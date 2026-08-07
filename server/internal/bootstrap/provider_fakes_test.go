@@ -9,14 +9,28 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 func testAgentModelProviders(run agentrun.TextGenerator) AgentModelProviders {
 	return AgentModelProviders{
-		Run:     run,
-		Memory:  testMemoryGenerator{run: run},
-		Summary: testSummaryGenerator{run: run},
+		Run:         run,
+		Memory:      testMemoryGenerator{run: run},
+		Summary:     testSummaryGenerator{run: run},
+		Translation: testTranslator{},
 	}
+}
+
+type testTranslator struct{}
+
+func (testTranslator) Translate(
+	ctx context.Context,
+	request sharedtranslation.Request,
+) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return request.Text, nil
 }
 
 func testJobTargetGenerator(

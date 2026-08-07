@@ -106,6 +106,46 @@ func TestFindMessageMapsPostgresReadErrors(t *testing.T) {
 	}
 }
 
+func TestFindOwnedMessageScopesLookupToAuthenticatedOwner(t *testing.T) {
+	t.Parallel()
+
+	database := &messageReaderDatabase{
+		row: messageReaderRow(func(destinations ...any) error {
+			*(destinations[0].(*string)) = "40000000-0000-4000-8000-000000000001"
+			*(destinations[1].(*string)) = "20000000-0000-4000-8000-000000000001"
+			*(destinations[2].(*string)) = "30000000-0000-4000-8000-000000000001"
+			*(destinations[3].(*int64)) = 2
+			*(destinations[4].(*string)) = "assistant"
+			*(destinations[5].(*string)) = ""
+			*(destinations[6].(*string)) = "10000000-0000-4000-8000-000000000001"
+			*(destinations[7].(*string)) = "text"
+			*(destinations[8].(*string)) = "Translate this."
+			*(destinations[9].(*time.Time)) = time.Now().UTC()
+			return nil
+		}),
+	}
+	repository := &Repository{database: database}
+	_, err := repository.FindOwnedMessage(
+		context.Background(),
+		"20000000-0000-4000-8000-000000000001",
+		"40000000-0000-4000-8000-000000000001",
+	)
+	if err != nil {
+		t.Fatalf("FindOwnedMessage: %v", err)
+	}
+	wantArguments := []any{
+		"40000000-0000-4000-8000-000000000001",
+		"20000000-0000-4000-8000-000000000001",
+	}
+	if !reflect.DeepEqual(database.arguments, wantArguments) {
+		t.Fatalf("query arguments = %#v, want %#v", database.arguments, wantArguments)
+	}
+	if !strings.Contains(database.query, "owner_user_id = $2") ||
+		strings.Contains(database.query, "thread_id = $3") {
+		t.Fatalf("owned message query = %s", database.query)
+	}
+}
+
 type messageReaderDatabase struct {
 	row       pgx.Row
 	query     string

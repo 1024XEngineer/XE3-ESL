@@ -8,6 +8,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 // Session is the voice-practice view of a frozen Practice Session. It carries
@@ -106,7 +107,7 @@ type SessionApplication struct {
 	questions    QuestionPort
 	checkpoints  CheckpointPort
 	orchestrator *RoundOrchestrator
-	translator   QuestionTranslator
+	translator   sharedtranslation.Translator
 	tips         QuestionTipPort
 }
 
@@ -115,14 +116,14 @@ func NewSessionApplication(
 	questions QuestionPort,
 	checkpoints CheckpointPort,
 	orchestrator *RoundOrchestrator,
-	translators ...QuestionTranslator,
+	translators ...sharedtranslation.Translator,
 ) (*SessionApplication, error) {
 	if sessions == nil || questions == nil || checkpoints == nil ||
 		orchestrator == nil || len(translators) > 1 ||
 		(len(translators) == 1 && translators[0] == nil) {
 		return nil, errors.New("practice voice: session dependency is required")
 	}
-	var translator QuestionTranslator
+	var translator sharedtranslation.Translator
 	if len(translators) == 1 {
 		translator = translators[0]
 	}
@@ -162,9 +163,9 @@ func (application *SessionApplication) QuestionTranslation(
 	if session.ID != question.SessionID || !session.QuestionTranslationAllowed {
 		return QuestionTranslation{}, ErrInvalidContext
 	}
-	content, err := application.translator.TranslateQuestion(
+	content, err := application.translator.Translate(
 		ctx,
-		QuestionTranslationRequest{Question: question.Content},
+		sharedtranslation.Request{Text: question.Content},
 	)
 	if err != nil {
 		return QuestionTranslation{}, err
@@ -175,7 +176,7 @@ func (application *SessionApplication) QuestionTranslation(
 	}
 	return QuestionTranslation{
 		QuestionID:     question.ID,
-		TargetLanguage: "zh-CN",
+		TargetLanguage: sharedtranslation.TargetLanguage,
 		Content:        content,
 	}, nil
 }

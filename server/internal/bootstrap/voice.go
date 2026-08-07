@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,7 +27,7 @@ type VoiceConfiguration struct {
 	PracticeRecognizer        practicevoice.SpeechRecognizer
 	PracticeSynthesizer       practicevoice.SpeechSynthesizer
 	QuestionGenerator         practicevoice.QuestionGenerator
-	QuestionTranslator        practicevoice.QuestionTranslator
+	QuestionTranslator        sharedtranslation.Translator
 	AnswerTipGenerator        practicevoice.AnswerTipGenerator
 	TemporaryAudio            practicevoice.TemporaryAudioVault
 	ObjectStore               objectstore.Store
@@ -144,26 +145,6 @@ func NewPracticeQuestionGenerator(
 		)
 	}
 	return qianwen.NewPracticeVoiceQuestionGenerator(
-		qianwen.TextConfig{
-			BaseURL:         configuration.BaseURL,
-			Model:           configuration.Model,
-			Timeout:         configuration.Timeout,
-			MaxOutputTokens: configuration.MaxOutputTokens,
-		},
-		configuration.APIKey.Reveal(),
-	)
-}
-
-// NewPracticeQuestionTranslator selects the Practice Voice translation adapter.
-func NewPracticeQuestionTranslator(
-	configuration config.TextGenerationConfig,
-) (practicevoice.QuestionTranslator, error) {
-	if configuration.Provider != config.TextProviderQianwen {
-		return nil, errors.New(
-			"bootstrap: Practice question translation provider is not registered",
-		)
-	}
-	return qianwen.NewPracticeVoiceQuestionTranslator(
 		qianwen.TextConfig{
 			BaseURL:         configuration.BaseURL,
 			Model:           configuration.Model,

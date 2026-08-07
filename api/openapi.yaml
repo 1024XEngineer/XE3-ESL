@@ -137,6 +137,8 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-message-audios~1{audio_id}
   /v1/agent-messages/{message_id}/speech:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1speech
+  /v1/agent-messages/{message_id}/translation:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1translation
   /v1/agent-threads/{thread_id}/runs:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs
   /v1/agent-threads/{thread_id}/runs/stream:
@@ -312,6 +314,8 @@ components:
       $ref: ./modules/agent.yaml#/components/schemas/AgentVoiceMessageConfirmation
     AgentMessageAudioPlayback:
       $ref: ./modules/agent.yaml#/components/schemas/AgentMessageAudioPlayback
+    AgentMessageTranslation:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageTranslation
     AgentRun:
       $ref: ./modules/agent.yaml#/components/schemas/AgentRun
     ContextManifest:

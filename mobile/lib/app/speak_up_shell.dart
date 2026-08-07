@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
@@ -50,6 +51,7 @@ class SpeakUpShell extends StatefulWidget {
     required this.conversationController,
     required this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     required this.practiceController,
     super.key,
   });
@@ -61,6 +63,7 @@ class SpeakUpShell extends StatefulWidget {
   final ConversationController conversationController;
   final ComposerController composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
@@ -382,6 +385,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : null,
         voiceController: widget.composerController.voiceController,
         messageAudioController: widget.messageAudioController,
+        onTranslateMessage: widget.messageTranslationClient == null
+            ? null
+            : (message) async {
+                final translation = await widget.messageTranslationClient!
+                    .translateMessage(messageId: message.id);
+                return translation.content;
+              },
         pendingImages: widget.composerController.pendingImages,
         imageErrorMessage: widget.composerController.imageErrorMessage,
         imageSelectionInFlight:
