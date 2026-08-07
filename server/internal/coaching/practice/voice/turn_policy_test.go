@@ -147,6 +147,7 @@ func TestQuestionAdapterUsesFrozenPreparationContext(t *testing.T) {
 		t.Fatalf("EnsureQuestion: %v", err)
 	}
 	if generator.request.SystemPrompt != preparationContextQuestionSystemPrompt ||
+		!strings.Contains(generator.request.SystemPrompt, "Respond only in English.") ||
 		!strings.Contains(generator.request.UserPrompt, `"situation":"Report project progress to a direct manager."`) ||
 		!strings.Contains(generator.request.UserPrompt, `"user_role":"项目负责人"`) ||
 		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"项目负责人的男朋友"`) ||

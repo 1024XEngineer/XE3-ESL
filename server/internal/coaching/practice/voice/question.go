@@ -25,7 +25,8 @@ Field meanings:
 - counterpart_persona: your conversational style
 
 Use all five fields consistently. Scene focus areas and turn blueprints are
-secondary training guidance and must be adapted to the preparation context.`
+secondary training guidance and must be adapted to the preparation context.
+Respond only in English.`
 )
 
 type questionAdapter struct {
