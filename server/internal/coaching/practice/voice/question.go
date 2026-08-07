@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	voiceQuestionObjective       = "targeted-english-practice"
-	scenarioQuestionSystemPrompt = `Conduct the role-play using scenario_preparation as the runtime context.
+	voiceQuestionObjective                 = "targeted-english-practice"
+	preparationContextQuestionSystemPrompt = `Conduct the role-play using the confirmed preparation context as the authoritative runtime context.
 
 Field meanings:
 - user_role: the learner's role
@@ -25,7 +25,7 @@ Field meanings:
 - counterpart_persona: your conversational style
 
 Use all five fields consistently. Scene focus areas and turn blueprints are
-training guidance and must be adapted to the runtime context.`
+secondary training guidance and must be adapted to the preparation context.`
 )
 
 type questionAdapter struct {
@@ -247,15 +247,16 @@ func questionGenerationRequest(
 		prompt.AIRole,
 		prompt.PersonaSummary,
 	)
-	if scenario := session.ScenarioContext; scenario != nil {
-		encoded, err := json.Marshal(scenario)
+	preparationContext := session.ScenarioContext
+	if preparationContext != nil {
+		encoded, err := json.Marshal(preparationContext)
 		if err != nil {
 			return QuestionGenerationRequest{}, ErrInvalidContext
 		}
-		systemPrompt = scenarioQuestionSystemPrompt
+		systemPrompt = preparationContextQuestionSystemPrompt
 		contextParts = append(
 			contextParts,
-			"scenario_preparation JSON: "+string(encoded),
+			"Confirmed preparation context JSON: "+string(encoded),
 		)
 	} else {
 		contextParts = append(
@@ -267,15 +268,15 @@ func questionGenerationRequest(
 			fmt.Sprintf("Your persona: %s", prompt.PersonaSummary),
 		)
 	}
-	if session.ScenarioContext != nil {
+	if preparationContext != nil {
 		contextParts = append(
 			contextParts,
 			fmt.Sprintf(
-				"Subordinate Scene focus areas (adapt if conflicting): %s",
+				"Scene focus areas (secondary; adapt if conflicting): %s",
 				strings.Join(prompt.FocusAreas, "; "),
 			),
 			fmt.Sprintf(
-				"Subordinate Scene turn blueprint (adapt if conflicting): %s",
+				"Scene turn blueprint (secondary; adapt if conflicting): %s",
 				prompt.TurnBlueprints[blueprintIndex],
 			),
 		)

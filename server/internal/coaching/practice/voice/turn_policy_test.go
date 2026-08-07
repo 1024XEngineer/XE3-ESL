@@ -124,7 +124,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 	})
 }
 
-func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
+func TestQuestionAdapterUsesFrozenPreparationContext(t *testing.T) {
 	repository := newTurnPolicyQuestionRepository()
 	generator := &turnPolicyQuestionGenerator{
 		response: "Dad, what brings you to the store today?",
@@ -146,20 +146,21 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureQuestion: %v", err)
 	}
-	if generator.request.SystemPrompt != scenarioQuestionSystemPrompt ||
+	if generator.request.SystemPrompt != preparationContextQuestionSystemPrompt ||
 		!strings.Contains(generator.request.UserPrompt, `"situation":"Report project progress to a direct manager."`) ||
 		!strings.Contains(generator.request.UserPrompt, `"user_role":"项目负责人"`) ||
 		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"项目负责人的男朋友"`) ||
 		!strings.Contains(generator.request.UserPrompt, `"goal":"Explain status, risks, and the requested decision."`) ||
 		!strings.Contains(generator.request.UserPrompt, `"counterpart_persona":"A direct manager who asks for evidence."`) ||
-		!strings.Contains(generator.request.UserPrompt, "Subordinate Scene focus areas (adapt if conflicting)") ||
-		!strings.Contains(generator.request.UserPrompt, "Subordinate Scene turn blueprint (adapt if conflicting)") ||
+		!strings.Contains(generator.request.UserPrompt, "Confirmed preparation context JSON") ||
+		!strings.Contains(generator.request.UserPrompt, "Scene focus areas (secondary; adapt if conflicting)") ||
+		!strings.Contains(generator.request.UserPrompt, "Scene turn blueprint (secondary; adapt if conflicting)") ||
 		strings.Contains(generator.request.SystemPrompt, "项目负责人的男朋友") {
-		t.Fatalf("scenario generation request = %#v", generator.request)
+		t.Fatalf("preparation context generation request = %#v", generator.request)
 	}
 }
 
-func TestGeneratedPoliciesUseScenarioPreparationAuthority(t *testing.T) {
+func TestGeneratedPoliciesUsePreparationContextAuthority(t *testing.T) {
 	for _, reference := range []string{
 		practice.GenericPracticeTurnPolicy,
 		practice.DailyHotelCheckinIssueTurnPolicy,
@@ -185,9 +186,9 @@ func TestGeneratedPoliciesUseScenarioPreparationAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatalf("EnsureQuestion: %v", err)
 			}
-			if generator.request.SystemPrompt != scenarioQuestionSystemPrompt ||
+			if generator.request.SystemPrompt != preparationContextQuestionSystemPrompt ||
 				!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"the learner's older brother"`) {
-				t.Fatalf("scenario authority request = %#v", generator.request)
+				t.Fatalf("preparation context authority request = %#v", generator.request)
 			}
 		})
 	}
