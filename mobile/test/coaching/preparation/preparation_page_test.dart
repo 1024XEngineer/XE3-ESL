@@ -54,8 +54,17 @@ void main() {
 
     expect(find.byKey(const Key('create-interview-plan')), findsOneWidget);
     expect(find.byKey(const Key('interview-plan-empty')), findsOneWidget);
+    final titleCenter = tester.getCenter(
+      find.byKey(const Key('practice-hub-title-interview')),
+    );
+    final createButton = find.byKey(const Key('create-interview-plan'));
+    final createCenter = tester.getCenter(createButton);
+    final createSize = tester.getSize(createButton);
+    expect((titleCenter.dy - createCenter.dy).abs(), lessThan(1));
+    expect(createSize.width, greaterThanOrEqualTo(44));
+    expect(createSize.height, greaterThanOrEqualTo(44));
 
-    await tester.tap(find.byKey(const Key('create-interview-plan')));
+    await tester.tap(createButton);
     await tester.pump();
 
     expect(opens, 1);

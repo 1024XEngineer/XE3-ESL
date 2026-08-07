@@ -27,20 +27,6 @@ class InterviewCatalog extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton.filled(
-            key: const Key('create-interview-plan'),
-            tooltip: '创建模拟面试',
-            onPressed: onCreatePressed,
-            icon: const Icon(Icons.add_rounded),
-            style: IconButton.styleFrom(
-              backgroundColor: PreparationDesign.ink,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
         if (loading && plans.isEmpty)
           const Center(child: CircularProgressIndicator())
         else if (errorMessage != null && plans.isEmpty)
@@ -93,6 +79,27 @@ class InterviewCatalog extends StatelessWidget {
   }
 }
 
+class InterviewCatalogCreateButton extends StatelessWidget {
+  const InterviewCatalogCreateButton({required this.onPressed, super.key});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filled(
+      key: const Key('create-interview-plan'),
+      tooltip: '创建模拟面试',
+      onPressed: onPressed,
+      icon: const Icon(Icons.add_rounded),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        backgroundColor: PreparationDesign.ink,
+        foregroundColor: Colors.white,
+      ),
+    );
+  }
+}
+
 class _PlanCard extends StatelessWidget {
   const _PlanCard({
     required this.plan,
@@ -115,24 +122,24 @@ class _PlanCard extends StatelessWidget {
       child: InkWell(
         onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Row(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: PreparationDesign.scenarioTint,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.mic_none_rounded),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: PreparationDesign.scenarioTint,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.mic_none_rounded),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -140,30 +147,73 @@ class _PlanCard extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${plan.practiceScope} · 约 $minutes 分钟 · '
-                      '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: PreparationDesign.inkTertiary,
-                      ),
+                  ),
+                  IconButton(
+                    key: Key('delete-interview-plan-${plan.id}'),
+                    tooltip: '删除模拟面试',
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                  ),
+                  const Icon(Icons.chevron_right_rounded),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 56, top: 4),
+                child: Text(
+                  plan.practiceScope,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: PreparationDesign.inkSecondary),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 56, top: 10),
+                child: Wrap(
+                  spacing: 16,
+                  runSpacing: 8,
+                  children: [
+                    _PlanMeta(
+                      icon: Icons.schedule_rounded,
+                      label: '约 $minutes 分钟',
+                    ),
+                    _PlanMeta(
+                      icon: Icons.repeat_rounded,
+                      label:
+                          '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
                     ),
                   ],
                 ),
               ),
-              IconButton(
-                key: Key('delete-interview-plan-${plan.id}'),
-                tooltip: '删除模拟面试',
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline_rounded),
-              ),
-              const Icon(Icons.chevron_right_rounded),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PlanMeta extends StatelessWidget {
+  const _PlanMeta({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: PreparationDesign.inkTertiary),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: PreparationDesign.meta.copyWith(
+              color: PreparationDesign.inkTertiary,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
