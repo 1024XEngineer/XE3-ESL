@@ -38,7 +38,6 @@ type ProviderOperation string
 
 const (
 	ProviderOperationQuestionGeneration  ProviderOperation = "question_generation"
-	ProviderOperationQuestionTranslation ProviderOperation = "question_translation"
 	ProviderOperationAnswerTipGeneration ProviderOperation = "answer_tip_generation"
 	ProviderOperationTranscription       ProviderOperation = "transcription"
 	ProviderOperationSynthesis           ProviderOperation = "synthesis"
@@ -139,17 +138,6 @@ type QuestionGenerator interface {
 	GenerateQuestion(
 		context.Context,
 		QuestionGenerationRequest,
-	) (string, error)
-}
-
-type QuestionTranslationRequest struct {
-	Question string
-}
-
-type QuestionTranslator interface {
-	TranslateQuestion(
-		context.Context,
-		QuestionTranslationRequest,
 	) (string, error)
 }
 

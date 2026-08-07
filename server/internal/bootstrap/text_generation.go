@@ -12,14 +12,16 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 // AgentModelProviders makes each Agent-owned model boundary explicit at the
 // composition root. No business module receives a provider's generic client.
 type AgentModelProviders struct {
-	Run     agentrun.TextGenerator
-	Memory  memory.Generator
-	Summary agentsummary.Generator
+	Run         agentrun.TextGenerator
+	Memory      memory.Generator
+	Summary     agentsummary.Generator
+	Translation sharedtranslation.Translator
 }
 
 func NewAgentModelProviders(
@@ -41,10 +43,15 @@ func NewAgentModelProviders(
 	if err != nil {
 		return AgentModelProviders{}, err
 	}
+	translator, err := qianwen.NewTranslator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
 	return AgentModelProviders{
-		Run:     runGenerator,
-		Memory:  memoryGenerator,
-		Summary: summaryGenerator,
+		Run:         runGenerator,
+		Memory:      memoryGenerator,
+		Summary:     summaryGenerator,
+		Translation: translator,
 	}, nil
 }
 

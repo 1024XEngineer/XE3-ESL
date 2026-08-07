@@ -16,6 +16,14 @@ func (r *Repository) FindMessage(
 	return findMessage(ctx, r.database, ownerID, threadID, messageID)
 }
 
+func (r *Repository) FindOwnedMessage(
+	ctx context.Context,
+	ownerID string,
+	messageID string,
+) (conversation.Message, error) {
+	return findOwnedMessage(ctx, r.database, ownerID, messageID)
+}
+
 type messageRowQueryer interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
@@ -27,10 +35,7 @@ func findMessage(
 	threadID string,
 	messageID string,
 ) (conversation.Message, error) {
-	var result conversation.Message
-	var role string
-	var modality string
-	err := queryer.QueryRow(ctx, `
+	return scanMessage(queryer.QueryRow(ctx, `
 SELECT
     id::text,
     owner_user_id::text,
@@ -45,11 +50,37 @@ SELECT
 FROM agent_messages
 WHERE id = $1
   AND owner_user_id = $2
-  AND thread_id = $3`,
-		messageID,
-		ownerID,
-		threadID,
-	).Scan(
+  AND thread_id = $3`, messageID, ownerID, threadID))
+}
+
+func findOwnedMessage(
+	ctx context.Context,
+	queryer messageRowQueryer,
+	ownerID string,
+	messageID string,
+) (conversation.Message, error) {
+	return scanMessage(queryer.QueryRow(ctx, `
+SELECT
+    id::text,
+    owner_user_id::text,
+    thread_id::text,
+    sequence_no,
+    role,
+    COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
+    modality,
+    content,
+    created_at
+FROM agent_messages
+WHERE id = $1
+  AND owner_user_id = $2`, messageID, ownerID))
+}
+
+func scanMessage(row pgx.Row) (conversation.Message, error) {
+	var result conversation.Message
+	var role string
+	var modality string
+	err := row.Scan(
 		&result.ID,
 		&result.OwnerID,
 		&result.ThreadID,

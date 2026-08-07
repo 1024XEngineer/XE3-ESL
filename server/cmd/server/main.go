@@ -115,13 +115,6 @@ func run() int {
 		logger.Error("Practice question generation startup failed")
 		return 1
 	}
-	practiceQuestionTranslator, err := bootstrap.NewPracticeQuestionTranslator(
-		textConfig,
-	)
-	if err != nil {
-		logger.Error("Practice question translation startup failed")
-		return 1
-	}
 	practiceAnswerTips, err := bootstrap.NewPracticeAnswerTipGenerator(textConfig)
 	if err != nil {
 		logger.Error("Practice answer Tip generation startup failed")
@@ -381,7 +374,7 @@ func run() int {
 				PracticeRecognizer:     practiceRecognizer,
 				PracticeSynthesizer:    practiceSynthesizer,
 				QuestionGenerator:      practiceQuestions,
-				QuestionTranslator:     practiceQuestionTranslator,
+				QuestionTranslator:     modelProviders.Translation,
 				AnswerTipGenerator:     practiceAnswerTips,
 				TemporaryAudio:         audioVault,
 				ObjectStore:            recordingStore,

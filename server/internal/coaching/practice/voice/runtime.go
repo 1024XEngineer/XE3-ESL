@@ -7,6 +7,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 type RuntimeRepository interface {
@@ -37,7 +38,7 @@ type RuntimeConfiguration struct {
 	Recognizer         SpeechRecognizer
 	Synthesizer        SpeechSynthesizer
 	QuestionGenerator  QuestionGenerator
-	QuestionTranslator QuestionTranslator
+	QuestionTranslator sharedtranslation.Translator
 	AnswerTipGenerator AnswerTipGenerator
 	Recordings         VoiceRecordingLifecycle
 	AudioAssets        *AudioAssetService
@@ -115,7 +116,7 @@ func NewRuntimeApplications(
 	if err != nil {
 		return nil, nil, err
 	}
-	translationPorts := make([]QuestionTranslator, 0, 1)
+	translationPorts := make([]sharedtranslation.Translator, 0, 1)
 	if configuration.QuestionTranslator != nil {
 		translationPorts = append(
 			translationPorts,

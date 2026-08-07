@@ -30,6 +30,7 @@ void main() {
         conversationController: dependencies.conversationController,
         composerController: dependencies.composerController,
         messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
         practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         ieltsPreparationController: dependencies.ieltsPreparationController,

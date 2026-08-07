@@ -270,6 +270,90 @@ void main() {
     );
     expect(selected, same(handoff));
   });
+
+  testWidgets('loads, caches, and toggles an assistant translation', (
+    tester,
+  ) async {
+    const message = AgentMessage(
+      id: 'assistant-translation',
+      role: AgentMessageRole.assistant,
+      text: 'Start with the result.',
+    );
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: message,
+            onTranslate: (_) async {
+              calls++;
+              return '先说结果。';
+            },
+          ),
+        ),
+      ),
+    );
+
+    final button = find.byKey(
+      const Key('agent-assistant-translate-assistant-translation'),
+    );
+    expect(button, findsOneWidget);
+    expect(find.text('先说结果。'), findsNothing);
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('先说结果。'), findsOneWidget);
+    expect(calls, 1);
+
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.text('先说结果。'), findsNothing);
+
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.text('先说结果。'), findsOneWidget);
+    expect(calls, 1);
+  });
+
+  testWidgets('retries an assistant translation after a request failure', (
+    tester,
+  ) async {
+    const message = AgentMessage(
+      id: 'assistant-translation-retry',
+      role: AgentMessageRole.assistant,
+      text: 'Add one concrete example.',
+    );
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: message,
+            onTranslate: (_) async {
+              calls++;
+              if (calls == 1) {
+                throw StateError('temporary failure');
+              }
+              return '补充一个具体例子。';
+            },
+          ),
+        ),
+      ),
+    );
+
+    final button = find.byKey(
+      const Key('agent-assistant-translate-assistant-translation-retry'),
+    );
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('翻译失败，请重试。'), findsOneWidget);
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('翻译失败，请重试。'), findsNothing);
+    expect(find.text('补充一个具体例子。'), findsOneWidget);
+    expect(calls, 2);
+  });
 }
 
 Future<void> _pumpMessage(WidgetTester tester, AgentMessage message) async {

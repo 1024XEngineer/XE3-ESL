@@ -45,6 +45,7 @@ class SpeakUpApp extends StatelessWidget {
     required this.conversationController,
     required this.composerController,
     required this.messageAudioController,
+    required this.messageTranslationClient,
     required this.practiceController,
     required this.preparationController,
     required this.ieltsPreparationController,
@@ -65,6 +66,7 @@ class SpeakUpApp extends StatelessWidget {
     this.conversationController,
     this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     this.practiceController,
     this.preparationController,
     this.ieltsPreparationController,
@@ -85,6 +87,7 @@ class SpeakUpApp extends StatelessWidget {
   final ConversationController? conversationController;
   final ComposerController? composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
@@ -111,6 +114,7 @@ class SpeakUpApp extends StatelessWidget {
               conversationController: conversationController,
               composerController: composerController,
               messageAudioController: messageAudioController,
+              messageTranslationClient: messageTranslationClient,
               practiceController: practiceController,
               preparationController: preparationController,
               ieltsPreparationController: ieltsPreparationController,
@@ -133,6 +137,7 @@ class SpeakUpApp extends StatelessWidget {
                 conversationController: conversationController,
                 composerController: composerController,
                 messageAudioController: messageAudioController,
+                messageTranslationClient: messageTranslationClient,
                 practiceController: practiceController,
                 preparationController: preparationController,
                 ieltsPreparationController: ieltsPreparationController,
@@ -159,6 +164,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.conversationController,
     this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     this.practiceController,
     this.preparationController,
     this.ieltsPreparationController,
@@ -179,6 +185,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final ConversationController? conversationController;
   final ComposerController? composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
@@ -365,6 +372,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             conversationController: _conversationController,
             composerController: _composerController,
             messageAudioController: _messageAudioController,
+            messageTranslationClient: widget.messageTranslationClient,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
             ieltsPreparationController: widget.ieltsPreparationController,
@@ -418,6 +426,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             conversationController: _conversationController,
             composerController: _composerController,
             messageAudioController: _messageAudioController,
+            messageTranslationClient: widget.messageTranslationClient,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
             ieltsPreparationController: widget.ieltsPreparationController,

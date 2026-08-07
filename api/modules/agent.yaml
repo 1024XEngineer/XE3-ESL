@@ -580,6 +580,43 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-messages/{message_id}/translation:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageId'
+    get:
+      tags:
+        - Agent
+      summary: Translate one completed assistant Agent Message on demand
+      description: |
+        The server reads the canonical Message by the trusted Actor and Message
+        ID; clients never submit translation source text. Only a persisted,
+        non-empty assistant Message produced by a completed Run is eligible.
+        The translation is ephemeral and does not modify the Message, Thread,
+        Summary, Memory, or practice context.
+      operationId: getAgentMessageTranslation
+      responses:
+        '200':
+          description: Ephemeral Simplified Chinese translation.
+          headers:
+            Cache-Control:
+              description: Prevent shared or persistent storage of generated text.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageTranslation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-messages/{message_id}/speech-previews:
     parameters:
       - $ref: '#/components/parameters/AgentMessageId'
@@ -1563,6 +1600,27 @@ components:
         expires_at:
           type: string
           format: date-time
+          readOnly: true
+    AgentMessageTranslation:
+      type: object
+      additionalProperties: false
+      required:
+        - message_id
+        - target_language
+        - translation
+      properties:
+        message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        target_language:
+          type: string
+          const: zh-CN
+          readOnly: true
+        translation:
+          type: string
+          minLength: 1
+          maxLength: 8000
           readOnly: true
     SubmitAgentRunRequest:
       $ref: '#/components/schemas/AppendAgentMessageRequest'

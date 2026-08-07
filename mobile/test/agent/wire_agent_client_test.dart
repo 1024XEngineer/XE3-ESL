@@ -1363,6 +1363,59 @@ void main() {
     });
   });
 
+  group('WireAgentClient message translation', () {
+    test('decodes one bounded Simplified Chinese translation', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-messages/$_assistantMessageId/translation',
+          response: _jsonResponse(HttpStatus.ok, {
+            'message_id': _assistantMessageId,
+            'target_language': 'zh-CN',
+            'translation': '先说结果。',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final translation = await harness.client.translateMessage(
+        messageId: _assistantMessageId,
+      );
+
+      expect(translation.messageId, _assistantMessageId);
+      expect(translation.targetLanguage, 'zh-CN');
+      expect(translation.content, '先说结果。');
+      transport.expectDone();
+    });
+
+    test('rejects a translation for a different message', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-messages/$_assistantMessageId/translation',
+          response: _jsonResponse(HttpStatus.ok, {
+            'message_id': _userMessageId,
+            'target_language': 'zh-CN',
+            'translation': '先说结果。',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.translateMessage(messageId: _assistantMessageId),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+  });
+
   group('WireAgentClient account isolation', () {
     test('a current 401 triggers generation-aware invalidation', () async {
       final transport = _ScriptedTransport([

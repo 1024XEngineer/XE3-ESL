@@ -44,6 +44,22 @@ abstract interface class AgentStreamingTextClient {
   });
 }
 
+abstract interface class AgentMessageTranslationClient {
+  Future<AgentMessageTranslation> translateMessage({required String messageId});
+}
+
+final class AgentMessageTranslation {
+  const AgentMessageTranslation({
+    required this.messageId,
+    required this.targetLanguage,
+    required this.content,
+  });
+
+  final String messageId;
+  final String targetLanguage;
+  final String content;
+}
+
 sealed class AgentTextStreamEvent {
   const AgentTextStreamEvent({required this.runId});
 
