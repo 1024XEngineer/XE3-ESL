@@ -2,6 +2,7 @@ package ielts
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +11,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type questionBankReaderStub struct {
+	bank QuestionBank
+}
+
+func (stub questionBankReaderStub) QuestionBank(context.Context) (QuestionBank, error) {
+	return stub.bank, nil
+}
+
 func TestHTTPHandlerPublishesQuestionBankAtDedicatedRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	NewHTTPHandler(mustTestBank(t)).RegisterRoutes(router)
+	NewHTTPHandler(questionBankReaderStub{bank: QuestionBank{
+		SchemaVersion: 3,
+		BankID:        "ielts-test-bank",
+		Season:        "2026-05-08",
+		Part1Topics:   make([]Part1PracticeTopic, 38),
+		TopicGroups:   make([]TopicGroup, 56),
+	}}).RegisterRoutes(router)
 
 	first := serveRequest(router, "/v1/ielts-speaking/question-bank")
 	second := serveRequest(router, "/v1/ielts-speaking/question-bank")
@@ -27,8 +42,8 @@ func TestHTTPHandlerPublishesQuestionBankAtDedicatedRoute(t *testing.T) {
 	if err := json.Unmarshal(first.Body.Bytes(), &bank); err != nil {
 		t.Fatalf("decode question bank: %v", err)
 	}
-	if len(bank.Part1Sets) != 38 || len(bank.TopicGroups) != 56 {
-		t.Fatalf("published counts = %d/%d", len(bank.Part1Sets), len(bank.TopicGroups))
+	if len(bank.Part1Topics) != 38 || len(bank.TopicGroups) != 56 {
+		t.Fatalf("published counts = %d/%d", len(bank.Part1Topics), len(bank.TopicGroups))
 	}
 
 	legacy := serveRequest(router, "/v1/scenes/ielts-speaking/question-bank")

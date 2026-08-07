@@ -236,13 +236,27 @@ func bootstrapTestScenePrompt() scene.ScenePrompt {
 	}
 }
 
-func newBootstrapTestIELTSQuestionBank(t *testing.T) *ielts.Bank {
+type bootstrapTestIELTSQuestionBank struct{}
+
+func (bootstrapTestIELTSQuestionBank) ResolveQuestionSet(
+	context.Context,
+	ielts.QuestionSetSelection,
+) (ielts.ResolvedQuestionSet, error) {
+	return ielts.ResolvedQuestionSet{}, errors.New("unexpected IELTS resolution")
+}
+
+func (bootstrapTestIELTSQuestionBank) AssignQuestionSet(
+	context.Context,
+	ielts.PracticeMode,
+) (ielts.ResolvedQuestionSet, error) {
+	return ielts.ResolvedQuestionSet{}, errors.New("unexpected IELTS assignment")
+}
+
+func newBootstrapTestIELTSQuestionBank(
+	t *testing.T,
+) ielts.QuestionSetResolver {
 	t.Helper()
-	bank, err := ielts.NewBank()
-	if err != nil {
-		t.Fatalf("ielts.NewBank: %v", err)
-	}
-	return bank
+	return bootstrapTestIELTSQuestionBank{}
 }
 
 func contextCompositionActor() requestcontext.Actor {

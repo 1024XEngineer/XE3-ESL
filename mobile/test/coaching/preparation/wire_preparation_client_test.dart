@@ -261,12 +261,11 @@ void main() {
 
     final bank = await client.getQuestionBank();
 
-    expect(bank.part1Sets, hasLength(38));
-    expect(bank.part1Topics, hasLength(38));
+    expect(bank.seasonLabel, '5–8 月题库');
+    expect(bank.part1Topics, hasLength(2));
     expect(bank.part1Topics.first.titleZh, '主题 1');
-    expect(bank.part1Sets.first.questionCount, 8);
-    expect(bank.part1Sets.first.topics, hasLength(3));
-    expect(bank.topicGroups, hasLength(56));
+    expect(bank.filters.topicTags.single.code, 'daily_life');
+    expect(bank.topicGroups, hasLength(2));
     expect(bank.topicGroups.first.part3Questions, hasLength(5));
     expect(bank.topicGroups.first.cueCard.points, hasLength(4));
     expect(transport.calls.single.path, '/v1/ielts-speaking/question-bank');
@@ -291,7 +290,7 @@ void main() {
       final bank = await client.getQuestionBank();
 
       expect(bank.topicGroups.first.part3Questions, hasLength(1));
-      expect(bank.topicGroups.first.supplementedQuestionCount, 0);
+      expect(bank.topicGroups.first.part3Questions.single, contains('schools'));
     },
   );
 }
@@ -337,68 +336,48 @@ IdentityHttpResponse _response(Object body) =>
     IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(body));
 
 Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
-  'schema_version': 2,
+  'schema_version': 3,
   'bank_id': 'ielts-speaking-2026-season',
   'season': '2026-05-08',
+  'season_label': '5–8 月题库',
+  'season_start': '2026-05-01',
+  'season_end': '2026-08-31',
   'source_cutoff': '2026-06-18T10:00:00Z',
-  'part1_sets': List<Object?>.generate(
-    38,
-    (index) => <String, Object?>{
-      'id': 'p1-${index + 1}',
-      'title': 'Part 1 Set ${index + 1}',
-      'topics': [
-        <String, Object?>{
-          'title': 'Topic A ${index + 1}',
-          'release': 'new',
-          'questions': ['A${index + 1}-1', 'A${index + 1}-2'],
-        },
-        <String, Object?>{
-          'title': 'Topic B ${index + 1}',
-          'release': 'carry_over',
-          'questions': [
-            'B${index + 1}-1',
-            'B${index + 1}-2',
-            'B${index + 1}-3',
-          ],
-        },
-        <String, Object?>{
-          'title': 'Topic C ${index + 1}',
-          'release': 'evergreen',
-          'questions': [
-            'C${index + 1}-1',
-            'C${index + 1}-2',
-            'C${index + 1}-3',
-          ],
-        },
-      ],
-      'question_count': 8,
-      'published': true,
-    },
-  ),
+  'filters': <String, Object?>{
+    'releases': [
+      <String, Object?>{'code': 'new', 'label': '本季新增'},
+    ],
+    'parts': [
+      <String, Object?>{'code': 'PART_1', 'label': 'Part 1'},
+      <String, Object?>{'code': 'PART_2', 'label': 'Part 2'},
+      <String, Object?>{'code': 'PART_3', 'label': 'Part 3'},
+    ],
+    'topic_tags': [
+      <String, Object?>{'code': 'daily_life', 'label': '日常生活'},
+    ],
+    'cue_card_types': [
+      <String, Object?>{'code': 'thing', 'label': '事物'},
+    ],
+  },
   'part1_topics': List<Object?>.generate(
-    38,
+    2,
     (index) => <String, Object?>{
       'id': 'p1-topic-${index + 1}',
       'title_zh': '主题 ${index + 1}',
       'title_en': 'Topic ${index + 1}',
-      'release': index < 16
-          ? 'new'
-          : index < 33
-          ? 'carry_over'
-          : 'evergreen',
-      'category': index.isEven ? 'thing' : 'event',
+      'release_status': index.isEven ? 'new' : 'carry_over',
+      'tag_codes': ['daily_life'],
       'questions': ['Topic ${index + 1}-1', 'Topic ${index + 1}-2'],
-      'published': true,
     },
   ),
   'topic_groups': List<Object?>.generate(
-    56,
+    2,
     (index) => <String, Object?>{
       'id': 'p23-${index + 1}',
       'title_zh': '主题 ${index + 1}',
-      'release': index.isEven ? 'new' : 'carry_over',
-      'region': 'mainland',
-      'category': index.isEven ? 'person' : 'place',
+      'release_status': index.isEven ? 'new' : 'carry_over',
+      'cue_card_type': index.isEven ? 'person' : 'place',
+      'tag_codes': ['daily_life'],
       'part2': <String, Object?>{
         'prompt': 'Describe topic ${index + 1}',
         'points': ['What', 'Where', 'Who', 'Why'],
@@ -407,8 +386,6 @@ Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
         5,
         (question) => 'Question ${index + 1}-${question + 1}',
       ),
-      'published': true,
-      'supplemented_question_count': 0,
     },
   ),
 };
