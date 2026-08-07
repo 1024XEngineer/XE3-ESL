@@ -68,9 +68,7 @@ class PlatformNavigationBar extends StatelessWidget {
                       child: GestureDetector(
                         key: destination.key,
                         behavior: HitTestBehavior.opaque,
-                        onTap: () => unawaited(
-                          onDestinationSelected(index),
-                        ),
+                        onTap: () => unawaited(onDestinationSelected(index)),
                       ),
                     ),
                 ],

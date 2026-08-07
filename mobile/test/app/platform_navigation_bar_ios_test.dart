@@ -4,8 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 
 void main() {
-  testWidgets('iOS native tab bar exposes destination keys and forwards taps',
-      (tester) async {
+  testWidgets('iOS native tab bar exposes destination keys and forwards taps', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
 
     final destinations = <PlatformNavigationDestination>[
