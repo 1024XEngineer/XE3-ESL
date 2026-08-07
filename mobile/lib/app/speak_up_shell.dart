@@ -7,7 +7,7 @@ import 'package:speakup/features/agent/conversation/agent_message_audio_controll
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
-import 'package:speakup/app/glass_navigation_bar.dart';
+import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -79,24 +79,36 @@ class SpeakUpShell extends StatefulWidget {
 
 class _SpeakUpShellState extends State<SpeakUpShell> {
   static const _destinations = [
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: 'SpeakUp',
       icon: Icons.chat_bubble_outline_rounded,
+      selectedIcon: Icons.chat_bubble_rounded,
+      iosSystemImage: 'bubble.left',
+      iosSelectedSystemImage: 'bubble.left.fill',
       key: Key('primary-tab-agent'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '训练',
       icon: Icons.grid_view_rounded,
+      selectedIcon: Icons.dashboard_rounded,
+      iosSystemImage: 'square.grid.2x2',
+      iosSelectedSystemImage: 'square.grid.2x2.fill',
       key: Key('primary-tab-scenes'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '复盘',
       icon: Icons.fact_check_outlined,
+      selectedIcon: Icons.fact_check_rounded,
+      iosSystemImage: 'checklist',
+      iosSelectedSystemImage: 'checkmark.square.fill',
       key: Key('primary-tab-review'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '我的',
-      icon: Icons.person_rounded,
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+      iosSystemImage: 'person',
+      iosSelectedSystemImage: 'person.fill',
       key: Key('primary-tab-profile'),
     ),
   ];
@@ -152,6 +164,11 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _selectDestination(int index) {
     unawaited(_selectDestinationAfterParking(index));
+  }
+
+  Future<int> _selectDestinationFromNavigation(int index) async {
+    await _selectDestinationAfterParking(index);
+    return _selectedIndex;
   }
 
   Future<void> _selectDestinationAfterParking(int index) async {
@@ -335,10 +352,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
-      GlassNavigationBar.minimumBottomInset,
+      PlatformNavigationBar.minimumBottomInset,
     );
     final composerBottomInset =
-        GlassNavigationBar.heightFor(context) + safeBottom + 10;
+        PlatformNavigationBar.heightFor(context) + safeBottom + 10;
     final pages = [
       ConversationPage(
         previewMode: widget.previewMode,
@@ -464,11 +481,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ),
       drawerScrimColor: const Color(0x52000000),
       body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: GlassNavigationBar(
+      bottomNavigationBar: PlatformNavigationBar(
         destinations: _destinations,
         selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectDestination,
-        solid: practiceSelected,
+        onDestinationSelected: _selectDestinationFromNavigation,
       ),
     );
   }
@@ -512,7 +528,10 @@ class _ConversationDrawer extends StatelessWidget {
             Row(
               children: [
                 const Expanded(
-                  child: Text('SpeakUp', style: SpeakUpDesign.sectionTitle),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SpeakUpWordmark(height: 30),
+                  ),
                 ),
                 IconButton(
                   tooltip: '关闭对话菜单',
@@ -776,7 +795,7 @@ class _ProfilePage extends StatelessWidget {
             140,
           ),
           children: [
-            const SpeakUpPageHeader(title: '我的', subtitle: '管理账号与练习身份。'),
+            const SpeakUpPageHeader(title: '我的'),
             const SizedBox(height: SpeakUpDesign.space24),
             Card(
               child: ListTile(

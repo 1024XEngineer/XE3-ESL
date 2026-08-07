@@ -291,9 +291,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final previewPlaying =
         audioController?.playingMessageId == message.id &&
         audioController?.messagePlaybackUsesPreview == true;
-    final deleting =
-        audioController?.deletingMessageId == message.id ||
-        audio.status == AgentMessageAudioStatus.deleting;
     final error = audioController?.errorMessageId == message.id
         ? audioController?.errorMessage
         : null;
@@ -309,7 +306,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         InlineLanguageFeedback(
           leading: _VoicePlaybackAction(
             key: Key('agent-user-voice-play-${message.id}'),
-            durationKey: Key('agent-user-voice-duration-${message.id}'),
             loading: loading,
             playing: playing,
             duration: audio.duration,
@@ -319,47 +315,12 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
           correction: widget.correction,
           polish: widget.polish,
+          optimizeIconOnly: true,
           suggestionLoading: previewLoading,
           suggestionPlaying: previewPlaying,
           onSpeakSuggestion: audioController == null
               ? null
               : (text) => audioController.toggleSpeechPreview(message, text),
-          trailing:
-              audio.status != AgentMessageAudioStatus.deleted &&
-                  audioController != null
-              ? IconButton(
-                  key: Key('agent-user-voice-delete-${message.id}'),
-                  tooltip: deleting ? '正在删除录音' : '删除录音',
-                  onPressed: deleting
-                      ? null
-                      : () => audioController.deleteMessageAudio(message),
-                  constraints: const BoxConstraints.tightFor(
-                    width: SpeakUpDesign.minTapTarget,
-                    height: SpeakUpDesign.minTapTarget,
-                  ),
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                  color: SpeakUpDesign.secondary,
-                  icon: deleting
-                      ? const SizedBox.square(
-                          dimension: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline_rounded, size: 19),
-                )
-              : !audio.isReadable
-              ? Text(
-                  audio.status == AgentMessageAudioStatus.deleting
-                      ? '正在删除录音'
-                      : '录音已删除',
-                  key: Key(
-                    audio.status == AgentMessageAudioStatus.deleting
-                        ? 'agent-user-voice-deleting-${message.id}'
-                        : 'agent-user-voice-deleted-${message.id}',
-                  ),
-                  style: SpeakUpDesign.meta,
-                )
-              : null,
         ),
         if (error != null) ...[
           const SizedBox(height: 4),
@@ -380,7 +341,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
 
 class _VoicePlaybackAction extends StatelessWidget {
   const _VoicePlaybackAction({
-    required this.durationKey,
     required this.loading,
     required this.playing,
     required this.duration,
@@ -388,7 +348,6 @@ class _VoicePlaybackAction extends StatelessWidget {
     super.key,
   });
 
-  final Key durationKey;
   final bool loading;
   final bool playing;
   final Duration duration;
@@ -405,40 +364,21 @@ class _VoicePlaybackAction extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minWidth: SpeakUpDesign.minTapTarget,
-              minHeight: SpeakUpDesign.minTapTarget,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (loading)
-                    const SizedBox.square(
+          child: SizedBox.square(
+            dimension: SpeakUpDesign.minTapTarget,
+            child: Center(
+              child: loading
+                  ? const SizedBox.square(
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  else
-                    Icon(
+                  : Icon(
                       playing ? Icons.pause_rounded : Icons.graphic_eq_rounded,
                       size: 24,
                       color: onPressed == null
                           ? SpeakUpDesign.tertiary
                           : SpeakUpDesign.primary,
                     ),
-                  const SizedBox(width: 5),
-                  Text(
-                    _formatDuration(duration),
-                    key: durationKey,
-                    style: SpeakUpDesign.meta.copyWith(
-                      color: SpeakUpDesign.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
         ),

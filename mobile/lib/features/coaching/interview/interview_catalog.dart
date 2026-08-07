@@ -27,36 +27,20 @@ class InterviewCatalog extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '英文面试',
-                    key: const Key('practice-hub-title-interview'),
-                    style: PreparationDesign.pageTitle,
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('创建并管理你的模拟面试。'),
-                ],
-              ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton.filled(
+            key: const Key('create-interview-plan'),
+            tooltip: '创建模拟面试',
+            onPressed: onCreatePressed,
+            icon: const Icon(Icons.add_rounded),
+            style: IconButton.styleFrom(
+              backgroundColor: PreparationDesign.ink,
+              foregroundColor: Colors.white,
             ),
-            IconButton.filled(
-              key: const Key('create-interview-plan'),
-              tooltip: '创建模拟面试',
-              onPressed: onCreatePressed,
-              icon: const Icon(Icons.add_rounded),
-              style: IconButton.styleFrom(
-                backgroundColor: PreparationDesign.ink,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
+          ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 12),
         if (loading && plans.isEmpty)
           const Center(child: CircularProgressIndicator())
         else if (errorMessage != null && plans.isEmpty)

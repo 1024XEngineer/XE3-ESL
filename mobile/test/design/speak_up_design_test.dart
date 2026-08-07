@@ -10,6 +10,8 @@ void main() {
 
     expect(theme.scaffoldBackgroundColor, SpeakUpDesign.canvas);
     expect(theme.colorScheme.primary, SpeakUpDesign.primary);
+    expect(SpeakUpDesign.primary, SpeakUpDesign.ink);
+    expect(theme.progressIndicatorTheme.color, SpeakUpDesign.primary);
     expect(theme.cardTheme.color, SpeakUpDesign.surface);
     expect(
       theme.textTheme.headlineLarge?.fontSize,

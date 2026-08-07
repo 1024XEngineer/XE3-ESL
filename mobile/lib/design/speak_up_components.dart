@@ -1,6 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
+class SpeakUpWordmark extends StatelessWidget {
+  const SpeakUpWordmark({this.height = 28, super.key});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Speak Up',
+      image: true,
+      child: ExcludeSemantics(
+        child: Image.asset(
+          'assets/images/brand/speak-up-wordmark-black.png',
+          height: height,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
 class SpeakUpContentWidth extends StatelessWidget {
   const SpeakUpContentWidth({required this.child, super.key});
 
@@ -81,31 +102,34 @@ class SpeakUpPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       header: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (leading != null) ...[
-            Align(alignment: Alignment.centerLeft, child: leading),
-            const SizedBox(height: SpeakUpDesign.space16),
+            leading!,
+            const SizedBox(width: SpeakUpDesign.space8),
           ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineLarge,
-                ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(top: leading == null ? 0 : 5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.headlineLarge),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(
+                      subtitle!,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ],
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: SpeakUpDesign.space12),
-                trailing!,
-              ],
-            ],
+            ),
           ),
-          if (subtitle != null) ...[
-            const SizedBox(height: SpeakUpDesign.space8),
-            Text(subtitle!, style: Theme.of(context).textTheme.bodyMedium),
+          if (trailing != null) ...[
+            const SizedBox(width: SpeakUpDesign.space12),
+            trailing!,
           ],
         ],
       ),
@@ -172,6 +196,47 @@ class SpeakUpBackButton extends StatelessWidget {
       ),
       onPressed: onPressed ?? () => Navigator.of(context).maybePop(),
       icon: const Icon(Icons.arrow_back_rounded),
+    );
+  }
+}
+
+class SpeakUpNavigationHeader extends StatelessWidget {
+  const SpeakUpNavigationHeader({
+    required this.title,
+    this.onBack,
+    this.backButtonKey,
+    this.titleKey,
+    this.trailing,
+    super.key,
+  });
+
+  final String title;
+  final VoidCallback? onBack;
+  final Key? backButtonKey;
+  final Key? titleKey;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SpeakUpBackButton(key: backButtonKey, onPressed: onBack),
+        const SizedBox(width: SpeakUpDesign.space8),
+        Expanded(
+          child: Semantics(
+            header: true,
+            child: Text(
+              title,
+              key: titleKey,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+        ),
+        if (trailing != null) ...[
+          const SizedBox(width: SpeakUpDesign.space12),
+          trailing!,
+        ],
+      ],
     );
   }
 }

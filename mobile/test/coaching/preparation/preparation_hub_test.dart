@@ -51,7 +51,10 @@ void main() {
 
     await _openModule(tester, const Key('practice-hub-interview'));
 
-    expect(find.text('英文面试'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-hub-title-interview')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('create-interview-plan')), findsOneWidget);
     expect(find.byKey(const Key('interview-plan-empty')), findsOneWidget);
     expect(find.text('专项练习'), findsNothing);
@@ -70,7 +73,7 @@ void main() {
 
       await _openModule(tester, const Key('practice-hub-exam'));
 
-      expect(find.text('专项练习'), findsOneWidget);
+      expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
       expect(find.text('快速开始整轮模考'), findsOneWidget);
       expect(find.text('Part 1'), findsWidgets);
       expect(find.text('Part 2'), findsOneWidget);

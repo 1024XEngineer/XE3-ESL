@@ -7,17 +7,11 @@ enum _ScenarioFilter { recommended, workplace, travel, daily }
 
 class ScenarioCatalog extends StatefulWidget {
   const ScenarioCatalog({
-    required this.title,
-    required this.description,
-    required this.titleKey,
     required this.scenes,
     required this.onScenePressed,
     super.key,
   });
 
-  final String title;
-  final String description;
-  final Key titleKey;
   final List<SceneDefinition> scenes;
   final ValueChanged<SceneDefinition> onScenePressed;
 
@@ -75,12 +69,6 @@ class _ScenarioCatalogState extends State<ScenarioCatalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _ScenarioModuleHeader(
-          title: widget.title,
-          description: widget.description,
-          titleKey: widget.titleKey,
-        ),
-        const SizedBox(height: 20),
         if (_availableFilters.length > 2) ...[
           Wrap(
             spacing: 8,
@@ -131,47 +119,6 @@ class _ScenarioCatalogState extends State<ScenarioCatalog> {
             includeCustom: _filter == _ScenarioFilter.recommended,
             onScenePressed: widget.onScenePressed,
           ),
-      ],
-    );
-  }
-}
-
-class _ScenarioModuleHeader extends StatelessWidget {
-  const _ScenarioModuleHeader({
-    required this.title,
-    required this.description,
-    required this.titleKey,
-  });
-
-  final String title;
-  final String description;
-  final Key titleKey;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Semantics(
-                header: true,
-                container: true,
-                child: Text(
-                  title,
-                  key: titleKey,
-                  style: PreparationDesign.pageTitle,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(description, style: PreparationDesign.body),
-            ],
-          ),
-        ),
-        const SizedBox(width: 16),
-        const PreparationCatalogAvatarPreview(size: 58),
       ],
     );
   }

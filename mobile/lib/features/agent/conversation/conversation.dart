@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/composer/agent_composer.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
@@ -672,10 +673,9 @@ class _AgentTopBar extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'SpeakUp',
+                    const SpeakUpWordmark(
                       key: Key('conversation-fixed-title'),
-                      style: SpeakUpDesign.cardTitle,
+                      height: 26,
                     ),
                     if (previewMode) ...[
                       const SizedBox(width: 8),

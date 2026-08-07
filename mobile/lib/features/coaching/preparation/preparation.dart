@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
@@ -546,12 +547,6 @@ class _PreparationPageState extends State<PreparationPage> {
           key: Key('training-center-title'),
           style: PreparationDesign.pageTitle,
         ),
-        const SizedBox(height: 8),
-        const Text(
-          '今天想练什么？',
-          key: Key('practice-hub-page-title'),
-          style: PreparationDesign.body,
-        ),
         if (widget.launchController?.workspaceErrorMessage case final message?)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -575,7 +570,7 @@ class _PreparationPageState extends State<PreparationPage> {
               ],
             ),
           ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
         if (controller.isLoadingScenes)
           const _CatalogLoading(key: Key('preparation-catalog-loading'))
         else if (controller.errorMessage case final message?)
@@ -656,23 +651,13 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 8,
       ),
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            key: const Key('preparation-back-to-families'),
-            tooltip: '返回场景练习',
-            onPressed: () => setState(() {
-              _selectedHub = null;
-            }),
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: PreparationDesign.ink,
-            style: IconButton.styleFrom(
-              backgroundColor: PreparationDesign.surface,
-              side: const BorderSide(color: PreparationDesign.border),
-            ),
-          ),
+        SpeakUpNavigationHeader(
+          title: _practiceHubLabel(hub),
+          backButtonKey: const Key('preparation-back-to-families'),
+          titleKey: Key('practice-hub-title-${hub.name}'),
+          onBack: () => setState(() => _selectedHub = null),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
             plans: widget.jobPreparationController?.interviewPlans ?? const [],
@@ -705,9 +690,6 @@ class _PreparationPageState extends State<PreparationPage> {
           )
         else
           ScenarioCatalog(
-            title: _practiceHubLabel(hub),
-            description: _scenarioHubDescription(hub),
-            titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
             onScenePressed: (scene) => unawaited(
               _startSceneDirectly(
@@ -733,29 +715,13 @@ class _PreparationPageState extends State<PreparationPage> {
           top: 8,
         ),
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: IconButton(
-              key: const Key('preparation-back-to-families'),
-              tooltip: '返回场景练习',
-              onPressed: () => setState(() => _selectedHub = null),
-              icon: const Icon(Icons.arrow_back_rounded),
-              color: PreparationDesign.ink,
-              style: IconButton.styleFrom(
-                backgroundColor: PreparationDesign.surface,
-                side: const BorderSide(color: PreparationDesign.border),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          PreparationCatalogHeader(
+          SpeakUpNavigationHeader(
             title: _practiceHubLabel(selectedHub),
-            description: selectedHub == _PracticeHub.interview
-                ? '选择一项面试能力开始练习。'
-                : '该模块需要连接真实场景目录后使用。',
+            backButtonKey: const Key('preparation-back-to-families'),
             titleKey: Key('practice-hub-title-${selectedHub.name}'),
+            onBack: () => setState(() => _selectedHub = null),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           const PreparationCatalogEmpty(message: '连接场景服务后即可查看练习。'),
         ],
       );
@@ -773,13 +739,15 @@ class _PreparationPageState extends State<PreparationPage> {
           key: Key('training-center-title'),
           style: PreparationDesign.pageTitle,
         ),
-        const SizedBox(height: 8),
-        Text(
-          widget.previewMode ? '今天想练什么？' : '练习内容暂时无法加载，请稍后重试。',
-          key: const Key('practice-availability-message'),
-          style: PreparationDesign.body,
-        ),
-        const SizedBox(height: 24),
+        if (!widget.previewMode) ...[
+          const SizedBox(height: 8),
+          const Text(
+            '练习内容暂时无法加载，请稍后重试。',
+            key: Key('practice-availability-message'),
+            style: PreparationDesign.body,
+          ),
+        ],
+        const SizedBox(height: 16),
         _PracticeHubEntry(
           key: const Key('practice-hub-interview'),
           title: '英文面试',
@@ -1131,14 +1099,6 @@ String _practiceHubLabel(_PracticeHub hub) {
     _PracticeHub.ielts => 'IELTS 口语',
     _PracticeHub.workplace => '职场英语',
     _PracticeHub.life => '生活与旅行',
-  };
-}
-
-String _scenarioHubDescription(_PracticeHub hub) {
-  return switch (hub) {
-    _PracticeHub.workplace => '练习会议、协作、汇报与客户沟通。',
-    _PracticeHub.life => '练习日常交流、旅行与生活问题处理。',
-    _ => throw StateError('Scenario description requires a Scenario hub.'),
   };
 }
 
