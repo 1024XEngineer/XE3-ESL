@@ -522,7 +522,7 @@ func resolvePart1Topic(
 		return ResolvedPart{}, fmt.Errorf("%w: read Part 1 topic: %v", ErrQuestionBankUnavailable, err)
 	}
 	defer rows.Close()
-	part := ResolvedPart{Part: PracticeModePart1, SourceID: topicID, TopicTitle: title}
+	part := ResolvedPart{Part: PracticeModePart1, SourceID: topicID}
 	for rows.Next() {
 		var prompt string
 		if err := rows.Scan(&prompt); err != nil {
