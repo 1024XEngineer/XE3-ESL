@@ -332,15 +332,15 @@ void main() {
 
     final interviewHub = find.byKey(const Key('practice-hub-interview'));
     final examHub = find.byKey(const Key('practice-hub-exam'));
-    final roleplayHub = find.byKey(const Key('practice-hub-roleplay'));
+    final workplaceHub = find.byKey(const Key('practice-hub-workplace'));
     await _waitForPreparationTarget(
       tester,
       target: interviewHub,
-      operation: 'load the three practice hubs',
+      operation: 'load the four practice hubs',
       timeout: const Duration(seconds: 30),
     );
     expect(examHub, findsOneWidget);
-    expect(roleplayHub, findsOneWidget);
+    expect(workplaceHub, findsOneWidget);
 
     await _scrollPreparationIntoView(tester, interviewHub);
     await tester.tap(interviewHub);
@@ -353,12 +353,12 @@ void main() {
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
     await tester.pumpAndSettle();
 
-    await _scrollPreparationIntoView(tester, roleplayHub);
-    await tester.tap(roleplayHub);
+    await _scrollPreparationIntoView(tester, workplaceHub);
+    await tester.tap(workplaceHub);
     await _waitForPreparationTarget(
       tester,
-      target: find.byKey(const Key('practice-hub-title-roleplay')),
-      operation: 'open the roleplay hub',
+      target: find.byKey(const Key('practice-hub-title-workplace')),
+      operation: 'open the workplace hub',
       timeout: const Duration(seconds: 10),
     );
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
@@ -368,24 +368,13 @@ void main() {
     await tester.tap(examHub);
     await tester.pump();
 
-    final part1 = find.byKey(
-      const Key('catalog-scene-scn_ielts_speaking_part_1'),
+    final questionSet = find.byKey(
+      const Key('ielts-part1-set-p1-topic-001'),
     );
-    await _waitForPreparationTarget(
-      tester,
-      target: part1,
-      operation: 'load the IELTS Part 1 entry',
-      timeout: const Duration(seconds: 30),
-    );
-    await _scrollPreparationIntoView(tester, part1);
-    await tester.tap(part1);
-    await tester.pump();
-
-    final questionSet = find.byKey(const Key('ielts-part1-set-p1-001'));
     await _waitForPreparationTarget(
       tester,
       target: questionSet,
-      operation: 'load the first IELTS Part 1 question set',
+      operation: 'load the first IELTS Part 1 question topic',
       timeout: const Duration(seconds: 30),
     );
     await _scrollPreparationIntoView(tester, questionSet);
