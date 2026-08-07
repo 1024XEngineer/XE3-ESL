@@ -164,6 +164,62 @@ func TestInterviewConversationContextIsBounded(t *testing.T) {
 	}
 }
 
+func TestInterviewConversationContextShrinksRichResumeToBudget(t *testing.T) {
+	snapshot := interviewPreparationSnapshotFixture(true)
+	longText := strings.Repeat("detail", 100)
+	snapshot.ResumeSnapshot.Material.WorkExperiences = make(
+		[]practice.ResumeWorkExperience,
+		5,
+	)
+	for index := range snapshot.ResumeSnapshot.Material.WorkExperiences {
+		snapshot.ResumeSnapshot.Material.WorkExperiences[index] =
+			practice.ResumeWorkExperience{
+				Company:      longText,
+				Position:     longText,
+				Duties:       repeatedInterviewStrings(longText, 8),
+				Achievements: repeatedInterviewStrings(longText, 8),
+			}
+	}
+	snapshot.ResumeSnapshot.Material.ProjectExperiences = make(
+		[]practice.ResumeProjectExperience,
+		5,
+	)
+	for index := range snapshot.ResumeSnapshot.Material.ProjectExperiences {
+		snapshot.ResumeSnapshot.Material.ProjectExperiences[index] =
+			practice.ResumeProjectExperience{
+				ProjectName:  longText,
+				Role:         longText,
+				Description:  strings.Repeat("description", 200),
+				Technologies: repeatedInterviewStrings(longText, 20),
+				Duties:       repeatedInterviewStrings(longText, 8),
+				Achievements: repeatedInterviewStrings(longText, 8),
+			}
+	}
+
+	projected, err := projectInterviewConversationContext(snapshot)
+	if err != nil {
+		t.Fatalf("projectInterviewConversationContext: %v", err)
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil || len(encoded) > maxInterviewConversationContextBytes {
+		t.Fatalf("encoded bytes = %d, error = %v", len(encoded), err)
+	}
+	if projected.JobTarget.JobTitle != "Senior Go Engineer" ||
+		projected.Resume == nil ||
+		len(projected.Resume.WorkExperiences) != 5 ||
+		len(projected.Resume.ProjectExperiences) != 5 {
+		t.Fatalf("essential context was lost: %#v", projected)
+	}
+}
+
+func repeatedInterviewStrings(value string, count int) []string {
+	result := make([]string, count)
+	for index := range result {
+		result[index] = value
+	}
+	return result
+}
+
 func interviewPreparationSnapshotFixture(
 	withResume bool,
 ) practice.PreparationSnapshot {

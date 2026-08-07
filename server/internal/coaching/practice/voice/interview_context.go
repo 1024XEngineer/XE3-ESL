@@ -113,12 +113,145 @@ func projectInterviewConversationContext(
 			snapshot.ResumeSnapshot.Material,
 		)
 	}
-	encoded, err := json.Marshal(result)
-	if err != nil || len(encoded) > maxInterviewConversationContextBytes ||
-		result.JobTarget.JobTitle == "" {
+	if result.JobTarget.JobTitle == "" ||
+		!fitInterviewConversationContext(result) {
 		return nil, ErrInvalidContext
 	}
 	return result, nil
+}
+
+func fitInterviewConversationContext(
+	context *InterviewConversationContext,
+) bool {
+	for {
+		encoded, err := json.Marshal(context)
+		if err != nil {
+			return false
+		}
+		if len(encoded) <= maxInterviewConversationContextBytes {
+			return true
+		}
+		if !shrinkLongestInterviewContextText(context) {
+			return false
+		}
+	}
+}
+
+func shrinkLongestInterviewContextText(
+	context *InterviewConversationContext,
+) bool {
+	values := interviewContextTextValues(context)
+	var longest *string
+	longestBytes := 0
+	for _, value := range values {
+		if value == nil || *value == "" {
+			continue
+		}
+		encoded, err := json.Marshal(*value)
+		if err != nil {
+			return false
+		}
+		if len(encoded) > longestBytes {
+			longest = value
+			longestBytes = len(encoded)
+		}
+	}
+	if longest == nil {
+		return false
+	}
+	runes := []rune(*longest)
+	if len(runes) == 1 {
+		*longest = ""
+		return true
+	}
+	*longest = interviewText(*longest, len(runes)/2)
+	return true
+}
+
+func interviewContextTextValues(
+	context *InterviewConversationContext,
+) []*string {
+	values := []*string{
+		&context.Background,
+		&context.JobTarget.Company,
+		&context.JobTarget.Seniority,
+		&context.JobTarget.JobDescription,
+		&context.JobTarget.CandidateBackground,
+		&context.JobTarget.PracticeFocus,
+		&context.JobTarget.ScopeNotice,
+	}
+	values = appendInterviewStringPointers(
+		values,
+		context.JobTarget.Responsibilities,
+		context.JobTarget.CoreSkills,
+		context.JobTarget.CommunicationFocus,
+		context.JobTarget.PracticeGoals,
+	)
+	resume := context.Resume
+	if resume == nil {
+		return values
+	}
+	values = append(
+		values,
+		&resume.TargetPosition,
+		&resume.ProfessionalSummary,
+	)
+	values = appendInterviewStringPointers(values, resume.Skills, resume.Awards)
+	for index := range resume.WorkExperiences {
+		item := &resume.WorkExperiences[index]
+		values = append(
+			values,
+			&item.Company,
+			&item.Position,
+			&item.StartDate,
+			&item.EndDate,
+		)
+		values = appendInterviewStringPointers(
+			values,
+			item.Duties,
+			item.Achievements,
+		)
+	}
+	for index := range resume.ProjectExperiences {
+		item := &resume.ProjectExperiences[index]
+		values = append(
+			values,
+			&item.ProjectName,
+			&item.Role,
+			&item.Description,
+		)
+		values = appendInterviewStringPointers(
+			values,
+			item.Technologies,
+			item.Duties,
+			item.Achievements,
+		)
+	}
+	for index := range resume.EducationExperiences {
+		item := &resume.EducationExperiences[index]
+		values = append(
+			values,
+			&item.School,
+			&item.Major,
+			&item.Degree,
+			&item.GPA,
+			&item.StartDate,
+			&item.EndDate,
+		)
+	}
+	return values
+}
+
+func appendInterviewStringPointers(
+	destination []*string,
+	sources ...[]string,
+) []*string {
+	for _, source := range sources {
+		for index := range source {
+			destination = append(destination, &source[index])
+		}
+	}
+	return destination
 }
 
 func projectInterviewResume(
