@@ -5,6 +5,7 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var agentPCMPlayer: AgentPCMStreamPlayer?
+  private var nativeTabBarFactory: NativeTabBarFactory?
 
   override func application(
     _ application: UIApplication,
@@ -15,9 +16,128 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let tabBarFactory = NativeTabBarFactory(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    guard let nativeTabBarRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "NativeTabBarPlugin"
+    ) else {
+      fatalError("Unable to register the native iOS tab bar.")
+    }
+    nativeTabBarRegistrar.register(
+      tabBarFactory,
+      withId: "speakup/native_tab_bar"
+    )
+    nativeTabBarFactory = tabBarFactory
     agentPCMPlayer = AgentPCMStreamPlayer(
       messenger: engineBridge.applicationRegistrar.messenger()
     )
+  }
+}
+
+private final class NativeTabBarFactory: NSObject, FlutterPlatformViewFactory {
+  private let messenger: FlutterBinaryMessenger
+
+  init(messenger: FlutterBinaryMessenger) {
+    self.messenger = messenger
+    super.init()
+  }
+
+  func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol {
+    FlutterStandardMessageCodec.sharedInstance()
+  }
+
+  func create(
+    withFrame frame: CGRect,
+    viewIdentifier viewId: Int64,
+    arguments args: Any?
+  ) -> FlutterPlatformView {
+    NativeTabBarView(
+      frame: frame,
+      viewId: viewId,
+      arguments: args,
+      messenger: messenger
+    )
+  }
+}
+
+private final class NativeTabBarView: NSObject, FlutterPlatformView, UITabBarDelegate {
+  private let tabBar: UITabBar
+  private let channel: FlutterMethodChannel
+
+  init(
+    frame: CGRect,
+    viewId: Int64,
+    arguments: Any?,
+    messenger: FlutterBinaryMessenger
+  ) {
+    tabBar = UITabBar(frame: frame)
+    channel = FlutterMethodChannel(
+      name: "speakup/native_tab_bar/\(viewId)",
+      binaryMessenger: messenger
+    )
+    super.init()
+
+    let values = arguments as? [String: Any]
+    let itemValues = values?["items"] as? [[String: String]] ?? []
+    tabBar.items = itemValues.enumerated().map { index, item in
+      guard
+        let label = item["label"],
+        let systemImageName = item["systemImage"],
+        let selectedSystemImageName = item["selectedSystemImage"],
+        let image = UIImage(systemName: systemImageName),
+        let selectedImage = UIImage(systemName: selectedSystemImageName)
+      else {
+        fatalError("Invalid native tab bar item configuration.")
+      }
+      let tabBarItem = UITabBarItem(
+        title: label,
+        image: image,
+        selectedImage: selectedImage
+      )
+      tabBarItem.tag = index
+      return tabBarItem
+    }
+    tabBar.tintColor = .label
+    tabBar.unselectedItemTintColor = .secondaryLabel
+    select(index: values?["selectedIndex"] as? Int ?? 0)
+    tabBar.delegate = self
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setSelectedIndex", let index = call.arguments as? Int else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      self?.select(index: index)
+      result(nil)
+    }
+  }
+
+  deinit {
+    channel.setMethodCallHandler(nil)
+  }
+
+  func view() -> UIView {
+    tabBar
+  }
+
+  func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+    channel.invokeMethod("onSelected", arguments: item.tag) { [weak self] result in
+      guard
+        tabBar.selectedItem?.tag == item.tag,
+        let selectedIndex = result as? Int
+      else {
+        return
+      }
+      self?.select(index: selectedIndex)
+    }
+  }
+
+  private func select(index: Int) {
+    guard let items = tabBar.items, items.indices.contains(index) else {
+      return
+    }
+    tabBar.selectedItem = items[index]
   }
 }
 

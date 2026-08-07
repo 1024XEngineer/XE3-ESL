@@ -16,6 +16,8 @@ import (
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	summarypostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary/postgres"
+	agenttranslation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/translation"
+	agenttranslationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/translation/http"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	agentimagehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/http"
 	imagepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/postgres"
@@ -132,6 +134,7 @@ func buildIdentityAgentComposition(
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || modelProviders.Run == nil ||
 		modelProviders.Memory == nil || modelProviders.Summary == nil ||
+		modelProviders.Translation == nil ||
 		memorySearcher == nil || len(voiceConfigurations) > 1 {
 		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
@@ -170,6 +173,13 @@ func buildIdentityAgentComposition(
 	agentService, err := agentconversation.NewService(
 		conversationRepository,
 		conversationGoals,
+	)
+	if err != nil {
+		return nil, err
+	}
+	messageTranslation, err := agenttranslation.NewService(
+		conversationRepository,
+		modelProviders.Translation,
 	)
 	if err != nil {
 		return nil, err
@@ -433,6 +443,13 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	translationHTTP, err := agenttranslationhttp.NewHandler(
+		messageTranslation,
+		errorRenderer,
+	)
+	if err != nil {
+		return nil, err
+	}
 	runHTTP, err := agentrunhttp.NewHandler(runService, errorRenderer)
 	if err != nil {
 		return nil, err
@@ -440,6 +457,7 @@ func buildIdentityAgentComposition(
 	registrars := []ProtectedRouteRegistrar{
 		goalHTTP,
 		conversationHTTP,
+		translationHTTP,
 		runHTTP,
 	}
 	if agentImages != nil {

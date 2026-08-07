@@ -203,6 +203,40 @@ final class PreparationSessionPolicy {
 
 enum PracticePlanStatus { ready, archived }
 
+final class PracticePlanSummary {
+  const PracticePlanSummary({
+    required this.id,
+    required this.revision,
+    required this.status,
+    required this.experience,
+    required this.sceneName,
+    required this.practiceScope,
+    required this.jobTitle,
+    required this.practiceObjectives,
+    required this.resumeUsed,
+    required this.suggestedDurationSeconds,
+    required this.minEffectiveTurns,
+    required this.maxEffectiveTurns,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final int revision;
+  final PracticePlanStatus status;
+  final PracticeExperience experience;
+  final String sceneName;
+  final String practiceScope;
+  final String jobTitle;
+  final List<String> practiceObjectives;
+  final bool resumeUsed;
+  final int suggestedDurationSeconds;
+  final int minEffectiveTurns;
+  final int maxEffectiveTurns;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
 final class PracticePlan {
   const PracticePlan({
     required this.id,

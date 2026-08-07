@@ -37,6 +37,11 @@ type PlanApplication interface {
 		requestcontext.Actor,
 		string,
 	) (PracticePlan, error)
+	ListPlans(
+		context.Context,
+		requestcontext.Actor,
+		scene.PracticeExperience,
+	) ([]PracticePlanSummary, error)
 	RevisePlan(
 		context.Context,
 		requestcontext.Actor,
@@ -44,6 +49,61 @@ type PlanApplication interface {
 		string,
 		RevisePlanRequest,
 	) (PracticePlan, bool, error)
+	ArchivePlan(context.Context, requestcontext.Actor, string) error
+}
+
+func (s *PlanService) ListPlans(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlanSummary, error) {
+	if ctx == nil || !actor.Valid() ||
+		(experience != scene.PracticeExperienceInterview &&
+			experience != scene.PracticeExperienceIELTSSpeaking &&
+			experience != scene.PracticeExperienceWorkplace &&
+			experience != scene.PracticeExperienceLifeAndTravel) {
+		return nil, ErrPlanInvalid
+	}
+	plans, err := s.repository.ListCurrentPlans(ctx, actor, experience)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]PracticePlanSummary, 0, len(plans))
+	for _, plan := range plans {
+		if !validReturnedPlan(plan, actor, plan.ID) ||
+			plan.SceneSelection.Scene.Experience != experience {
+			return nil, ErrPlanRepository
+		}
+		option, err := plan.SceneSelection.PracticeOption()
+		if err != nil {
+			return nil, ErrPlanRepository
+		}
+		objectives := make([]string, 0, len(plan.PracticeObjectives))
+		for _, objective := range plan.PracticeObjectives {
+			objectives = append(objectives, objective.Description)
+		}
+		jobTitle := ""
+		if candidate := plan.PreparationSnapshot.JobTargetCandidateSnapshot; candidate != nil {
+			jobTitle = candidate.JobTitle
+		}
+		summaries = append(summaries, PracticePlanSummary{
+			ID:                       plan.ID,
+			Revision:                 plan.Revision,
+			Status:                   plan.Status,
+			PracticeExperience:       experience,
+			SceneName:                plan.SceneSelection.Scene.Name,
+			PracticeScope:            option.DisplayName,
+			JobTitle:                 jobTitle,
+			PracticeObjectives:       objectives,
+			ResumeUsed:               plan.PreparationSnapshot.ResumeSnapshot != nil,
+			SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
+			MinEffectiveTurns:        plan.SessionPolicy.MinEffectiveTurns,
+			MaxEffectiveTurns:        plan.SessionPolicy.MaxEffectiveTurns,
+			CreatedAt:                plan.CreatedAt,
+			UpdatedAt:                plan.UpdatedAt,
+		})
+	}
+	return summaries, nil
 }
 
 type PlanService struct {
@@ -150,6 +210,7 @@ func (s *PlanService) CreatePlan(
 		return PracticePlan{}, false, ErrPlanConflict
 	}
 	selection, ieltsAssignment, err := freezeIELTSAssignment(
+		ctx,
 		s.ielts,
 		selection,
 		request.IELTSSelection,
@@ -224,6 +285,17 @@ func (s *PlanService) ReadPlan(
 	return clonePracticePlan(plan), nil
 }
 
+func (s *PlanService) ArchivePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+) error {
+	if ctx == nil || !actor.Valid() || !validPlanResourceID(planID) {
+		return ErrPlanNotFound
+	}
+	return s.repository.ArchivePlan(ctx, actor, planID)
+}
+
 func (s *PlanService) RevisePlan(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -275,6 +347,7 @@ func (s *PlanService) RevisePlan(
 		return PracticePlan{}, false, err
 	}
 	selection, ieltsAssignment, err := freezeIELTSAssignment(
+		ctx,
 		s.ielts,
 		selection,
 		request.IELTSSelection,
@@ -466,6 +539,7 @@ func selectionMatchesCreateRequest(
 }
 
 func freezeIELTSAssignment(
+	ctx context.Context,
 	questions ielts.QuestionSetResolver,
 	selection scene.SelectionSnapshot,
 	request *IELTSQuestionSelection,
@@ -484,17 +558,33 @@ func freezeIELTSAssignment(
 	}
 	mode, validMode := ieltsPracticeMode(option.Mode)
 	if selection.Scene.Category != scene.SceneCategoryIELTSSpeaking ||
-		!validMode || request == nil ||
-		!validIELTSQuestionSelection(option.Mode, *request) {
+		!validMode {
 		return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 	}
-	resolved, err := questions.ResolveQuestionSet(
-		ielts.QuestionSetSelection{
-			Mode:         mode,
-			Part1SetID:   request.Part1SetID,
-			TopicGroupID: request.TopicGroupID,
-		},
-	)
+	var resolved ielts.ResolvedQuestionSet
+	var effectiveSelection IELTSQuestionSelection
+	if request == nil {
+		if option.Mode != scene.PracticeModeFullMock {
+			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
+		}
+		resolved, err = questions.AssignQuestionSet(ctx, mode)
+		if err == nil {
+			effectiveSelection = ieltsSelectionFromResolved(resolved)
+		}
+	} else {
+		if !validIELTSQuestionSelection(option.Mode, *request) {
+			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
+		}
+		effectiveSelection = *request
+		resolved, err = questions.ResolveQuestionSet(
+			ctx,
+			ielts.QuestionSetSelection{
+				Mode:         mode,
+				Part1SetID:   request.Part1SetID,
+				TopicGroupID: request.TopicGroupID,
+			},
+		)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, ielts.ErrQuestionSetNotFound):
@@ -505,7 +595,7 @@ func freezeIELTSAssignment(
 			return scene.SelectionSnapshot{}, nil, err
 		}
 	}
-	if !validResolvedIELTSQuestionSet(option.Mode, *request, resolved) {
+	if !validResolvedIELTSQuestionSet(option.Mode, effectiveSelection, resolved) {
 		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
 	}
 
@@ -535,6 +625,21 @@ func freezeIELTSAssignment(
 		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
 	}
 	return selection, assignment, nil
+}
+
+func ieltsSelectionFromResolved(
+	resolved ielts.ResolvedQuestionSet,
+) IELTSQuestionSelection {
+	var selection IELTSQuestionSelection
+	for _, part := range resolved.Parts {
+		switch part.Part {
+		case ielts.PracticeModePart1:
+			selection.Part1SetID = part.SourceID
+		case ielts.PracticeModePart2, ielts.PracticeModePart3:
+			selection.TopicGroupID = part.SourceID
+		}
+	}
+	return selection
 }
 
 func ieltsPracticeMode(mode scene.PracticeMode) (ielts.PracticeMode, bool) {

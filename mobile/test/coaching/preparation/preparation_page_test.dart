@@ -3,7 +3,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
@@ -12,8 +11,6 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_client.
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
-
-import 'preparation_test_fakes.dart';
 
 Future<void> _openFamily(WidgetTester tester, String family) async {
   final hubKey = switch (family) {
@@ -30,69 +27,40 @@ Future<void> _openFamily(WidgetTester tester, String family) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _openInterviewScene(
-  WidgetTester tester, {
-  required String sceneId,
-  required String modeId,
-}) async {
-  final scene = find.byKey(Key('catalog-scene-$sceneId'));
-  if (scene.evaluate().isEmpty) {
-    final mode = find.byKey(Key('interview-mode-$modeId'));
-    await tester.scrollUntilVisible(
-      mode,
-      140,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(mode);
-    await tester.pumpAndSettle();
-  }
-  final revealedScene = find.byKey(Key('catalog-scene-$sceneId'));
-  await tester.ensureVisible(revealedScene);
-  await tester.tap(revealedScene);
-  await tester.pumpAndSettle();
-}
-
 void main() {
-  testWidgets(
-    'product training center separates full interview from specialties',
-    (tester) async {
-      final controller = PreparationController(client: _FixtureClient());
-      addTearDown(controller.dispose);
-      var opens = 0;
+  testWidgets('product training center opens the interview plan library', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _FixtureClient());
+    addTearDown(controller.dispose);
+    var opens = 0;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PreparationPage(
-            preparationController: controller,
-            onOpenJobPreparation: () => opens++,
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: controller,
+          onOpenJobPreparation: () => opens++,
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('training-center-title')), findsOneWidget);
-      expect(find.text('场景练习'), findsOneWidget);
-      expect(find.text('今天想练什么？'), findsOneWidget);
-      expect(find.text('英文面试'), findsOneWidget);
+    expect(find.byKey(const Key('training-center-title')), findsOneWidget);
+    expect(find.text('场景练习'), findsOneWidget);
+    expect(find.text('今天想练什么？'), findsNothing);
+    expect(find.text('英文面试'), findsOneWidget);
 
-      await _openFamily(tester, 'INTERVIEW');
-      await tester.tap(find.byKey(const Key('open-job-preparation')));
-      await tester.pump();
+    await _openFamily(tester, 'INTERVIEW');
 
-      expect(opens, 1);
-      expect(controller.selectedScene, isNull);
+    expect(find.byKey(const Key('create-interview-plan')), findsOneWidget);
+    expect(find.byKey(const Key('interview-plan-empty')), findsOneWidget);
 
-      await _openInterviewScene(
-        tester,
-        sceneId: _sceneId,
-        modeId: 'professional',
-      );
+    await tester.tap(find.byKey(const Key('create-interview-plan')));
+    await tester.pump();
 
-      expect(controller.selectedScene, isNull);
-      expect(find.byKey(const Key('preparation-scene-config')), findsNothing);
-      expect(find.text('选择对话角色'), findsNothing);
-    },
-  );
+    expect(opens, 1);
+    expect(controller.selectedScene, isNull);
+  });
 
   testWidgets('only the interview topic opens JD-first when catalog grows', (
     tester,
@@ -121,58 +89,6 @@ void main() {
     expect(controller.selectedScene, isNull);
     expect(find.text('General speaking practice'), findsOneWidget);
     expect(find.byKey(const Key('preparation-scene-title')), findsNothing);
-  });
-
-  testWidgets('subscenes show their own server summaries', (tester) async {
-    tester.view.physicalSize = const Size(375, 812);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final controller = PreparationController(client: _InterviewSummaryClient());
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MediaQuery(
-        data: const MediaQueryData(textScaler: TextScaler.linear(2)),
-        child: MaterialApp(
-          home: PreparationPage(preparationController: controller),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openFamily(tester, 'INTERVIEW');
-
-    expect(find.text('Discuss one backend project.'), findsOneWidget);
-    final hr = find.byKey(const Key('interview-mode-hr'));
-    await tester.scrollUntilVisible(
-      hr,
-      180,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(hr.hitTestable(), findsOneWidget);
-    await tester.tap(hr);
-    await tester.pumpAndSettle();
-    final recruiter = find.byKey(
-      const Key('catalog-scene-scn_interview_recruiter_screening'),
-      skipOffstage: false,
-    );
-    expect(recruiter, findsOneWidget);
-    await tester.ensureVisible(recruiter);
-    await tester.pumpAndSettle();
-    expect(
-      find.descendant(
-        of: recruiter,
-        matching: find.text(
-          'Discuss motivation, role fit, and basic expectations.',
-          skipOffstage: false,
-        ),
-        skipOffstage: false,
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('围绕真实项目经历，练习结构化表达与追问应对'), findsNothing);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('groups the catalog into four product directions', (
@@ -231,81 +147,6 @@ void main() {
     client.second.complete(const <SceneDefinition>[]);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('preparation-catalog-empty')), findsOneWidget);
-  });
-
-  testWidgets('starts the real typed chain and reports success to navigation', (
-    tester,
-  ) async {
-    final agentClient = GoalAwareAgentClient();
-    final conversationController = ConversationController(client: agentClient);
-    final preparationController = PreparationController(
-      client: _FixtureClient(),
-    );
-    final launchClient = _PageLaunchClient();
-    var navigations = 0;
-    await conversationController.initialize();
-    await activateTestGoal(
-      goalClient: agentClient,
-      conversationController: conversationController,
-      threadId: conversationController.threadId!,
-      scene: _scene,
-      clientOperationId: 'activate-page-scene',
-    );
-    final launchController = PreparationLaunchController(
-      client: launchClient,
-      contextProvider: () => AgentPracticeContext(
-        threadId: conversationController.threadId!,
-        goalId: conversationController.activeGoalId!,
-      ),
-      threadIdProvider: () => conversationController.threadId,
-      goalActivator:
-          ({
-            required threadId,
-            required selection,
-            required clientOperationId,
-          }) async {
-            final goal = await activateTestGoal(
-              goalClient: agentClient,
-              conversationController: conversationController,
-              threadId: threadId,
-              scene: selection.scene,
-              clientOperationId: clientOperationId,
-            );
-            return AgentPracticeContext(threadId: threadId, goalId: goal.id);
-          },
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {},
-      idFactory: (scope) => '$scope-widget-key',
-    );
-    addTearDown(conversationController.dispose);
-    addTearDown(preparationController.dispose);
-    addTearDown(launchController.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PreparationPage(
-          preparationController: preparationController,
-          launchController: launchController,
-          onPracticeStarted: () => navigations++,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openFamily(tester, 'INTERVIEW');
-    await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-    await tester.pumpAndSettle();
-
-    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
-    expect(navigations, 1);
-    expect(find.byKey(const Key('preparation-scene-detail')), findsNothing);
-    expect(conversationController.threadId, isNotNull);
-    expect(conversationController.activeGoalId, isNotNull);
-    expect(launchController.bootstrap?.maxEffectiveTurns, 6);
   });
 
   testWidgets('ordinary scene requires five-field Preparation before launch', (
@@ -400,300 +241,6 @@ void main() {
       ),
     );
   });
-
-  testWidgets('direct start reports a missing practice context in place', (
-    tester,
-  ) async {
-    final preparationController = PreparationController(
-      client: _FixtureClient(),
-    );
-    final launchClient = _PageLaunchClient();
-    final launchController = PreparationLaunchController(
-      client: launchClient,
-      contextProvider: () => null,
-      threadIdProvider: () => null,
-      goalActivator:
-          ({
-            required threadId,
-            required selection,
-            required clientOperationId,
-          }) {
-            throw StateError('Goal activation must wait for the Thread.');
-          },
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {},
-      idFactory: (scope) => '$scope-thread-wait-key',
-    );
-    addTearDown(preparationController.dispose);
-    addTearDown(launchController.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PreparationPage(
-          preparationController: preparationController,
-          launchController: launchController,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openFamily(tester, 'INTERVIEW');
-    await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const Key('preparation-scene-launch-status')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('preparation-launch-error')), findsOneWidget);
-    expect(find.text('选择对话角色'), findsNothing);
-    expect(launchClient.calls, isEmpty);
-  });
-
-  testWidgets(
-    'direct start return preserves a committed retry for reconnection',
-    (tester) async {
-      final session = Completer<PreparationPracticeBootstrap>();
-      final preparationController = PreparationController(
-        client: _FixtureClient(),
-      );
-      final launchClient = _PageLaunchClient(sessionCompleter: session);
-      var navigations = 0;
-      var voiceCalls = 0;
-      final launchController = PreparationLaunchController(
-        client: launchClient,
-        contextProvider: () => _pageContext,
-        threadIdProvider: () => _pageContext.threadId,
-        goalActivator:
-            ({
-              required threadId,
-              required selection,
-              required clientOperationId,
-            }) async => _pageContext,
-        voiceActivator:
-            ({
-              required context,
-              required scene,
-              required bootstrap,
-              required clientOperationId,
-            }) async {
-              voiceCalls++;
-              if (voiceCalls == 1) {
-                throw const PreparationLaunchException(
-                  kind: PreparationLaunchFailureKind.invalidResponse,
-                  stage: PreparationLaunchStage.voice,
-                );
-              }
-            },
-        idFactory: (scope) => '$scope-pending-widget-key',
-      );
-      addTearDown(preparationController.dispose);
-      addTearDown(launchController.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PreparationPage(
-            showBackButton: true,
-            preparationController: preparationController,
-            launchController: launchController,
-            onPracticeStarted: () => navigations++,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await _openFamily(tester, 'INTERVIEW');
-      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-      await tester.pump();
-      await tester.pump();
-
-      expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
-      expect(launchController.isStarting, isTrue);
-      expect(
-        tester
-            .widget<IconButton>(
-              find.byKey(const Key('preparation-back-to-catalog')),
-            )
-            .onPressed,
-        isNull,
-      );
-      expect(find.text('选择对话角色'), findsNothing);
-
-      session.complete(
-        PreparationPracticeBootstrap(
-          session: PreparationPracticeSession(
-            id: 'session-1',
-            planId: 'plan-1',
-            practiceExperience: PracticeExperience.interview,
-            sceneCategory: SceneCategory.interviewProfessional,
-            practiceMode: PracticeMode.fullSimulation,
-            snapshotId: 'session-snapshot-1',
-            status: 'starting',
-            version: 1,
-            createdAt: DateTime.utc(2026, 7, 26),
-          ),
-          preparationSnapshotId: 'preparation-snapshot-1',
-          maxEffectiveTurns: 6,
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(launchController.canRetry, isTrue);
-      expect(navigations, 0);
-      expect(launchController.isSelectionLocked, isTrue);
-      expect(launchController.isNavigationLocked, isFalse);
-      expect(
-        tester
-            .widget<IconButton>(
-              find.byKey(const Key('preparation-back-to-catalog')),
-            )
-            .onPressed,
-        isNotNull,
-      );
-
-      await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(const Key('preparation-scene-launch-status')),
-        findsNothing,
-      );
-      expect(find.byKey(const Key('catalog-scene-$_sceneId')), findsOneWidget);
-      expect(launchController.canRetry, isTrue);
-
-      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-      await tester.pumpAndSettle();
-
-      expect(voiceCalls, 2);
-      expect(navigations, 1);
-      expect(
-        find.byKey(const Key('preparation-scene-launch-status')),
-        findsNothing,
-      );
-    },
-  );
-
-  testWidgets(
-    'inline return discards a replaceable failure before a new launch',
-    (tester) async {
-      final preparationController = PreparationController(
-        client: _MultiSceneClient(),
-      );
-      final launchClient = _PageLaunchClient(failFirstProfile: true);
-      var navigations = 0;
-      final launchController = PreparationLaunchController(
-        client: launchClient,
-        contextProvider: () => _pageContext,
-        threadIdProvider: () => _pageContext.threadId,
-        goalActivator:
-            ({
-              required threadId,
-              required selection,
-              required clientOperationId,
-            }) async => _pageContext,
-        voiceActivator:
-            ({
-              required context,
-              required scene,
-              required bootstrap,
-              required clientOperationId,
-            }) async {},
-        idFactory: (scope) => '$scope-replaceable-widget-key',
-      );
-      addTearDown(preparationController.dispose);
-      addTearDown(launchController.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PreparationPage(
-            preparationController: preparationController,
-            launchController: launchController,
-            onPracticeStarted: () => navigations++,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await _openFamily(tester, 'INTERVIEW');
-      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-      await tester.pumpAndSettle();
-
-      expect(launchController.canRetry, isTrue);
-      await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
-      await tester.pumpAndSettle();
-
-      expect(launchController.canRetry, isFalse);
-      expect(launchController.isSelectionLocked, isFalse);
-      expect(preparationController.selectedScene, isNull);
-
-      await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-      await tester.pumpAndSettle();
-
-      expect(navigations, 1);
-      expect(
-        launchClient.calls.where((call) => call == 'profile'),
-        hasLength(2),
-      );
-    },
-  );
-
-  testWidgets('failed direct start can exit and preserve its retry', (
-    tester,
-  ) async {
-    final preparationController = PreparationController(
-      client: _FixtureClient(),
-    );
-    final launchController = PreparationLaunchController(
-      client: _PageLaunchClient(),
-      contextProvider: () => _pageContext,
-      threadIdProvider: () => _pageContext.threadId,
-      goalActivator:
-          ({
-            required threadId,
-            required selection,
-            required clientOperationId,
-          }) async => _pageContext,
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async => throw const PreparationLaunchException(
-            kind: PreparationLaunchFailureKind.invalidResponse,
-            stage: PreparationLaunchStage.voice,
-          ),
-      idFactory: (scope) => '$scope-exit-widget-key',
-    );
-    addTearDown(preparationController.dispose);
-    addTearDown(launchController.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PreparationPage(
-          preparationController: preparationController,
-          launchController: launchController,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _openFamily(tester, 'INTERVIEW');
-    await tester.tap(find.byKey(const Key('catalog-scene-$_sceneId')));
-    await tester.pumpAndSettle();
-
-    expect(launchController.canDismissFailedLaunch, isTrue);
-    await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
-    await tester.pumpAndSettle();
-
-    expect(launchController.canRetry, isTrue);
-    expect(preparationController.selectedScene, isNull);
-    expect(
-      find.byKey(const Key('preparation-scene-launch-status')),
-      findsNothing,
-    );
-  });
 }
 
 class _FixtureClient implements SceneClient {
@@ -718,24 +265,6 @@ final class _MultiSceneClient implements SceneClient {
   @override
   Future<List<RoleDefinition>> listRoles(String sceneId) async =>
       sceneId == _sceneId ? _roles : [_otherRole];
-}
-
-final class _InterviewSummaryClient implements SceneClient {
-  @override
-  Future<SceneDefinition> getScene(String sceneId) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<List<SceneDefinition>> listScenes() async => [
-    _scene,
-    _secondInterviewScene,
-  ];
-
-  @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) {
-    throw UnimplementedError();
-  }
 }
 
 final class _FourFamilyClient implements SceneClient {
@@ -783,10 +312,7 @@ final class _ControlledListClient implements SceneClient {
 }
 
 final class _PageLaunchClient implements PreparationLaunchClient {
-  _PageLaunchClient({this.sessionCompleter, this.failFirstProfile = false});
-
-  final Completer<PreparationPracticeBootstrap>? sessionCompleter;
-  final bool failFirstProfile;
+  _PageLaunchClient();
   final calls = <String>[];
   PreparationLaunchSelection? selection;
   CreatePreparationProfileInput? lastProfileInput;
@@ -802,14 +328,6 @@ final class _PageLaunchClient implements PreparationLaunchClient {
   }) async {
     calls.add('profile');
     lastProfileInput = input;
-    if (failFirstProfile &&
-        calls.where((call) => call == 'profile').length == 1) {
-      throw const PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.network,
-        stage: PreparationLaunchStage.profile,
-        retryable: true,
-      );
-    }
     return PreparationProfile(
       id: 'profile-1',
       userId: 'user-1',
@@ -922,7 +440,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       preparationSnapshotId: plan.preparationSnapshot.id,
       maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
     );
-    return sessionCompleter?.future ?? bootstrap;
+    return bootstrap;
   }
 }
 
@@ -940,15 +458,6 @@ final _scene = testScene(
   name: 'English interview for technical roles',
   version: 1,
   prompt: _interviewPrompt,
-);
-
-final _secondInterviewScene = testScene(
-  id: 'scn_interview_recruiter_screening',
-  experience: PracticeExperience.interview,
-  category: SceneCategory.interviewRecruiter,
-  name: 'Recruiter screening',
-  version: 1,
-  prompt: _recruiterPrompt,
 );
 
 final _otherScene = testScene(
@@ -1030,16 +539,6 @@ const _workplacePrompt = ScenePrompt(
   personaSummary: 'Direct and supportive.',
   focusAreas: ['fluency'],
   turnBlueprints: ['Ask for current progress.'],
-);
-
-const _recruiterPrompt = ScenePrompt(
-  publicSceneBrief: 'Discuss motivation, role fit, and basic expectations.',
-  practiceGoal: 'Explain motivation and expectations clearly.',
-  userRole: 'Candidate',
-  aiRole: 'Recruiter',
-  personaSummary: 'Warm and structured.',
-  focusAreas: ['motivation'],
-  turnBlueprints: ['Ask about motivation and role fit.'],
 );
 
 final _technicalRole = testRole(

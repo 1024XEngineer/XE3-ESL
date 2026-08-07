@@ -21,7 +21,8 @@ func TestNewAgentAndPreparationGeneratorsRegisterConfiguredQianwen(
 	if err != nil {
 		t.Fatalf("register Agent model providers: %v", err)
 	}
-	if providers.Run == nil || providers.Memory == nil || providers.Summary == nil {
+	if providers.Run == nil || providers.Memory == nil || providers.Summary == nil ||
+		providers.Translation == nil {
 		t.Fatalf("Agent model providers are incomplete: %#v", providers)
 	}
 	jobTargetGenerator, err := NewPreparationJobTargetGenerator(configuration)
@@ -63,7 +64,8 @@ func TestExplicitModelPortsRejectUnregisteredProviderWithoutFallback(
 ) {
 	configuration := config.TextGenerationConfig{Provider: "fake"}
 	if providers, err := NewAgentModelProviders(configuration); err == nil ||
-		providers.Run != nil || providers.Memory != nil || providers.Summary != nil {
+		providers.Run != nil || providers.Memory != nil || providers.Summary != nil ||
+		providers.Translation != nil {
 		t.Fatalf(
 			"unregistered provider returned Agent ports=%#v error=%v",
 			providers,

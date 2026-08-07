@@ -244,6 +244,49 @@ func TestPlanServiceIELTSCreateRequiresExplicitSelection(t *testing.T) {
 	}
 }
 
+func TestPlanServiceIELTSFullMockUsesServerAssignment(t *testing.T) {
+	t.Parallel()
+
+	var created CreatePlanCommand
+	repository := &planRepositoryStub{create: func(
+		actor requestcontext.Actor,
+		command CreatePlanCommand,
+	) (PracticePlan, bool, error) {
+		created = command
+		return planFromCreateCommand(actor, command), false, nil
+	}}
+	selection := planIELTSSelectionFixture()
+	selection.Scene.Name = "IELTS Speaking Full Mock"
+	selection.Scene.PracticeOptions[0].Mode = scene.PracticeModeFullMock
+	selection.Scene.PracticeOptions[0].TurnPolicyRef = "ielts.speaking_full_mock.turn.v1"
+	selection.Scene.PracticeOptions[0].SessionPolicyRef = "ielts.speaking_full_mock.session.v1"
+	service := newPlanTestService(t, repository, planServiceDependencies{
+		resolveSelection: func(string, int, []string, string) (scene.SelectionSnapshot, error) {
+			return selection, nil
+		},
+		assignIELTS: func(mode ielts.PracticeMode) (ielts.ResolvedQuestionSet, error) {
+			if mode != ielts.PracticeModeFullMock {
+				t.Fatalf("assigned mode = %s", mode)
+			}
+			return planIELTSFullMockResolvedFixture(), nil
+		},
+	})
+	plan, _, err := service.CreatePlan(
+		context.Background(),
+		planActor(),
+		"plan-create-ielts-full-mock",
+		validPlanCreateRequest(),
+	)
+	if err != nil {
+		t.Fatalf("CreatePlan IELTS full mock: %v", err)
+	}
+	if created.IELTSAssignment == nil || plan.IELTSAssignment == nil ||
+		created.IELTSAssignment.Mode != scene.PracticeModeFullMock ||
+		len(created.IELTSAssignment.Parts) != 3 {
+		t.Fatalf("frozen full mock assignment = %#v", created.IELTSAssignment)
+	}
+}
+
 func TestPlanServiceIELTSCreateResolvesAndFreezesQuestionAssignment(
 	t *testing.T,
 ) {
@@ -567,8 +610,21 @@ type planRepositoryStub struct {
 	replay         func(IdempotencyIntent) (PracticePlan, bool, error)
 	create         func(requestcontext.Actor, CreatePlanCommand) (PracticePlan, bool, error)
 	readCurrent    func(string) (PracticePlan, error)
+	listCurrent    func(scene.PracticeExperience) ([]PracticePlan, error)
 	revise         func(requestcontext.Actor, RevisePlanCommand) (PracticePlan, bool, error)
+	archive        func(string) error
 	readExecutable func(string, int) (PracticePlan, error)
+}
+
+func (s *planRepositoryStub) ListCurrentPlans(
+	_ context.Context,
+	_ requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlan, error) {
+	if s.listCurrent == nil {
+		return nil, errors.New("unexpected ListCurrentPlans")
+	}
+	return s.listCurrent(experience)
 }
 
 func (s *planRepositoryStub) ReplayPlan(
@@ -613,6 +669,17 @@ func (s *planRepositoryStub) RevisePlan(
 		return PracticePlan{}, false, errors.New("unexpected RevisePlan")
 	}
 	return s.revise(actor, command)
+}
+
+func (s *planRepositoryStub) ArchivePlan(
+	_ context.Context,
+	_ requestcontext.Actor,
+	planID string,
+) error {
+	if s.archive == nil {
+		return errors.New("unexpected ArchivePlan")
+	}
+	return s.archive(planID)
 }
 
 func (s *planRepositoryStub) ReadExecutablePlan(
@@ -732,9 +799,11 @@ func (s planCatalogStub) ResolveAccessibleSelection(
 
 type planIELTSResolverStub struct {
 	resolve func(ielts.QuestionSetSelection) (ielts.ResolvedQuestionSet, error)
+	assign  func(ielts.PracticeMode) (ielts.ResolvedQuestionSet, error)
 }
 
 func (s planIELTSResolverStub) ResolveQuestionSet(
+	_ context.Context,
 	selection ielts.QuestionSetSelection,
 ) (ielts.ResolvedQuestionSet, error) {
 	if s.resolve == nil {
@@ -743,6 +812,18 @@ func (s planIELTSResolverStub) ResolveQuestionSet(
 		)
 	}
 	return s.resolve(selection)
+}
+
+func (s planIELTSResolverStub) AssignQuestionSet(
+	_ context.Context,
+	mode ielts.PracticeMode,
+) (ielts.ResolvedQuestionSet, error) {
+	if s.assign != nil {
+		return s.assign(mode)
+	}
+	return ielts.ResolvedQuestionSet{}, errors.New(
+		"unexpected IELTS question-set assignment",
+	)
 }
 
 type planServiceDependencies struct {
@@ -760,6 +841,7 @@ type planServiceDependencies struct {
 		string,
 	) (scene.SelectionSnapshot, error)
 	resolveIELTS func(ielts.QuestionSetSelection) (ielts.ResolvedQuestionSet, error)
+	assignIELTS  func(ielts.PracticeMode) (ielts.ResolvedQuestionSet, error)
 }
 
 func newPlanTestService(
@@ -803,7 +885,10 @@ func newPlanTestService(
 			resolve:           dependencies.resolveSelection,
 			resolveAccessible: dependencies.resolveAccessibleSelection,
 		},
-		planIELTSResolverStub{resolve: dependencies.resolveIELTS},
+		planIELTSResolverStub{
+			resolve: dependencies.resolveIELTS,
+			assign:  dependencies.assignIELTS,
+		},
 		planPolicyResolverStub{},
 	)
 	if err != nil {
@@ -979,6 +1064,34 @@ func planIELTSResolvedFixture() ielts.ResolvedQuestionSet {
 		Season: "2026-05",
 		Mode:   ielts.PracticeModePart2,
 		Parts: []ielts.ResolvedPart{
+			{
+				Part:           ielts.PracticeModePart2,
+				SourceID:       "topic-1",
+				TopicTitle:     "科技与学习",
+				CueCard:        "Describe a useful technology.",
+				TurnBlueprints: []string{"Part 2 cue card"},
+			},
+			{
+				Part:           ielts.PracticeModePart3,
+				SourceID:       "topic-1",
+				TopicTitle:     "科技与学习",
+				TurnBlueprints: []string{"Part 3 question"},
+			},
+		},
+	}
+}
+
+func planIELTSFullMockResolvedFixture() ielts.ResolvedQuestionSet {
+	return ielts.ResolvedQuestionSet{
+		BankID: "ielts-bank-1",
+		Season: "2026-05-08",
+		Mode:   ielts.PracticeModeFullMock,
+		Parts: []ielts.ResolvedPart{
+			{
+				Part:           ielts.PracticeModePart1,
+				SourceID:       "part1-set-1",
+				TurnBlueprints: []string{"Part 1 question"},
+			},
 			{
 				Part:           ielts.PracticeModePart2,
 				SourceID:       "topic-1",

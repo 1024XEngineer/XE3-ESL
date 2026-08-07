@@ -112,6 +112,7 @@ final class JobTargetCandidate {
     required this.source,
     required this.generalAdviceOnly,
     required this.jobTitle,
+    this.company = '',
     required this.seniority,
     required this.responsibilities,
     required this.coreSkills,
@@ -124,6 +125,7 @@ final class JobTargetCandidate {
   final JobTargetSource source;
   final bool generalAdviceOnly;
   final String jobTitle;
+  final String company;
   final String seniority;
   final List<String> responsibilities;
   final List<String> coreSkills;

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/composer/image/image_picker_agent_image_picker.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
@@ -64,6 +65,7 @@ void main() {
       conversationController: dependencies.conversationController,
       composerController: dependencies.composerController,
       messageAudioController: dependencies.messageAudioController,
+      messageTranslationClient: dependencies.messageTranslationClient,
       practiceController: dependencies.practiceController,
       preparationController: dependencies.preparationController,
       ieltsPreparationController: dependencies.ieltsPreparationController,
@@ -86,6 +88,7 @@ final class ProductionAppDependencies {
     required this.conversationController,
     required this.composerController,
     required this.messageAudioController,
+    required this.messageTranslationClient,
     required this.practiceController,
     required this.goalClient,
     required this.preparationController,
@@ -105,6 +108,7 @@ final class ProductionAppDependencies {
   final ConversationController conversationController;
   final ComposerController composerController;
   final AgentMessageAudioController messageAudioController;
+  final AgentMessageTranslationClient messageTranslationClient;
   final PracticeController practiceController;
   final GoalClient goalClient;
   final PreparationController preparationController;
@@ -568,6 +572,7 @@ ProductionAppDependencies createProductionAppDependencies({
     conversationController: conversationController,
     composerController: composerController,
     messageAudioController: messageAudioController,
+    messageTranslationClient: agentClient,
     practiceController: practiceController,
     goalClient: goalClient,
     preparationController: preparationController,

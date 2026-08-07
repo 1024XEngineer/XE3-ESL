@@ -59,157 +59,142 @@ void main() {
     },
   );
 
-  testWidgets(
-    'records, directly sends, plays, and deletes one Agent voice Message',
-    (tester) async {
-      final client = FakeAgentClient();
-      final voiceClient = FakeAgentVoiceClient();
-      final assistantSpeech = _FlowAssistantSpeechClient();
-      final messagePlayer = FakeAgentAudioPlayer();
-      final conversationController = ConversationController(client: client);
-      final messageAudioController = AgentMessageAudioController(
+  testWidgets('records, directly sends, and plays one Agent voice Message', (
+    tester,
+  ) async {
+    final client = FakeAgentClient();
+    final voiceClient = FakeAgentVoiceClient();
+    final assistantSpeech = _FlowAssistantSpeechClient();
+    final messagePlayer = FakeAgentAudioPlayer();
+    final conversationController = ConversationController(client: client);
+    final messageAudioController = AgentMessageAudioController(
+      conversationController: conversationController,
+      client: voiceClient,
+      audioPlayer: messagePlayer,
+      assistantSpeechClient: assistantSpeech,
+    );
+    final composerController = ComposerController(
+      conversationController: conversationController,
+      voiceClient: voiceClient,
+      onAssistantStreamStarted: (transientMessageId) => messageAudioController
+          .startLiveAssistantSpeech(transientMessageId: transientMessageId),
+      onAssistantStreamDelta: (transientMessageId, delta) =>
+          messageAudioController.appendLiveAssistantSpeech(
+            transientMessageId: transientMessageId,
+            delta: delta,
+          ),
+      onAssistantStreamCompleted: (transientMessageId, message) =>
+          messageAudioController.completeLiveAssistantSpeech(
+            transientMessageId: transientMessageId,
+            message: message,
+          ),
+      onAssistantStreamFailed: (transientMessageId) => messageAudioController
+          .failLiveAssistantSpeech(transientMessageId: transientMessageId),
+      clientIdFactory: _sequentialIdFactory(),
+    );
+    addTearDown(() {
+      composerController.dispose();
+      messageAudioController.dispose();
+      conversationController.dispose();
+    });
+
+    await tester.pumpWidget(
+      SpeakUpApp.preview(
         conversationController: conversationController,
-        client: voiceClient,
-        audioPlayer: messagePlayer,
-        assistantSpeechClient: assistantSpeech,
-      );
-      final composerController = ComposerController(
-        conversationController: conversationController,
-        voiceClient: voiceClient,
-        onAssistantStreamStarted: (transientMessageId) => messageAudioController
-            .startLiveAssistantSpeech(transientMessageId: transientMessageId),
-        onAssistantStreamDelta: (transientMessageId, delta) =>
-            messageAudioController.appendLiveAssistantSpeech(
-              transientMessageId: transientMessageId,
-              delta: delta,
-            ),
-        onAssistantStreamCompleted: (transientMessageId, message) =>
-            messageAudioController.completeLiveAssistantSpeech(
-              transientMessageId: transientMessageId,
-              message: message,
-            ),
-        onAssistantStreamFailed: (transientMessageId) => messageAudioController
-            .failLiveAssistantSpeech(transientMessageId: transientMessageId),
-        clientIdFactory: _sequentialIdFactory(),
-      );
-      addTearDown(() {
-        composerController.dispose();
-        messageAudioController.dispose();
-        conversationController.dispose();
-      });
+        composerController: composerController,
+        messageAudioController: messageAudioController,
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.pumpWidget(
-        SpeakUpApp.preview(
-          conversationController: conversationController,
-          composerController: composerController,
-          messageAudioController: messageAudioController,
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+    expect(
+      composerController.voiceController?.state,
+      AgentVoiceComposerState.recording,
+    );
+    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
+    expect(find.byKey(const Key('agent-voice-stop')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await tester.pump();
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceComposerState.recording,
-      );
-      expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
-      expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-      expect(find.byKey(const Key('agent-voice-stop')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agent-voice-stop')));
+    await _pumpVoiceOperation(tester);
+    expect(
+      composerController.voiceController?.state,
+      AgentVoiceComposerState.idle,
+    );
+    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
+    expect(find.text('试听'), findsNothing);
+    expect(find.text('重录'), findsNothing);
+    expect(find.text('上传并转写'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('agent-voice-stop')));
-      await _pumpVoiceOperation(tester);
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceComposerState.idle,
-      );
-      expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
-      expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-      expect(find.text('试听'), findsNothing);
-      expect(find.text('重录'), findsNothing);
-      expect(find.text('上传并转写'), findsNothing);
-
-      final voiceMessages = conversationController.messages
-          .where((message) => message.modality == AgentMessageModality.voice)
-          .toList();
-      expect(voiceMessages, hasLength(1));
-      expect(
-        voiceMessages.single.text,
-        'I explained the problem, the trade-off, and the result clearly.',
-      );
-      expect(voiceMessages.single.audio?.isReadable, isTrue);
-      expect(
-        conversationController.messages.where(
-          (message) => message.role == AgentMessageRole.assistant,
-        ),
-        hasLength(1),
-      );
-      expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-
-      final assistant = conversationController.messages.singleWhere(
+    final voiceMessages = conversationController.messages
+        .where((message) => message.modality == AgentMessageModality.voice)
+        .toList();
+    expect(voiceMessages, hasLength(1));
+    expect(
+      voiceMessages.single.text,
+      'I explained the problem, the trade-off, and the result clearly.',
+    );
+    expect(voiceMessages.single.audio?.isReadable, isTrue);
+    expect(
+      conversationController.messages.where(
         (message) => message.role == AgentMessageRole.assistant,
-      );
-      final assistantTts = find.byKey(
-        Key('agent-assistant-tts-${assistant.id}'),
-      );
-      await tester.pumpAndSettle();
-      expect(assistantTts.hitTestable(), findsOneWidget);
-      expect(assistantSpeech.texts, <String>[
-        'That was clear. Add one measurable result to make the answer stronger.',
-      ]);
-      expect(messageAudioController.playingMessageId, assistant.id);
-      messagePlayer.complete();
-      await tester.pump();
-      expect(messageAudioController.playingMessageId, isNull);
-      await tester.tap(assistantTts);
-      await tester.pump();
-      expect(
-        find.byKey(Key('agent-assistant-text-${assistant.id}')),
-        findsOneWidget,
-      );
-      expect(messageAudioController.playingMessageId, assistant.id);
-      await tester.tap(
-        find.byKey(Key('agent-assistant-speed-${assistant.id}')),
-      );
-      await tester.pump();
-      expect(messageAudioController.speechSpeed, 1.25);
+      ),
+      hasLength(1),
+    );
+    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
 
-      final voiceMessage = voiceMessages.single;
-      final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
-      final voiceDecoration =
-          tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
-      expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
-      expect(tester.getSize(voiceBubble).height, lessThan(220));
-      expect(
-        find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(Key('agent-user-voice-duration-${voiceMessage.id}')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
-        findsOneWidget,
-      );
+    final assistant = conversationController.messages.singleWhere(
+      (message) => message.role == AgentMessageRole.assistant,
+    );
+    final assistantTts = find.byKey(Key('agent-assistant-tts-${assistant.id}'));
+    await tester.pumpAndSettle();
+    expect(assistantTts.hitTestable(), findsOneWidget);
+    expect(assistantSpeech.texts, <String>[
+      'That was clear. Add one measurable result to make the answer stronger.',
+    ]);
+    expect(messageAudioController.playingMessageId, assistant.id);
+    messagePlayer.complete();
+    await tester.pump();
+    expect(messageAudioController.playingMessageId, isNull);
+    await tester.tap(assistantTts);
+    await tester.pump();
+    expect(
+      find.byKey(Key('agent-assistant-text-${assistant.id}')),
+      findsOneWidget,
+    );
+    expect(messageAudioController.playingMessageId, assistant.id);
+    await tester.tap(find.byKey(Key('agent-assistant-speed-${assistant.id}')));
+    await tester.pump();
+    expect(messageAudioController.speechSpeed, 1.25);
 
-      await tester.tap(
-        find.byKey(Key('agent-user-voice-delete-${voiceMessage.id}')),
-      );
-      await _pumpVoiceOperation(tester);
-      final retained = conversationController.messages.singleWhere(
-        (message) => message.id == voiceMessage.id,
-      );
-      expect(retained.text, voiceMessage.text);
-      expect(retained.audio?.status, AgentMessageAudioStatus.deleted);
-      expect(
-        find.byKey(Key('agent-user-voice-deleted-${voiceMessage.id}')),
-        findsOneWidget,
-      );
-      await composerController.voiceController?.cancel();
-      await tester.pump();
-    },
-  );
+    final voiceMessage = voiceMessages.single;
+    final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
+    final voiceDecoration =
+        tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
+    expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
+    expect(tester.getSize(voiceBubble).height, lessThan(220));
+    expect(
+      find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('agent-user-voice-duration-${voiceMessage.id}')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('agent-user-voice-delete-${voiceMessage.id}')),
+      findsNothing,
+    );
+    await composerController.voiceController?.cancel();
+    await tester.pump();
+  });
 
   testWidgets('upward swipe cancels home recording', (tester) async {
     final client = FakeAgentClient();

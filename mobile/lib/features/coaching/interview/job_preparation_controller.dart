@@ -21,7 +21,7 @@ typedef JobPreparationGoalActivator =
     });
 typedef JobPreparationVoiceActivator =
     Future<void> Function({
-      required AgentPracticeContext context,
+      required AgentPracticeContext? context,
       required SceneDefinition scene,
       required PreparationPracticeBootstrap bootstrap,
       required String clientOperationId,
@@ -80,6 +80,12 @@ final class JobPreparationController extends ChangeNotifier {
   String? _agentIntentPrefill;
   _StoredJobPreparationDraft? _restorableDraft;
   Future<void> _draftWriteTail = Future<void>.value();
+  List<PracticePlanSummary> _interviewPlans = const [];
+  bool _plansLoading = false;
+  bool _plansLoaded = false;
+  String? _plansErrorMessage;
+  bool _openedSavedPlan = false;
+  int _planListEpoch = 0;
 
   String? _createTargetKey;
   String? _updateTargetKey;
@@ -95,7 +101,6 @@ final class JobPreparationController extends ChangeNotifier {
   String? _voiceKey;
   String? _workspaceKey;
   PracticeWorkspaceLease? _workspaceLease;
-  bool _workspaceReplaceRequested = false;
 
   JobTargetInput get input => _input;
   JobTarget? get target => _target;
@@ -116,6 +121,113 @@ final class JobPreparationController extends ChangeNotifier {
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
+  List<PracticePlanSummary> get interviewPlans => _interviewPlans;
+  bool get plansLoading => _plansLoading;
+  bool get plansLoaded => _plansLoaded;
+  String? get plansErrorMessage => _plansErrorMessage;
+  bool get openedSavedPlan => _openedSavedPlan;
+
+  Future<void> loadInterviewPlans({bool force = false}) async {
+    if (_disposed || _plansLoading || (_plansLoaded && !force)) {
+      return;
+    }
+    _plansLoading = true;
+    _plansErrorMessage = null;
+    final requestEpoch = ++_planListEpoch;
+    notifyListeners();
+    try {
+      final plans = await client.listPlans(
+        experience: PracticeExperience.interview,
+      );
+      if (_disposed || requestEpoch != _planListEpoch) {
+        return;
+      }
+      _interviewPlans = plans;
+      _plansLoaded = true;
+    } on Object {
+      if (!_disposed && requestEpoch == _planListEpoch) {
+        _plansErrorMessage = '暂时无法加载模拟面试，请稍后重试。';
+      }
+    } finally {
+      if (!_disposed && requestEpoch == _planListEpoch) {
+        _plansLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<bool> deleteInterviewPlan(String planId) async {
+    if (_disposed || _plansLoading) {
+      return false;
+    }
+    _plansLoading = true;
+    _plansErrorMessage = null;
+    notifyListeners();
+    try {
+      await client.deletePlan(planId);
+      if (_disposed) {
+        return false;
+      }
+      _interviewPlans = _interviewPlans
+          .where((plan) => plan.id != planId)
+          .toList(growable: false);
+      return true;
+    } on Object {
+      if (!_disposed) {
+        _plansErrorMessage = '暂时无法删除这场模拟面试，请稍后重试。';
+      }
+      return false;
+    } finally {
+      if (!_disposed) {
+        _plansLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void beginNewPreparation() {
+    if (_disposed || _busy) {
+      return;
+    }
+    _epoch++;
+    _resetPresentation();
+    notifyListeners();
+  }
+
+  Future<bool> openSavedPlan(String planId) async {
+    if (_disposed || _busy || !_validResourceId(planId)) {
+      return false;
+    }
+    final operationEpoch = ++_epoch;
+    _resetPresentation();
+    _begin(JobPreparationOperationStage.plan);
+    try {
+      final plan = await client.getPlan(planId);
+      _requireCurrent(operationEpoch, _input);
+      if (plan.status != PracticePlanStatus.ready ||
+          plan.sceneSelection.scene.experience !=
+              PracticeExperience.interview) {
+        throw const JobPreparationException(
+          kind: JobPreparationFailureKind.invalidResponse,
+          stage: JobPreparationOperationStage.plan,
+        );
+      }
+      _plan = plan;
+      _candidate = plan.preparationSnapshot.jobTargetCandidate;
+      _input = plan.preparationSnapshot.jobTargetInput ?? _input;
+      _step = JobPreparationStep.preview;
+      _openedSavedPlan = true;
+      _errorMessage = null;
+      return true;
+    } on Object {
+      if (_isCurrent(operationEpoch)) {
+        _errorMessage = '暂时无法打开这场模拟面试，请稍后重试。';
+      }
+      return false;
+    } finally {
+      _finish(operationEpoch);
+    }
+  }
 
   Future<bool> resumeCurrentPractice() async {
     final workspace = workspaceController;
@@ -183,6 +295,11 @@ final class JobPreparationController extends ChangeNotifier {
     _loadedDraftAccountId = null;
     _restorableDraft = null;
     _agentIntentPrefill = null;
+    _planListEpoch++;
+    _interviewPlans = const [];
+    _plansLoading = false;
+    _plansLoaded = false;
+    _plansErrorMessage = null;
     _resetPresentation();
     _initializingDraft = true;
     notifyListeners();
@@ -592,6 +709,9 @@ final class JobPreparationController extends ChangeNotifier {
     if (_disposed || _busy) {
       return false;
     }
+    if (_openedSavedPlan && _plan != null) {
+      return startPractice();
+    }
     final target = _target;
     final candidate = _candidate;
     final analysis = target?.analysis;
@@ -646,7 +766,7 @@ final class JobPreparationController extends ChangeNotifier {
     }
   }
 
-  Future<bool> createPreview({bool replaceCurrentPractice = false}) async {
+  Future<bool> createPreview() async {
     if (_disposed || _busy) {
       return false;
     }
@@ -656,8 +776,6 @@ final class JobPreparationController extends ChangeNotifier {
     final background =
         _input.candidateBackground ??
         '未提供个人背景，本次按${candidate?.jobTitle ?? '目标岗位'}通用要求练习。';
-    final workspace = workspaceController;
-    var threadId = workspace == null ? threadIdProvider() : null;
     if (target == null ||
         confirmation == null ||
         candidate == null ||
@@ -668,70 +786,9 @@ final class JobPreparationController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if (workspace == null &&
-        (threadId == null || !_validResourceId(threadId))) {
-      _errorMessage = 'Agent 对话仍在恢复，请稍后重试。';
-      _operationStage = JobPreparationOperationStage.goal;
-      notifyListeners();
-      return false;
-    }
-
     final operationEpoch = _epoch;
-    String? workspaceOperationId;
-    var workspaceParked = false;
-    _begin(JobPreparationOperationStage.goal);
+    _begin(JobPreparationOperationStage.profile);
     try {
-      if (workspace != null) {
-        if (replaceCurrentPractice) {
-          _workspaceReplaceRequested = true;
-        }
-        final operationId = _workspaceKey ??= _newId('job-target-workspace');
-        workspaceOperationId = operationId;
-        final previousLease = _workspaceLease;
-        final lease = previousLease == null && _workspaceReplaceRequested
-            ? await workspace.replaceCurrentPractice(operationId)
-            : await workspace.acquireThread(operationId);
-        if (lease == null ||
-            (previousLease != null &&
-                !_sameWorkspaceIdentity(lease, previousLease))) {
-          throw const JobPreparationException(
-            kind: JobPreparationFailureKind.conflict,
-            stage: JobPreparationOperationStage.goal,
-            retryable: true,
-          );
-        }
-        _workspaceLease = lease;
-        threadId = lease.practiceThreadId;
-        if (threadIdProvider() != threadId) {
-          throw const JobPreparationException(
-            kind: JobPreparationFailureKind.invalidResponse,
-            stage: JobPreparationOperationStage.goal,
-            retryable: true,
-          );
-        }
-      }
-      if (threadId == null || !_validResourceId(threadId)) {
-        throw const JobPreparationException(
-          kind: JobPreparationFailureKind.invalidResponse,
-          stage: JobPreparationOperationStage.goal,
-          retryable: true,
-        );
-      }
-      final context = await goalActivator(
-        threadId: threadId,
-        candidate: candidate,
-        clientOperationId: _goalKey ??= _newId('job-target-goal'),
-      );
-      _requireCurrent(operationEpoch, _input);
-      if (context.threadId != threadId || !_validResourceId(context.goalId)) {
-        throw const JobPreparationException(
-          kind: JobPreparationFailureKind.invalidResponse,
-          stage: JobPreparationOperationStage.goal,
-        );
-      }
-
-      _operationStage = JobPreparationOperationStage.profile;
-      notifyListeners();
       final profile = await client.createProfile(
         input: CreatePreparationProfileInput(
           backgroundSummary: background,
@@ -777,8 +834,6 @@ final class JobPreparationController extends ChangeNotifier {
       notifyListeners();
       final plan = await client.createPlan(
         input: CreatePreparationPlanInput(
-          sourceThreadId: context.threadId,
-          goalId: context.goalId,
           preparationSnapshotId: snapshot.id,
           sceneId: candidate.catalogRecommendation.sceneId,
           sceneVersion: candidate.catalogRecommendation.sceneVersion,
@@ -789,7 +844,7 @@ final class JobPreparationController extends ChangeNotifier {
       );
       _requireCurrent(operationEpoch, _input);
       if (plan.userId != target.userId ||
-          plan.agentContext != context ||
+          plan.agentContext != null ||
           plan.preparationSnapshot.sourceJobTargetId != target.id ||
           plan.preparationSnapshot.sourceJobTargetConfirmationVersion !=
               confirmation.confirmationVersion) {
@@ -804,38 +859,19 @@ final class JobPreparationController extends ChangeNotifier {
       _voiceKey = null;
       _step = JobPreparationStep.preview;
       _errorMessage = null;
-      if (workspace != null) {
-        workspaceParked = await parkCurrentPractice();
-        if (!workspaceParked) {
-          throw const JobPreparationException(
-            kind: JobPreparationFailureKind.network,
-            stage: JobPreparationOperationStage.goal,
-            retryable: true,
-          );
-        }
-      }
       return true;
     } on JobPreparationException catch (error) {
       if (_isCurrent(operationEpoch)) {
         _operationStage = error.stage ?? _operationStage;
-        _errorMessage = workspace?.errorMessage ?? _messageFor(error);
+        _errorMessage = _messageFor(error);
       }
       return false;
     } on Object {
       if (_isCurrent(operationEpoch)) {
-        _errorMessage = workspace?.errorMessage ?? '暂时无法生成练习预览，请稍后重试。';
+        _errorMessage = '暂时无法生成练习预览，请稍后重试。';
       }
       return false;
     } finally {
-      if (!workspaceParked &&
-          _isCurrent(operationEpoch) &&
-          workspace != null &&
-          workspace.currentLease?.operationId == workspaceOperationId) {
-        final parked = await workspace.parkCurrentPractice();
-        if (!parked && _isCurrent(operationEpoch)) {
-          _errorMessage ??= workspace.errorMessage ?? '面试预览已保留，但暂时无法返回首页。';
-        }
-      }
       _finish(operationEpoch);
     }
   }
@@ -899,14 +935,8 @@ final class JobPreparationController extends ChangeNotifier {
     }
     final operationEpoch = _epoch;
     final workspace = workspaceController;
-    final context = plan.agentContext;
-    if (context == null) {
-      _errorMessage = '练习计划缺少 Agent 上下文，请重新生成。';
-      _operationStage = JobPreparationOperationStage.plan;
-      notifyListeners();
-      return false;
-    }
-    final workspaceOperationId = _workspaceLease?.operationId;
+    const AgentPracticeContext? context = null;
+    var workspaceOperationId = _workspaceLease?.operationId;
     var practiceStarted = false;
     _begin(
       _bootstrap == null
@@ -916,18 +946,17 @@ final class JobPreparationController extends ChangeNotifier {
     try {
       if (workspace != null) {
         final previousLease = _workspaceLease;
-        if (previousLease == null) {
-          throw const JobPreparationException(
-            kind: JobPreparationFailureKind.conflict,
-            stage: JobPreparationOperationStage.goal,
-            retryable: true,
-          );
-        }
-        final lease = await workspace.acquireThread(previousLease.operationId);
+        final operationId =
+            previousLease?.operationId ??
+            (_workspaceKey ??= _newId('saved-plan-workspace'));
+        final lease = previousLease == null
+            ? await workspace.replaceCurrentPractice(operationId)
+            : await workspace.acquireThread(operationId);
+        workspaceOperationId = operationId;
         if (lease == null ||
-            !_sameWorkspaceIdentity(lease, previousLease) ||
-            lease.practiceThreadId != context.threadId ||
-            threadIdProvider() != context.threadId) {
+            (previousLease != null &&
+                !_sameWorkspaceIdentity(lease, previousLease)) ||
+            threadIdProvider() != lease.practiceThreadId) {
           throw const JobPreparationException(
             kind: JobPreparationFailureKind.conflict,
             stage: JobPreparationOperationStage.goal,
@@ -956,10 +985,9 @@ final class JobPreparationController extends ChangeNotifier {
         final lease = _workspaceLease;
         final scene = plan.sceneSelection.scene;
         if (lease == null ||
-            lease.practiceThreadId != context.threadId ||
             !await workspace.commitSession(
               lease: lease,
-              goalId: context.goalId,
+              goalId: context?.goalId,
               sessionId: bootstrap.session.id,
               scene: scene,
             )) {
@@ -1017,6 +1045,9 @@ final class JobPreparationController extends ChangeNotifier {
   }
 
   Future<bool> retry() {
+    if (_openedSavedPlan && _plan != null) {
+      return startPractice();
+    }
     return switch (_operationStage) {
       JobPreparationOperationStage.target ||
       JobPreparationOperationStage.analysis => analyze(),
@@ -1043,6 +1074,11 @@ final class JobPreparationController extends ChangeNotifier {
     _restorableDraft = null;
     _initializingDraft = false;
     _resetPresentation();
+    _interviewPlans = const [];
+    _plansLoading = false;
+    _plansLoaded = false;
+    _plansErrorMessage = null;
+    _planListEpoch++;
     await client.clearAccountState();
     await _draftWriteTail;
     if (accountId != null) {
@@ -1118,6 +1154,7 @@ final class JobPreparationController extends ChangeNotifier {
     _errorMessage = null;
     _busy = false;
     _draftCompleted = false;
+    _openedSavedPlan = false;
     _createTargetKey = null;
     _updateTargetKey = null;
     _analysisKey = null;
@@ -1176,7 +1213,6 @@ final class JobPreparationController extends ChangeNotifier {
     _voiceKey = null;
     _workspaceKey = null;
     _workspaceLease = null;
-    _workspaceReplaceRequested = false;
   }
 
   void _handleWorkspaceState() {
@@ -1480,6 +1516,7 @@ Map<String, Object?> _storedCandidateJson(JobTargetCandidate candidate) {
     'source': candidate.source.wireValue,
     'general_advice_only': candidate.generalAdviceOnly,
     'job_title': candidate.jobTitle,
+    if (candidate.company.isNotEmpty) 'company': candidate.company,
     'seniority': candidate.seniority,
     'responsibilities': candidate.responsibilities,
     'core_skills': candidate.coreSkills,
@@ -1501,6 +1538,7 @@ JobTargetCandidate _storedCandidate(Object? value) {
         'source',
         'general_advice_only',
         'job_title',
+        'company',
         'seniority',
         'responsibilities',
         'core_skills',
@@ -1509,7 +1547,7 @@ JobTargetCandidate _storedCandidate(Object? value) {
         'scope_notice',
         'catalog_recommendation',
       }).isNotEmpty ||
-      value.length != 10) {
+      (value.length != 10 && value.length != 11)) {
     throw const FormatException('Invalid stored JobTarget candidate.');
   }
   final source = switch (value['source']) {
@@ -1537,6 +1575,9 @@ JobTargetCandidate _storedCandidate(Object? value) {
     source: source,
     generalAdviceOnly: value['general_advice_only'] as bool,
     jobTitle: _storedText(value['job_title'], 512),
+    company: value.containsKey('company')
+        ? _storedText(value['company'], 512)
+        : '',
     seniority: _storedText(value['seniority'], 256),
     responsibilities: _storedStringList(value['responsibilities']),
     coreSkills: _storedStringList(value['core_skills']),
@@ -1661,6 +1702,7 @@ bool _sameJobTargetCandidate(
   return left.source == right.source &&
       left.generalAdviceOnly == right.generalAdviceOnly &&
       left.jobTitle == right.jobTitle &&
+      left.company == right.company &&
       left.seniority == right.seniority &&
       listEquals(left.responsibilities, right.responsibilities) &&
       listEquals(left.coreSkills, right.coreSkills) &&

@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/composer/agent_composer.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
@@ -20,6 +21,8 @@ typedef ConversationVoiceStarter = AgentComposerAction;
 typedef ConversationPendingImageAction = AgentComposerPendingImageAction;
 typedef ConversationMessageImageAction =
     FutureOr<void> Function(String messageId, String imageAssetId);
+typedef ConversationMessageTranslator =
+    Future<String> Function(AgentMessage message);
 
 /// App-injected presentation port for optional Message feedback.
 abstract interface class ConversationMessageFeedbackPresenter
@@ -66,6 +69,7 @@ class ConversationPage extends StatefulWidget {
     this.onLoadEarlierMessages,
     this.voiceController,
     this.messageAudioController,
+    this.onTranslateMessage,
     this.pendingImages = const <AgentPendingImage>[],
     this.imageErrorMessage,
     this.imageSelectionInFlight = false,
@@ -105,6 +109,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onLoadEarlierMessages;
   final AgentVoiceController? voiceController;
   final AgentMessageAudioController? messageAudioController;
+  final ConversationMessageTranslator? onTranslateMessage;
   final List<AgentPendingImage> pendingImages;
   final String? imageErrorMessage;
   final bool imageSelectionInFlight;
@@ -281,6 +286,7 @@ class ConversationPage extends StatefulWidget {
                                 messages: messages,
                                 suppressLoadingFeedback: replyPending,
                                 messageAudioController: messageAudioController,
+                                onTranslateMessage: onTranslateMessage,
                                 onHandoff: onMessageHandoff,
                                 onRefreshImage: onRefreshMessageImage,
                                 feedbackPresenter: feedbackPresenter,
@@ -672,10 +678,9 @@ class _AgentTopBar extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'SpeakUp',
+                    const SpeakUpWordmark(
                       key: Key('conversation-fixed-title'),
-                      style: SpeakUpDesign.cardTitle,
+                      height: 26,
                     ),
                     if (previewMode) ...[
                       const SizedBox(width: 8),
@@ -906,6 +911,7 @@ class _MessageList extends StatelessWidget {
     required this.messages,
     required this.suppressLoadingFeedback,
     this.messageAudioController,
+    this.onTranslateMessage,
     this.onHandoff,
     this.onRefreshImage,
     this.feedbackPresenter,
@@ -915,6 +921,7 @@ class _MessageList extends StatelessWidget {
   final List<AgentMessage> messages;
   final bool suppressLoadingFeedback;
   final AgentMessageAudioController? messageAudioController;
+  final ConversationMessageTranslator? onTranslateMessage;
   final ValueChanged<AgentHandoff>? onHandoff;
   final ConversationMessageImageAction? onRefreshImage;
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
@@ -929,6 +936,7 @@ class _MessageList extends StatelessWidget {
           AgentMessageBubble(
             message: message,
             messageAudioController: messageAudioController,
+            onTranslate: onTranslateMessage,
             onHandoff: onHandoff,
             onRefreshImage: onRefreshImage,
             correction: feedbackPresenter?.correctionFor(message),

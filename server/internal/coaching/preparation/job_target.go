@@ -65,6 +65,7 @@ const (
 
 	defaultJobTargetAnalysisLease = 2 * time.Minute
 	jobTargetPersistenceTimeout   = 5 * time.Second
+	selfIntroductionSceneID       = "scn_interview_self_introduction"
 )
 
 // JobTargetInput is the exact editable, untrusted material for one input
@@ -92,6 +93,7 @@ type JobTargetCandidate struct {
 	Source                JobTargetSource                `json:"source"`
 	GeneralAdviceOnly     bool                           `json:"general_advice_only"`
 	JobTitle              string                         `json:"job_title"`
+	Company               string                         `json:"company,omitempty"`
 	Seniority             string                         `json:"seniority"`
 	Responsibilities      []string                       `json:"responsibilities"`
 	CoreSkills            []string                       `json:"core_skills"`
@@ -473,6 +475,14 @@ func (s *JobTargetService) Confirm(
 		request.ExpectedAnalysisVersion < 1 {
 		return JobTarget{}, false, ErrJobTargetInvalid
 	}
+	candidate, err := s.applyConfirmedPracticeFocus(
+		ctx,
+		request.Candidate,
+	)
+	if err != nil {
+		return JobTarget{}, false, err
+	}
+	request.Candidate = candidate
 	if err := validateJobTargetCandidate(
 		ctx,
 		request.Candidate,
@@ -495,6 +505,51 @@ func (s *JobTargetService) Confirm(
 		Request:  request,
 		Intent:   intent,
 	})
+}
+
+func (s *JobTargetService) applyConfirmedPracticeFocus(
+	ctx context.Context,
+	candidate JobTargetCandidate,
+) (JobTargetCandidate, error) {
+	selfIntroduction := false
+	for _, goal := range candidate.PracticeGoals {
+		if strings.TrimSpace(goal) == "自我介绍" {
+			selfIntroduction = true
+			break
+		}
+	}
+	if !selfIntroduction {
+		return candidate, nil
+	}
+	definition, err := s.catalog.GetScene(ctx, selfIntroductionSceneID)
+	if err != nil || definition.Status != scene.SceneStatusActive ||
+		definition.Experience != scene.PracticeExperienceInterview ||
+		len(definition.Roles) == 0 {
+		return JobTargetCandidate{}, ErrJobTargetInvalid
+	}
+	role := definition.Roles[0]
+	var selected *scene.PracticeOption
+	for index := range definition.PracticeOptions {
+		option := &definition.PracticeOptions[index]
+		if option.Mode == scene.PracticeModeFocus &&
+			option.RoleDefinitionID == role.ID {
+			selected = option
+			break
+		}
+		if selected == nil && option.Mode == scene.PracticeModeFullSimulation {
+			selected = option
+		}
+	}
+	if selected == nil {
+		return JobTargetCandidate{}, ErrJobTargetInvalid
+	}
+	candidate.CatalogRecommendation = JobTargetCatalogRecommendation{
+		SceneID:          definition.ID,
+		SceneVersion:     definition.Version,
+		SelectedRoleIDs:  []string{role.ID},
+		PracticeOptionID: selected.ID,
+	}
+	return candidate, nil
 }
 
 func (s *JobTargetService) Discard(
@@ -675,6 +730,11 @@ func validJobTargetCandidateShape(
 			candidate.JobTitle,
 			maxJobTargetTitleBytes,
 			true,
+		) ||
+		!validJobTargetText(
+			candidate.Company,
+			maxJobTargetCompanyBytes,
+			false,
 		) ||
 		!validJobTargetText(
 			candidate.Seniority,

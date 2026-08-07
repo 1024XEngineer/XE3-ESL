@@ -7,6 +7,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
@@ -55,7 +56,7 @@ func TestSessionTranslationUsesFrozenPolicy(t *testing.T) {
 func translationApplication(
 	t *testing.T,
 	sessions SessionPort,
-	translator QuestionTranslator,
+	translator sharedtranslation.Translator,
 ) *SessionApplication {
 	t.Helper()
 	candidate := roundCandidate()
@@ -99,12 +100,12 @@ type questionTranslatorStub struct {
 	calls    int
 }
 
-func (stub *questionTranslatorStub) TranslateQuestion(
+func (stub *questionTranslatorStub) Translate(
 	_ context.Context,
-	request QuestionTranslationRequest,
+	request sharedtranslation.Request,
 ) (string, error) {
 	stub.calls++
-	stub.question = request.Question
+	stub.question = request.Text
 	return stub.content, nil
 }
 

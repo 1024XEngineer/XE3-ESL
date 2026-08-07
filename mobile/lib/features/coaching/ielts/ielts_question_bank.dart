@@ -1,37 +1,46 @@
-import 'dart:math';
-
 import 'package:speakup/features/coaching/scene/scene.dart';
 
-enum IeltsTopicCategory {
-  person('person'),
-  place('place'),
-  thing('thing'),
-  event('event');
+final class IeltsFilterOption {
+  const IeltsFilterOption({required this.code, required this.label});
 
-  const IeltsTopicCategory(this.wireName);
+  final String code;
+  final String label;
+}
 
-  final String wireName;
+final class IeltsCatalogFilters {
+  const IeltsCatalogFilters({
+    required this.releases,
+    required this.parts,
+    required this.topicTags,
+    required this.cueCardTypes,
+  });
 
-  static IeltsTopicCategory? fromWireName(String value) => IeltsTopicCategory
-      .values
-      .where((category) => category.wireName == value)
-      .firstOrNull;
+  final List<IeltsFilterOption> releases;
+  final List<IeltsFilterOption> parts;
+  final List<IeltsFilterOption> topicTags;
+  final List<IeltsFilterOption> cueCardTypes;
 }
 
 final class IeltsQuestionBank {
   const IeltsQuestionBank({
     required this.bankId,
     required this.season,
+    required this.seasonLabel,
+    required this.seasonStart,
+    required this.seasonEnd,
     required this.sourceCutoff,
-    required this.part1Sets,
+    required this.filters,
     required this.part1Topics,
     required this.topicGroups,
   });
 
   final String bankId;
   final String season;
+  final String seasonLabel;
+  final DateTime seasonStart;
+  final DateTime seasonEnd;
   final DateTime sourceCutoff;
-  final List<IeltsPart1Set> part1Sets;
+  final IeltsCatalogFilters filters;
   final List<IeltsPart1PracticeTopic> part1Topics;
   final List<IeltsTopicGroup> topicGroups;
 }
@@ -41,44 +50,16 @@ final class IeltsPart1PracticeTopic {
     required this.id,
     required this.titleZh,
     required this.titleEn,
-    required this.release,
-    required this.category,
+    required this.releaseStatus,
+    required this.tagCodes,
     required this.questions,
   });
 
   final String id;
   final String titleZh;
   final String titleEn;
-  final String release;
-  final IeltsTopicCategory category;
-  final List<String> questions;
-}
-
-final class IeltsPart1Set {
-  const IeltsPart1Set({
-    required this.id,
-    required this.title,
-    required this.topics,
-    required this.questionCount,
-  });
-
-  final String id;
-  final String title;
-  final List<IeltsPart1Topic> topics;
-  final int questionCount;
-
-  String get topicSummary => topics.map((topic) => topic.title).join(' · ');
-}
-
-final class IeltsPart1Topic {
-  const IeltsPart1Topic({
-    required this.title,
-    required this.release,
-    required this.questions,
-  });
-
-  final String title;
-  final String release;
+  final String releaseStatus;
+  final List<String> tagCodes;
   final List<String> questions;
 }
 
@@ -86,20 +67,20 @@ final class IeltsTopicGroup {
   const IeltsTopicGroup({
     required this.id,
     required this.title,
-    required this.release,
-    required this.category,
+    required this.releaseStatus,
+    required this.cueCardType,
+    required this.tagCodes,
     required this.cueCard,
     required this.part3Questions,
-    required this.supplementedQuestionCount,
   });
 
   final String id;
   final String title;
-  final String release;
-  final IeltsTopicCategory category;
+  final String releaseStatus;
+  final String cueCardType;
+  final List<String> tagCodes;
   final IeltsCueCard cueCard;
   final List<String> part3Questions;
-  final int supplementedQuestionCount;
 }
 
 final class IeltsCueCard {
@@ -136,30 +117,4 @@ final class IeltsPracticeSelection {
 
   @override
   int get hashCode => Object.hash(part1SetId, topicGroupId);
-}
-
-IeltsPracticeSelection randomIeltsFullMockSelection({
-  required IeltsQuestionBank bank,
-  required Set<String> completedPart1SetIds,
-  required Set<String> completedTopicGroupIds,
-  Random? random,
-}) {
-  final generator = random ?? Random.secure();
-  final availablePart1 = bank.part1Sets
-      .where((set) => !completedPart1SetIds.contains(set.id))
-      .toList(growable: false);
-  final availableGroups = bank.topicGroups
-      .where((group) => !completedTopicGroupIds.contains(group.id))
-      .toList(growable: false);
-  if (bank.part1Sets.isEmpty || bank.topicGroups.isEmpty) {
-    throw StateError('IELTS full mock requires a non-empty question bank.');
-  }
-  final part1Pool = availablePart1.isEmpty ? bank.part1Sets : availablePart1;
-  final groupPool = availableGroups.isEmpty
-      ? bank.topicGroups
-      : availableGroups;
-  return IeltsPracticeSelection(
-    part1SetId: part1Pool[generator.nextInt(part1Pool.length)].id,
-    topicGroupId: groupPool[generator.nextInt(groupPool.length)].id,
-  );
 }

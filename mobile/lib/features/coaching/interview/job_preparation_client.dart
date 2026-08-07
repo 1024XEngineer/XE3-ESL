@@ -2,6 +2,7 @@ import 'package:speakup/features/coaching/interview/job_preparation_models.dart'
 import 'package:speakup/features/coaching/preparation/preparation_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 abstract interface class JobPreparationClient implements PreparationClient {
   Future<JobTarget> createJobTarget({
@@ -39,6 +40,12 @@ abstract interface class JobPreparationClient implements PreparationClient {
   });
 
   Future<PracticePlan> getPlan(String planId);
+
+  Future<List<PracticePlanSummary>> listPlans({
+    required PracticeExperience experience,
+  });
+
+  Future<void> deletePlan(String planId);
 
   Future<PracticePlan> revisePlan({
     required String planId,

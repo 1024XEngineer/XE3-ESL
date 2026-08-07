@@ -1,61 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 
-class PreparationCatalogAvatarPreview extends StatelessWidget {
-  const PreparationCatalogAvatarPreview({required this.size, super.key});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: SizedBox.square(
-        dimension: size,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            color: PreparationDesign.scenarioTint,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            Icons.record_voice_over_outlined,
-            size: size * 0.46,
-            color: PreparationDesign.scenario,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class PreparationCatalogHeader extends StatelessWidget {
-  const PreparationCatalogHeader({
-    required this.title,
-    required this.description,
-    required this.titleKey,
-    super.key,
-  });
-
-  final String title;
-  final String description;
-  final Key titleKey;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Semantics(
-          header: true,
-          container: true,
-          child: Text(title, key: titleKey, style: PreparationDesign.pageTitle),
-        ),
-        const SizedBox(height: 8),
-        Text(description, style: PreparationDesign.body),
-      ],
-    );
-  }
-}
-
 class PreparationFeaturedScene extends StatelessWidget {
   const PreparationFeaturedScene({
     required this.eyebrow,

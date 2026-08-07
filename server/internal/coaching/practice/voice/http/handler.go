@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 	"github.com/gin-gonic/gin"
 )
 
@@ -476,6 +477,7 @@ func ConfirmedTurnResponse(turn practice.Turn) gin.H {
 
 func mapError(err error) error {
 	var providerFailure *practicevoice.ProviderError
+	var translationFailure *sharedtranslation.ProviderError
 	switch {
 	case errors.Is(err, practicevoice.ErrInvalidRequest),
 		errors.Is(err, practicevoice.ErrInvalidContext),
@@ -511,9 +513,27 @@ func mapError(err error) error {
 		)
 	case errors.As(err, &providerFailure):
 		return providerError(providerFailure.Kind, err)
+	case errors.As(err, &translationFailure):
+		return translationProviderError(translationFailure.Kind, err)
 	default:
 		return internalError(err)
 	}
+}
+
+func translationProviderError(
+	kind sharedtranslation.ProviderErrorKind,
+	cause error,
+) error {
+	code := "provider_unavailable"
+	message := "The configured provider is temporarily unavailable."
+	if kind == sharedtranslation.ProviderErrorQuotaExhausted {
+		code = "quota_exhausted"
+		message = "The configured provider quota is exhausted."
+	}
+	return apperror.New(
+		apperror.Unavailable, code, message,
+		apperror.WithRetryable(kind.Retryable()), apperror.WithCause(cause),
+	)
 }
 
 func providerError(kind practicevoice.ProviderErrorKind, cause error) error {
