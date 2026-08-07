@@ -30,6 +30,17 @@ enum PracticeRecordingState {
   completed,
 }
 
+enum PracticeCompletionMode {
+  turnLimited,
+  userControlled;
+
+  static PracticeCompletionMode? fromWireValue(String value) => switch (value) {
+    'TURN_LIMITED' => PracticeCompletionMode.turnLimited,
+    'USER_CONTROLLED' => PracticeCompletionMode.userControlled,
+    _ => null,
+  };
+}
+
 final class PracticeCapabilities {
   const PracticeCapabilities({
     required this.retryAllowed,
@@ -133,6 +144,7 @@ final class PracticeSessionSnapshot {
     required this.sessionVersion,
     required this.completedTurns,
     required this.turnLimit,
+    this.completionMode = PracticeCompletionMode.turnLimited,
     required this.sessionCompleted,
     this.ieltsAssignment,
     this.currentQuestion,
@@ -149,6 +161,7 @@ final class PracticeSessionSnapshot {
   final int sessionVersion;
   final int completedTurns;
   final int turnLimit;
+  final PracticeCompletionMode completionMode;
   final bool sessionCompleted;
   final IeltsPracticeAssignment? ieltsAssignment;
   final PracticeQuestion? currentQuestion;
@@ -240,6 +253,7 @@ final class PracticeTurnConfirmation {
     required this.answer,
     required this.completedTurns,
     required this.turnLimit,
+    this.completionMode = PracticeCompletionMode.turnLimited,
     required this.sessionCompleted,
     required this.practiceExperience,
     required this.sceneCategory,
@@ -258,6 +272,7 @@ final class PracticeTurnConfirmation {
   final PracticeMessage answer;
   final int completedTurns;
   final int turnLimit;
+  final PracticeCompletionMode completionMode;
   final bool sessionCompleted;
   final PracticeExperience practiceExperience;
   final SceneCategory sceneCategory;

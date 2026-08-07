@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
@@ -27,8 +28,10 @@ func TestResolverFreezesCompleteRegisteredPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.RetryAllowed || policy.MinEffectiveTurns != 4 ||
-		policy.MaxEffectiveTurns != 6 || policy.CoverageCheckpointTurn != 4 ||
+	if !policy.RetryAllowed ||
+		policy.CompletionMode != preparation.CompletionModeUserControlled ||
+		policy.MinEffectiveTurns != 1 || policy.MaxEffectiveTurns != 0 ||
+		policy.CoverageCheckpointTurn != 1 ||
 		policy.MaxFollowUpsPerQuestion != 1 {
 		t.Fatalf("resolved policy = %#v", policy)
 	}

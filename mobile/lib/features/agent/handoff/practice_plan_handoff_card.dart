@@ -35,8 +35,10 @@ final class PracticePlanHandoffCard extends StatelessWidget {
           Text('角色：${handoff.roles.join('、')}', style: SpeakUpDesign.body),
           Text('范围：${handoff.practiceScope}', style: SpeakUpDesign.body),
           Text(
-            '预计 $minutes 分钟 · '
-            '${handoff.minEffectiveTurns}–${handoff.maxEffectiveTurns} 轮',
+            handoff.maxEffectiveTurns == 0
+                ? '预计 $minutes 分钟'
+                : '预计 $minutes 分钟 · '
+                      '${handoff.minEffectiveTurns}–${handoff.maxEffectiveTurns} 轮',
             style: SpeakUpDesign.meta,
           ),
           const SizedBox(height: 8),

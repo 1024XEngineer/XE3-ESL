@@ -287,8 +287,7 @@ func validVoiceTurnCheckpoint(turn practice.Turn) bool {
 		turn.TranscriptID == "" ||
 		turn.EvidenceVersion < 1 ||
 		strings.TrimSpace(turn.AnswerText) == "" ||
-		turn.EffectiveTurns < 0 ||
-		turn.EffectiveTurns > practice.MaxPracticeTurns {
+		turn.EffectiveTurns < 0 {
 		return false
 	}
 	return turn.EffectiveTurns > 0

@@ -44,6 +44,14 @@ abstract interface class PracticeLifecycleClient {
   });
 }
 
+abstract interface class PracticeCompletionClient {
+  Future<PracticeSessionLifecycle> complete({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  });
+}
+
 abstract interface class PracticeQuestionTranslationClient {
   Future<PracticeQuestionTranslation> translateQuestion({
     required String questionId,
@@ -89,7 +97,10 @@ abstract interface class PracticeSpeechFeedbackRetryClient {
 }
 
 final class FakePracticeClient
-    implements PracticeClient, PracticeLifecycleClient {
+    implements
+        PracticeClient,
+        PracticeLifecycleClient,
+        PracticeCompletionClient {
   FakePracticeClient({
     this.delay = Duration.zero,
     this.practiceExperience = PracticeExperience.interview,
@@ -103,11 +114,14 @@ final class FakePracticeClient
       speechFeedbackAllowed: false,
     ),
     this.turnLimit = 3,
+    this.completionMode = PracticeCompletionMode.turnLimited,
     this.ieltsAssignment,
     PracticeSessionSnapshot? initialSnapshot,
   }) : _snapshot = initialSnapshot {
-    if (turnLimit < 1 ||
-        turnLimit > practiceTurnSafetyLimit ||
+    if ((completionMode == PracticeCompletionMode.turnLimited &&
+            (turnLimit < 1 || turnLimit > practiceTurnSafetyLimit)) ||
+        (completionMode == PracticeCompletionMode.userControlled &&
+            turnLimit != 0) ||
         (practiceExperience == PracticeExperience.ieltsSpeaking) !=
             (ieltsAssignment != null) ||
         (ieltsAssignment != null &&
@@ -123,6 +137,7 @@ final class FakePracticeClient
   final PracticeMode practiceMode;
   final PracticeCapabilities capabilities;
   final int turnLimit;
+  final PracticeCompletionMode completionMode;
   final IeltsPracticeAssignment? ieltsAssignment;
   int _generation = 0;
   int _messageSequence = 0;
@@ -174,6 +189,7 @@ final class FakePracticeClient
       sessionVersion: 1,
       completedTurns: 0,
       turnLimit: turnLimit,
+      completionMode: completionMode,
       sessionCompleted: false,
       ieltsAssignment: ieltsAssignment,
       currentQuestion: PracticeQuestion(
@@ -237,7 +253,9 @@ final class FakePracticeClient
     }
     final completedTurns = snapshot.completedTurns + 1;
     final nextSessionVersion = snapshot.sessionVersion + 1;
-    final completed = completedTurns == snapshot.turnLimit;
+    final completed =
+        snapshot.completionMode == PracticeCompletionMode.turnLimited &&
+        completedTurns == snapshot.turnLimit;
     final nextQuestion = completed
         ? null
         : PracticeQuestion(
@@ -260,6 +278,7 @@ final class FakePracticeClient
       ),
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,
+      completionMode: snapshot.completionMode,
       sessionCompleted: completed,
       practiceExperience: snapshot.practiceExperience,
       sceneCategory: snapshot.sceneCategory,
@@ -279,6 +298,7 @@ final class FakePracticeClient
       sessionVersion: nextSessionVersion,
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,
+      completionMode: snapshot.completionMode,
       sessionCompleted: completed,
       currentQuestion: nextQuestion,
     );
@@ -304,6 +324,45 @@ final class FakePracticeClient
     return PracticeSessionLifecycle(
       sessionId: sessionId,
       status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> complete({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    final generation = _generation;
+    await _wait(generation);
+    final snapshot = _snapshot;
+    if (snapshot == null ||
+        snapshot.sessionId != sessionId ||
+        snapshot.sessionVersion != expectedSessionVersion ||
+        snapshot.completionMode != PracticeCompletionMode.userControlled ||
+        snapshot.completedTurns < 1 ||
+        idempotencyKey.trim().isEmpty) {
+      throw StateError('Fake practice cannot be completed.');
+    }
+    _snapshot = PracticeSessionSnapshot(
+      sessionId: snapshot.sessionId,
+      planId: snapshot.planId,
+      practiceExperience: snapshot.practiceExperience,
+      sceneCategory: snapshot.sceneCategory,
+      practiceMode: snapshot.practiceMode,
+      capabilities: snapshot.capabilities,
+      sessionVersion: expectedSessionVersion + 1,
+      completedTurns: snapshot.completedTurns,
+      turnLimit: snapshot.turnLimit,
+      completionMode: snapshot.completionMode,
+      sessionCompleted: true,
+      currentTurn: snapshot.currentTurn,
+      turnHistory: snapshot.turnHistory,
+    );
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.completed,
       version: expectedSessionVersion + 1,
     );
   }

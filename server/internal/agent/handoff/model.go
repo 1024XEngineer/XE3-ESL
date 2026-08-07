@@ -65,7 +65,8 @@ func Validate(item Item) error {
 		!validText(item.PracticeScope, 200) ||
 		item.SuggestedDurationSeconds < 1 ||
 		item.MinEffectiveTurns < 1 ||
-		item.MaxEffectiveTurns < item.MinEffectiveTurns ||
+		(item.MaxEffectiveTurns != 0 &&
+			item.MaxEffectiveTurns < item.MinEffectiveTurns) ||
 		item.MaxEffectiveTurns > 100 ||
 		item.ExecutableStatus != PracticePlanReadyStatus ||
 		!validText(item.ConfirmationPrompt, 300) ||

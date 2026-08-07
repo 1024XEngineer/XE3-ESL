@@ -66,6 +66,7 @@ final class PracticeController extends ChangeNotifier
   PracticeCapabilities? _practiceCapabilities;
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
+  String? _completePracticeClientId;
   PracticeQuestion? _currentQuestion;
   PracticeQuestionTip? _questionTip;
   String? _questionTipRequestId;
@@ -85,6 +86,7 @@ final class PracticeController extends ChangeNotifier
   String? _errorMessage;
   int _completedTurns = 0;
   int _turnLimit = 0;
+  PracticeCompletionMode _completionMode = PracticeCompletionMode.turnLimited;
   bool _sessionCompleted = false;
   int _epoch = 0;
   int _practiceGeneration = 0;
@@ -214,10 +216,19 @@ final class PracticeController extends ChangeNotifier
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
+  PracticeCompletionMode get completionMode => _completionMode;
+  bool get canCompleteActivePractice =>
+      _completionMode == PracticeCompletionMode.userControlled &&
+      _completedTurns > 0 &&
+      hasActivePractice &&
+      !isBusy &&
+      !_disposed &&
+      _recordingState == PracticeRecordingState.idle;
   bool get isFinalSubmission =>
       _recordingState == PracticeRecordingState.submitting &&
       _speechFeedbackRetry == null &&
       !_sessionCompleted &&
+      _completionMode == PracticeCompletionMode.turnLimited &&
       _turnLimit > 0 &&
       _completedTurns + 1 == _turnLimit;
   bool get isBusy =>
@@ -300,7 +311,7 @@ final class PracticeController extends ChangeNotifier
         planId.trim().isEmpty ||
         scene.id.trim().isEmpty ||
         scene.name.trim().isEmpty ||
-        turnLimit < 1 ||
+        turnLimit < 0 ||
         turnLimit > practiceTurnSafetyLimit ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
@@ -594,6 +605,65 @@ final class PracticeController extends ChangeNotifier
                 error.kind == PracticeClientFailureKind.authenticationRequired
             ? '登录状态已失效，请重新登录后继续。'
             : '暂时无法结束当前练习，进度仍已保留，可以重试。';
+      }
+      return false;
+    } finally {
+      if (_isCurrent(fence.epoch)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<bool> completeActivePractice() async {
+    final practice = client;
+    final lifecycle = practice is PracticeCompletionClient
+        ? practice as PracticeCompletionClient
+        : null;
+    final sessionId = _practiceSessionId;
+    final sessionVersion = _practiceSessionVersion;
+    if (lifecycle == null ||
+        sessionId == null ||
+        sessionVersion == null ||
+        !canCompleteActivePractice) {
+      return false;
+    }
+    final fence = _captureOperationFence(practiceSessionId: sessionId);
+    final operationId = _completePracticeClientId ??= _newClientId(
+      'practice-complete',
+    );
+    _setBusy(true);
+    _errorMessage = null;
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final result = await lifecycle.complete(
+        sessionId: sessionId,
+        expectedSessionVersion: sessionVersion,
+        idempotencyKey: operationId,
+      );
+      if (!_isOperationCurrent(fence) ||
+          result.sessionId != sessionId ||
+          result.status != PracticeSessionLifecycleStatus.completed ||
+          result.version <= sessionVersion) {
+        throw StateError(
+          'Practice completion response did not match the session.',
+        );
+      }
+      _practiceSessionVersion = result.version;
+      _sessionCompleted = true;
+      _currentQuestion = null;
+      _recordingState = PracticeRecordingState.completed;
+      _completePracticeClientId = null;
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _errorMessage =
+            error is PracticeClientException &&
+                error.kind == PracticeClientFailureKind.authenticationRequired
+            ? '登录状态已失效，请重新登录后继续。'
+            : '暂时无法完成当前练习，进度仍已保留，可以重试。';
       }
       return false;
     } finally {
@@ -1529,9 +1599,11 @@ final class PracticeController extends ChangeNotifier
     _practiceCapabilities = confirmation.capabilities;
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
+    _completionMode = confirmation.completionMode;
     _sessionCompleted = confirmation.sessionCompleted;
     _practiceSessionVersion = confirmation.sessionVersion;
     _endPracticeClientId = null;
+    _completePracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _clearQuestionTip();
     final audioAssetId = confirmation.audioAssetId;
@@ -1691,6 +1763,7 @@ final class PracticeController extends ChangeNotifier
     _practiceCapabilities = null;
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
+    _completePracticeClientId = null;
     _currentQuestion = null;
     _clearQuestionTip();
     _candidate = null;
@@ -1704,6 +1777,7 @@ final class PracticeController extends ChangeNotifier
     _errorMessage = null;
     _completedTurns = 0;
     _turnLimit = 0;
+    _completionMode = PracticeCompletionMode.turnLimited;
     _sessionCompleted = false;
     _recordings = const <PracticeRecordingReference>[];
     _playingMediaKey = null;
@@ -1822,11 +1896,13 @@ final class PracticeController extends ChangeNotifier
       _practiceCapabilities = null;
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
+      _completePracticeClientId = null;
       _currentQuestion = null;
       _clearQuestionTip();
       _activeScene = null;
       _completedTurns = 0;
       _turnLimit = 0;
+      _completionMode = PracticeCompletionMode.turnLimited;
       _sessionCompleted = false;
       _recordings = const <PracticeRecordingReference>[];
       _practiceMessages = const <PracticeMessage>[];
@@ -1851,6 +1927,7 @@ final class PracticeController extends ChangeNotifier
     _clearQuestionTip();
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
+    _completionMode = snapshot.completionMode;
     _sessionCompleted = snapshot.sessionCompleted;
     final currentTurn = snapshot.currentTurn;
     final audioAssetId = currentTurn?.audioAssetId;
@@ -2089,9 +2166,12 @@ final class PracticeController extends ChangeNotifier
     if (snapshot.sessionId.trim().isEmpty ||
         snapshot.planId.trim().isEmpty ||
         snapshot.completedTurns < 0 ||
-        snapshot.turnLimit < 1 ||
-        snapshot.turnLimit > practiceTurnSafetyLimit ||
-        snapshot.completedTurns > snapshot.turnLimit ||
+        (snapshot.completionMode == PracticeCompletionMode.turnLimited &&
+            (snapshot.turnLimit < 1 ||
+                snapshot.turnLimit > practiceTurnSafetyLimit ||
+                snapshot.completedTurns > snapshot.turnLimit)) ||
+        (snapshot.completionMode == PracticeCompletionMode.userControlled &&
+            snapshot.turnLimit != 0) ||
         snapshot.sessionVersion < 1 ||
         (snapshot.practiceExperience == PracticeExperience.ieltsSpeaking) !=
             (snapshot.ieltsAssignment != null) ||
@@ -2250,9 +2330,13 @@ final class PracticeController extends ChangeNotifier
             confirmation.candidateId != expectedCandidateId) ||
         confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
-        confirmation.turnLimit < 1 ||
-        confirmation.turnLimit > practiceTurnSafetyLimit ||
-        confirmation.completedTurns > confirmation.turnLimit ||
+        confirmation.completionMode != _completionMode ||
+        (confirmation.completionMode == PracticeCompletionMode.turnLimited &&
+            (confirmation.turnLimit < 1 ||
+                confirmation.turnLimit > practiceTurnSafetyLimit ||
+                confirmation.completedTurns > confirmation.turnLimit)) ||
+        (confirmation.completionMode == PracticeCompletionMode.userControlled &&
+            confirmation.turnLimit != 0) ||
         confirmation.sessionVersion < 1 ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&

@@ -320,6 +320,45 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       ..showSnackBar(const SnackBar(content: Text('练习正在完成，请稍后重试。')));
   }
 
+  Future<void> _requestUserControlledCompletion() async {
+    final controller = widget.practiceController;
+    if (!mounted || !controller.canCompleteActivePractice) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('结束练习并复盘？'),
+        content: const Text('结束后将保存本次对话，并进入评分与复盘。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('继续练习'),
+          ),
+          FilledButton(
+            key: const Key('scenario-confirm-completion'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('结束并复盘'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    final completed = await controller.completeActivePractice();
+    if (!mounted) {
+      return;
+    }
+    if (completed) {
+      await _completePractice();
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('练习暂时无法结束，请稍后重试。')));
+  }
+
   Future<void> _submitText() async {
     await _runBoundedUserTurnAction(widget.onBeforeSubmitText);
     if (!mounted) {
@@ -470,6 +509,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                       onSpeakTip: _speakQuestionTip,
                       visibleTipQuestionId: _visibleTipQuestionId,
                       onPracticeCompleted: _completePractice,
+                      onCompleteRequested: _requestUserControlledCompletion,
                     );
                     if (landscape) {
                       return Row(
@@ -691,6 +731,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.onSpeakTip,
     required this.visibleTipQuestionId,
     required this.onPracticeCompleted,
+    required this.onCompleteRequested,
   });
 
   final PracticeController controller;
@@ -713,6 +754,7 @@ class _ConversationPanel extends StatelessWidget {
   final Future<void> Function() onSpeakTip;
   final String? visibleTipQuestionId;
   final VoidCallback onPracticeCompleted;
+  final VoidCallback onCompleteRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -727,6 +769,7 @@ class _ConversationPanel extends StatelessWidget {
             onReplayQuestion: onReplayQuestion,
             replayLoading: replayLoading,
             replayPlaying: replayPlaying,
+            onCompleteRequested: onCompleteRequested,
           ),
           Expanded(
             child: messages.isEmpty
@@ -840,6 +883,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.onReplayQuestion,
     required this.replayLoading,
     required this.replayPlaying,
+    required this.onCompleteRequested,
   });
 
   final PracticeController controller;
@@ -847,13 +891,14 @@ class _ConversationHeader extends StatelessWidget {
   final ScenarioAsyncAction? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
+  final VoidCallback onCompleteRequested;
 
   @override
   Widget build(BuildContext context) {
     final current =
         (controller.completedTurns +
                 (controller.currentQuestion?.isFollowUp == true ? 0 : 1))
-            .clamp(1, controller.turnLimit);
+            .clamp(1, controller.turnLimit == 0 ? 1 : controller.turnLimit);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       decoration: const BoxDecoration(
@@ -862,16 +907,27 @@ class _ConversationHeader extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: Text('对话', style: SpeakUpDesign.cardTitle)),
-          Flexible(
-            child: Text(
-              '第 $current 轮 · 共 ${controller.turnLimit} 轮',
-              key: const Key('scenario-turn-progress'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: SpeakUpDesign.meta,
+          if (controller.completionMode ==
+              PracticeCompletionMode.userControlled)
+            TextButton.icon(
+              key: const Key('scenario-complete-practice'),
+              onPressed: controller.canCompleteActivePractice
+                  ? onCompleteRequested
+                  : null,
+              icon: const Icon(Icons.stop_circle_outlined, size: 18),
+              label: const Text('结束练习并复盘'),
+            )
+          else
+            Flexible(
+              child: Text(
+                '第 $current 轮 · 共 ${controller.turnLimit} 轮',
+                key: const Key('scenario-turn-progress'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: SpeakUpDesign.meta,
+              ),
             ),
-          ),
           if (controller.practiceCapabilities?.questionTipsAllowed ??
               false) ...[
             const SizedBox(width: 8),

@@ -230,6 +230,7 @@ func sessionFixture() Session {
 		},
 		SessionVersion:             1,
 		TurnLimit:                  3,
+		CompletionMode:             practice.CompletionModeTurnLimited,
 		MaxFollowUpsPerQuestion:    1,
 		QuestionTranslationAllowed: true,
 		Status:                     "in_progress",

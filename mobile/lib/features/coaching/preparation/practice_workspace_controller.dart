@@ -1212,9 +1212,7 @@ final class _StoredPracticeWorkspace {
           (goalId != null && goalId is! String) ||
           (sessionId != null && sessionId is! String) ||
           (completedTurns != null &&
-              (completedTurns is! int ||
-                  completedTurns < 0 ||
-                  completedTurns > practiceTurnSafetyLimit)) ||
+              (completedTurns is! int || completedTurns < 0)) ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||

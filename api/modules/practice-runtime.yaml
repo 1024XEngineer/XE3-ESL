@@ -877,6 +877,7 @@ components:
         - session_version
         - effective_turns
         - turn_limit
+        - completion_mode
         - session_completed
         - practice_capabilities
       properties:
@@ -910,8 +911,14 @@ components:
           minimum: 0
         turn_limit:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 64
+          description: Zero when completion_mode is USER_CONTROLLED.
+        completion_mode:
+          type: string
+          enum:
+            - TURN_LIMITED
+            - USER_CONTROLLED
         session_completed:
           type: boolean
           description: |
@@ -928,13 +935,12 @@ components:
           $ref: '#/components/schemas/ConfirmedVoiceTurn'
         turn_history:
           type: array
-          maxItems: 256
           description: |
             Confirmed `EFFECTIVE` turns ordered by Question sequence. A
             `PRIMARY` Turn advances `effective_turns`; a `FOLLOW_UP` Turn keeps
-            the previous value. With the protocol safety limit of 64 primary
-            Questions and three follow-ups per Question, the projection is
-            bounded to 256 entries.
+            the previous value. USER_CONTROLLED Sessions may continue until
+            the learner explicitly completes them, so this projection has no
+            fixed round-count bound.
             `RETRY` turns are intentionally excluded so same-question practice
             cannot change the Session's current Question, latest effective
             checkpoint, or `effective_turns` history invariant. This projection
@@ -944,6 +950,22 @@ components:
           items:
             $ref: '#/components/schemas/VoiceTurnHistoryEntry'
       allOf:
+        - if:
+            properties:
+              completion_mode:
+                const: USER_CONTROLLED
+            required:
+              - completion_mode
+          then:
+            properties:
+              turn_limit:
+                type: integer
+                const: 0
+          else:
+            properties:
+              turn_limit:
+                type: integer
+                minimum: 1
         - if:
             properties:
               practice_experience:

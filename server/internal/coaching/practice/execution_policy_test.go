@@ -17,17 +17,19 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 	tests := []struct {
 		name        string
 		reference   string
+		completion  CompletionMode
+		maxTurns    int
 		retry       bool
 		translation bool
 		followUps   int
 		wantErr     error
 	}{
-		{"daily", DailyPracticeSessionPolicy, true, false, 1, nil},
-		{"workplace", WorkplacePracticeSessionPolicy, true, false, 1, nil},
-		{"interview", InterviewPracticeSessionPolicy, false, true, 3, nil},
-		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, false, true, 3, nil},
-		{"exam", ExamPracticeSessionPolicy, false, false, 1, nil},
-		{"unknown", "unknown.practice.session.v1", false, false, 0, ErrExecutionPolicyNotFound},
+		{"daily", DailyPracticeSessionPolicy, CompletionModeUserControlled, 0, true, false, 1, nil},
+		{"workplace", WorkplacePracticeSessionPolicy, CompletionModeUserControlled, 0, true, false, 1, nil},
+		{"interview", InterviewPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"exam", ExamPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, false, 1, nil},
+		{"unknown", "unknown.practice.session.v1", "", 0, false, false, 0, ErrExecutionPolicyNotFound},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -38,7 +40,9 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || policy.RetryAllowed != test.retry ||
+			if err != nil || policy.CompletionMode != test.completion ||
+				policy.MaxEffectiveTurns != test.maxTurns ||
+				policy.RetryAllowed != test.retry ||
 				policy.QuestionTranslationAllowed != test.translation ||
 				policy.MaxFollowUpsPerQuestion != test.followUps ||
 				!ValidSessionPolicy(

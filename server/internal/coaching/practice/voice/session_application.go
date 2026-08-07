@@ -31,6 +31,7 @@ type Session struct {
 	SessionVersion             int
 	EffectiveTurns             int
 	TurnLimit                  int
+	CompletionMode             practice.CompletionMode
 	MaxFollowUpsPerQuestion    int
 	QuestionTranslationAllowed bool
 	QuestionTipsAllowed        bool
@@ -350,10 +351,8 @@ func (application *SessionApplication) state(
 		!validVoiceTurnPolicy(session.TurnPolicyRef) ||
 		!validVoiceScenePrompt(session) ||
 		session.SessionVersion < 1 ||
-		session.TurnLimit < 1 ||
-		session.TurnLimit > practice.MaxPracticeTurns ||
 		session.EffectiveTurns < 0 ||
-		session.EffectiveTurns > session.TurnLimit ||
+		!validVoiceProgress(session) ||
 		!validVoiceSessionLifecycle(session) ||
 		session.FacilitatorParticipantID == "" ||
 		session.LearnerParticipantID == "" ||
@@ -535,20 +534,32 @@ func validVoiceScenePrompt(session Session) bool {
 }
 
 func validVoiceSessionLifecycle(session Session) bool {
+	turnAvailable := session.CompletionMode == practice.CompletionModeUserControlled ||
+		session.EffectiveTurns < session.TurnLimit
 	switch session.Status {
 	case "in_progress":
-		return !session.Completed &&
-			session.EffectiveTurns < session.TurnLimit
+		return !session.Completed && turnAvailable
 	case "paused":
-		return !session.Completed &&
-			session.EffectiveTurns < session.TurnLimit
+		return !session.Completed && turnAvailable
 	case "completed":
-		return session.Completed &&
-			session.EffectiveTurns > 0 &&
-			session.EffectiveTurns <= session.TurnLimit
+		return session.Completed && session.EffectiveTurns > 0 &&
+			(session.CompletionMode == practice.CompletionModeUserControlled ||
+				session.EffectiveTurns <= session.TurnLimit)
 	case "ended_early":
-		return !session.Completed &&
-			session.EffectiveTurns < session.TurnLimit
+		return !session.Completed && turnAvailable
+	default:
+		return false
+	}
+}
+
+func validVoiceProgress(session Session) bool {
+	switch session.CompletionMode {
+	case practice.CompletionModeUserControlled:
+		return session.TurnLimit == 0
+	case practice.CompletionModeTurnLimited:
+		return session.TurnLimit > 0 &&
+			session.TurnLimit <= practice.MaxPracticeTurns &&
+			session.EffectiveTurns <= session.TurnLimit
 	default:
 		return false
 	}

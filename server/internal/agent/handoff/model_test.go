@@ -25,6 +25,12 @@ func TestConfirmPracticePlanRequiresExactExecutablePlan(t *testing.T) {
 	if _, err := NewConfirmPracticePlan(invalid); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("duplicate roles error = %v, want ErrInvalid", err)
 	}
+
+	openEnded := validConfirmPracticePlan()
+	openEnded.MaxEffectiveTurns = 0
+	if _, err := NewConfirmPracticePlan(openEnded); err != nil {
+		t.Fatalf("open-ended plan error = %v", err)
+	}
 }
 
 func TestCloneItemsDoesNotShareRoles(t *testing.T) {

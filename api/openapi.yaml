@@ -219,6 +219,8 @@ paths:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1pause
   /v1/practice-sessions/{practice_session_id}/resume:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1resume
+  /v1/practice-sessions/{practice_session_id}/complete:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1complete
   /v1/practice-sessions/{practice_session_id}/end-early:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1end-early
   /v1/practice-sessions/{practice_session_id}/bootstrap:

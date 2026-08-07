@@ -392,9 +392,16 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
       'avatar_allowed',
       'speech_feedback_allowed',
     },
+    optional: const <String>{'completion_mode'},
   );
+  final completionMode = object['completion_mode'] == null
+      ? PreparationCompletionMode.turnLimited
+      : PreparationCompletionMode.fromWireValue(
+          _text(object['completion_mode'], maximumBytes: 32),
+        );
   final minimum = _version(object['min_effective_turns']);
-  final maximum = _version(object['max_effective_turns']);
+  final maximumValue = object['max_effective_turns'];
+  final maximum = maximumValue is int ? maximumValue : -1;
   final checkpoint = _version(object['coverage_checkpoint_turn']);
   final followUps = object['max_follow_ups_per_question'];
   final rule = _text(object['early_completion_rule'], maximumBytes: 128);
@@ -403,8 +410,12 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
   final questionTipsAllowed = object['question_tips_allowed'];
   final avatarAllowed = object['avatar_allowed'];
   final speechFeedbackAllowed = object['speech_feedback_allowed'];
-  if (minimum > checkpoint ||
-      checkpoint > maximum ||
+  if (completionMode == null ||
+      maximum < 0 ||
+      (completionMode == PreparationCompletionMode.turnLimited &&
+          (maximum < 1 || minimum > checkpoint || checkpoint > maximum)) ||
+      (completionMode == PreparationCompletionMode.userControlled &&
+          (maximum != 0 || checkpoint != 1)) ||
       followUps is! int ||
       followUps < 0 ||
       followUps > 3 ||
@@ -417,6 +428,7 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
     throw const PreparationWireFormatException();
   }
   return PreparationSessionPolicy(
+    completionMode: completionMode,
     suggestedDurationSeconds: _version(object['suggested_duration_seconds']),
     minEffectiveTurns: minimum,
     maxEffectiveTurns: maximum,

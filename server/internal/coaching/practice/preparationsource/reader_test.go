@@ -32,6 +32,10 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.InterviewPracticeSessionPolicy
 	plan.SessionPolicy.RetryAllowed = false
+	plan.SessionPolicy.CompletionMode = preparation.CompletionModeTurnLimited
+	plan.SessionPolicy.MinEffectiveTurns = 4
+	plan.SessionPolicy.MaxEffectiveTurns = 6
+	plan.SessionPolicy.CoverageCheckpointTurn = 4
 	plan.SessionPolicy.MaxFollowUpsPerQuestion = 3
 	plan.SessionPolicy.QuestionTranslationAllowed = true
 	plan.SessionPolicy.QuestionTipsAllowed = true
@@ -170,10 +174,11 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			PracticeOptionID: "option-selected",
 		},
 		SessionPolicy: preparation.SessionPolicy{
+			CompletionMode:           preparation.CompletionModeUserControlled,
 			SuggestedDurationSeconds: 600,
-			MinEffectiveTurns:        4,
-			MaxEffectiveTurns:        6,
-			CoverageCheckpointTurn:   4,
+			MinEffectiveTurns:        1,
+			MaxEffectiveTurns:        0,
+			CoverageCheckpointTurn:   1,
 			MaxFollowUpsPerQuestion:  1,
 			EarlyCompletionRule: preparation.
 				EarlyCompletionCoverageSatisfiedAfterCheckpoint,

@@ -1638,12 +1638,12 @@ assert.ok(
 );
 assert.ok(
   voiceSessionState?.properties?.turn_history,
-  'VoiceSessionState must expose the bounded cold-start Turn history.',
+  'VoiceSessionState must expose the cold-start Turn history.',
 );
 assert.equal(
   voiceSessionState.properties.turn_history.maxItems,
-  256,
-  'Turn history must allow 64 primary Questions with three follow-ups each.',
+  undefined,
+  'User-controlled Turn history must not impose a fixed round-count bound.',
 );
 assert.equal(
   voiceSessionState.properties.turn_limit.maximum,

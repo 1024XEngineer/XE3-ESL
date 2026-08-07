@@ -218,6 +218,40 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/complete:
+    post:
+      tags:
+        - Practice
+      summary: Complete a user-controlled practice session for Review
+      operationId: completePracticeSession
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionLifecycleCommand'
+            example:
+              expected_session_version: 8
+      responses:
+        '200':
+          description: The completed Session; repeating the same intent returns this state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSession'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}/snapshot:
     get:
       tags:

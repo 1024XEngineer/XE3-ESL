@@ -240,6 +240,115 @@ func TestContextRepositoryRejectsArchivedPlanAndConflictsByPlan(t *testing.T) {
 	}
 }
 
+func TestContextRepositoryCompletesUserControlledSessionIdempotently(
+	t *testing.T,
+) {
+	repository, pool := newContextRepository(t)
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	plan := createContextPlanForExperience(
+		t,
+		pool,
+		preparationpostgres.NewPostgresPlanRepository(pool),
+		owner,
+		"plan-user-complete",
+		scene.PracticeExperienceLifeAndTravel,
+	)
+	command := contextSessionCommand(
+		owner,
+		plan,
+		"session-user-complete",
+		"snapshot-user-complete",
+		"session-user-complete-key",
+	)
+	created, replayed, err := repository.CreateSession(
+		context.Background(),
+		owner.Actor,
+		command,
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateSession = (%#v,%t,%v)", created, replayed, err)
+	}
+	if created.Snapshot.SessionPolicy.CompletionMode !=
+		practice.CompletionModeUserControlled {
+		t.Fatalf(
+			"completion mode = %q, want %q",
+			created.Snapshot.SessionPolicy.CompletionMode,
+			practice.CompletionModeUserControlled,
+		)
+	}
+
+	startedVersion := created.Session.Version + 1
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE practice_sessions
+		SET status = 'in_progress',
+		    version = $3,
+		    effective_turns = 1,
+		    started_at = transaction_timestamp(),
+		    updated_at = transaction_timestamp()
+		WHERE owner_user_id = $1 AND session_id = $2
+	`, owner.Actor.UserID, created.Session.ID, startedVersion); err != nil {
+		t.Fatalf("start user-controlled Session fixture: %v", err)
+	}
+	completeIntent := practice.IdempotencyIntent{
+		Method:        "POST",
+		CanonicalPath: "/v1/practice-sessions/" + created.Session.ID + "/complete",
+		Key:           "session-complete-key",
+		PayloadFingerprint: sha256.Sum256(
+			[]byte("session-complete-payload"),
+		),
+	}
+	completeCommand := practice.TransitionSessionCommand{
+		SessionID:              created.Session.ID,
+		ExpectedSessionVersion: startedVersion,
+		Transition:             practice.SessionComplete,
+		Intent:                 completeIntent,
+	}
+	completed, replayed, err := repository.TransitionSession(
+		context.Background(),
+		owner.Actor,
+		completeCommand,
+	)
+	if err != nil || replayed || completed.Status != practice.SessionCompleted ||
+		completed.Version != startedVersion+1 ||
+		completed.EndReason != "USER_COMPLETED" {
+		t.Fatalf("complete Session = (%#v,%t,%v)", completed, replayed, err)
+	}
+
+	replayedSession, replayed, err := repository.TransitionSession(
+		context.Background(),
+		owner.Actor,
+		completeCommand,
+	)
+	if err != nil || !replayed || replayedSession.ID != completed.ID ||
+		replayedSession.Status != completed.Status ||
+		replayedSession.Version != completed.Version ||
+		replayedSession.EndReason != completed.EndReason {
+		t.Fatalf(
+			"replay complete Session = (%#v,%t,%v), want %#v",
+			replayedSession,
+			replayed,
+			err,
+			completed,
+		)
+	}
+	var resourceKind string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT resource_kind
+		FROM practice_idempotency_records
+		WHERE owner_user_id = $1
+		  AND canonical_path = $2
+		  AND idempotency_key = $3
+	`, owner.Actor.UserID, completeIntent.CanonicalPath, completeIntent.Key).Scan(
+		&resourceKind,
+	); err != nil {
+		t.Fatalf("read completion idempotency record: %v", err)
+	}
+	if resourceKind != string(practice.SessionComplete) {
+		t.Fatalf("completion resource kind = %q", resourceKind)
+	}
+}
+
 func TestContextRepositoryPersistsCanonicalParticipantRoles(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	owner := contextOwnerA()
@@ -425,6 +534,25 @@ func createContextPlan(
 	planID string,
 ) preparation.PracticePlan {
 	t.Helper()
+	return createContextPlanForExperience(
+		t,
+		pool,
+		repository,
+		owner,
+		planID,
+		"",
+	)
+}
+
+func createContextPlanForExperience(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	repository *preparationpostgres.PostgresPlanRepository,
+	owner contextOwnerFixture,
+	planID string,
+	experience scene.PracticeExperience,
+) preparation.PracticePlan {
+	t.Helper()
 	catalog, err := scene.NewPostgresCatalog(
 		pool,
 		scoring.NewEvaluationPolicyRegistry(),
@@ -437,6 +565,19 @@ func createContextPlan(
 		t.Fatalf("ListActive Scenes = (%d,%v)", len(definitions), err)
 	}
 	definition := definitions[0]
+	if experience != "" {
+		found := false
+		for _, candidate := range definitions {
+			if candidate.Experience == experience {
+				definition = candidate
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("seeded Scenes lack experience %q", experience)
+		}
+	}
 	if len(definition.Roles) == 0 || len(definition.PracticeOptions) == 0 {
 		t.Fatal("seeded Scene lacks selectable roles/options")
 	}

@@ -1072,15 +1072,24 @@ func ValidPracticeObjectives(objectives []PracticeObjective) bool {
 }
 
 func validStoredSessionPolicy(policy SessionPolicy) bool {
-	return policy.SuggestedDurationSeconds > 0 &&
-		policy.MinEffectiveTurns > 0 &&
+	completionMode := NormalizeCompletionMode(policy.CompletionMode)
+	if policy.SuggestedDurationSeconds < 1 ||
+		policy.MinEffectiveTurns < 1 ||
+		policy.CoverageCheckpointTurn < 1 ||
+		policy.MaxFollowUpsPerQuestion < 0 ||
+		policy.EarlyCompletionRule !=
+			EarlyCompletionCoverageSatisfiedAfterCheckpoint {
+		return false
+	}
+	if completionMode == CompletionModeUserControlled {
+		return policy.MaxEffectiveTurns == 0 &&
+			policy.CoverageCheckpointTurn == 1
+	}
+	return completionMode == CompletionModeTurnLimited &&
 		policy.MaxEffectiveTurns >= policy.MinEffectiveTurns &&
 		policy.MaxEffectiveTurns <= maxPlanEffectiveTurns &&
-		policy.CoverageCheckpointTurn > 0 &&
 		policy.CoverageCheckpointTurn <= policy.MaxEffectiveTurns &&
-		policy.MaxFollowUpsPerQuestion >= 0 &&
-		policy.EarlyCompletionRule ==
-			EarlyCompletionCoverageSatisfiedAfterCheckpoint
+		policy.MaxEffectiveTurns > 0
 }
 
 func ValidStoredSessionPolicy(policy SessionPolicy) bool {

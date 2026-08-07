@@ -550,6 +550,26 @@ func (r *Repository) TransitionSession(
 	if session.Version != command.ExpectedSessionVersion {
 		return practice.Session{}, false, practice.ErrConflict
 	}
+	if command.Transition == practice.SessionComplete {
+		if session.EffectiveTurns < 1 {
+			return practice.Session{}, false, practice.ErrConflict
+		}
+		var snapshotDocument []byte
+		if err := tx.QueryRow(ctx, `
+			SELECT snapshot_document
+			FROM practice_session_snapshots
+			WHERE owner_user_id = $1 AND session_id = $2
+		`, actor.UserID, command.SessionID).Scan(&snapshotDocument); err != nil {
+			return practice.Session{}, false, classifyContextWriteError(
+				"read completion policy", err,
+			)
+		}
+		snapshot, err := decodeContextSnapshot(snapshotDocument)
+		if err != nil || snapshot.SessionPolicy.CompletionMode !=
+			practice.CompletionModeUserControlled {
+			return practice.Session{}, false, practice.ErrConflict
+		}
+	}
 	nextStatus, allowed := contextTransitionStatus(
 		session.Status,
 		command.Transition,
@@ -560,10 +580,14 @@ func (r *Repository) TransitionSession(
 	startedAtExpression := "started_at"
 	completedAtExpression := "NULL"
 	endReasonExpression := "NULL"
-	if command.Transition == practice.SessionEndEarly {
+	if command.Transition == practice.SessionEndEarly ||
+		command.Transition == practice.SessionComplete {
 		startedAtExpression = "COALESCE(started_at, transaction_timestamp())"
 		completedAtExpression = "transaction_timestamp()"
 		endReasonExpression = "'USER_ENDED'"
+		if command.Transition == practice.SessionComplete {
+			endReasonExpression = "'USER_COMPLETED'"
+		}
 	}
 	query := fmt.Sprintf(`
 		UPDATE practice_sessions
@@ -1182,6 +1206,7 @@ func validTransitionCommand(
 		command.ExpectedSessionVersion > 0 && validContextIntent(command.Intent) &&
 		(command.Transition == practice.SessionPause ||
 			command.Transition == practice.SessionResume ||
+			command.Transition == practice.SessionComplete ||
 			command.Transition == practice.SessionEndEarly)
 }
 
@@ -1196,6 +1221,10 @@ func contextTransitionStatus(
 	case practice.SessionResume:
 		return practice.SessionInProgress,
 			current == practice.SessionPaused
+	case practice.SessionComplete:
+		return practice.SessionCompleted,
+			current == practice.SessionInProgress ||
+				current == practice.SessionPaused
 	case practice.SessionEndEarly:
 		return practice.SessionEndedEarly,
 			current == practice.SessionStarting ||

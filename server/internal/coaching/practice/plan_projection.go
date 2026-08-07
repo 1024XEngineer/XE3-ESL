@@ -248,10 +248,25 @@ type EarlyCompletionRule string
 
 const EarlyCompletionCoverageSatisfiedAfterCheckpoint EarlyCompletionRule = "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
 
+type CompletionMode string
+
+const (
+	CompletionModeTurnLimited    CompletionMode = "TURN_LIMITED"
+	CompletionModeUserControlled CompletionMode = "USER_CONTROLLED"
+)
+
+func NormalizeCompletionMode(value CompletionMode) CompletionMode {
+	if value == "" {
+		return CompletionModeTurnLimited
+	}
+	return value
+}
+
 // SessionPolicy is Practice's frozen progression policy. RetryAllowed is a
 // concrete value projected once at Session creation; runtime code never
 // infers it again from Scene family or model.
 type SessionPolicy struct {
+	CompletionMode             CompletionMode      `json:"completion_mode"`
 	SuggestedDurationSeconds   int                 `json:"suggested_duration_seconds"`
 	MinEffectiveTurns          int                 `json:"min_effective_turns"`
 	MaxEffectiveTurns          int                 `json:"max_effective_turns"`

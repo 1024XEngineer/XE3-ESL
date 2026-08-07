@@ -97,6 +97,56 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('hides round progress and lets open scenarios finish manually', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final scene = testScene(
+      id: 'daily-open-practice',
+      experience: PracticeExperience.lifeAndTravel,
+      category: SceneCategory.lifeTravel,
+      name: 'Open travel practice',
+    );
+    final controller = PracticeController(
+      client: FakePracticeClient(
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
+        completionMode: PracticeCompletionMode.userControlled,
+        turnLimit: 0,
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: scene,
+      sessionId: 'session-open-scenario',
+      planId: testPracticePlanId('session-open-scenario'),
+      practiceMode: scene.practiceOptions.first.mode,
+      turnLimit: 0,
+      clientOperationId: 'activate-open-scenario',
+    );
+    await controller.submitPracticeText('I would like to check in.');
+
+    await tester.pumpWidget(
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('scenario-turn-progress')), findsNothing);
+    expect(find.byKey(const Key('scenario-complete-practice')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('scenario-complete-practice')));
+    await tester.pumpAndSettle();
+    expect(find.text('结束练习并复盘？'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('scenario-confirm-completion')));
+    await tester.pumpAndSettle();
+
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(controller.currentQuestion, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('hides the duplicate avatar subtitle for interviews', (
     tester,
   ) async {

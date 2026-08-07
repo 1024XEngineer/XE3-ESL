@@ -987,6 +987,9 @@ func validCompletedEvidenceSession(
 	session practice.Session,
 	snapshot practice.SessionSnapshot,
 ) bool {
+	completionMode := practice.NormalizeCompletionMode(
+		snapshot.SessionPolicy.CompletionMode,
+	)
 	option, optionErr := snapshot.SceneSelection.PracticeOption()
 	if session.ID != practiceSessionID ||
 		session.Status != practice.SessionCompleted ||
@@ -1011,10 +1014,16 @@ func validCompletedEvidenceSession(
 		!validIdentifier(snapshot.Preparation.ID) ||
 		!validIdentifier(snapshot.Preparation.SourceProfileID) ||
 		snapshot.Preparation.SourceVersion < 1 ||
-		snapshot.SessionPolicy.MaxEffectiveTurns < session.EffectiveTurns ||
 		snapshot.SessionPolicy.MinEffectiveTurns < 1 ||
-		snapshot.SessionPolicy.MinEffectiveTurns >
-			snapshot.SessionPolicy.MaxEffectiveTurns ||
+		(completionMode == practice.CompletionModeTurnLimited &&
+			(snapshot.SessionPolicy.MaxEffectiveTurns < session.EffectiveTurns ||
+				snapshot.SessionPolicy.MinEffectiveTurns >
+					snapshot.SessionPolicy.MaxEffectiveTurns)) ||
+		(completionMode == practice.CompletionModeUserControlled &&
+			(snapshot.SessionPolicy.MaxEffectiveTurns != 0 ||
+				snapshot.SessionPolicy.CoverageCheckpointTurn != 1)) ||
+		(completionMode != practice.CompletionModeTurnLimited &&
+			completionMode != practice.CompletionModeUserControlled) ||
 		option.EvaluationPolicyRef != session.EvaluationPolicyRef {
 		return false
 	}

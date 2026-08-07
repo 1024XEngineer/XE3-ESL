@@ -673,7 +673,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			EffectiveTurns:      2,
 			StartedAt:           &started,
 			EndedAt:             &ended,
-			EndReason:           "COVERAGE_SATISFIED_AT_CHECKPOINT",
+			EndReason:           "USER_COMPLETED",
 			CreatedAt:           started,
 		},
 		snapshot: practice.SessionSnapshot{
@@ -800,9 +800,10 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				},
 			},
 			SessionPolicy: practice.SessionPolicy{
+				CompletionMode:           practice.CompletionModeUserControlled,
 				SuggestedDurationSeconds: 300,
 				MinEffectiveTurns:        1,
-				MaxEffectiveTurns:        3,
+				MaxEffectiveTurns:        0,
 				CoverageCheckpointTurn:   1,
 				MaxFollowUpsPerQuestion:  1,
 				EarlyCompletionRule: practice.
