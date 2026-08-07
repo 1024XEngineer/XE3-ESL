@@ -125,7 +125,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 	})
 }
 
-func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
+func TestQuestionAdapterUsesFrozenPreparationContext(t *testing.T) {
 	repository := newTurnPolicyQuestionRepository()
 	generator := &turnPolicyQuestionGenerator{
 		response: "Dad, what brings you to the store today?",
@@ -133,11 +133,11 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 	session := sessionFixture()
 	session.TurnPolicyRef = practice.GenericPracticeTurnPolicy
 	session.ScenarioContext = &practice.ScenarioPreparationContext{
-		Situation:          "Discuss a return at the store.",
-		UserRole:           "店员爸爸",
-		CounterpartRole:    "店员",
-		Goal:               "Resolve the return request.",
-		CounterpartPersona: "A helpful store assistant.",
+		Situation:          "Report project progress to a direct manager.",
+		UserRole:           "项目负责人",
+		CounterpartRole:    "项目负责人的男朋友",
+		Goal:               "Explain status, risks, and the requested decision.",
+		CounterpartPersona: "A direct manager who asks for evidence.",
 	}
 
 	_, err := (&questionAdapter{
@@ -147,11 +147,52 @@ func TestQuestionAdapterUsesFrozenScenarioPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureQuestion: %v", err)
 	}
-	if !strings.Contains(generator.request.SystemPrompt, "known role and identity") ||
-		!strings.Contains(generator.request.UserPrompt, `"user_role":"店员爸爸"`) ||
-		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"店员"`) ||
-		strings.Contains(generator.request.SystemPrompt, "店员爸爸") {
-		t.Fatalf("scenario generation request = %#v", generator.request)
+	if generator.request.SystemPrompt != preparationContextQuestionSystemPrompt ||
+		!strings.Contains(generator.request.SystemPrompt, "Respond only in English.") ||
+		!strings.Contains(generator.request.UserPrompt, `"situation":"Report project progress to a direct manager."`) ||
+		!strings.Contains(generator.request.UserPrompt, `"user_role":"项目负责人"`) ||
+		!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"项目负责人的男朋友"`) ||
+		!strings.Contains(generator.request.UserPrompt, `"goal":"Explain status, risks, and the requested decision."`) ||
+		!strings.Contains(generator.request.UserPrompt, `"counterpart_persona":"A direct manager who asks for evidence."`) ||
+		!strings.Contains(generator.request.UserPrompt, "Confirmed preparation context JSON") ||
+		!strings.Contains(generator.request.UserPrompt, "Scene focus areas (secondary; adapt if conflicting)") ||
+		!strings.Contains(generator.request.UserPrompt, "Scene turn blueprint (secondary; adapt if conflicting)") ||
+		strings.Contains(generator.request.SystemPrompt, "项目负责人的男朋友") {
+		t.Fatalf("preparation context generation request = %#v", generator.request)
+	}
+}
+
+func TestGeneratedPoliciesUsePreparationContextAuthority(t *testing.T) {
+	for _, reference := range []string{
+		practice.GenericPracticeTurnPolicy,
+		practice.DailyHotelCheckinIssueTurnPolicy,
+		practice.WorkplaceProgressRiskUpdateTurnPolicy,
+	} {
+		t.Run(reference, func(t *testing.T) {
+			repository := newTurnPolicyQuestionRepository()
+			generator := &turnPolicyQuestionGenerator{response: "What would you like to discuss?"}
+			session := sessionFixture()
+			session.TurnPolicyRef = reference
+			session.ScenarioContext = &practice.ScenarioPreparationContext{
+				Situation:          "A private conversation unrelated to the default Scene.",
+				UserRole:           "the learner's sibling",
+				CounterpartRole:    "the learner's older brother",
+				Goal:               "Resolve a family misunderstanding.",
+				CounterpartPersona: "Direct and evidence-seeking like the default manager.",
+			}
+
+			_, err := (&questionAdapter{
+				repository: repository,
+				generator:  generator,
+			}).EnsureQuestion(context.Background(), persistenceRequestActor(), session, 1)
+			if err != nil {
+				t.Fatalf("EnsureQuestion: %v", err)
+			}
+			if generator.request.SystemPrompt != preparationContextQuestionSystemPrompt ||
+				!strings.Contains(generator.request.UserPrompt, `"counterpart_role":"the learner's older brother"`) {
+				t.Fatalf("preparation context authority request = %#v", generator.request)
+			}
+		})
 	}
 }
 
