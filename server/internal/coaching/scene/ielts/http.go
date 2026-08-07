@@ -29,7 +29,7 @@ func (handler *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 }
 
 func (handler *HTTPHandler) getQuestionBank(c *gin.Context) {
-	bank, err := handler.bank.QuestionBank()
+	bank, err := handler.bank.QuestionBank(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{

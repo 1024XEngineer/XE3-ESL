@@ -59,7 +59,6 @@ class PreparationPage extends StatefulWidget {
 class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
   _PracticeHub? _selectedHub;
-  PracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _scenarioFormVisible = false;
   bool _scenarioReplaceCurrentPractice = false;
@@ -154,7 +153,6 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     setState(() {
       _selectedHub = _PracticeHub.ielts;
-      _selectedIeltsSection = request.mode;
     });
     final selection = request.selection;
     if (selection != null) {
@@ -227,7 +225,6 @@ class _PreparationPageState extends State<PreparationPage> {
       catalog.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
         _scenarioFormVisible = false;
       });
@@ -254,7 +251,6 @@ class _PreparationPageState extends State<PreparationPage> {
       catalog?.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
         _scenarioFormVisible = false;
       });
@@ -347,28 +343,10 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationController controller,
     SceneDefinition scene,
   ) async {
-    final ielts = widget.ieltsController;
-    if (ielts == null) {
-      throw StateError('IELTS controller is required for IELTS practice.');
-    }
-    await ielts.loadIfNeeded();
-    if (!mounted) {
-      return;
-    }
-    final selection = ielts.randomFullMockSelection();
-    if (selection == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(ielts.errorMessage ?? '雅思口语题库暂时不可用，请稍后重试。')),
-        );
-      return;
-    }
     await _startSceneDirectly(
       controller,
       scene,
       practiceMode: PracticeMode.fullMock,
-      ieltsSelection: selection,
     );
   }
 
@@ -668,12 +646,7 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildHub(PreparationController controller, _PracticeHub hub) {
     final scenes = _scenesForHub(controller.scenes, hub);
     final ielts = widget.ieltsController;
-    final ieltsSection = hub == _PracticeHub.ielts
-        ? _selectedIeltsSection
-        : null;
-    final routeKey = hub == _PracticeHub.ielts
-        ? (ieltsSection == null ? 'ielts-modes' : 'ielts-${ieltsSection.name}')
-        : hub.name;
+    final routeKey = hub.name;
     return ListView(
       key: Key('preparation-hub-list-$routeKey'),
       primary: false,
@@ -689,11 +662,7 @@ class _PreparationPageState extends State<PreparationPage> {
             key: const Key('preparation-back-to-families'),
             tooltip: '返回场景练习',
             onPressed: () => setState(() {
-              if (ieltsSection != null) {
-                _selectedIeltsSection = null;
-              } else {
-                _selectedHub = null;
-              }
+              _selectedHub = null;
             }),
             icon: const Icon(Icons.arrow_back_rounded),
             color: PreparationDesign.ink,
@@ -719,34 +688,21 @@ class _PreparationPageState extends State<PreparationPage> {
             ),
           )
         else if (hub == _PracticeHub.ielts)
-          if (ieltsSection == null)
-            IeltsCatalog(
-              scenes: scenes,
-              onFullMockPressed: (scene) =>
-                  unawaited(_startIeltsFullMock(controller, scene)),
-              onPartPressed: (scene, mode) {
-                if (ielts == null) {
-                  throw StateError('IELTS controller is not configured.');
-                }
-                setState(() => _selectedIeltsSection = mode);
-                unawaited(ielts.loadIfNeeded());
-              },
-            )
-          else
-            IeltsSetCatalog(
-              controller: ielts!,
-              mode: ieltsSection,
-              scene: ieltsSceneForMode(scenes, ieltsSection),
-              onRetry: ielts.retryLoad,
-              onSelectionPressed: (scene, selection) => unawaited(
-                _startSceneDirectly(
-                  controller,
-                  scene,
-                  practiceMode: ieltsSection,
-                  ieltsSelection: selection,
-                ),
+          IeltsCatalog(
+            controller: ielts!,
+            scenes: scenes,
+            onFullMockPressed: (scene) =>
+                unawaited(_startIeltsFullMock(controller, scene)),
+            onRetry: ielts.retryLoad,
+            onSelectionPressed: (scene, mode, selection) => unawaited(
+              _startSceneDirectly(
+                controller,
+                scene,
+                practiceMode: mode,
+                ieltsSelection: selection,
               ),
-            )
+            ),
+          )
         else
           ScenarioCatalog(
             title: _practiceHubLabel(hub),

@@ -211,7 +211,7 @@ func run() int {
 		logger.Error("Scene catalog startup failed", slog.Any("error", err))
 		return 1
 	}
-	ieltsQuestionBank, err := ielts.NewBank()
+	ieltsQuestionBank, err := ielts.NewPostgresStore(databasePool.Native())
 	if err != nil {
 		logger.Error("IELTS question bank startup failed", slog.Any("error", err))
 		return 1

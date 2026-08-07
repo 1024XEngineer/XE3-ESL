@@ -332,15 +332,18 @@ func validPreviewIELTSSelection(
 	mode scene.PracticeMode,
 	selection *preparation.IELTSQuestionSelection,
 ) bool {
-	if selection == nil {
-		return false
-	}
 	switch mode {
 	case scene.PracticeModeFullMock:
-		return selection.Part1SetID != "" && selection.TopicGroupID != ""
+		return selection == nil
 	case scene.PracticeModePart1:
+		if selection == nil {
+			return false
+		}
 		return selection.Part1SetID != "" && selection.TopicGroupID == ""
 	case scene.PracticeModePart2, scene.PracticeModePart3:
+		if selection == nil {
+			return false
+		}
 		return selection.Part1SetID == "" && selection.TopicGroupID != ""
 	default:
 		return false

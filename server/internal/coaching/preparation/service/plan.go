@@ -210,6 +210,7 @@ func (s *PlanService) CreatePlan(
 		return PracticePlan{}, false, ErrPlanConflict
 	}
 	selection, ieltsAssignment, err := freezeIELTSAssignment(
+		ctx,
 		s.ielts,
 		selection,
 		request.IELTSSelection,
@@ -346,6 +347,7 @@ func (s *PlanService) RevisePlan(
 		return PracticePlan{}, false, err
 	}
 	selection, ieltsAssignment, err := freezeIELTSAssignment(
+		ctx,
 		s.ielts,
 		selection,
 		request.IELTSSelection,
@@ -537,6 +539,7 @@ func selectionMatchesCreateRequest(
 }
 
 func freezeIELTSAssignment(
+	ctx context.Context,
 	questions ielts.QuestionSetResolver,
 	selection scene.SelectionSnapshot,
 	request *IELTSQuestionSelection,
@@ -555,17 +558,33 @@ func freezeIELTSAssignment(
 	}
 	mode, validMode := ieltsPracticeMode(option.Mode)
 	if selection.Scene.Category != scene.SceneCategoryIELTSSpeaking ||
-		!validMode || request == nil ||
-		!validIELTSQuestionSelection(option.Mode, *request) {
+		!validMode {
 		return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 	}
-	resolved, err := questions.ResolveQuestionSet(
-		ielts.QuestionSetSelection{
-			Mode:         mode,
-			Part1SetID:   request.Part1SetID,
-			TopicGroupID: request.TopicGroupID,
-		},
-	)
+	var resolved ielts.ResolvedQuestionSet
+	var effectiveSelection IELTSQuestionSelection
+	if request == nil {
+		if option.Mode != scene.PracticeModeFullMock {
+			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
+		}
+		resolved, err = questions.AssignQuestionSet(ctx, mode)
+		if err == nil {
+			effectiveSelection = ieltsSelectionFromResolved(resolved)
+		}
+	} else {
+		if !validIELTSQuestionSelection(option.Mode, *request) {
+			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
+		}
+		effectiveSelection = *request
+		resolved, err = questions.ResolveQuestionSet(
+			ctx,
+			ielts.QuestionSetSelection{
+				Mode:         mode,
+				Part1SetID:   request.Part1SetID,
+				TopicGroupID: request.TopicGroupID,
+			},
+		)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, ielts.ErrQuestionSetNotFound):
@@ -576,7 +595,7 @@ func freezeIELTSAssignment(
 			return scene.SelectionSnapshot{}, nil, err
 		}
 	}
-	if !validResolvedIELTSQuestionSet(option.Mode, *request, resolved) {
+	if !validResolvedIELTSQuestionSet(option.Mode, effectiveSelection, resolved) {
 		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
 	}
 
@@ -606,6 +625,21 @@ func freezeIELTSAssignment(
 		return scene.SelectionSnapshot{}, nil, ErrPlanConflict
 	}
 	return selection, assignment, nil
+}
+
+func ieltsSelectionFromResolved(
+	resolved ielts.ResolvedQuestionSet,
+) IELTSQuestionSelection {
+	var selection IELTSQuestionSelection
+	for _, part := range resolved.Parts {
+		switch part.Part {
+		case ielts.PracticeModePart1:
+			selection.Part1SetID = part.SourceID
+		case ielts.PracticeModePart2, ielts.PracticeModePart3:
+			selection.TopicGroupID = part.SourceID
+		}
+	}
+	return selection
 }
 
 func ieltsPracticeMode(mode scene.PracticeMode) (ielts.PracticeMode, bool) {
