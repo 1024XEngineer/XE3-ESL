@@ -13,6 +13,7 @@ import (
 func TestResolveTurnPolicyUsesExactRegisteredReference(t *testing.T) {
 	tests := map[string]practice.TurnPolicyKind{
 		practice.GenericPracticeTurnPolicy:             practice.TurnPolicyGenerated,
+		practice.InterviewPracticeTurnPolicy:           practice.TurnPolicyInterview,
 		practice.DailyHotelCheckinIssueTurnPolicy:      practice.TurnPolicyGenerated,
 		practice.WorkplaceProgressRiskUpdateTurnPolicy: practice.TurnPolicyGenerated,
 		practice.InterviewProjectDeepDiveTurnPolicy:    practice.TurnPolicyInterview,

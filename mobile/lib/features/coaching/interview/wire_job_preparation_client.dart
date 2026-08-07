@@ -351,6 +351,17 @@ final class WireJobPreparationClient implements JobPreparationClient {
   }
 
   @override
+  Future<void> deletePlan(String planId) async {
+    _requireResourceId(planId);
+    await _request(
+      method: 'DELETE',
+      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}',
+      acceptedStatuses: const <int>{HttpStatus.noContent},
+      stage: JobPreparationOperationStage.plan,
+    );
+  }
+
+  @override
   Future<PracticePlan> getPlan(String planId) async {
     _requireResourceId(planId);
     final response = await _request(
@@ -368,6 +379,23 @@ final class WireJobPreparationClient implements JobPreparationClient {
       throw _invalidResponse(JobPreparationOperationStage.plan);
     }
     return plan;
+  }
+
+  @override
+  Future<List<PracticePlanSummary>> listPlans({
+    required PracticeExperience experience,
+  }) async {
+    final response = await _request(
+      method: 'GET',
+      path: '/v1/practice-plans?practice_experience=${experience.wireValue}',
+      acceptedStatuses: const <int>{HttpStatus.ok},
+      stage: JobPreparationOperationStage.plan,
+    );
+    return _decodeResponse(
+      response,
+      stage: JobPreparationOperationStage.plan,
+      decode: _decodePracticePlanList,
+    );
   }
 
   @override
@@ -453,8 +481,8 @@ final class WireJobPreparationClient implements JobPreparationClient {
     String? idempotencyKey,
     Map<String, Object?>? body,
   }) async {
-    if ((method == 'GET') != (body == null) ||
-        (method == 'GET') != (idempotencyKey == null)) {
+    final bodyless = method == 'GET' || method == 'DELETE';
+    if (bodyless != (body == null) || bodyless != (idempotencyKey == null)) {
       throw JobPreparationException(
         kind: JobPreparationFailureKind.invalidRequest,
         stage: stage,
@@ -819,6 +847,7 @@ JobTargetCandidate _jobTargetCandidate(Object? value) {
       'scope_notice',
       'catalog_recommendation',
     },
+    optional: const <String>{'company'},
   );
   if (utf8.encode(jsonEncode(object)).length > 64 * 1024) {
     throw _invalidResponse();
@@ -847,6 +876,7 @@ JobTargetCandidate _jobTargetCandidate(Object? value) {
     source: source,
     generalAdviceOnly: generalAdviceOnly,
     jobTitle: _text(object['job_title'], maxBytes: 512),
+    company: _optionalText(object, 'company', maxBytes: 512) ?? '',
     seniority: _text(object['seniority'], maxBytes: 256),
     responsibilities: _candidateItems(object['responsibilities']),
     coreSkills: _candidateItems(object['core_skills']),
@@ -867,6 +897,89 @@ PracticePlan _decodePracticePlan(String body) => decodePracticePlanBody(
   decodeJobTargetInput: _jobTargetInput,
   decodeJobTargetCandidate: _jobTargetCandidate,
 );
+
+List<PracticePlanSummary> _decodePracticePlanList(String body) {
+  final root = _object(
+    _decodeJson(body),
+    required: const <String>{'practice_plans'},
+  );
+  final values = root['practice_plans'];
+  if (values is! List<Object?> || values.length > 100) {
+    throw _invalidResponse();
+  }
+  return List<PracticePlanSummary>.unmodifiable(
+    values.map((value) {
+      final object = _object(
+        value,
+        required: const <String>{
+          'practice_plan_id',
+          'plan_revision',
+          'practice_plan_status',
+          'practice_experience',
+          'scene_name',
+          'practice_scope',
+          'job_title',
+          'practice_objectives',
+          'resume_used',
+          'suggested_duration_seconds',
+          'min_effective_turns',
+          'max_effective_turns',
+          'created_at',
+          'updated_at',
+        },
+      );
+      final experience = PracticeExperience.fromWireValue(
+        _text(object['practice_experience'], maxBytes: 32),
+      );
+      final objectiveValues = object['practice_objectives'];
+      if (experience == null ||
+          objectiveValues is! List<Object?> ||
+          objectiveValues.isEmpty ||
+          objectiveValues.length > 64 ||
+          object['resume_used'] is! bool) {
+        throw _invalidResponse();
+      }
+      final jobTitleValue = object['job_title'];
+      if (jobTitleValue is! String ||
+          jobTitleValue.trim() != jobTitleValue ||
+          jobTitleValue.contains('\u0000') ||
+          utf8.encode(jobTitleValue).length > 512) {
+        throw _invalidResponse();
+      }
+      int positiveInt(String key) {
+        final value = object[key];
+        if (value is! int || value < 1) {
+          throw _invalidResponse();
+        }
+        return value;
+      }
+
+      return PracticePlanSummary(
+        id: _resourceId(object['practice_plan_id']),
+        revision: _version(object['plan_revision']),
+        status: switch (_enumText(object['practice_plan_status'], const {
+          'ready',
+        })) {
+          'ready' => PracticePlanStatus.ready,
+          _ => throw _invalidResponse(),
+        },
+        experience: experience,
+        sceneName: _text(object['scene_name'], maxBytes: 512),
+        practiceScope: _text(object['practice_scope'], maxBytes: 512),
+        jobTitle: jobTitleValue,
+        practiceObjectives: List<String>.unmodifiable(
+          objectiveValues.map((item) => _text(item, maxBytes: 2048)),
+        ),
+        resumeUsed: object['resume_used']! as bool,
+        suggestedDurationSeconds: positiveInt('suggested_duration_seconds'),
+        minEffectiveTurns: positiveInt('min_effective_turns'),
+        maxEffectiveTurns: positiveInt('max_effective_turns'),
+        createdAt: _dateTime(object['created_at']),
+        updatedAt: _dateTime(object['updated_at']),
+      );
+    }),
+  );
+}
 
 RoleDefinition _preparationRole(Object? value) {
   try {
@@ -1153,6 +1266,7 @@ bool _sameCandidate(JobTargetCandidate left, JobTargetCandidate right) {
   return left.source == right.source &&
       left.generalAdviceOnly == right.generalAdviceOnly &&
       left.jobTitle == right.jobTitle &&
+      left.company == right.company &&
       left.seniority == right.seniority &&
       _sameStrings(left.responsibilities, right.responsibilities) &&
       _sameStrings(left.coreSkills, right.coreSkills) &&
@@ -1393,6 +1507,7 @@ Map<String, Object?> _jobTargetCandidateJson(JobTargetCandidate candidate) {
     'source': candidate.source.wireValue,
     'general_advice_only': candidate.generalAdviceOnly,
     'job_title': candidate.jobTitle,
+    if (candidate.company.isNotEmpty) 'company': candidate.company,
     'seniority': candidate.seniority,
     'responsibilities': candidate.responsibilities,
     'core_skills': candidate.coreSkills,

@@ -18,12 +18,16 @@ type JobTargetService = preparationservice.JobTargetApplication
 type CreatePlanRequest = preparation.CreatePlanRequest
 type RevisePlanRequest = preparation.RevisePlanRequest
 type PracticePlan = preparation.PracticePlan
+type PracticePlanSummary = preparation.PracticePlanSummary
+type PlanStatus = preparation.PlanStatus
 type PlanService = preparationservice.PlanService
 
 const (
 	JobTargetSourceQuickStart = preparation.JobTargetSourceQuickStart
 	JobTargetStageDraft       = preparation.JobTargetStageDraft
 	JobTargetStageParsing     = preparation.JobTargetStageParsing
+	PlanStatusReady           = preparation.PlanStatusReady
+	PlanStatusArchived        = preparation.PlanStatusArchived
 )
 
 var (

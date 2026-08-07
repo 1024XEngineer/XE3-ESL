@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_catalog.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -31,7 +32,9 @@ class PreparationPage extends StatefulWidget {
     this.preparationController,
     this.ieltsController,
     this.launchController,
+    this.jobPreparationController,
     this.onOpenJobPreparation,
+    this.onOpenInterviewPlan,
     this.onSceneSelected,
     this.onPracticeStarted,
     super.key,
@@ -43,7 +46,9 @@ class PreparationPage extends StatefulWidget {
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsController;
   final PreparationLaunchController? launchController;
+  final JobPreparationController? jobPreparationController;
   final VoidCallback? onOpenJobPreparation;
+  final ValueChanged<String>? onOpenInterviewPlan;
   final VoidCallback? onSceneSelected;
   final VoidCallback? onPracticeStarted;
 
@@ -66,6 +71,7 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.ieltsController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
+    widget.jobPreparationController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
     unawaited(widget.preparationController?.loadIfNeeded());
   }
@@ -92,6 +98,10 @@ class _PreparationPageState extends State<PreparationPage> {
       _backgroundController?.dispose();
       _backgroundController = _newBackgroundController(widget.launchController);
     }
+    if (oldWidget.jobPreparationController != widget.jobPreparationController) {
+      oldWidget.jobPreparationController?.removeListener(_rebuild);
+      widget.jobPreparationController?.addListener(_rebuild);
+    }
   }
 
   @override
@@ -100,6 +110,7 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.removeListener(_rebuild);
     widget.ieltsController?.removeListener(_rebuild);
     widget.launchController?.removeListener(_rebuild);
+    widget.jobPreparationController?.removeListener(_rebuild);
     _backgroundController?.dispose();
     super.dispose();
   }
@@ -125,6 +136,11 @@ class _PreparationPageState extends State<PreparationPage> {
         });
       }
     }
+  }
+
+  void _openInterviewCatalog() {
+    setState(() => _selectedHub = _PracticeHub.interview);
+    unawaited(widget.jobPreparationController?.loadInterviewPlans());
   }
 
   Future<void> _handleIeltsNavigation(
@@ -579,8 +595,7 @@ class _PreparationPageState extends State<PreparationPage> {
             accentColor: PreparationDesign.interview,
             tintColor: PreparationDesign.interviewTint,
             assetPath: 'assets/images/scenes/interview-hero.jpg',
-            onPressed: () =>
-                setState(() => _selectedHub = _PracticeHub.interview),
+            onPressed: _openInterviewCatalog,
           ),
           const SizedBox(height: 12),
           _PracticeHubEntry(
@@ -660,10 +675,17 @@ class _PreparationPageState extends State<PreparationPage> {
         const SizedBox(height: 12),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
-            scenes: scenes,
-            onScenePressed: (scene) =>
-                unawaited(_startSceneDirectly(controller, scene)),
-            onOpenJobPreparation: widget.onOpenJobPreparation,
+            plans: widget.jobPreparationController?.interviewPlans ?? const [],
+            loading: widget.jobPreparationController?.plansLoading ?? false,
+            errorMessage: widget.jobPreparationController?.plansErrorMessage,
+            onCreatePressed: widget.onOpenJobPreparation,
+            onPlanPressed: (plan) => widget.onOpenInterviewPlan?.call(plan.id),
+            onPlanDeleted: (plan) => unawaited(
+              widget.jobPreparationController?.deleteInterviewPlan(plan.id),
+            ),
+            onRetry: () => unawaited(
+              widget.jobPreparationController?.loadInterviewPlans(force: true),
+            ),
           )
         else if (hub == _PracticeHub.ielts)
           IeltsCatalog(
@@ -761,13 +783,12 @@ class _PreparationPageState extends State<PreparationPage> {
         _PracticeHubEntry(
           key: const Key('practice-hub-interview'),
           title: '英文面试',
-          description: '模拟面试与轮次专项练习',
+          description: '创建并管理你的模拟面试',
           icon: Icons.work_outline_rounded,
           accentColor: PreparationDesign.interview,
           tintColor: PreparationDesign.interviewTint,
           assetPath: 'assets/images/scenes/interview-hero.jpg',
-          onPressed: () =>
-              setState(() => _selectedHub = _PracticeHub.interview),
+          onPressed: _openInterviewCatalog,
         ),
         const SizedBox(height: 12),
         _PracticeHubEntry(

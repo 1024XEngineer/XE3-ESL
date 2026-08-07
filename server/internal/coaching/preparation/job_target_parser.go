@@ -26,6 +26,7 @@ Return exactly one JSON object and no markdown. Use exactly these fields:
   "source": "job_description" | "quick_start",
   "general_advice_only": boolean,
   "job_title": string,
+  "company": string,
   "seniority": string,
   "responsibilities": [string],
   "core_skills": [string],
@@ -40,7 +41,7 @@ Return exactly one JSON object and no markdown. Use exactly these fields:
   }
 }
 
-Every array must be non-empty and contain unique, concise items. Each array item is limited to 2048 Unicode characters, and the entire returned JSON is limited to 65536 UTF-8 bytes. For an INTERVIEW scenario, selected_role_ids must contain exactly one role ID: roles are independent interviewer perspectives, never a combined hiring sequence. For quick_start, set general_advice_only to true and state clearly in scope_notice that the advice is generic and not based on a real job description. For job_description, set it to false. Recommend only exact IDs and versions from TRUSTED_CATALOG. If the target is outside the catalog's technical-interview scope, say so in scope_notice; do not silently pretend it is Backend engineer.`
+Every array must be non-empty and contain unique, concise items. Use an empty string for company when it is not provided or cannot be inferred from the supplied material. Each array item is limited to 2048 Unicode characters, and the entire returned JSON is limited to 65536 UTF-8 bytes. For an INTERVIEW scenario, selected_role_ids must contain exactly one role ID: roles are independent interviewer perspectives, never a combined hiring sequence. For quick_start, set general_advice_only to true and state clearly in scope_notice that the advice is generic and not based on a real job description. For job_description, set it to false. Recommend only exact IDs and versions from TRUSTED_CATALOG. If the target is outside the catalog's technical-interview scope, say so in scope_notice; do not silently pretend it is Backend engineer.`
 
 // AIJobTargetParser uses Preparation's data-only generation Port. It cannot
 // expose provider APIs, tools, repositories, HTTP clients, or Actor identity

@@ -220,6 +220,86 @@ func (r *PostgresPlanRepository) ReadCurrentPlan(
 	return plan, nil
 }
 
+func (r *PostgresPlanRepository) ListCurrentPlans(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlan, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validPreparationActor(actor) ||
+		(experience != scene.PracticeExperienceInterview &&
+			experience != scene.PracticeExperienceIELTSSpeaking &&
+			experience != scene.PracticeExperienceWorkplace &&
+			experience != scene.PracticeExperienceLifeAndTravel) {
+		return nil, ErrPlanInvalid
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+selectPracticePlanColumns+`
+		FROM preparation_practice_plans AS plan
+		JOIN preparation_practice_plan_revisions AS revision
+		  ON revision.owner_user_id = plan.owner_user_id
+		 AND revision.plan_id = plan.plan_id
+		 AND revision.revision = plan.current_revision
+		JOIN identity_users AS owner
+		  ON owner.id = plan.owner_user_id
+		LEFT JOIN preparation_deletion_fences AS fence
+		  ON fence.owner_user_id = plan.owner_user_id
+		WHERE plan.owner_user_id = $1
+		  AND plan.status = 'ready'
+		  AND revision.scene_selection->'scene'->>'practice_experience' = $2
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
+		ORDER BY plan.created_at DESC, plan.plan_id DESC
+		LIMIT 100
+	`, actor.UserID, string(experience))
+	if err != nil {
+		return nil, planPersistenceError(err)
+	}
+	defer rows.Close()
+	plans := make([]PracticePlan, 0)
+	for rows.Next() {
+		plan, err := scanStoredPracticePlan(rows)
+		if err != nil {
+			return nil, planPersistenceError(err)
+		}
+		if !validReturnedPlan(plan, actor, plan.ID) ||
+			plan.SceneSelection.Scene.Experience != experience {
+			return nil, planDatabaseFailure("validate listed Plan")
+		}
+		plans = append(plans, plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, planPersistenceError(err)
+	}
+	return plans, nil
+}
+
+func (r *PostgresPlanRepository) ArchivePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+) error {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validPreparationActor(actor) || !validPlanResourceID(planID) {
+		return ErrPlanNotFound
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE preparation_practice_plans
+		SET status = 'archived',
+		    updated_at = transaction_timestamp()
+		WHERE owner_user_id = $1
+		  AND plan_id = $2
+		  AND status = 'ready'
+	`, actor.UserID, planID)
+	if err != nil {
+		return planPersistenceError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrPlanNotFound
+	}
+	return nil
+}
+
 func (r *PostgresPlanRepository) RevisePlan(
 	ctx context.Context,
 	actor requestcontext.Actor,

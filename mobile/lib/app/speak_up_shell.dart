@@ -210,6 +210,17 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       _showMockNotice('岗位准备流程尚未连接');
       return;
     }
+    widget.jobPreparationController!.beginNewPreparation();
+    Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
+  }
+
+  Future<void> _openInterviewPlan(String planId) async {
+    final controller = widget.jobPreparationController;
+    if (controller == null ||
+        !await controller.openSavedPlan(planId) ||
+        !mounted) {
+      return;
+    }
     Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
   }
 
@@ -403,9 +414,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         preparationController: widget.preparationController,
         ieltsController: widget.ieltsPreparationController,
         launchController: widget.preparationLaunchController,
+        jobPreparationController: widget.jobPreparationController,
         onOpenJobPreparation: widget.jobPreparationController == null
             ? null
             : _openJobPreparation,
+        onOpenInterviewPlan: widget.jobPreparationController == null
+            ? null
+            : (planId) => unawaited(_openInterviewPlan(planId)),
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
       ),

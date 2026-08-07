@@ -37,6 +37,11 @@ type PlanApplication interface {
 		requestcontext.Actor,
 		string,
 	) (PracticePlan, error)
+	ListPlans(
+		context.Context,
+		requestcontext.Actor,
+		scene.PracticeExperience,
+	) ([]PracticePlanSummary, error)
 	RevisePlan(
 		context.Context,
 		requestcontext.Actor,
@@ -44,6 +49,61 @@ type PlanApplication interface {
 		string,
 		RevisePlanRequest,
 	) (PracticePlan, bool, error)
+	ArchivePlan(context.Context, requestcontext.Actor, string) error
+}
+
+func (s *PlanService) ListPlans(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlanSummary, error) {
+	if ctx == nil || !actor.Valid() ||
+		(experience != scene.PracticeExperienceInterview &&
+			experience != scene.PracticeExperienceIELTSSpeaking &&
+			experience != scene.PracticeExperienceWorkplace &&
+			experience != scene.PracticeExperienceLifeAndTravel) {
+		return nil, ErrPlanInvalid
+	}
+	plans, err := s.repository.ListCurrentPlans(ctx, actor, experience)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]PracticePlanSummary, 0, len(plans))
+	for _, plan := range plans {
+		if !validReturnedPlan(plan, actor, plan.ID) ||
+			plan.SceneSelection.Scene.Experience != experience {
+			return nil, ErrPlanRepository
+		}
+		option, err := plan.SceneSelection.PracticeOption()
+		if err != nil {
+			return nil, ErrPlanRepository
+		}
+		objectives := make([]string, 0, len(plan.PracticeObjectives))
+		for _, objective := range plan.PracticeObjectives {
+			objectives = append(objectives, objective.Description)
+		}
+		jobTitle := ""
+		if candidate := plan.PreparationSnapshot.JobTargetCandidateSnapshot; candidate != nil {
+			jobTitle = candidate.JobTitle
+		}
+		summaries = append(summaries, PracticePlanSummary{
+			ID:                       plan.ID,
+			Revision:                 plan.Revision,
+			Status:                   plan.Status,
+			PracticeExperience:       experience,
+			SceneName:                plan.SceneSelection.Scene.Name,
+			PracticeScope:            option.DisplayName,
+			JobTitle:                 jobTitle,
+			PracticeObjectives:       objectives,
+			ResumeUsed:               plan.PreparationSnapshot.ResumeSnapshot != nil,
+			SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
+			MinEffectiveTurns:        plan.SessionPolicy.MinEffectiveTurns,
+			MaxEffectiveTurns:        plan.SessionPolicy.MaxEffectiveTurns,
+			CreatedAt:                plan.CreatedAt,
+			UpdatedAt:                plan.UpdatedAt,
+		})
+	}
+	return summaries, nil
 }
 
 type PlanService struct {
@@ -223,6 +283,17 @@ func (s *PlanService) ReadPlan(
 		return PracticePlan{}, ErrPlanRepository
 	}
 	return clonePracticePlan(plan), nil
+}
+
+func (s *PlanService) ArchivePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+) error {
+	if ctx == nil || !actor.Valid() || !validPlanResourceID(planID) {
+		return ErrPlanNotFound
+	}
+	return s.repository.ArchivePlan(ctx, actor, planID)
 }
 
 func (s *PlanService) RevisePlan(

@@ -610,8 +610,21 @@ type planRepositoryStub struct {
 	replay         func(IdempotencyIntent) (PracticePlan, bool, error)
 	create         func(requestcontext.Actor, CreatePlanCommand) (PracticePlan, bool, error)
 	readCurrent    func(string) (PracticePlan, error)
+	listCurrent    func(scene.PracticeExperience) ([]PracticePlan, error)
 	revise         func(requestcontext.Actor, RevisePlanCommand) (PracticePlan, bool, error)
+	archive        func(string) error
 	readExecutable func(string, int) (PracticePlan, error)
+}
+
+func (s *planRepositoryStub) ListCurrentPlans(
+	_ context.Context,
+	_ requestcontext.Actor,
+	experience scene.PracticeExperience,
+) ([]PracticePlan, error) {
+	if s.listCurrent == nil {
+		return nil, errors.New("unexpected ListCurrentPlans")
+	}
+	return s.listCurrent(experience)
 }
 
 func (s *planRepositoryStub) ReplayPlan(
@@ -656,6 +669,17 @@ func (s *planRepositoryStub) RevisePlan(
 		return PracticePlan{}, false, errors.New("unexpected RevisePlan")
 	}
 	return s.revise(actor, command)
+}
+
+func (s *planRepositoryStub) ArchivePlan(
+	_ context.Context,
+	_ requestcontext.Actor,
+	planID string,
+) error {
+	if s.archive == nil {
+		return errors.New("unexpected ArchivePlan")
+	}
+	return s.archive(planID)
 }
 
 func (s *planRepositoryStub) ReadExecutablePlan(
