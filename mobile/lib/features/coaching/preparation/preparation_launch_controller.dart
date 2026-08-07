@@ -101,6 +101,28 @@ final class PreparationLaunchController extends ChangeNotifier {
         await workspace.parkCurrentPractice();
   }
 
+  /// Cancels a preparation launch that has not produced a usable practice.
+  ///
+  /// The launch epoch is invalidated first so late profile/plan/session
+  /// responses cannot restore the preparation screen after the user leaves.
+  /// An in-flight launch parks its workspace from the launcher's finally block
+  /// once the current workspace operation has completed.
+  Future<bool> cancelCurrentPreparation() async {
+    if (_disposed) {
+      return false;
+    }
+    final workspace = workspaceController;
+    final wasStarting = isStarting;
+    _invalidateAttempt();
+    if (wasStarting) {
+      return true;
+    }
+    if (workspace?.currentLease == null) {
+      return true;
+    }
+    return workspace!.parkCurrentPractice();
+  }
+
   Future<bool> completeAndContinueWithAgent() async {
     final workspace = workspaceController;
     return workspace != null && await workspace.completeAndContinueWithAgent();
@@ -449,7 +471,6 @@ final class PreparationLaunchController extends ChangeNotifier {
     } finally {
       var safelyParked = workspace == null;
       if (!launchSucceeded &&
-          _isCurrent(operationEpoch) &&
           workspace != null &&
           workspace.currentLease?.operationId == attempt.workspaceOperationId) {
         final parked = await workspace.parkCurrentPractice();

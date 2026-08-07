@@ -435,9 +435,13 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
-  void _handleBack(PreparationController? controller) {
+  Future<void> _handleBack(PreparationController? controller) async {
     final launch = widget.launchController;
-    if (launch?.isNavigationLocked ?? false) {
+    if (launch?.isStarting ?? false) {
+      if (!await launch!.cancelCurrentPreparation() || !mounted) {
+        return;
+      }
+    } else if (launch?.isNavigationLocked ?? false) {
       return;
     }
     if (controller?.selectedScene != null) {
@@ -456,7 +460,7 @@ class _PreparationPageState extends State<PreparationPage> {
       setState(() => _selectedHub = null);
       return;
     }
-    Navigator.of(context).maybePop();
+    await Navigator.of(context).maybePop();
   }
 
   @override
@@ -470,7 +474,7 @@ class _PreparationPageState extends State<PreparationPage> {
       canPop: !navigationLocked && !hasInternalRoute,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
-          _handleBack(controller);
+          unawaited(_handleBack(controller));
         }
       },
       child: Scaffold(
@@ -485,9 +489,11 @@ class _PreparationPageState extends State<PreparationPage> {
                 leading: IconButton(
                   key: const Key('preparation-route-back-button'),
                   tooltip: '返回',
-                  onPressed: navigationLocked
+                  onPressed:
+                      navigationLocked &&
+                          !(widget.launchController?.isStarting ?? false)
                       ? null
-                      : () => _handleBack(controller),
+                      : () => unawaited(_handleBack(controller)),
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
               )
@@ -516,7 +522,7 @@ class _PreparationPageState extends State<PreparationPage> {
           ),
           scene: selectedScene,
           hasPrimaryNavigation: !widget.showBackButton,
-          onBack: () => _handleBack(controller),
+          onBack: () => unawaited(_handleBack(controller)),
           onSubmit: _submitScenarioPreparation,
         );
       }
@@ -525,7 +531,7 @@ class _PreparationPageState extends State<PreparationPage> {
         scene: selectedScene,
         launchController: widget.launchController,
         hasPrimaryNavigation: !widget.showBackButton,
-        onBack: () => _handleBack(controller),
+        onBack: () => unawaited(_handleBack(controller)),
         onRetry: _retryLaunch,
       );
     }
@@ -851,7 +857,10 @@ class _SceneLaunchStatus extends StatelessWidget {
             child: IconButton(
               key: const Key('preparation-back-to-catalog'),
               tooltip: '取消并返回',
-              onPressed: navigationLocked ? null : onBack,
+              onPressed:
+                  navigationLocked && !(launchController?.isStarting ?? false)
+                  ? null
+                  : onBack,
               icon: const Icon(Icons.arrow_back_rounded),
               color: PreparationDesign.ink,
               style: IconButton.styleFrom(

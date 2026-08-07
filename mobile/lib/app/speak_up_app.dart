@@ -477,7 +477,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       );
     }
     final experience = _practiceController.practiceExperience;
-    if (experience == PracticeExperience.workplace ||
+    if (experience == PracticeExperience.interview ||
+        experience == PracticeExperience.workplace ||
         experience == PracticeExperience.lifeAndTravel) {
       final factory = widget.avatarControllerFactory;
       if (factory != null) {

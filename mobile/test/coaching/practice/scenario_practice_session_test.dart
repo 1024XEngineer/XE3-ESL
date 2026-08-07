@@ -379,6 +379,44 @@ void main() {
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
 
+  testWidgets('routes interview practice through avatar with Tips', (
+    tester,
+  ) async {
+    final practiceController = await _interviewPracticeController();
+    addTearDown(practiceController.dispose);
+    final renderer = FakeAvatarRenderer();
+    final tokenClient = FakeAvatarSessionTokenClient();
+    var factoryCalls = 0;
+
+    await tester.pumpWidget(
+      SpeakUpApp.preview(
+        practiceController: practiceController,
+        avatarControllerFactory: () {
+          factoryCalls++;
+          return AvatarController(
+            renderer: renderer,
+            tokenClient: tokenClient,
+            fallbackPlayback: (_) async {},
+            fallbackStop: () async {},
+            delay: (_) async {},
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Navigator.of(
+      tester.element(find.byType(SpeakUpShell)),
+    ).pushNamed(AppRoutes.practice);
+    await tester.pumpAndSettle();
+
+    expect(factoryCalls, 1);
+    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-avatar-surface')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-question-tip')), findsOneWidget);
+    expect(find.byKey(const Key('practice-page')), findsNothing);
+  });
+
   testWidgets('loads each assistant WAV once and sends it only to the avatar', (
     tester,
   ) async {
@@ -465,6 +503,47 @@ Future<PracticeController> _scenarioPracticeController() async {
       id: 'question-daily-travel-1',
       sessionId: sessionId,
       text: 'Where would you like to go?',
+    ),
+  );
+  final controller = PracticeController(
+    client: _SnapshotPracticeClient(snapshot),
+  );
+  await _activateCreatedPractice(controller, scene, snapshot);
+  return controller;
+}
+
+Future<PracticeController> _interviewPracticeController() async {
+  final scene = testScene(
+    id: 'interview-avatar',
+    experience: PracticeExperience.interview,
+    category: SceneCategory.interviewProfessional,
+    name: '英文自我介绍',
+    prompt: const ScenePrompt(
+      publicSceneBrief: 'Practice a concise interview introduction.',
+      practiceGoal: 'Introduce professional experience clearly.',
+      userRole: 'Candidate',
+      aiRole: 'Interviewer',
+      personaSummary: 'Professional and attentive.',
+      focusAreas: <String>['clarity'],
+      turnBlueprints: <String>['Ask for an introduction.'],
+    ),
+  );
+  const sessionId = 'session-interview-avatar';
+  final snapshot = PracticeSessionSnapshot(
+    sessionId: sessionId,
+    planId: 'plan-interview-avatar',
+    practiceExperience: scene.experience,
+    sceneCategory: scene.category,
+    practiceMode: PracticeMode.fullSimulation,
+    capabilities: testPracticeCapabilities,
+    sessionVersion: 1,
+    completedTurns: 0,
+    turnLimit: 3,
+    sessionCompleted: false,
+    currentQuestion: const PracticeQuestion(
+      id: 'question-interview-avatar-1',
+      sessionId: sessionId,
+      text: 'Could you introduce yourself?',
     ),
   );
   final controller = PracticeController(
