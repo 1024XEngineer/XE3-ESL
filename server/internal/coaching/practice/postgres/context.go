@@ -626,6 +626,80 @@ func (r *Repository) TransitionSession(
 	if err != nil {
 		return practice.Session{}, false, err
 	}
+	if command.Transition == practice.SessionComplete {
+		var finalTurnID string
+		err := tx.QueryRow(ctx, `
+			SELECT turn_id
+			FROM practice_turn_results
+			WHERE owner_user_id = $1
+			  AND session_id = $2
+			  AND round_number = $3
+		`, actor.UserID, command.SessionID, session.EffectiveTurns).Scan(
+			&finalTurnID,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return practice.Session{}, false, practice.ErrConflict
+		}
+		if err != nil {
+			return practice.Session{}, false,
+				fmt.Errorf("read final Practice Turn: %w", err)
+		}
+		completionToken := fmt.Sprintf(
+			"practice-session:%s:completed:v%d",
+			command.SessionID,
+			session.Version,
+		)
+		tag, err := tx.Exec(ctx, `
+			UPDATE practice_turn_results
+			SET completed = true,
+			    completion_token = $4
+			WHERE owner_user_id = $1
+			  AND session_id = $2
+			  AND turn_id = $3
+			  AND completed = false
+			  AND completion_token = ''
+		`, actor.UserID, command.SessionID, finalTurnID, completionToken)
+		if err != nil {
+			return practice.Session{}, false,
+				classifyContextWriteError(
+					"complete final Practice Turn result",
+					err,
+				)
+		}
+		if tag.RowsAffected() != 1 {
+			return practice.Session{}, false, practice.ErrConflict
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE practice_turns
+			SET session_completed = true
+			WHERE owner_user_id = $1
+			  AND practice_session_id = $2
+			  AND turn_id = $3
+			  AND effective_turns = $4
+			  AND session_completed = false
+		`, actor.UserID, command.SessionID, finalTurnID,
+			session.EffectiveTurns); err != nil {
+			return practice.Session{}, false,
+				classifyContextWriteError(
+					"complete final Practice Turn projection",
+					err,
+				)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO practice_completed (
+				owner_user_id, session_id, final_turn_id,
+				session_version, completion_token
+			)
+			VALUES ($1, $2, $3, $4, $5)
+		`, actor.UserID, command.SessionID, finalTurnID,
+			session.Version, completionToken); err != nil {
+			return practice.Session{}, false,
+				classifyContextWriteError(
+					"record user-controlled Practice completion",
+					err,
+				)
+		}
+	}
 	if err := saveContextIdempotency(
 		ctx,
 		tx,

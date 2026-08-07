@@ -650,10 +650,22 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	}
 	var completedAudioAssetID string
 	var thirdTurnID string
+	var thirdSessionVersion int
 	for result := range results {
 		if result["effective_turns"] != float64(3) ||
-			result["session_completed"] != true {
+			result["session_completed"] != false ||
+			result["completion_mode"] != "USER_CONTROLLED" ||
+			result["turn_limit"] != float64(0) ||
+			result["current_question"] == nil {
 			t.Errorf("unexpected third-round state: %#v", result)
+		}
+		sessionVersion, _ := result["session_version"].(float64)
+		if sessionVersion < 1 {
+			t.Errorf("third-round response has no Session version: %#v", result)
+		} else if thirdSessionVersion == 0 {
+			thirdSessionVersion = int(sessionVersion)
+		} else if thirdSessionVersion != int(sessionVersion) {
+			t.Errorf("concurrent confirmations returned different Session versions")
 		}
 		turn := result["current_turn"].(map[string]any)
 		if turn["candidate_id"] != candidate["candidate_id"] {
@@ -676,6 +688,41 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		} else if completedAudioAssetID != currentAudioAssetID {
 			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
+	}
+	completePath := "/v1/practice-sessions/" + sessionID + "/complete"
+	completeBody := fmt.Sprintf(
+		`{"expected_session_version":%d}`,
+		thirdSessionVersion,
+	)
+	completedSession := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		completePath,
+		completeBody,
+		"complete-user-controlled-session-0001",
+		http.StatusOK,
+	)
+	if completedSession["practice_session_status"] != "completed" ||
+		completedSession["session_version"] != float64(thirdSessionVersion+1) ||
+		completedSession["end_reason"] != "USER_COMPLETED" {
+		t.Fatalf("manual Practice completion = %#v", completedSession)
+	}
+	replayedCompletion := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		completePath,
+		completeBody,
+		"complete-user-controlled-session-0001",
+		http.StatusOK,
+	)
+	if replayedCompletion["practice_session_status"] != "completed" ||
+		replayedCompletion["session_version"] !=
+			completedSession["session_version"] {
+		t.Fatalf("manual Practice completion replay = %#v", replayedCompletion)
 	}
 	completedState := voiceJSONRequest(
 		t,

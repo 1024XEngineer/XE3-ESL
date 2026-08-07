@@ -290,6 +290,19 @@ func TestContextRepositoryCompletesUserControlledSessionIdempotently(
 	`, owner.Actor.UserID, created.Session.ID, startedVersion); err != nil {
 		t.Fatalf("start user-controlled Session fixture: %v", err)
 	}
+	turnFingerprint := sha256.Sum256([]byte("turn-user-complete-payload"))
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO practice_turn_results (
+			owner_user_id, session_id, turn_id, payload_fingerprint,
+			round_number, effective_turns, session_version,
+			completed, completion_token
+		)
+		VALUES ($1, $2, 'turn-user-complete', $3, 1, 1, $4, false, '')
+	`, owner.Actor.UserID, created.Session.ID,
+		turnFingerprint[:],
+		startedVersion); err != nil {
+		t.Fatalf("insert user-controlled final Turn fixture: %v", err)
+	}
 	completeIntent := practice.IdempotencyIntent{
 		Method:        "POST",
 		CanonicalPath: "/v1/practice-sessions/" + created.Session.ID + "/complete",
@@ -346,6 +359,51 @@ func TestContextRepositoryCompletesUserControlledSessionIdempotently(
 	}
 	if resourceKind != string(practice.SessionComplete) {
 		t.Fatalf("completion resource kind = %q", resourceKind)
+	}
+	var finalTurnID, completionToken, deliveryStatus string
+	var completionVersion int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT final_turn_id, session_version, completion_token, delivery_status
+		FROM practice_completed
+		WHERE owner_user_id = $1 AND session_id = $2
+	`, owner.Actor.UserID, completed.ID).Scan(
+		&finalTurnID,
+		&completionVersion,
+		&completionToken,
+		&deliveryStatus,
+	); err != nil {
+		t.Fatalf("read completion handoff: %v", err)
+	}
+	if finalTurnID != "turn-user-complete" ||
+		completionVersion != completed.Version || completionToken == "" ||
+		deliveryStatus != "PENDING" {
+		t.Fatalf(
+			"completion handoff = (%q,%d,%q,%q)",
+			finalTurnID,
+			completionVersion,
+			completionToken,
+			deliveryStatus,
+		)
+	}
+	var turnCompleted bool
+	var turnCompletionToken string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT completed, completion_token
+		FROM practice_turn_results
+		WHERE owner_user_id = $1 AND session_id = $2 AND turn_id = $3
+	`, owner.Actor.UserID, completed.ID, finalTurnID).Scan(
+		&turnCompleted,
+		&turnCompletionToken,
+	); err != nil {
+		t.Fatalf("read completed final Turn result: %v", err)
+	}
+	if !turnCompleted || turnCompletionToken != completionToken {
+		t.Fatalf(
+			"final Turn completion = (%t,%q), want token %q",
+			turnCompleted,
+			turnCompletionToken,
+			completionToken,
+		)
 	}
 }
 
