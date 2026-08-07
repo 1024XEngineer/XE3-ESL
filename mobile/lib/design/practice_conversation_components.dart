@@ -30,6 +30,7 @@ class InlineLanguageFeedback extends StatefulWidget {
     this.onSpeakSuggestion,
     this.suggestionLoading = false,
     this.suggestionPlaying = false,
+    this.optimizeIconOnly = false,
     this.foregroundColor = SpeakUpDesign.primary,
     this.textColor = SpeakUpDesign.ink,
     super.key,
@@ -44,6 +45,7 @@ class InlineLanguageFeedback extends StatefulWidget {
   final ValueChanged<String>? onSpeakSuggestion;
   final bool suggestionLoading;
   final bool suggestionPlaying;
+  final bool optimizeIconOnly;
   final Color foregroundColor;
   final Color textColor;
 
@@ -77,6 +79,7 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
           key: const Key('inline-language-optimize'),
           icon: Icons.auto_awesome_outlined,
           label: '优化',
+          iconOnly: widget.optimizeIconOnly,
           selected: _expanded,
           color: widget.foregroundColor,
           onPressed: _toggle,
@@ -365,6 +368,7 @@ class _InlineFeedbackAction extends StatelessWidget {
     required this.onPressed,
     this.selected = false,
     this.loading = false,
+    this.iconOnly = false,
     super.key,
   });
 
@@ -374,9 +378,30 @@ class _InlineFeedbackAction extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool selected;
   final bool loading;
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
+    final actionIcon = loading
+        ? const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(selected ? Icons.keyboard_arrow_up_rounded : icon, size: 19);
+    if (iconOnly) {
+      return IconButton(
+        tooltip: label,
+        onPressed: onPressed,
+        color: color,
+        constraints: const BoxConstraints.tightFor(
+          width: SpeakUpDesign.minTapTarget,
+          height: SpeakUpDesign.minTapTarget,
+        ),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: actionIcon,
+      );
+    }
     return TextButton.icon(
       onPressed: onPressed,
       style: TextButton.styleFrom(
@@ -386,12 +411,7 @@ class _InlineFeedbackAction extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         textStyle: SpeakUpDesign.label,
       ),
-      icon: loading
-          ? const SizedBox.square(
-              dimension: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(selected ? Icons.keyboard_arrow_up_rounded : icon, size: 19),
+      icon: actionIcon,
       label: Text(label),
     );
   }

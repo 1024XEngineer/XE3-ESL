@@ -7,7 +7,7 @@ import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
-import 'package:speakup/app/glass_navigation_bar.dart';
+import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
@@ -44,23 +44,33 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
     expect(navigation, findsOneWidget);
     expect(
-      find.ancestor(of: navigation, matching: find.byType(BackdropFilter)),
-      findsNothing,
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.chat_bubble_rounded),
+      ),
+      findsOneWidget,
     );
+    expect(find.byType(BackdropFilter), findsNothing);
     final composerRect = tester.getRect(
       find.byKey(const Key('agent-composer-surface')),
     );
     final navigationRect = tester.getRect(navigation);
-    expect(navigationRect.height, closeTo(GlassNavigationBar.height, 0.1));
+    expect(
+      navigationRect.height,
+      closeTo(PlatformNavigationBar.contentHeight, 0.1),
+    );
     expect(navigationRect.top - composerRect.bottom, closeTo(10, 1));
-    expect(navigationRect.left, closeTo(composerRect.left, 1));
-    expect(navigationRect.right, closeTo(composerRect.right, 1));
+    expect(navigationRect.left, 0);
+    expect(
+      navigationRect.right,
+      tester.view.physicalSize.width / tester.view.devicePixelRatio,
+    );
 
     final semantics = tester.ensureSemantics();
     expect(
       tester.getSemantics(find.byKey(const Key('primary-tab-agent'))),
       isSemantics(
-        label: 'SpeakUp',
+        label: 'SpeakUp\nTab 1 of 4',
         isButton: true,
         hasSelectedState: true,
         isSelected: true,
@@ -79,17 +89,14 @@ void main() {
       key: 'primary-tab-scenes',
       expectedPageKey: 'scenes-page',
     );
-    final practiceNavigation = tester.widget<GlassNavigationBar>(
-      find.byType(GlassNavigationBar),
-    );
-    expect(practiceNavigation.solid, isTrue);
     expect(
-      find.ancestor(
+      find.descendant(
         of: find.byKey(const Key('primary-navigation')),
-        matching: find.byType(BackdropFilter),
+        matching: find.byIcon(Icons.dashboard_rounded),
       ),
-      findsNothing,
+      findsOneWidget,
     );
+    expect(find.byType(BackdropFilter), findsNothing);
     final shellScaffold = tester.widget<Scaffold>(
       find.ancestor(
         of: find.byKey(const Key('primary-navigation')),
@@ -117,7 +124,7 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
-    expect(find.text('管理账号与练习身份。'), findsOneWidget);
+    expect(find.text('管理账号与练习身份。'), findsNothing);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-agent',
@@ -736,9 +743,9 @@ void main() {
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
     expect(
       find.byKey(const Key('practice-availability-message')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('今天想练什么？'), findsOneWidget);
+    expect(find.text('今天想练什么？'), findsNothing);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();

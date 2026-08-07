@@ -4,8 +4,6 @@ import 'package:speakup/design/speak_up_design.dart';
 
 /// Visual tokens shared by the preparation discovery and selection surfaces.
 ///
-/// These values intentionally stay local to the feature until the app-wide
-/// visual foundation tracked by Issue #189 is available.
 abstract final class PreparationDesign {
   static const canvas = SpeakUpDesign.canvas;
   static const surface = SpeakUpDesign.surface;
@@ -20,14 +18,14 @@ abstract final class PreparationDesign {
   static const error = SpeakUpDesign.error;
   static const errorMuted = SpeakUpDesign.errorMuted;
 
-  static const interview = Color(0xFF20252A);
-  static const interviewTint = Color(0xFFE9EAEC);
-  static const ielts = Color(0xFF0284C7);
-  static const ieltsDeep = Color(0xFF075985);
-  static const ieltsTint = Color(0xFFE0F2FE);
-  static const ieltsBorder = Color(0xFFBAE6FD);
-  static const scenario = Color(0xFF173B47);
-  static const scenarioTint = Color(0xFFDDECF0);
+  static const interview = SpeakUpDesign.ink;
+  static const interviewTint = SpeakUpDesign.primaryMuted;
+  static const ielts = SpeakUpDesign.ink;
+  static const ieltsDeep = SpeakUpDesign.ink;
+  static const ieltsTint = SpeakUpDesign.primaryMuted;
+  static const ieltsBorder = SpeakUpDesign.border;
+  static const scenario = SpeakUpDesign.ink;
+  static const scenarioTint = SpeakUpDesign.primaryMuted;
 
   static const radiusControl = SpeakUpDesign.radiusControl;
   static const radiusCard = SpeakUpDesign.radiusCard;

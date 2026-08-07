@@ -62,14 +62,6 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        PreparationCatalogHeader(
-          title: '专项练习',
-          description: bank == null
-              ? '按题季、Part 和主题分类选择题目。'
-              : '${bank.seasonLabel} · 按 Part 和主题分类选择题目。',
-          titleKey: const Key('practice-hub-title-ielts'),
-        ),
-        const SizedBox(height: 20),
         if (fullMockScene != null) ...[
           PreparationFeaturedScene(
             key: const Key('ielts-mode-full'),

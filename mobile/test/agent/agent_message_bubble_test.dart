@@ -181,11 +181,12 @@ void main() {
       ),
     );
 
-    expect(find.text('优化'), findsOneWidget);
+    expect(find.text('优化'), findsNothing);
+    expect(find.byKey(const Key('inline-language-optimize')), findsOneWidget);
     expect(find.text('纠错'), findsNothing);
     expect(find.text('This plan sounds good.'), findsNothing);
 
-    await tester.tap(find.text('优化'));
+    await tester.tap(find.byKey(const Key('inline-language-optimize')));
     await tester.pump();
 
     expect(find.text('纠错'), findsOneWidget);

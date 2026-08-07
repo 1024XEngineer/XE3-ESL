@@ -47,7 +47,7 @@ void main() {
 
     expect(find.byKey(const Key('training-center-title')), findsOneWidget);
     expect(find.text('场景练习'), findsOneWidget);
-    expect(find.text('今天想练什么？'), findsOneWidget);
+    expect(find.text('今天想练什么？'), findsNothing);
     expect(find.text('英文面试'), findsOneWidget);
 
     await _openFamily(tester, 'INTERVIEW');
