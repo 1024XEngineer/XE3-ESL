@@ -368,24 +368,13 @@ void main() {
     await tester.tap(examHub);
     await tester.pump();
 
-    final part1 = find.byKey(
-      const Key('catalog-scene-scn_ielts_speaking_part_1'),
+    final questionSet = find.byKey(
+      const Key('ielts-part1-set-p1-topic-001'),
     );
-    await _waitForPreparationTarget(
-      tester,
-      target: part1,
-      operation: 'load the IELTS Part 1 entry',
-      timeout: const Duration(seconds: 30),
-    );
-    await _scrollPreparationIntoView(tester, part1);
-    await tester.tap(part1);
-    await tester.pump();
-
-    final questionSet = find.byKey(const Key('ielts-part1-set-p1-001'));
     await _waitForPreparationTarget(
       tester,
       target: questionSet,
-      operation: 'load the first IELTS Part 1 question set',
+      operation: 'load the first IELTS Part 1 question topic',
       timeout: const Duration(seconds: 30),
     );
     await _scrollPreparationIntoView(tester, questionSet);
