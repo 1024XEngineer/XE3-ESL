@@ -428,6 +428,11 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 			TopicTitle:     "An integration topic",
 			CueCard:        "Describe an integration topic.",
 			TurnBlueprints: []string{"Describe an integration topic."},
+		}, {
+			Part:           ielts.PracticeModePart3,
+			SourceID:       "integration-topic-group",
+			TopicTitle:     "An integration topic",
+			TurnBlueprints: []string{"Why is this topic important?"},
 		}},
 	}
 	assignment := &preparation.IELTSAssignmentSnapshot{
@@ -483,7 +488,7 @@ func TestPostgresPlanRepositoryPersistsFrozenIELTSAssignmentAcrossRevisions(
 			PracticeOptionID:      selection.PracticeOptionID,
 			MaxEffectiveTurns:     policy.MaxEffectiveTurns,
 			IELTSSelection: &preparation.IELTSQuestionSelection{
-				TopicGroupID: questionSelection.TopicGroupID,
+				TopicGroupID: resolved.Parts[0].SourceID,
 			},
 		},
 	)
