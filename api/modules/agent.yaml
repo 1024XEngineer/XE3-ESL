@@ -1297,8 +1297,9 @@ components:
           readOnly: true
         max_effective_turns:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 100
+          description: Zero for a learner-completed, open-ended Practice.
           readOnly: true
         executable_status:
           type: string

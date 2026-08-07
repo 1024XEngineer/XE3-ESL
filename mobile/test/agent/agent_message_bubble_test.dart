@@ -271,6 +271,45 @@ void main() {
     expect(selected, same(handoff));
   });
 
+  testWidgets('does not show a round count for an open-ended handoff', (
+    tester,
+  ) async {
+    const handoff = ConfirmPracticePlanHandoff(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000002',
+      planRevision: 1,
+      target: 'Travel English Practice',
+      sceneName: '酒店入住',
+      practiceExperience: 'LIFE_AND_TRAVEL',
+      sceneCategory: 'LIFE_TRAVEL',
+      practiceMode: 'FULL_SIMULATION',
+      roles: <String>['前台'],
+      practiceScope: '开放对话',
+      suggestedDuration: Duration(minutes: 10),
+      minEffectiveTurns: 1,
+      maxEffectiveTurns: 0,
+      executableStatus: 'ready',
+      confirmationPrompt: '请确认是否开始练习。',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: const AgentMessage(
+              id: 'assistant-open-practice',
+              role: AgentMessageRole.assistant,
+              text: '旅行场景已创建。',
+              handoffs: <AgentHandoff>[handoff],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('预计 10 分钟'), findsOneWidget);
+    expect(find.textContaining('轮'), findsNothing);
+  });
+
   testWidgets('loads, caches, and toggles an assistant translation', (
     tester,
   ) async {

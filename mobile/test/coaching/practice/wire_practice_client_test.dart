@@ -201,6 +201,10 @@ void main() {
       endpoints.endEarlyPath(opaque),
       '/v1/practice-sessions/$encoded/end-early',
     );
+    expect(
+      endpoints.completePath(opaque),
+      '/v1/practice-sessions/$encoded/complete',
+    );
   });
 
   test('decodes one bounded Simplified Chinese question translation', () async {
@@ -528,6 +532,53 @@ void main() {
     expect(lifecycle.version, 4);
     transport.expectDone();
   });
+
+  test(
+    'completes a user-controlled session with its current version',
+    () async {
+      final transport = _Transport([
+        _Step(
+          method: 'POST',
+          path: '/v1/practice-sessions/$_sessionId/complete',
+          verify: (request) {
+            expect(jsonDecode(request.jsonBody!), {
+              'expected_session_version': 8,
+            });
+            expect(
+              request.headers['Idempotency-Key'],
+              'complete-practice-operation',
+            );
+          },
+          response: _json(HttpStatus.ok, {
+            'practice_session_id': _sessionId,
+            'practice_plan_id': 'plan-1',
+            'plan_revision': 1,
+            'practice_experience': 'LIFE_AND_TRAVEL',
+            'scene_category': 'LIFE_TRAVEL',
+            'practice_mode': 'FULL_SIMULATION',
+            'evaluation_policy_ref': 'scenario.shadow.evaluation.v1',
+            'snapshot_id': 'snapshot-1',
+            'practice_session_status': 'completed',
+            'session_version': 9,
+            'started_at': '2026-07-25T09:00:01Z',
+            'ended_at': '2026-07-25T09:10:00Z',
+            'end_reason': 'USER_COMPLETED',
+            'created_at': _timestamp,
+          }),
+        ),
+      ]);
+
+      final lifecycle = await _client(transport).complete(
+        sessionId: _sessionId,
+        expectedSessionVersion: 8,
+        idempotencyKey: 'complete-practice-operation',
+      );
+
+      expect(lifecycle.status, PracticeSessionLifecycleStatus.completed);
+      expect(lifecycle.version, 9);
+      transport.expectDone();
+    },
+  );
 
   test('a practice 401 invalidates the captured Session generation', () async {
     final transport = _Transport([

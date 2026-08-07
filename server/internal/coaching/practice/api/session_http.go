@@ -81,6 +81,10 @@ func (h *Handler) RegisterRoutes(routes gin.IRoutes) {
 		h.resumeSession,
 	)
 	routes.POST(
+		"/v1/practice-sessions/:practice_session_id/complete",
+		h.completeSession,
+	)
+	routes.POST(
 		"/v1/practice-sessions/:practice_session_id/end-early",
 		h.endSessionEarly,
 	)
@@ -205,6 +209,10 @@ func (h *Handler) pauseSession(c *gin.Context) {
 
 func (h *Handler) resumeSession(c *gin.Context) {
 	h.transitionSession(c, practice.SessionResume)
+}
+
+func (h *Handler) completeSession(c *gin.Context) {
+	h.transitionSession(c, practice.SessionComplete)
 }
 
 func (h *Handler) endSessionEarly(c *gin.Context) {

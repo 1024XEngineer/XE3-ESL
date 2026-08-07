@@ -221,7 +221,9 @@ func questionGenerationRequest(
 	sequence int,
 ) (QuestionGenerationRequest, error) {
 	prompt := session.Prompt
-	if sequence < 1 || sequence > session.TurnLimit ||
+	if sequence < 1 ||
+		(session.CompletionMode == practice.CompletionModeTurnLimited &&
+			sequence > session.TurnLimit) ||
 		strings.TrimSpace(session.PracticeExperience) == "" ||
 		strings.TrimSpace(session.SceneCategory) == "" ||
 		strings.TrimSpace(session.PracticeMode) == "" ||
@@ -297,10 +299,17 @@ func questionGenerationRequest(
 			fmt.Sprintf("Previous learner response: %s", answer),
 		)
 	}
-	contextParts = append(
-		contextParts,
-		fmt.Sprintf("This is turn %d of at most %d.", sequence, session.TurnLimit),
-	)
+	if session.CompletionMode == practice.CompletionModeTurnLimited {
+		contextParts = append(
+			contextParts,
+			fmt.Sprintf("This is turn %d of at most %d.", sequence, session.TurnLimit),
+		)
+	} else {
+		contextParts = append(
+			contextParts,
+			fmt.Sprintf("This is turn %d. Continue naturally until the learner chooses to finish.", sequence),
+		)
+	}
 	return QuestionGenerationRequest{
 		SystemPrompt: systemPrompt,
 		UserPrompt:   strings.Join(contextParts, "\n"),

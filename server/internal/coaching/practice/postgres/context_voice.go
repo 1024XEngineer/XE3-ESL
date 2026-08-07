@@ -126,12 +126,21 @@ func (r *Repository) advanceTurnInTransaction(
 	}
 
 	snapshot, err := decodeContextSnapshot(snapshotDocument)
+	completionMode := practice.NormalizeCompletionMode(
+		snapshot.SessionPolicy.CompletionMode,
+	)
 	if err != nil ||
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.SessionID ||
 		snapshot.SessionPolicy.MaxEffectiveTurns != turnLimit ||
-		turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
-		effectiveTurns < 0 || effectiveTurns > turnLimit {
+		effectiveTurns < 0 ||
+		(completionMode != practice.CompletionModeTurnLimited &&
+			completionMode != practice.CompletionModeUserControlled) ||
+		(completionMode == practice.CompletionModeTurnLimited &&
+			(turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
+				effectiveTurns > turnLimit)) ||
+		(completionMode == practice.CompletionModeUserControlled &&
+			turnLimit != 0) {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
 	option, err := snapshot.SceneSelection.PracticeOption()
@@ -162,7 +171,8 @@ func (r *Repository) advanceTurnInTransaction(
 		// paused and unknown lifecycle states cannot consume a Turn.
 		return practice.TurnResult{}, practice.ErrConflict
 	}
-	if effectiveTurns >= turnLimit {
+	if completionMode == practice.CompletionModeTurnLimited &&
+		effectiveTurns >= turnLimit {
 		return practice.TurnResult{}, practice.ErrSessionCompleted
 	}
 
@@ -173,7 +183,9 @@ func (r *Repository) advanceTurnInTransaction(
 	if round < 1 {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
-	completed := command.CountsTowardTurnLimit && round == turnLimit
+	completed := completionMode ==
+		practice.CompletionModeTurnLimited &&
+		command.CountsTowardTurnLimit && round == turnLimit
 	nextVersion := version + 1
 	completionToken := ""
 	if completed {

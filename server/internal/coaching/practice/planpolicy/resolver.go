@@ -63,6 +63,7 @@ func (*Resolver) ResolveSessionPolicy(
 		}
 	}
 	return preparation.SessionPolicy{
+		CompletionMode:           preparation.CompletionMode(policy.CompletionMode),
 		SuggestedDurationSeconds: policy.SuggestedDurationSeconds,
 		MinEffectiveTurns:        policy.MinEffectiveTurns,
 		MaxEffectiveTurns:        policy.MaxEffectiveTurns,

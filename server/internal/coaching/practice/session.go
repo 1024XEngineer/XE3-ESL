@@ -86,6 +86,7 @@ type SessionTransition string
 const (
 	SessionPause    SessionTransition = "pause"
 	SessionResume   SessionTransition = "resume"
+	SessionComplete SessionTransition = "complete"
 	SessionEndEarly SessionTransition = "end_early"
 )
 

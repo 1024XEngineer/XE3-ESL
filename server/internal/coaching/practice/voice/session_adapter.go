@@ -203,20 +203,23 @@ func mapPracticeSession(
 		return Session{}, ErrInvalidContext
 	}
 	result := Session{
-		ID:                         session.ID,
-		PlanID:                     session.PlanID,
-		SceneID:                    selection.Scene.ID,
-		SceneVersion:               selection.Scene.Version,
-		PracticeExperience:         string(snapshot.Experience),
-		SceneCategory:              string(snapshot.Category),
-		PracticeMode:               string(snapshot.PracticeMode),
-		TurnPolicyRef:              option.TurnPolicyRef,
-		Prompt:                     cloneScenePrompt(selection.Scene.Prompt),
-		ScenarioContext:            cloneScenarioPreparationContext(snapshot.Preparation.ScenarioContext),
-		IELTSAssignment:            cloneIELTSAssignment(snapshot.IELTSAssignment),
-		SessionVersion:             session.Version,
-		EffectiveTurns:             session.EffectiveTurns,
-		TurnLimit:                  snapshot.SessionPolicy.MaxEffectiveTurns,
+		ID:                 session.ID,
+		PlanID:             session.PlanID,
+		SceneID:            selection.Scene.ID,
+		SceneVersion:       selection.Scene.Version,
+		PracticeExperience: string(snapshot.Experience),
+		SceneCategory:      string(snapshot.Category),
+		PracticeMode:       string(snapshot.PracticeMode),
+		TurnPolicyRef:      option.TurnPolicyRef,
+		Prompt:             cloneScenePrompt(selection.Scene.Prompt),
+		ScenarioContext:    cloneScenarioPreparationContext(snapshot.Preparation.ScenarioContext),
+		IELTSAssignment:    cloneIELTSAssignment(snapshot.IELTSAssignment),
+		SessionVersion:     session.Version,
+		EffectiveTurns:     session.EffectiveTurns,
+		TurnLimit:          snapshot.SessionPolicy.MaxEffectiveTurns,
+		CompletionMode: practice.NormalizeCompletionMode(
+			snapshot.SessionPolicy.CompletionMode,
+		),
 		MaxFollowUpsPerQuestion:    snapshot.SessionPolicy.MaxFollowUpsPerQuestion,
 		QuestionTranslationAllowed: snapshot.SessionPolicy.QuestionTranslationAllowed,
 		QuestionTipsAllowed:        snapshot.SessionPolicy.QuestionTipsAllowed,
@@ -294,14 +297,15 @@ func mapPracticeSession(
 	if result.FacilitatorParticipantID == "" ||
 		result.LearnerParticipantID == "" ||
 		len(facilitatorRoles) != len(selectedRoles) ||
-		result.TurnLimit < 1 ||
-		result.TurnLimit > practice.MaxPracticeTurns ||
-		result.EffectiveTurns < 0 ||
-		result.EffectiveTurns > result.TurnLimit ||
+		result.EffectiveTurns < 0 || !validVoiceProgress(result) ||
 		(result.Status == string(
 			practice.SessionCompleted,
 		)) != result.Completed ||
-		!validPersistedSessionLifecycle(session, result.TurnLimit) {
+		!validPersistedSessionLifecycle(
+			session,
+			result.TurnLimit,
+			result.CompletionMode,
+		) {
 		return Session{}, ErrInvalidContext
 	}
 	return result, nil
@@ -345,12 +349,19 @@ func cloneIELTSAssignment(
 func validPersistedSessionLifecycle(
 	session practice.Session,
 	turnLimit int,
+	completionMode practice.CompletionMode,
 ) bool {
-	if turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
-		session.EffectiveTurns < 0 ||
-		session.EffectiveTurns > turnLimit {
+	if session.EffectiveTurns < 0 ||
+		(completionMode == practice.CompletionModeUserControlled && turnLimit != 0) ||
+		(completionMode == practice.CompletionModeTurnLimited &&
+			(turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
+				session.EffectiveTurns > turnLimit)) ||
+		(completionMode != practice.CompletionModeUserControlled &&
+			completionMode != practice.CompletionModeTurnLimited) {
 		return false
 	}
+	turnAvailable := completionMode == practice.CompletionModeUserControlled ||
+		session.EffectiveTurns < turnLimit
 	switch session.Status {
 	case practice.SessionStarting:
 		return session.EffectiveTurns == 0 &&
@@ -359,7 +370,7 @@ func validPersistedSessionLifecycle(
 			session.EndReason == ""
 	case practice.SessionInProgress,
 		practice.SessionPaused:
-		return session.EffectiveTurns < turnLimit &&
+		return turnAvailable &&
 			session.StartedAt != nil &&
 			session.EndedAt == nil &&
 			session.EndReason == ""
@@ -369,7 +380,7 @@ func validPersistedSessionLifecycle(
 			session.EndedAt != nil &&
 			strings.TrimSpace(session.EndReason) != ""
 	case practice.SessionEndedEarly:
-		return session.EffectiveTurns < turnLimit &&
+		return turnAvailable &&
 			session.StartedAt != nil &&
 			session.EndedAt != nil &&
 			strings.TrimSpace(session.EndReason) != ""

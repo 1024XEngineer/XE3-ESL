@@ -13,6 +13,16 @@ void main() {
     expect(handoff.roles, <String>['面试官']);
   });
 
+  test('decodes an open-ended PracticePlan handoff', () {
+    final payload = _validHandoff()..['max_effective_turns'] = 0;
+    final handoff =
+        decodeAgentHandoffs(<Object?>[payload]).single
+            as ConfirmPracticePlanHandoff;
+
+    expect(handoff.minEffectiveTurns, 3);
+    expect(handoff.maxEffectiveTurns, 0);
+  });
+
   test('rejects malformed or ambiguous handoff payloads', () {
     final unknownField = _validHandoff()..['unexpected'] = true;
     final invalidScene = _validHandoff()..['practice_experience'] = 'UNKNOWN';

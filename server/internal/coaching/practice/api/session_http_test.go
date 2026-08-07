@@ -40,6 +40,50 @@ func TestSessionHTTPRegistersOnlyPracticeSessionRoutes(t *testing.T) {
 	if _, exists := paths["POST /v1/practice-plans/:practice_plan_id/practice-sessions"]; !exists {
 		t.Fatal("Practice Session create route missing")
 	}
+	if _, exists := paths["POST /v1/practice-sessions/:practice_session_id/complete"]; !exists {
+		t.Fatal("Practice Session complete route missing")
+	}
+}
+
+func TestSessionHTTPCompletesUserControlledSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotTransition practice.SessionTransition
+	application := contextHTTPApplicationStub{
+		transitionSession: func(
+			_ context.Context,
+			actor requestcontext.Actor,
+			sessionID string,
+			key string,
+			expectedVersion int,
+			transition practice.SessionTransition,
+		) (practice.Session, bool, error) {
+			if actor.UserID != "user-1" || sessionID != "session-1" ||
+				key != "complete-session-0001" || expectedVersion != 8 {
+				t.Fatal("TransitionSession received altered trusted input")
+			}
+			gotTransition = transition
+			return practice.Session{
+				ID: "session-1", Status: practice.SessionCompleted, Version: 9,
+			}, false, nil
+		},
+	}
+	response := serveContextHTTPRequest(
+		t,
+		contextHTTPRouter(t, application),
+		http.MethodPost,
+		"/v1/practice-sessions/session-1/complete",
+		`{"expected_session_version":8}`,
+		"complete-session-0001",
+	)
+	if response.Code != http.StatusOK ||
+		gotTransition != practice.SessionComplete {
+		t.Fatalf(
+			"status=%d transition=%q body=%s",
+			response.Code,
+			gotTransition,
+			response.Body.String(),
+		)
+	}
 }
 
 func TestSessionHTTPCreateSessionForwardsOnlyExecutablePlanInputs(t *testing.T) {
@@ -165,6 +209,14 @@ type contextHTTPApplicationStub struct {
 		string,
 		practice.CreateSessionRequest,
 	) (practice.SessionBootstrap, bool, error)
+	transitionSession func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		int,
+		practice.SessionTransition,
+	) (practice.Session, bool, error)
 }
 
 func (s contextHTTPApplicationStub) CreateSession(
@@ -197,14 +249,19 @@ func (contextHTTPApplicationStub) GetSessionSnapshot(
 	return practice.SessionSnapshot{}, errors.New("unexpected GetSessionSnapshot")
 }
 
-func (contextHTTPApplicationStub) TransitionSession(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-	int,
-	practice.SessionTransition,
+func (s contextHTTPApplicationStub) TransitionSession(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	key string,
+	expectedVersion int,
+	transition practice.SessionTransition,
 ) (practice.Session, bool, error) {
+	if s.transitionSession != nil {
+		return s.transitionSession(
+			ctx, actor, sessionID, key, expectedVersion, transition,
+		)
+	}
 	return practice.Session{}, false,
 		errors.New("unexpected TransitionSession")
 }

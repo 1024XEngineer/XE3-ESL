@@ -765,6 +765,7 @@ bool _sameSessionPolicy(
   PreparationSessionPolicy left,
   PreparationSessionPolicy right,
 ) =>
+    left.completionMode == right.completionMode &&
     left.suggestedDurationSeconds == right.suggestedDurationSeconds &&
     left.minEffectiveTurns == right.minEffectiveTurns &&
     left.maxEffectiveTurns == right.maxEffectiveTurns &&

@@ -452,6 +452,8 @@ func contextTransitionWireAction(
 		return "pause", true
 	case SessionResume:
 		return "resume", true
+	case SessionComplete:
+		return "complete", true
 	case SessionEndEarly:
 		return "end-early", true
 	default:

@@ -383,6 +383,7 @@ func SessionStateResponse(state practicevoice.SessionState) gin.H {
 		"session_version":         state.Session.SessionVersion,
 		"effective_turns":         state.Session.EffectiveTurns,
 		"turn_limit":              state.Session.TurnLimit,
+		"completion_mode":         state.Session.CompletionMode,
 		"session_completed": state.Session.Completed ||
 			state.Session.Status == string(practice.SessionEndedEarly),
 		"practice_capabilities": gin.H{

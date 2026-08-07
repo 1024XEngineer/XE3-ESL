@@ -175,6 +175,7 @@ final class PracticeObjective {
 
 final class PreparationSessionPolicy {
   const PreparationSessionPolicy({
+    this.completionMode = PreparationCompletionMode.turnLimited,
     required this.suggestedDurationSeconds,
     required this.minEffectiveTurns,
     required this.maxEffectiveTurns,
@@ -188,6 +189,7 @@ final class PreparationSessionPolicy {
     required this.speechFeedbackAllowed,
   });
 
+  final PreparationCompletionMode completionMode;
   final int suggestedDurationSeconds;
   final int minEffectiveTurns;
   final int maxEffectiveTurns;
@@ -199,6 +201,18 @@ final class PreparationSessionPolicy {
   final bool questionTipsAllowed;
   final bool avatarAllowed;
   final bool speechFeedbackAllowed;
+}
+
+enum PreparationCompletionMode {
+  turnLimited,
+  userControlled;
+
+  static PreparationCompletionMode? fromWireValue(String value) =>
+      switch (value) {
+        'TURN_LIMITED' => PreparationCompletionMode.turnLimited,
+        'USER_CONTROLLED' => PreparationCompletionMode.userControlled,
+        _ => null,
+      };
 }
 
 enum PracticePlanStatus { ready, archived }

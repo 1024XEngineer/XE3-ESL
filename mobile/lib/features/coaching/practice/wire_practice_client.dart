@@ -35,6 +35,7 @@ final class PracticeWireEndpoints {
         '{question_id}/tips',
     this.confirm = '/v1/transcription-candidates/{candidate_id}/confirmations',
     this.endEarly = '/v1/practice-sessions/{practice_session_id}/end-early',
+    this.complete = '/v1/practice-sessions/{practice_session_id}/complete',
     this.retryRequest = '/v1/feedback-items/{feedback_item_id}/retry-requests',
     this.retryRequestStatus = '/v1/retry-requests/{retry_request_id}',
     this.retryConfirmation =
@@ -50,6 +51,7 @@ final class PracticeWireEndpoints {
   final String questionTip;
   final String confirm;
   final String endEarly;
+  final String complete;
   final String retryRequest;
   final String retryRequestStatus;
   final String retryConfirmation;
@@ -83,6 +85,9 @@ final class PracticeWireEndpoints {
 
   String endEarlyPath(String sessionId) =>
       endEarly.replaceAll('{practice_session_id}', _pathSegment(sessionId));
+
+  String completePath(String sessionId) =>
+      complete.replaceAll('{practice_session_id}', _pathSegment(sessionId));
 
   String retryRequestPath(String feedbackItemId) => retryRequest.replaceAll(
     '{feedback_item_id}',
@@ -145,6 +150,7 @@ final class WirePracticeClient
     implements
         PracticeClient,
         PracticeLifecycleClient,
+        PracticeCompletionClient,
         PracticeSpeechFeedbackRetryClient,
         PracticeQuestionTipClient,
         PracticeQuestionTranslationClient {
@@ -538,6 +544,42 @@ final class WirePracticeClient
     });
   }
 
+  @override
+  Future<PracticeSessionLifecycle> complete({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireClientId(idempotencyKey);
+      if (expectedSessionVersion < 1) {
+        throw const PracticeClientException(
+          kind: PracticeClientFailureKind.invalidRequest,
+        );
+      }
+      final response = await _sendJson(
+        generation: generation,
+        method: 'POST',
+        path: _endpoints.completePath(sessionId),
+        body: <String, Object?>{
+          'expected_session_version': expectedSessionVersion,
+        },
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      final lifecycle = _decodeSessionLifecycle(
+        response.body,
+        expectedSessionId: sessionId,
+      );
+      if (lifecycle.status != PracticeSessionLifecycleStatus.completed ||
+          lifecycle.version <= expectedSessionVersion) {
+        throw _invalidResponse();
+      }
+      return lifecycle;
+    });
+  }
+
   Future<PracticeWireResponse> _sendJson({
     required int generation,
     required String method,
@@ -799,6 +841,7 @@ PracticeSessionSnapshot _decodeSessionState(
       'current_question',
       'current_turn',
       'turn_history',
+      'completion_mode',
     },
   );
   final sessionId = _string(root, 'practice_session_id');
@@ -831,6 +874,11 @@ PracticeSessionSnapshot _decodeSessionState(
   final sessionVersion = _integer(root, 'session_version');
   final effectiveTurns = _integer(root, 'effective_turns');
   final turnLimit = _integer(root, 'turn_limit');
+  final completionMode = root.containsKey('completion_mode')
+      ? PracticeCompletionMode.fromWireValue(
+          _string(root, 'completion_mode', maxLength: 32),
+        )
+      : PracticeCompletionMode.turnLimited;
   final completed = _boolean(root, 'session_completed');
   final terminal =
       sessionStatus == PracticeSessionLifecycleStatus.completed ||
@@ -866,9 +914,13 @@ PracticeSessionSnapshot _decodeSessionState(
       sessionVersion < 1 ||
       completed != terminal ||
       effectiveTurns < 0 ||
-      turnLimit < 1 ||
-      turnLimit > practiceTurnSafetyLimit ||
-      effectiveTurns > turnLimit ||
+      completionMode == null ||
+      (completionMode == PracticeCompletionMode.turnLimited &&
+          (turnLimit < 1 ||
+              turnLimit > practiceTurnSafetyLimit ||
+              effectiveTurns > turnLimit)) ||
+      (completionMode == PracticeCompletionMode.userControlled &&
+          turnLimit != 0) ||
       (practiceExperience == PracticeExperience.ieltsSpeaking) !=
           (ieltsAssignment != null) ||
       (ieltsAssignment != null &&
@@ -906,6 +958,7 @@ PracticeSessionSnapshot _decodeSessionState(
     sessionVersion: sessionVersion,
     completedTurns: effectiveTurns,
     turnLimit: turnLimit,
+    completionMode: completionMode,
     sessionCompleted: completed,
     ieltsAssignment: ieltsAssignment,
     currentQuestion: question,
@@ -923,9 +976,7 @@ IeltsPracticeAssignment _decodeIeltsAssignment(Object? value) {
 }
 
 List<PracticeTurnExchange> _decodeTurnHistory(Object? value) {
-  if (value is! List<Object?> ||
-      value.isEmpty ||
-      value.length > practiceTurnSafetyLimit) {
+  if (value is! List<Object?> || value.isEmpty) {
     throw _invalidResponse();
   }
   final exchanges = <PracticeTurnExchange>[];
@@ -1386,6 +1437,7 @@ PracticeTurnConfirmation _confirmationFromState(
     ),
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
+    completionMode: state.completionMode,
     sessionCompleted: state.sessionCompleted,
     practiceExperience: state.practiceExperience,
     sceneCategory: state.sceneCategory,

@@ -89,13 +89,13 @@ ConfirmPracticePlanHandoff _decodeConfirmPracticePlanHandoff(Object? value) {
       .map((role) => _string(role, 1, 200))
       .toList(growable: false);
   final minTurns = _integer(object['min_effective_turns'], 1, 100);
-  final maxTurns = _integer(object['max_effective_turns'], 1, 100);
+  final maxTurns = _integer(object['max_effective_turns'], 0, 100);
   if (_string(object['type'], 1, 64) != 'confirm_practice_plan' ||
       !_practiceExperiences.contains(practiceExperience) ||
       !_sceneCategories.contains(sceneCategory) ||
       !_practiceModes.contains(practiceMode) ||
       roles.toSet().length != roles.length ||
-      maxTurns < minTurns ||
+      (maxTurns != 0 && maxTurns < minTurns) ||
       object['executable_status'] != 'ready') {
     _rejectHandoffPayload();
   }

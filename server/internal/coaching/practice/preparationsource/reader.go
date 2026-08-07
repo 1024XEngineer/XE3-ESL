@@ -188,6 +188,9 @@ func projectSessionPolicy(
 		return practice.SessionPolicy{}, practice.ErrConflict
 	}
 	projected := practice.SessionPolicy{
+		CompletionMode: practice.NormalizeCompletionMode(
+			practice.CompletionMode(policy.CompletionMode),
+		),
 		SuggestedDurationSeconds: policy.SuggestedDurationSeconds,
 		MinEffectiveTurns:        policy.MinEffectiveTurns,
 		MaxEffectiveTurns:        policy.MaxEffectiveTurns,

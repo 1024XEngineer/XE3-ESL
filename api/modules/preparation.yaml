@@ -608,9 +608,12 @@ components:
       type: object
       additionalProperties: false
       description: |
-        The effective-Turn budget frozen into a PracticePlan revision. Invalid
-        input and technical failures do not advance the budget.
+        The completion behavior frozen into a PracticePlan revision. A
+        TURN_LIMITED policy completes at max_effective_turns. A
+        USER_CONTROLLED policy uses max_effective_turns 0 and completes only
+        after the learner explicitly requests completion.
       required:
+        - completion_mode
         - suggested_duration_seconds
         - min_effective_turns
         - max_effective_turns
@@ -623,6 +626,11 @@ components:
         - avatar_allowed
         - speech_feedback_allowed
       properties:
+        completion_mode:
+          type: string
+          enum:
+            - TURN_LIMITED
+            - USER_CONTROLLED
         suggested_duration_seconds:
           type: integer
           minimum: 1
@@ -631,7 +639,7 @@ components:
           minimum: 1
         max_effective_turns:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 64
         coverage_checkpoint_turn:
           type: integer
@@ -655,6 +663,26 @@ components:
           type: boolean
         speech_feedback_allowed:
           type: boolean
+      allOf:
+        - if:
+            properties:
+              completion_mode:
+                const: USER_CONTROLLED
+            required:
+              - completion_mode
+          then:
+            properties:
+              max_effective_turns:
+                type: integer
+                const: 0
+              coverage_checkpoint_turn:
+                type: integer
+                const: 1
+          else:
+            properties:
+              max_effective_turns:
+                type: integer
+                minimum: 1
     IELTSPracticeSelection:
       type: object
       additionalProperties: false

@@ -827,6 +827,7 @@ func installEvidenceAuthorities(
 			len(practiceContext.Participants),
 		),
 		SessionPolicy: practice.SessionPolicy{
+			CompletionMode: practice.CompletionModeTurnLimited,
 			SuggestedDurationSeconds: practiceContext.TaskContext.
 				SuggestedDurationSeconds,
 			MinEffectiveTurns:       minEffectiveTurns,

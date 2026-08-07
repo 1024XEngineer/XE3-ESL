@@ -67,4 +67,5 @@ import "embed"
 //go:embed 000079_preparation_plan_typed_context.*.sql
 //go:embed 000080_ielts_versioned_question_bank.*.sql
 //go:embed 000081_restore_interview_follow_ups.*.sql
+//go:embed 000082_user_controlled_practice_sessions.*.sql
 var Files embed.FS

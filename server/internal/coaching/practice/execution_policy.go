@@ -45,6 +45,7 @@ type TurnPolicy struct {
 }
 
 type sessionPolicyRegistration struct {
+	completionMode             CompletionMode
 	minEffectiveTurns          int
 	maxEffectiveTurns          int
 	coverageCheckpointTurn     int
@@ -112,6 +113,7 @@ func ValidSessionPolicy(
 		return false
 	}
 	return policy.SuggestedDurationSeconds == expected.SuggestedDurationSeconds &&
+		NormalizeCompletionMode(policy.CompletionMode) == expected.CompletionMode &&
 		policy.MinEffectiveTurns == expected.MinEffectiveTurns &&
 		policy.MaxEffectiveTurns == expected.MaxEffectiveTurns &&
 		policy.CoverageCheckpointTurn == expected.CoverageCheckpointTurn &&
@@ -170,6 +172,7 @@ func resolveSessionPolicyRegistration(
 	reference string,
 ) (sessionPolicyRegistration, bool) {
 	standard := sessionPolicyRegistration{
+		completionMode:          CompletionModeTurnLimited,
 		minEffectiveTurns:       4,
 		maxEffectiveTurns:       6,
 		coverageCheckpointTurn:  4,
@@ -190,6 +193,10 @@ func resolveSessionPolicyRegistration(
 		DailyHotelCheckinIssueSessionPolicy,
 		WorkplacePracticeSessionPolicy,
 		WorkplaceProgressRiskUpdateSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
 		standard.retryAllowed = true
 		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
@@ -206,6 +213,7 @@ func resolveSessionPolicyRegistration(
 		IELTSSpeakingPart3SessionPolicy,
 		IELTSSpeakingFullMockSessionPolicy:
 		return sessionPolicyRegistration{
+			completionMode:        CompletionModeTurnLimited,
 			turnsFromBlueprints:   true,
 			speechFeedbackAllowed: true,
 		}, true
@@ -234,21 +242,28 @@ func buildSessionPolicy(
 		registration.minEffectiveTurns = blueprintCount
 		registration.maxEffectiveTurns = blueprintCount
 		registration.coverageCheckpointTurn = blueprintCount
-	} else if mode == PracticeModeFocus {
+	} else if mode == PracticeModeFocus &&
+		registration.completionMode == CompletionModeTurnLimited {
 		registration.minEffectiveTurns = 1
 		registration.maxEffectiveTurns = 3
 		registration.coverageCheckpointTurn = 1
-	} else if mode != PracticeModeFullSimulation {
+	} else if mode != PracticeModeFullSimulation &&
+		mode != PracticeModeFocus {
 		return SessionPolicy{}, false
 	}
 	if requestedMaxEffectiveTurns > 0 {
-		if requestedMaxEffectiveTurns < registration.minEffectiveTurns ||
+		if registration.completionMode == CompletionModeUserControlled {
+			requestedMaxEffectiveTurns = 0
+		} else if requestedMaxEffectiveTurns < registration.minEffectiveTurns ||
 			requestedMaxEffectiveTurns > registration.maxEffectiveTurns {
 			return SessionPolicy{}, false
 		}
-		registration.maxEffectiveTurns = requestedMaxEffectiveTurns
+		if requestedMaxEffectiveTurns > 0 {
+			registration.maxEffectiveTurns = requestedMaxEffectiveTurns
+		}
 	}
 	return SessionPolicy{
+		CompletionMode:             registration.completionMode,
 		SuggestedDurationSeconds:   suggestedDurationSeconds,
 		MinEffectiveTurns:          registration.minEffectiveTurns,
 		MaxEffectiveTurns:          registration.maxEffectiveTurns,
