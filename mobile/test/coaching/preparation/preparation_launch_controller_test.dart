@@ -428,6 +428,50 @@ void main() {
     },
   );
 
+  test('cancel fences an in-flight preparation completion', () async {
+    final profile = Completer<PreparationProfile>();
+    final client = _LaunchClient(profileCompleter: profile);
+    var activated = false;
+    final controller = PreparationLaunchController(
+      client: client,
+      contextProvider: () => _context,
+      threadIdProvider: () => _threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _context,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {
+            activated = true;
+          },
+      idFactory: (scope) => '$scope-cancel-key',
+    );
+    addTearDown(controller.dispose);
+    controller.updateBackgroundSummary(_background);
+
+    final start = controller.start(_selection);
+    expect(controller.isStarting, isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.calls, ['profile']);
+
+    expect(await controller.cancelCurrentPreparation(), isTrue);
+    expect(controller.isStarting, isFalse);
+    expect(controller.bootstrap, isNull);
+    expect(controller.errorMessage, isNull);
+
+    profile.complete(_profile);
+    expect(await start, isFalse);
+    expect(client.calls, ['profile']);
+    expect(activated, isFalse);
+  });
+
   test(
     'selection changes cannot orphan a Session while launch is pending',
     () async {

@@ -241,6 +241,84 @@ void main() {
       ),
     );
   });
+
+  testWidgets('back cancels a pending preparation and clears launch status', (
+    tester,
+  ) async {
+    final preparationController = PreparationController(
+      client: _FixtureClient(),
+    );
+    await preparationController.loadIfNeeded();
+    await preparationController.selectScene(_scene);
+    expect(preparationController.selectRecommendedConfiguration(), isTrue);
+    final profile = Completer<PreparationProfile>();
+    final launchClient = _PageLaunchClient(profileCompleter: profile);
+    var navigations = 0;
+    final launchController = PreparationLaunchController(
+      client: launchClient,
+      contextProvider: () => _pageContext,
+      threadIdProvider: () => _pageContext.threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _pageContext,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-cancel-widget-key',
+    );
+    launchController.updateBackgroundSummary(
+      'Backend engineer preparing a technical interview.',
+    );
+    addTearDown(preparationController.dispose);
+    addTearDown(launchController.dispose);
+
+    final start = launchController.start(
+      PreparationLaunchSelection.fromCatalog(
+        scene: preparationController.detail!,
+        role: preparationController.selectedRole!,
+        option: preparationController.selectedOption!,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: preparationController,
+          launchController: launchController,
+          onPracticeStarted: () => navigations++,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('正在准备练习…'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('preparation-back-to-catalog')));
+    await tester.pump();
+
+    expect(find.text('正在准备练习…'), findsNothing);
+    expect(find.byKey(const Key('preparation-launch-progress')), findsNothing);
+    expect(preparationController.selectedScene, isNull);
+
+    profile.complete(
+      PreparationProfile(
+        id: 'profile-1',
+        userId: 'user-1',
+        backgroundSummary: 'Backend engineer preparing a technical interview.',
+        version: 1,
+        updatedAt: DateTime.utc(2026, 7, 26),
+      ),
+    );
+    expect(await start, isFalse);
+    await tester.pumpAndSettle();
+    expect(navigations, 0);
+    expect(find.text('正在准备练习…'), findsNothing);
+  });
 }
 
 class _FixtureClient implements SceneClient {
@@ -312,7 +390,8 @@ final class _ControlledListClient implements SceneClient {
 }
 
 final class _PageLaunchClient implements PreparationLaunchClient {
-  _PageLaunchClient();
+  _PageLaunchClient({this.profileCompleter});
+  final Completer<PreparationProfile>? profileCompleter;
   final calls = <String>[];
   PreparationLaunchSelection? selection;
   CreatePreparationProfileInput? lastProfileInput;
@@ -328,7 +407,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
   }) async {
     calls.add('profile');
     lastProfileInput = input;
-    return PreparationProfile(
+    final result = PreparationProfile(
       id: 'profile-1',
       userId: 'user-1',
       backgroundSummary: input.backgroundSummary,
@@ -336,6 +415,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       version: 1,
       updatedAt: DateTime.utc(2026, 7, 26),
     );
+    return profileCompleter?.future ?? result;
   }
 
   @override
