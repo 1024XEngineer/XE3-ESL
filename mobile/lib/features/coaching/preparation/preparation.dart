@@ -656,8 +656,13 @@ class _PreparationPageState extends State<PreparationPage> {
           backButtonKey: const Key('preparation-back-to-families'),
           titleKey: Key('practice-hub-title-${hub.name}'),
           onBack: () => setState(() => _selectedHub = null),
+          trailing: hub == _PracticeHub.interview
+              ? InterviewCatalogCreateButton(
+                  onPressed: widget.onOpenJobPreparation,
+                )
+              : null,
         ),
-        const SizedBox(height: 16),
+        SizedBox(height: hub == _PracticeHub.interview ? 20 : 16),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
             plans: widget.jobPreparationController?.interviewPlans ?? const [],
@@ -720,8 +725,13 @@ class _PreparationPageState extends State<PreparationPage> {
             backButtonKey: const Key('preparation-back-to-families'),
             titleKey: Key('practice-hub-title-${selectedHub.name}'),
             onBack: () => setState(() => _selectedHub = null),
+            trailing: selectedHub == _PracticeHub.interview
+                ? InterviewCatalogCreateButton(
+                    onPressed: widget.onOpenJobPreparation,
+                  )
+                : null,
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: selectedHub == _PracticeHub.interview ? 20 : 16),
           const PreparationCatalogEmpty(message: '连接场景服务后即可查看练习。'),
         ],
       );
