@@ -10,6 +10,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
@@ -39,6 +40,35 @@ type fixedSummaryGenerator struct {
 	result   agentsummary.GenerationResult
 	err      error
 	requests []agentsummary.GenerationRequest
+}
+
+type fixedTitleGenerator struct {
+	mu       sync.Mutex
+	result   agenttitle.GenerationResult
+	err      error
+	requests []agenttitle.GenerationRequest
+}
+
+func (generator *fixedTitleGenerator) GenerateJSON(
+	ctx context.Context,
+	request agenttitle.GenerationRequest,
+) (agenttitle.GenerationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return agenttitle.GenerationResult{}, err
+	}
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	generator.requests = append(generator.requests, request)
+	if generator.err != nil {
+		return agenttitle.GenerationResult{}, generator.err
+	}
+	return generator.result, nil
+}
+
+func (generator *fixedTitleGenerator) CallCount() int {
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	return len(generator.requests)
 }
 
 func newFixedSummaryGenerator(

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
@@ -17,6 +18,7 @@ func testAgentModelProviders(run agentrun.TextGenerator) AgentModelProviders {
 		Run:         run,
 		Memory:      testMemoryGenerator{run: run},
 		Summary:     testSummaryGenerator{run: run},
+		Title:       testTitleGenerator{run: run},
 		Translation: testTranslator{},
 	}
 }
@@ -62,6 +64,27 @@ func (generator testMemoryGenerator) GenerateJSON(
 
 type testSummaryGenerator struct {
 	run agentrun.TextGenerator
+}
+
+type testTitleGenerator struct {
+	run agentrun.TextGenerator
+}
+
+func (generator testTitleGenerator) GenerateJSON(
+	ctx context.Context,
+	request agenttitle.GenerationRequest,
+) (agenttitle.GenerationResult, error) {
+	result, err := generateTestJSON(
+		ctx,
+		generator.run,
+		request.SystemPrompt,
+		request.UserPrompt,
+	)
+	return agenttitle.GenerationResult{
+		Provider: result.Provider,
+		Model:    result.Model,
+		Content:  result.Content,
+	}, err
 }
 
 func (generator testSummaryGenerator) GenerateJSON(

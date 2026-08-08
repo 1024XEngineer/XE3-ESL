@@ -6,6 +6,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
@@ -51,6 +52,7 @@ type IdentityAgentPracticeComposition struct {
 	agentImageReclaimer    AgentImageObjectReclaimer
 	memoryExtraction       memory.ExtractionProcessor
 	summaryProcessor       agentsummary.Processor
+	titleProcessor         agenttitle.Processor
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparationservice.ProfileService
 	preparationHTTP        *preparationrouter.Router
@@ -91,6 +93,7 @@ func NewIdentityAgentAndPracticeComposition(
 		nil,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -125,6 +128,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		memoryExtractionNotifier,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -132,6 +136,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 type AgentWorkerWakeups struct {
 	MemoryExtraction interface{ Notify() }
 	ThreadSummary    interface{ Notify() }
+	ThreadTitle      interface{ Notify() }
 }
 
 func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
@@ -161,6 +166,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
+		wakeups.ThreadTitle,
 		nil,
 		voiceConfigurations...,
 	)
@@ -194,6 +200,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
+		wakeups.ThreadTitle,
 		imageConfiguration,
 		voiceConfigurations...,
 	)
@@ -212,6 +219,7 @@ func newIdentityAgentAndPracticeComposition(
 	jobTargetGenerator preparation.JobTargetGenerator,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
+	titleNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -228,6 +236,7 @@ func newIdentityAgentAndPracticeComposition(
 		memorySearcher,
 		memoryExtractionNotifier,
 		summaryNotifier,
+		titleNotifier,
 		imageConfiguration,
 		voiceConfigurations...,
 	)
@@ -391,6 +400,7 @@ func newIdentityAgentAndPracticeComposition(
 		agentImageReclaimer:    base.agentImageReclaimer,
 		memoryExtraction:       base.memoryExtraction,
 		summaryProcessor:       base.summaryProcessor,
+		titleProcessor:         base.titleProcessor,
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
@@ -446,6 +456,13 @@ func (c *IdentityAgentPracticeComposition) ThreadSummaryProcessor() agentsummary
 		return nil
 	}
 	return c.summaryProcessor
+}
+
+func (c *IdentityAgentPracticeComposition) ThreadTitleProcessor() agenttitle.Processor {
+	if c == nil {
+		return nil
+	}
+	return c.titleProcessor
 }
 
 func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparationservice.ProfileService {

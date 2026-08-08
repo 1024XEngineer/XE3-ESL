@@ -126,7 +126,7 @@ func (r *Repository) ListThreads(
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -136,15 +136,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE threads.owner_user_id = $1
   AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC`,
@@ -169,7 +160,6 @@ ORDER BY threads.updated_at DESC, threads.id DESC`,
 		); err != nil {
 			return nil, conversation.ErrRepository
 		}
-		item.Title = conversation.DeriveThreadTitle(item.Title)
 		result = append(result, item)
 	}
 	if rows.Err() != nil {
@@ -188,7 +178,7 @@ func (r *Repository) PageThreads(
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -198,15 +188,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE threads.owner_user_id = $1
   AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC
@@ -217,7 +198,7 @@ LIMIT $2`
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -227,15 +208,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE threads.owner_user_id = $1
   AND threads.sidebar_deleted_at IS NULL
   AND (threads.updated_at, threads.id) < ($2, $3)
@@ -268,7 +240,6 @@ LIMIT $4`
 		); err != nil {
 			return nil, conversation.ErrRepository
 		}
-		item.Title = conversation.DeriveThreadTitle(item.Title)
 		result = append(result, item)
 	}
 	if rows.Err() != nil {
@@ -287,7 +258,7 @@ func (r *Repository) FindThread(
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -297,15 +268,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 		threadID,
 		ownerID,
@@ -321,7 +283,6 @@ WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 	if err != nil {
 		return conversation.Thread{}, mapConversationPostgresError(err)
 	}
-	result.Title = conversation.DeriveThreadTitle(result.Title)
 	return result, nil
 }
 
@@ -334,7 +295,7 @@ func (r *Repository) FindFocusedThread(
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -347,15 +308,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE focus.owner_user_id = $1`,
 		ownerID,
 	).Scan(
@@ -373,7 +325,6 @@ WHERE focus.owner_user_id = $1`,
 	if err != nil {
 		return conversation.Thread{}, false, mapConversationPostgresError(err)
 	}
-	result.Title = conversation.DeriveThreadTitle(result.Title)
 	return result, true, nil
 }
 
@@ -413,7 +364,7 @@ selected AS (
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -425,16 +376,7 @@ JOIN agent_threads AS threads
 LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
- AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true`,
+ AND active_link.is_active`,
 		threadID,
 		ownerID,
 	).Scan(
@@ -449,7 +391,6 @@ LEFT JOIN LATERAL (
 	if err != nil {
 		return conversation.Thread{}, mapConversationPostgresError(err)
 	}
-	result.Title = conversation.DeriveThreadTitle(result.Title)
 	return result, nil
 }
 

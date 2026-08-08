@@ -6,6 +6,7 @@ import (
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	summarypostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary/postgres"
+	titlepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title/postgres"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,7 @@ type agentRepositories struct {
 	context      *contextpostgres.Repository
 	run          *runpostgres.Repository
 	summary      *summarypostgres.Repository
+	title        *titlepostgres.Repository
 }
 
 func newAgentRepositories(
@@ -40,10 +42,15 @@ func newAgentRepositories(
 	if err != nil {
 		t.Fatalf("new Agent Summary repository: %v", err)
 	}
+	titleRepository, err := titlepostgres.New(pool, ids)
+	if err != nil {
+		t.Fatalf("new Agent Title repository: %v", err)
+	}
 	return &agentRepositories{
 		conversation: conversationRepository,
 		context:      contextRepository,
 		run:          runRepository,
 		summary:      summaryRepository,
+		title:        titleRepository,
 	}
 }

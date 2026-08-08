@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
@@ -21,6 +22,7 @@ type AgentModelProviders struct {
 	Run         agentrun.TextGenerator
 	Memory      memory.Generator
 	Summary     agentsummary.Generator
+	Title       agenttitle.Generator
 	Translation sharedtranslation.Translator
 }
 
@@ -43,6 +45,10 @@ func NewAgentModelProviders(
 	if err != nil {
 		return AgentModelProviders{}, err
 	}
+	titleGenerator, err := qianwen.NewTitleGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
 	translator, err := qianwen.NewTranslator(providerConfig, apiKey)
 	if err != nil {
 		return AgentModelProviders{}, err
@@ -51,6 +57,7 @@ func NewAgentModelProviders(
 		Run:         runGenerator,
 		Memory:      memoryGenerator,
 		Summary:     summaryGenerator,
+		Title:       titleGenerator,
 		Translation: translator,
 	}, nil
 }
