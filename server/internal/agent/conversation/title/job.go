@@ -50,13 +50,15 @@ func ValidTitle(value string) bool {
 	if strings.ContainsRune(".!?。！？;；,，", []rune(value)[runes-1]) {
 		return false
 	}
-	words := titleWordCount(value)
-	return words >= MinTitleWords && words <= MaxTitleWords
+	words, usesUnsegmentedScript := titleWordCount(value)
+	return words >= MinTitleWords &&
+		(usesUnsegmentedScript || words <= MaxTitleWords)
 }
 
-func titleWordCount(value string) int {
+func titleWordCount(value string) (int, bool) {
 	words := 0
 	inAlphabeticWord := false
+	usesUnsegmentedScript := false
 	for _, value := range value {
 		switch {
 		case unicode.Is(unicode.Han, value) ||
@@ -65,6 +67,7 @@ func titleWordCount(value string) int {
 			unicode.Is(unicode.Hangul, value):
 			words++
 			inAlphabeticWord = false
+			usesUnsegmentedScript = true
 		case unicode.IsLetter(value) || unicode.IsDigit(value):
 			if !inAlphabeticWord {
 				words++
@@ -74,7 +77,7 @@ func titleWordCount(value string) int {
 			inAlphabeticWord = false
 		}
 	}
-	return words
+	return words, usesUnsegmentedScript
 }
 
 func ValidFailureKind(value string) bool {

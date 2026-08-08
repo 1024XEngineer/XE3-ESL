@@ -10,7 +10,11 @@ func TestValidTitleEnforcesGenerationContract(t *testing.T) {
 		"Chinese semantic title": {title: "产品经理面试准备", valid: true},
 		"English semantic title": {title: "Product interview preparation", valid: true},
 		"mixed language title":   {title: "IELTS 口语练习", valid: true},
-		"one word":               {title: "Interview", valid: false},
+		"unsegmented title uses character limit": {
+			title: "技术产品经理英文模拟面试准备",
+			valid: true,
+		},
+		"one word": {title: "Interview", valid: false},
 		"too many words": {
 			title: "one two three four five six seven eight nine ten eleven twelve thirteen",
 			valid: false,
