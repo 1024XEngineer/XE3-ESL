@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,69 @@ import 'package:speakup/features/coaching/review/interview_report_controller.dar
 import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
+  testWidgets('uses voice and analysis icons for Material navigation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SpeakUpApp.preview());
+    final navigation = find.byKey(const Key('primary-navigation'));
+
+    expect(
+      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.insights_outlined),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.mic_none_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.insights_rounded),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'passes voice and analysis SF Symbols to the native iOS tab bar',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await tester.pumpWidget(const SpeakUpApp.preview());
+
+        final platformView = tester.widget<UiKitView>(find.byType(UiKitView));
+        final parameters =
+            platformView.creationParams! as Map<Object?, Object?>;
+        final items = parameters['items']! as List<Object?>;
+        expect(items[0], <String, String>{
+          'label': 'SpeakUp',
+          'systemImage': 'waveform.circle',
+          'selectedSystemImage': 'waveform.circle.fill',
+        });
+        expect(items[2], <String, String>{
+          'label': '复盘',
+          'systemImage': 'chart.bar',
+          'selectedSystemImage': 'chart.bar.fill',
+        });
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
   testWidgets('starts on the Agent home with four primary navigation entries', (
     tester,
   ) async {
