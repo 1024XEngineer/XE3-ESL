@@ -224,7 +224,7 @@ final class ConversationController extends ChangeNotifier {
     if (pendingFocusThreadId != null) {
       return selectThread(pendingFocusThreadId);
     }
-    return _createNewThread();
+    return _createNewThread(reuseBlankCurrent: true);
   }
 
   /// Creates a new Thread for a caller that requires an isolated workspace.
@@ -239,7 +239,7 @@ final class ConversationController extends ChangeNotifier {
     return _createNewThread();
   }
 
-  Future<bool> _createNewThread() async {
+  Future<bool> _createNewThread({bool reuseBlankCurrent = false}) async {
     if (_disposed) {
       return false;
     }
@@ -254,10 +254,22 @@ final class ConversationController extends ChangeNotifier {
       if (!_isCurrent(accountEpoch)) {
         return false;
       }
+      if (reuseBlankCurrent && _canReuseCurrentBlankThread) {
+        return true;
+      }
       return await _transitionThread(historyClient, createNew: true);
     } finally {
       _finishThreadTransition(transitionGeneration);
     }
+  }
+
+  bool get _canReuseCurrentBlankThread {
+    final current = _currentThreadSummary;
+    return _threadId != null &&
+        current?.id == _threadId &&
+        current?.activeGoalId == null &&
+        _messages.isEmpty &&
+        _retry == null;
   }
 
   Future<bool> selectThread(String threadId) async {
@@ -973,6 +985,18 @@ final class ConversationController extends ChangeNotifier {
       case null:
         return;
     }
+  }
+
+  Future<void> refreshThreadHistory() async {
+    final threadId = _threadId;
+    if (_disposed || !_initialized || isBusy || threadId == null) {
+      return;
+    }
+    await _refreshAuthoritativeThreadPage(
+      client,
+      fence: _captureOperationFence(threadId: threadId),
+      failureMessage: '对话列表暂时无法刷新，请稍后再试。',
+    );
   }
 
   Future<void> _retryThreadHistoryRefresh() async {

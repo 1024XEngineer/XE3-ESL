@@ -663,12 +663,12 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('新建聊天')),
+      find.descendant(of: drawer, matching: find.text('聊天')),
       findsOneWidget,
     );
     expect(
       find.descendant(of: drawer, matching: find.text('最近')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: drawer, matching: find.byTooltip('删除对话')),
@@ -688,6 +688,37 @@ void main() {
     );
   });
 
+  testWidgets('conversation drawer excludes practice-owned Threads', (
+    tester,
+  ) async {
+    final controller = ConversationController(client: FakeAgentClient());
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final practiceThreadId = controller.threadId!;
+    controller.applyActiveGoal(
+      threadId: practiceThreadId,
+      goalId: 'goal_practice_drawer',
+    );
+    expect(await controller.createThread(), isTrue);
+    final ordinaryThreadId = controller.threadId!;
+
+    await tester.pumpWidget(
+      SpeakUpApp.preview(conversationController: controller),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('conversation-menu-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(Key('conversation-thread-$ordinaryThreadId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('conversation-thread-$practiceThreadId')),
+      findsNothing,
+    );
+  });
+
   testWidgets(
     'new conversation becomes selected and the old one stays recent',
     (tester) async {
@@ -696,6 +727,8 @@ void main() {
       await tester.pumpWidget(
         SpeakUpApp.preview(conversationController: controller),
       );
+      await tester.pumpAndSettle();
+      expect(await controller.sendText('保留这段已有聊天'), isTrue);
       await tester.pumpAndSettle();
       final originalThreadId = controller.threadId;
 
@@ -734,6 +767,8 @@ void main() {
     await tester.pumpWidget(
       SpeakUpApp.preview(conversationController: controller),
     );
+    await tester.pumpAndSettle();
+    expect(await controller.sendText('创建一段可删除的聊天'), isTrue);
     await tester.pumpAndSettle();
     final originalThreadId = controller.threadId!;
 
@@ -1033,7 +1068,7 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      expect(find.text('新建聊天').hitTestable(), findsOneWidget);
+      expect(find.text('聊天').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.drag(find.byType(ListView), const Offset(0, 1000));

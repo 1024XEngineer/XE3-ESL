@@ -408,6 +408,36 @@ void main() {
     expect(controller.isThreadTransitionInFlight, isFalse);
   });
 
+  test('reuses a focused blank ordinary Thread without another POST', () async {
+    final client = _HistoryAgentClient(focusedThreadEmpty: true);
+    final controller = ConversationController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final originalThreadId = controller.threadId;
+
+    expect(controller.messages, isEmpty);
+    expect(await controller.createThread(), isTrue);
+
+    expect(client.createCalls, 0);
+    expect(controller.threadId, originalThreadId);
+  });
+
+  test(
+    'independent Thread creation does not reuse a blank ordinary Thread',
+    () async {
+      final client = _HistoryAgentClient(focusedThreadEmpty: true);
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final originalThreadId = controller.threadId;
+
+      expect(await controller.createIndependentThread(), isTrue);
+
+      expect(client.createCalls, 1);
+      expect(controller.threadId, isNot(originalThreadId));
+    },
+  );
+
   test(
     'exposes ambiguous Thread creation as an explicit recovery operation',
     () async {
@@ -558,6 +588,38 @@ void main() {
         updatedSummaryOne.updatedAt,
       );
       expect(client.firstPageCalls, 3);
+    },
+  );
+
+  test(
+    'refreshes a generated Thread title from the authoritative page',
+    () async {
+      final generatedTitle = AgentThreadSummary(
+        id: _historyThreadOne,
+        title: '产品经理面试准备',
+        createdAt: _historySummaryOne.createdAt,
+        updatedAt: _historySummaryOne.updatedAt,
+      );
+      final client = _HistoryAgentClient(
+        initialThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[_historySummaryOne],
+          focusedThreadId: _historyThreadOne,
+        ),
+        refreshedThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[generatedTitle],
+          focusedThreadId: _historyThreadOne,
+        ),
+      );
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(controller.threads.single.title, isNull);
+
+      await controller.refreshThreadHistory();
+
+      expect(controller.threads.single.title, '产品经理面试准备');
+      expect(controller.currentThreadSummary?.title, '产品经理面试准备');
     },
   );
 
@@ -812,6 +874,7 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
     this.textExchange,
     this.laterThreadPage,
     this.olderMessagePage,
+    this.focusedThreadEmpty = false,
   });
 
   final bool controlOldSend;
@@ -827,6 +890,7 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
   final AgentExchange? textExchange;
   final AgentThreadPage? laterThreadPage;
   final AgentMessagePage? olderMessagePage;
+  final bool focusedThreadEmpty;
   final initialListStarted = Completer<void>();
   final createStarted = Completer<void>();
   final sendStarted = Completer<void>();
@@ -886,7 +950,11 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
     if (startsWithoutFocus) {
       return null;
     }
-    return _historySnapshot(_historySummaryOne, hasOlderMessages: true);
+    return _historySnapshot(
+      _historySummaryOne,
+      hasOlderMessages: true,
+      empty: focusedThreadEmpty,
+    );
   }
 
   @override
@@ -988,17 +1056,20 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
 AgentThreadSnapshot _historySnapshot(
   AgentThreadSummary summary, {
   bool hasOlderMessages = false,
+  bool empty = false,
 }) {
   return AgentThreadSnapshot(
     threadId: summary.id,
-    messages: <AgentMessage>[
-      AgentMessage(
-        id: 'message_current_${summary.id}',
-        role: AgentMessageRole.assistant,
-        text: 'current ${summary.id}',
-        sequence: 2,
-      ),
-    ],
+    messages: empty
+        ? const <AgentMessage>[]
+        : <AgentMessage>[
+            AgentMessage(
+              id: 'message_current_${summary.id}',
+              role: AgentMessageRole.assistant,
+              text: 'current ${summary.id}',
+              sequence: 2,
+            ),
+          ],
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
     nextMessageCursor: hasOlderMessages ? 'older_messages' : null,
