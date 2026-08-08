@@ -6,4 +6,4 @@
 - 启动前将当前任务分支更新到最新 `upstream/dev` 并保留当前修改，然后从同一 worktree 运行 `make dev-ios-simulator`；使用真实后端，模拟器禁用数字人。
 - 只修改当前 Issue 范围，优先复用现有组件及官方或主流实现，不提交密钥、`.env`、缓存、构建产物或无关文件。
 - Commit 使用 `<type>(<scope>): <subject>`；PR 必须包含功能描述、实现思路、可复现测试和关联 Issue，默认邀请 `gangcaiyoule`、`jyqin0203`、`zhiwilliam1-cell`；相关检查通过、Review 意见解决且范围一致后方可合并。
-- 视觉改动除非已明确要求直接提交，否则先启动并截图确认；PR 合并后同步个人 Fork，并删除已完成的远程分支、本地分支和 worktree。
+- 视觉改动除非已明确要求直接提交，否则先启动并截图确认；PR 合并后关闭对应 Issue、同步个人 Fork，并删除已完成的远程分支、本地分支和 worktree。
