@@ -480,7 +480,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           ? SpeakUpDesign.canvas
           : Colors.transparent,
       drawer: _ConversationDrawer(
-        previewMode: widget.previewMode,
         controller: widget.conversationController,
         hiddenThreadIds: {
           ?widget
@@ -509,12 +508,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
 class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
-    required this.previewMode,
     required this.controller,
     this.hiddenThreadIds = const <String>{},
   });
 
-  final bool previewMode;
   final ConversationController controller;
   final Set<String> hiddenThreadIds;
 
@@ -528,131 +525,129 @@ class _ConversationDrawer extends StatelessWidget {
             !hiddenThreadIds.contains(thread.id))
           thread,
     ];
+    final busy = controller.isBusy;
+    final threadWidgets = <Widget>[
+      if (currentThreadId == null)
+        _ConversationThreadTile(
+          key: const Key('no-focused-conversation'),
+          title: '新对话 · 未发送',
+          selected: true,
+          enabled: !busy,
+          onTap: () => Navigator.of(context).pop(),
+        )
+      else
+        _ConversationThreadTile(
+          key: Key('conversation-thread-$currentThreadId'),
+          title: current?.title ?? '新对话',
+          selected: true,
+          enabled: !busy,
+          onTap: () => Navigator.of(context).pop(),
+          onDelete: () =>
+              _confirmDelete(context, currentThreadId, current?.title),
+        ),
+      for (final thread in recentThreads)
+        _ConversationThreadTile(
+          key: Key('conversation-thread-${thread.id}'),
+          title: thread.title ?? '新对话',
+          selected: false,
+          enabled: !busy,
+          onTap: () async {
+            final selected = await controller.selectThread(thread.id);
+            if (!context.mounted || !selected) {
+              return;
+            }
+            Navigator.of(context).pop();
+          },
+          onDelete: () => _confirmDelete(context, thread.id, thread.title),
+        ),
+    ];
+
     return Drawer(
       width: 300,
       backgroundColor: SpeakUpDesign.canvas,
       child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        child: Column(
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: SpeakUpWordmark(height: 30),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SpeakUpWordmark(height: 30),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭对话菜单',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                children: [
+                  if (controller.threadHistoryErrorMessage case final message?)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        message,
+                        key: const Key('conversation-history-error'),
+                        style: SpeakUpDesign.meta.copyWith(
+                          color: SpeakUpDesign.error,
+                        ),
+                      ),
+                    ),
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text('最近', style: SpeakUpDesign.label),
+                  ),
+                  ...threadWidgets,
+                  if (controller.hasMoreThreads) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      key: const Key('load-more-conversations'),
+                      onPressed: controller.isLoadingMoreThreads || busy
+                          ? null
+                          : controller.loadMoreThreads,
+                      child: Text(
+                        controller.isLoadingMoreThreads ? '正在加载…' : '加载更早',
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: FilledButton.icon(
+                key: const Key('new-conversation-button'),
+                onPressed: busy
+                    ? null
+                    : () async {
+                        final created = await controller.createThread();
+                        if (!context.mounted || !created) {
+                          return;
+                        }
+                        Navigator.of(context).pop();
+                      },
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('新建聊天'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  backgroundColor: SpeakUpDesign.primary,
+                  foregroundColor: SpeakUpDesign.canvas,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(
+                      SpeakUpDesign.radiusControl,
+                    ),
                   ),
                 ),
-                IconButton(
-                  tooltip: '关闭对话菜单',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            Text(
-              previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号',
-              style: SpeakUpDesign.meta,
-            ),
-            const SizedBox(height: 20),
-            FilledButton.tonalIcon(
-              key: const Key('new-conversation-button'),
-              onPressed: controller.isBusy
-                  ? null
-                  : () async {
-                      final created = await controller.createThread();
-                      if (!context.mounted || !created) {
-                        return;
-                      }
-                      Navigator.of(context).pop();
-                    },
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('新对话'),
-              style: FilledButton.styleFrom(
-                alignment: Alignment.centerLeft,
-                minimumSize: const Size.fromHeight(48),
-                backgroundColor: SpeakUpDesign.primaryMuted,
-                foregroundColor: SpeakUpDesign.primary,
               ),
             ),
-            if (controller.isBusy) ...[
-              const SizedBox(height: 12),
-              const LinearProgressIndicator(
-                key: Key('conversation-drawer-progress'),
-                minHeight: 2,
-              ),
-            ],
-            const SizedBox(height: 28),
-            const Text('当前对话', style: SpeakUpDesign.label),
-            const SizedBox(height: 8),
-            if (currentThreadId == null)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                child: Text(
-                  '新对话 · 未发送',
-                  key: Key('no-focused-conversation'),
-                  style: SpeakUpDesign.body,
-                ),
-              )
-            else
-              _ConversationThreadTile(
-                threadId: currentThreadId,
-                title: current?.title,
-                updatedAt: current?.updatedAt,
-                selected: true,
-                enabled: !controller.isBusy,
-                onTap: () => Navigator.of(context).pop(),
-                onDelete: () =>
-                    _confirmDelete(context, currentThreadId, current?.title),
-              ),
-            const SizedBox(height: 24),
-            const Text('近期对话', style: SpeakUpDesign.label),
-            const SizedBox(height: 8),
-            if (recentThreads.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                child: Text(
-                  '暂无其他对话',
-                  key: Key('no-recent-conversations'),
-                  style: SpeakUpDesign.body,
-                ),
-              )
-            else
-              for (final thread in recentThreads)
-                _ConversationThreadTile(
-                  threadId: thread.id,
-                  title: thread.title,
-                  updatedAt: thread.updatedAt,
-                  selected: false,
-                  enabled: !controller.isBusy,
-                  onTap: () async {
-                    final selected = await controller.selectThread(thread.id);
-                    if (!context.mounted || !selected) {
-                      return;
-                    }
-                    Navigator.of(context).pop();
-                  },
-                  onDelete: () =>
-                      _confirmDelete(context, thread.id, thread.title),
-                ),
-            if (controller.threadHistoryErrorMessage case final message?) ...[
-              const SizedBox(height: 10),
-              Text(
-                message,
-                key: const Key('conversation-history-error'),
-                style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
-              ),
-            ],
-            if (controller.hasMoreThreads) ...[
-              const SizedBox(height: 10),
-              TextButton(
-                key: const Key('load-more-conversations'),
-                onPressed: controller.isLoadingMoreThreads || controller.isBusy
-                    ? null
-                    : controller.loadMoreThreads,
-                child: Text(controller.isLoadingMoreThreads ? '正在加载…' : '加载更早'),
-              ),
-            ],
           ],
         ),
       ),
@@ -692,18 +687,15 @@ class _ConversationDrawer extends StatelessWidget {
 
 class _ConversationThreadTile extends StatelessWidget {
   const _ConversationThreadTile({
-    required this.threadId,
+    super.key,
     required this.title,
-    required this.updatedAt,
     required this.selected,
     required this.enabled,
     required this.onTap,
-    required this.onDelete,
+    this.onDelete,
   });
 
-  final String threadId;
-  final String? title;
-  final DateTime? updatedAt;
+  final String title;
   final bool selected;
   final bool enabled;
   final VoidCallback onTap;
@@ -711,53 +703,41 @@ class _ConversationThreadTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lastUpdatedAt = updatedAt;
-    final displayTitle = title ?? '新对话';
     return Semantics(
       selected: selected,
       button: true,
-      label: selected ? '当前对话：$displayTitle' : displayTitle,
-      child: ListTile(
-        key: Key('conversation-thread-$threadId'),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-        selected: selected,
-        selectedTileColor: SpeakUpDesign.primaryMuted,
-        shape: RoundedRectangleBorder(
+      label: selected ? '当前对话：$title' : title,
+      hint: onDelete == null ? null : '长按删除对话',
+      onTap: enabled ? onTap : null,
+      onLongPress: enabled ? onDelete : null,
+      excludeSemantics: true,
+      child: Material(
+        color: selected ? SpeakUpDesign.primaryMuted : Colors.transparent,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        child: InkWell(
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-        ),
-        leading: const Icon(Icons.chat_bubble_outline_rounded),
-        title: Text(displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: lastUpdatedAt == null
-            ? null
-            : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (selected)
-              const Icon(
-                Icons.check_rounded,
-                key: Key('focused-conversation-indicator'),
-                size: 20,
-              ),
-            IconButton(
-              key: Key('delete-conversation-$threadId'),
-              tooltip: '删除对话',
-              onPressed: enabled ? onDelete : null,
-              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+          onTap: enabled ? onTap : null,
+          onLongPress: enabled ? onDelete : null,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: selected
+                  ? SpeakUpDesign.body.copyWith(
+                      color: SpeakUpDesign.ink,
+                      fontWeight: FontWeight.w600,
+                    )
+                  : SpeakUpDesign.body,
             ),
-          ],
+          ),
         ),
-        onTap: enabled ? onTap : null,
       ),
     );
   }
-}
-
-String _formatThreadUpdatedAt(DateTime value) {
-  final local = value.toLocal();
-  String twoDigits(int part) => part.toString().padLeft(2, '0');
-  return '${twoDigits(local.month)}月${twoDigits(local.day)}日 '
-      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
 class _ProfilePage extends StatelessWidget {
