@@ -696,14 +696,13 @@ class _AvatarPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: '情景对话画面',
-      child: const Center(
-        child: Icon(
-          Icons.person_outline_rounded,
-          key: Key('scenario-avatar-placeholder'),
-          size: 84,
-          color: Color(0xFF819087),
-        ),
+      label: '情景对话静态角色画面',
+      image: true,
+      child: Image.asset(
+        'assets/images/scenes/static-avatar-van-gogh.jpg',
+        key: const Key('scenario-avatar-placeholder'),
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
       ),
     );
   }

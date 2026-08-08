@@ -129,4 +129,5 @@ cd "$mobile_dir"
 flutter "$flutter_mode" \
   "$@" \
   -d "$device_id" \
-  --dart-define="SPEAKUP_API_BASE_URL=$base_url"
+  --dart-define="SPEAKUP_API_BASE_URL=$base_url" \
+  --dart-define="SPEAKUP_AVATAR_ENABLED=false"
