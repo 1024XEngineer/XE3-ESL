@@ -133,8 +133,11 @@ class ConversationPage extends StatefulWidget {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final textScaler = MediaQuery.textScalerOf(context);
-    final titleSize = width < 350 ? 28.0 : 32.0;
+    final titleSize = width < 350 ? 27.0 : 30.0;
+    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.27).clamp(
+      152.0,
+      228.0,
+    );
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
@@ -208,11 +211,9 @@ class ConversationPage extends StatefulWidget {
                                   ),
                                 ),
                               ],
-                              SizedBox(height: width < 350 ? 16 : 20),
+                              SizedBox(height: emptyHomeActionGap),
                               if (practiceAvailable)
                                 _QuickActions(
-                                  compact:
-                                      width < 350 || textScaler.scale(1) > 1.2,
                                   onCreatePlan: onCreatePlan,
                                   onBrowseScenes: onBrowseScenes,
                                   onContinuePractice: onContinuePractice,
@@ -771,14 +772,12 @@ class _Greeting extends StatelessWidget {
 
 class _QuickActions extends StatelessWidget {
   const _QuickActions({
-    required this.compact,
     required this.onCreatePlan,
     required this.onBrowseScenes,
     required this.onContinuePractice,
     required this.onOpenReview,
   });
 
-  final bool compact;
   final VoidCallback? onCreatePlan;
   final VoidCallback? onBrowseScenes;
   final VoidCallback? onContinuePractice;
@@ -787,59 +786,40 @@ class _QuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <_QuickActionButton>[
-      _QuickActionButton(
-        actionKey: const Key('quick-action-create-plan'),
-        icon: Icons.auto_awesome_outlined,
-        label: '创建模拟面试',
-        compact: compact,
-        onPressed: onCreatePlan,
-      ),
       if (onContinuePractice != null)
         _QuickActionButton(
           actionKey: const Key('quick-action-continue-practice'),
-          icon: Icons.play_arrow_rounded,
+          icon: Icons.play_circle_outline_rounded,
           label: '继续上次练习',
-          compact: compact,
           onPressed: onContinuePractice,
         ),
       _QuickActionButton(
+        actionKey: const Key('quick-action-create-plan'),
+        icon: Icons.work_outline_rounded,
+        label: '准备模拟面试',
+        onPressed: onCreatePlan,
+      ),
+      _QuickActionButton(
         actionKey: const Key('quick-action-browse-scenes'),
-        icon: Icons.grid_view_rounded,
-        label: '浏览练习场景',
-        compact: compact,
+        icon: Icons.record_voice_over_outlined,
+        label: '选择口语训练',
         onPressed: onBrowseScenes,
       ),
       _QuickActionButton(
         actionKey: const Key('quick-action-recent-review'),
-        icon: Icons.fact_check_outlined,
-        label: '查看最近复盘',
-        compact: compact,
+        icon: Icons.history_rounded,
+        label: '回顾最近练习',
         onPressed: onOpenReview,
       ),
     ];
-    if (compact) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var index = 0; index < actions.length; index++) ...[
-            actions[index],
-            if (index != actions.length - 1) const SizedBox(height: 8),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < actions.length; index++) ...[
+          actions[index],
+          if (index != actions.length - 1) const SizedBox(height: 2),
         ],
-      );
-    }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final itemWidth = (constraints.maxWidth - 10) / 2;
-        return Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final action in actions)
-              SizedBox(width: itemWidth, child: action),
-          ],
-        );
-      },
+      ],
     );
   }
 }
@@ -849,14 +829,12 @@ class _QuickActionButton extends StatelessWidget {
     this.actionKey,
     required this.icon,
     required this.label,
-    required this.compact,
     required this.onPressed,
   });
 
   final Key? actionKey;
   final IconData icon;
   final String label;
-  final bool compact;
   final VoidCallback? onPressed;
 
   @override
@@ -869,32 +847,32 @@ class _QuickActionButton extends StatelessWidget {
       onTap: onPressed,
       excludeSemantics: true,
       child: Material(
-        color: SpeakUpDesign.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-          side: const BorderSide(color: SpeakUpDesign.border),
-        ),
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onPressed,
           child: Container(
-            constraints: const BoxConstraints(
-              minHeight: SpeakUpDesign.minTapTarget,
-            ),
+            constraints: const BoxConstraints(minHeight: 58),
             padding: const EdgeInsets.symmetric(
-              horizontal: SpeakUpDesign.space12,
+              horizontal: SpeakUpDesign.space4,
               vertical: SpeakUpDesign.space12,
             ),
             child: Row(
               children: [
-                Icon(icon, size: 19, color: SpeakUpDesign.primary),
-                const SizedBox(width: SpeakUpDesign.space8),
+                Icon(icon, size: 24, color: SpeakUpDesign.secondary),
+                const SizedBox(width: SpeakUpDesign.space16),
                 Expanded(
                   child: Text(
                     label,
-                    maxLines: compact ? 2 : 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: SpeakUpDesign.label,
+                    style: const TextStyle(
+                      color: SpeakUpDesign.secondary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
+                      height: 1.25,
+                    ),
                   ),
                 ),
               ],

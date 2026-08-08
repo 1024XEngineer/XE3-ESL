@@ -33,6 +33,31 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
+    expect(find.text('准备模拟面试'), findsOneWidget);
+    expect(find.text('选择口语训练'), findsOneWidget);
+    expect(find.text('回顾最近练习'), findsOneWidget);
+    expect(find.text('创建模拟面试'), findsNothing);
+    expect(find.text('浏览练习场景'), findsNothing);
+    expect(find.text('查看最近复盘'), findsNothing);
+
+    final createAction = find.byKey(const Key('quick-action-create-plan'));
+    final trainingAction = find.byKey(const Key('quick-action-browse-scenes'));
+    final reviewAction = find.byKey(const Key('quick-action-recent-review'));
+    expect(
+      tester.getTopLeft(createAction).dy,
+      lessThan(tester.getTopLeft(trainingAction).dy),
+    );
+    expect(
+      tester.getTopLeft(trainingAction).dy,
+      lessThan(tester.getTopLeft(reviewAction).dy),
+    );
+    final actionMaterial = tester.widget<Material>(
+      find.descendant(of: createAction, matching: find.byType(Material)).first,
+    );
+    expect(actionMaterial.color, Colors.transparent);
+    expect(actionMaterial.shape, isNull);
+    final createLabel = tester.widget<Text>(find.text('准备模拟面试'));
+    expect(createLabel.style?.fontSize, 17);
     expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
     expect(find.byKey(const Key('agent-show-text-composer')), findsOneWidget);
     expect(find.byKey(const Key('agent-preview-label')), findsOneWidget);
