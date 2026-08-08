@@ -114,6 +114,7 @@ void main() {
       key: 'primary-tab-scenes',
       expectedPageKey: 'scenes-page',
     );
+    expect(find.text('Practice'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('primary-navigation')),
@@ -134,21 +135,15 @@ void main() {
       key: 'primary-tab-review',
       expectedPageKey: 'review-page',
     );
-    expect(find.byKey(const Key('review-exit-button')), findsOneWidget);
+    expect(find.text('Review'), findsOneWidget);
+    expect(find.byKey(const Key('review-exit-button')), findsNothing);
     expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('review-exit-button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-    await _tapPrimaryDestination(
-      tester,
-      key: 'primary-tab-review',
-      expectedPageKey: 'review-page',
-    );
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
+    expect(find.text('Profile'), findsOneWidget);
     expect(find.text('管理账号与练习身份。'), findsNothing);
     await _tapPrimaryDestination(
       tester,
@@ -901,7 +896,7 @@ void main() {
     expect(reportController.practiceSessionId, 'practice-session-report-route');
   });
 
-  testWidgets('keeps the named conversation route escapable on every tab', (
+  testWidgets('keeps primary tabs root-styled from the conversation route', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
@@ -919,28 +914,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('preparation-route-back-button')),
-      findsOneWidget,
+      findsNothing,
     );
 
     await tester.tap(find.byKey(const Key('primary-tab-review')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('review-route-back-button')), findsOneWidget);
+    expect(find.byKey(const Key('review-route-back-button')), findsNothing);
 
     await tester.tap(find.byKey(const Key('primary-tab-profile')));
     await tester.pumpAndSettle();
     final profileBackButton = find.byKey(
       const Key('profile-route-back-button'),
     );
-    expect(profileBackButton, findsOneWidget);
+    expect(profileBackButton, findsNothing);
 
-    await tester.tap(profileBackButton);
+    await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
 
-    expect(profileBackButton, findsNothing);
-    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-    expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
-    final rootShellContext = tester.element(find.byType(SpeakUpShell));
-    expect(Navigator.of(rootShellContext).canPop(), isFalse);
+    expect(
+      find.byKey(const Key('conversation-route-back-button')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('stays usable on a narrow screen and with the keyboard open', (

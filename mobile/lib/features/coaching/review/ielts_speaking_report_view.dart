@@ -429,10 +429,9 @@ class IeltsSpeakingAbilityProfile extends StatelessWidget {
             const Text('个人能力', style: SpeakUpDesign.sectionTitle),
             const SizedBox(height: SpeakUpDesign.space16),
             if (criteria == null)
-              ConstrainedBox(
+              _AbilityEmptyState(
                 key: const Key('review-ability-empty'),
-                constraints: const BoxConstraints(minHeight: 220),
-                child: _AbilityEmptyState(loading: loading),
+                loading: loading,
               )
             else
               Center(
@@ -508,14 +507,14 @@ class _AbilitySummary extends StatelessWidget {
 }
 
 class _AbilityEmptyState extends StatelessWidget {
-  const _AbilityEmptyState({required this.loading});
+  const _AbilityEmptyState({required this.loading, super.key});
 
   final bool loading;
 
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
-      padding: const EdgeInsets.all(SpeakUpDesign.space24),
+      padding: const EdgeInsets.symmetric(vertical: SpeakUpDesign.space8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

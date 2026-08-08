@@ -40,6 +40,14 @@ abstract final class SpeakUpDesign {
     letterSpacing: -0.35,
   );
 
+  static const displayTitle = TextStyle(
+    color: ink,
+    fontFamily: 'Allura',
+    fontSize: 48,
+    fontWeight: FontWeight.w400,
+    height: 1,
+  );
+
   static const sectionTitle = TextStyle(
     color: ink,
     fontSize: 20,

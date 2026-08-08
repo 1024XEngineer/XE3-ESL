@@ -22,6 +22,36 @@ class SpeakUpWordmark extends StatelessWidget {
   }
 }
 
+/// The brand-level heading used only on primary product destinations.
+class SpeakUpDisplayTitle extends StatelessWidget {
+  const SpeakUpDisplayTitle({
+    required this.title,
+    required this.semanticLabel,
+    super.key,
+  });
+
+  final String title;
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      header: true,
+      label: semanticLabel,
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: double.infinity,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(title, maxLines: 1, style: SpeakUpDesign.displayTitle),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SpeakUpContentWidth extends StatelessWidget {
   const SpeakUpContentWidth({required this.child, super.key});
 

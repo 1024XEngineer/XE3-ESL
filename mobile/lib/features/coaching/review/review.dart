@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
@@ -223,7 +224,12 @@ class _ReviewPageState extends State<ReviewPage> {
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(8, 28, 8, 0),
+                padding: EdgeInsets.fromLTRB(
+                  SpeakUpDesign.horizontalInset(context),
+                  28,
+                  SpeakUpDesign.horizontalInset(context),
+                  0,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: _ReviewHeader(previewMode: widget.previewMode),
                 ),
@@ -440,7 +446,11 @@ class _ReviewHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('复盘', style: SpeakUpDesign.pageTitle),
+          const SpeakUpDisplayTitle(
+            key: Key('review-page-title'),
+            title: 'Review',
+            semanticLabel: '复盘',
+          ),
           if (previewMode) ...[
             const SizedBox(height: 8),
             Text('本地预览；结果不会写入正式服务。', style: SpeakUpDesign.body),

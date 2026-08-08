@@ -11,6 +11,31 @@ import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.d
 import 'ielts_speaking_report_fixture.dart';
 
 void main() {
+  testWidgets('keeps the empty ability profile compact', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: IeltsSpeakingAbilityProfile(
+                  report: null,
+                  loading: false,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('review-ability-empty')), findsOneWidget);
+    expect(
+      tester.getSize(find.byType(IeltsSpeakingAbilityProfile)).height,
+      lessThan(180),
+    );
+  });
+
   testWidgets('renders honest partial Bands and unavailable dimensions', (
     tester,
   ) async {
