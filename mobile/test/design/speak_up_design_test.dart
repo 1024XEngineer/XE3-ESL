@@ -50,6 +50,11 @@ void main() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const SpeakUpDisplayTitle(
+                      title: 'Practice',
+                      semanticLabel: '训练',
+                    ),
+                    const SizedBox(height: SpeakUpDesign.space24),
                     const SpeakUpPageHeader(
                       title: '英文表达训练',
                       subtitle: '一次只完成一个清晰任务。',
@@ -90,6 +95,7 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      expect(find.text('Practice'), findsOneWidget);
       expect(find.text('英文表达训练'), findsOneWidget);
       expect(find.text('项目经历深挖'), findsOneWidget);
 
@@ -109,6 +115,26 @@ void main() {
       );
     },
   );
+
+  testWidgets('display title exposes the localized page heading', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SpeakUpDisplayTitle(title: 'Review', semanticLabel: '复盘'),
+        ),
+      ),
+    );
+
+    final semantics = tester.ensureSemantics();
+    expect(find.bySemanticsLabel('复盘'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text('Review')).style?.fontFamily,
+      SpeakUpDesign.displayTitle.fontFamily,
+    );
+    semantics.dispose();
+  });
 
   testWidgets('interactive controls meet the 44 point minimum target', (
     tester,

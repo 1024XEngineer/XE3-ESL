@@ -440,7 +440,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         feedbackPresenter: _feedbackPresenter,
       ),
       PreparationPage(
-        showBackButton: widget.showBackButton,
+        showBackButton: false,
         previewMode: widget.previewMode,
         practiceController: widget.practiceController,
         preparationController: widget.preparationController,
@@ -457,8 +457,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onPracticeStarted: _openPractice,
       ),
       ReviewPage(
-        showBackButton: widget.showBackButton,
-        onExit: widget.showBackButton ? null : () => _selectDestination(0),
+        showBackButton: false,
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
@@ -466,7 +465,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         autoload: false,
       ),
       _ProfilePage(
-        showBackButton: widget.showBackButton,
+        showBackButton: false,
         user: widget.user,
         profile: widget.authController?.profile,
         profileErrorMessage: widget.authController?.profileErrorMessage,
@@ -804,7 +803,11 @@ class _ProfilePage extends StatelessWidget {
             140,
           ),
           children: [
-            const SpeakUpPageHeader(title: '我的'),
+            const SpeakUpDisplayTitle(
+              key: Key('profile-page-title'),
+              title: 'Profile',
+              semanticLabel: '我的',
+            ),
             const SizedBox(height: SpeakUpDesign.space24),
             Card(
               child: ListTile(

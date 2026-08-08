@@ -548,10 +548,10 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 18,
       ),
       children: [
-        const Text(
-          '场景练习',
+        const SpeakUpDisplayTitle(
+          title: 'Practice',
+          semanticLabel: '训练',
           key: Key('training-center-title'),
-          style: PreparationDesign.pageTitle,
         ),
         if (widget.launchController?.workspaceErrorMessage case final message?)
           Padding(
@@ -750,10 +750,10 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 18,
       ),
       children: [
-        const Text(
-          '场景练习',
+        const SpeakUpDisplayTitle(
+          title: 'Practice',
+          semanticLabel: '训练',
           key: Key('training-center-title'),
-          style: PreparationDesign.pageTitle,
         ),
         if (!widget.previewMode) ...[
           const SizedBox(height: 8),

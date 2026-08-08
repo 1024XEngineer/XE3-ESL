@@ -29,6 +29,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Allura
+      fonts:
+        - asset: assets/fonts/allura/Allura-Regular.ttf
   assets:
     - assets/images/brand/
     - assets/images/scenes/
