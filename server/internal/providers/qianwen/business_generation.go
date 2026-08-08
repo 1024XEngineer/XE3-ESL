@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	conversationtitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
@@ -52,6 +53,45 @@ func (generator *MemoryGenerator) GenerateJSON(
 
 type SummaryGenerator struct {
 	generator *textClient
+}
+
+type TitleGenerator struct {
+	generator *textClient
+}
+
+func NewTitleGenerator(
+	configuration TextConfig,
+	apiKey string,
+) (*TitleGenerator, error) {
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return &TitleGenerator{generator: generator}, nil
+}
+
+func (generator *TitleGenerator) GenerateJSON(
+	ctx context.Context,
+	request conversationtitle.GenerationRequest,
+) (conversationtitle.GenerationResult, error) {
+	if generator == nil {
+		return conversationtitle.GenerationResult{}, missingBusinessGenerator()
+	}
+	result, err := generateBusinessText(
+		ctx,
+		generator.generator,
+		request.SystemPrompt,
+		request.UserPrompt,
+		protocol.TextResponseFormatJSON,
+	)
+	if err != nil {
+		return conversationtitle.GenerationResult{}, err
+	}
+	return conversationtitle.GenerationResult{
+		Provider: result.Provider,
+		Model:    result.Model,
+		Content:  result.Content,
+	}, nil
 }
 
 func NewSummaryGenerator(

@@ -16,6 +16,8 @@ import (
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	summarypostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary/postgres"
+	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
+	titlepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title/postgres"
 	agenttranslation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/translation"
 	agenttranslationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/translation/http"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
@@ -80,6 +82,7 @@ func NewIdentityAndAgentModules(
 		nil,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -102,6 +105,7 @@ type identityAgentComposition struct {
 	runService          *agentrun.Service
 	memoryExtraction    memory.ExtractionProcessor
 	summaryProcessor    agentsummary.Processor
+	titleProcessor      agenttitle.Processor
 	ids                 *identity.UUIDv4Generator
 }
 
@@ -129,11 +133,13 @@ func buildIdentityAgentComposition(
 	memorySearcher memory.Searcher,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
+	titleNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || modelProviders.Run == nil ||
 		modelProviders.Memory == nil || modelProviders.Summary == nil ||
+		modelProviders.Title == nil ||
 		modelProviders.Translation == nil ||
 		memorySearcher == nil || len(voiceConfigurations) > 1 {
 		return nil, errors.New(
@@ -290,12 +296,15 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	var runStore agentrun.Repository = runRepository
-	notifiers := make([]interface{ Notify() }, 0, 2)
+	notifiers := make([]interface{ Notify() }, 0, 3)
 	if memoryExtractionNotifier != nil {
 		notifiers = append(notifiers, memoryExtractionNotifier)
 	}
 	if summaryNotifier != nil {
 		notifiers = append(notifiers, summaryNotifier)
+	}
+	if titleNotifier != nil {
+		notifiers = append(notifiers, titleNotifier)
 	}
 	if len(notifiers) > 0 {
 		runStore = &runCompletionNotifyingRepository{
@@ -353,6 +362,19 @@ func buildIdentityAgentComposition(
 	summaryProcessor, err := agentsummary.NewProcessor(
 		summaryRepository,
 		modelProviders.Summary,
+		runConfiguration.Provider,
+		runConfiguration.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	titleRepository, err := titlepostgres.New(database, ids)
+	if err != nil {
+		return nil, err
+	}
+	titleProcessor, err := agenttitle.NewProcessor(
+		titleRepository,
+		modelProviders.Title,
 		runConfiguration.Provider,
 		runConfiguration.Model,
 	)
@@ -537,6 +559,7 @@ func buildIdentityAgentComposition(
 		runService:          runService,
 		memoryExtraction:    memoryExtraction,
 		summaryProcessor:    summaryProcessor,
+		titleProcessor:      titleProcessor,
 		ids:                 ids,
 	}, nil
 }
@@ -595,6 +618,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		modelProviders,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		nil,
 		nil,
 		nil,

@@ -1545,7 +1545,7 @@ _WireThread _decodeThreadObject(Object? value) {
   final titleValue = object['title'];
   final title = titleValue == null
       ? null
-      : _strictString(titleValue, minLength: 1, maxLength: 25);
+      : _strictString(titleValue, minLength: 2, maxLength: 32);
   final activeGoalId = _absentOnlyOptional(
     object,
     'active_goal_id',

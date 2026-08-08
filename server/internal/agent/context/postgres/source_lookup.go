@@ -33,7 +33,7 @@ func (r *Repository) FindThread(
 SELECT
     threads.id::text,
     threads.owner_user_id::text,
-    COALESCE(first_user.content, ''),
+    COALESCE(threads.title, ''),
     COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
@@ -43,15 +43,6 @@ LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
-LEFT JOIN LATERAL (
-    SELECT messages.content
-    FROM agent_messages AS messages
-    WHERE messages.owner_user_id = threads.owner_user_id
-      AND messages.thread_id = threads.id
-      AND messages.role = 'user'
-    ORDER BY messages.sequence_no
-    LIMIT 1
-) AS first_user ON true
 WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 		threadID,
 		ownerID,
@@ -67,7 +58,6 @@ WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 	if err != nil {
 		return conversation.Thread{}, mapSourcePostgresError(err)
 	}
-	result.Title = conversation.DeriveThreadTitle(result.Title)
 	return result, nil
 }
 

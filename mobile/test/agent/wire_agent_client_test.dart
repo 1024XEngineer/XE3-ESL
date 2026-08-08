@@ -375,7 +375,7 @@ void main() {
           method: 'GET',
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
-            'threads': [_threadJson(title: List.filled(26, '一').join())],
+            'threads': [_threadJson(title: List.filled(33, '一').join())],
           }),
         ),
       ]);

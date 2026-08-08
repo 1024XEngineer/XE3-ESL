@@ -265,6 +265,7 @@ func run() int {
 	memoryExtractionWakeup := newWorkerWakeup()
 	memoryIndexWakeup := newWorkerWakeup()
 	threadSummaryWakeup := newWorkerWakeup()
+	threadTitleWakeup := newWorkerWakeup()
 
 	var recordingStore objectstore.Store
 	var imageStore objectstore.Store
@@ -365,6 +366,7 @@ func run() int {
 			bootstrap.AgentWorkerWakeups{
 				MemoryExtraction: memoryExtractionWakeup,
 				ThreadSummary:    threadSummaryWakeup,
+				ThreadTitle:      threadTitleWakeup,
 			},
 			agentImageConfig,
 			bootstrap.VoiceConfiguration{
@@ -404,6 +406,18 @@ func run() int {
 	if err != nil {
 		logger.Error(
 			"thread summary startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	threadTitle, err := buildThreadTitleWorker(
+		applicationComposition.ThreadTitleProcessor(),
+		logger,
+		threadTitleWakeup.Events(),
+	)
+	if err != nil {
+		logger.Error(
+			"thread title startup failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
@@ -584,6 +598,11 @@ func run() int {
 		defer close(threadSummaryDone)
 		threadSummary.Run(ctx)
 	}()
+	threadTitleDone := make(chan struct{})
+	go func() {
+		defer close(threadTitleDone)
+		threadTitle.Run(ctx)
+	}()
 	evaluationShadowDone := make(chan struct{})
 	go func() {
 		defer close(evaluationShadowDone)
@@ -716,6 +735,15 @@ func run() int {
 	case <-shutdownCtx.Done():
 		logger.Error(
 			"thread summary shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-threadTitleDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"thread title shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1
