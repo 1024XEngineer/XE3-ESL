@@ -69,10 +69,7 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
     expect(navigation, findsOneWidget);
     expect(
-      find.descendant(
-        of: navigation,
-        matching: find.byIcon(Icons.chat_bubble_rounded),
-      ),
+      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
       findsOneWidget,
     );
     expect(find.byType(BackdropFilter), findsNothing);
