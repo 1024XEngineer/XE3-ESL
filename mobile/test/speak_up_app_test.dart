@@ -693,7 +693,7 @@ void main() {
           messages: const [
             AgentMessage(
               id: 'first-message',
-              role: AgentMessageRole.user,
+              role: AgentMessageRole.assistant,
               text: 'The first message stays fully visible.',
             ),
           ],

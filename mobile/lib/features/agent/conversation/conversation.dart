@@ -150,7 +150,7 @@ class ConversationPage extends StatefulWidget {
       _ => false,
     };
     final replyPending = isBusy || voiceShowsReplyProgress;
-    const topContentInset = 64.0;
+    const topContentInset = 65.0;
     const topOverlayExtent = 76.0;
     final bottomOverlayExtent = composerBottom + composerHeight + 16;
 
