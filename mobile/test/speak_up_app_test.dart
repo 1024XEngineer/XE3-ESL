@@ -681,6 +681,39 @@ void main() {
     },
   );
 
+  testWidgets('keeps the first message below the top overlay', (tester) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          messages: const [
+            AgentMessage(
+              id: 'first-message',
+              role: AgentMessageRole.assistant,
+              text: 'The first message stays fully visible.',
+            ),
+          ],
+          onOpenMenu: () {},
+          onCreateConversation: () {},
+          onSubmitText: (_) async => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final overlayBottom = tester
+        .getRect(find.byKey(const Key('agent-top-overlay-scrim')))
+        .bottom;
+    final firstMessageTextTop = tester
+        .getRect(find.text('The first message stays fully visible.'))
+        .top;
+    expect(firstMessageTextTop, greaterThanOrEqualTo(overlayBottom));
+  });
+
   testWidgets('keeps the latest Message clear of a growing composer', (
     tester,
   ) async {
