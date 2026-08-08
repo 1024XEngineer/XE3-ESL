@@ -499,6 +499,32 @@ void main() {
     );
   });
 
+  testWidgets('a busy run shows only the page reply progress', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ConversationPage(
+          isBusy: true,
+          messages: <AgentMessage>[
+            AgentMessage(
+              id: 'user-message',
+              role: AgentMessageRole.user,
+              text: 'Help me prepare for an interview.',
+            ),
+            AgentMessage(
+              id: 'assistant-stream',
+              role: AgentMessageRole.assistant,
+              text: '',
+              isStreaming: true,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('agent-operation-progress')), findsOneWidget);
+    expect(find.byKey(const Key('agent-assistant-streaming')), findsNothing);
+  });
+
   testWidgets('older Message pagination is visible and accessible', (
     tester,
   ) async {
