@@ -64,6 +64,26 @@ func TestServiceRejectsInvalidGenerationResponses(t *testing.T) {
 			Content: `{"title":"` +
 				strings.Repeat("面", MaxTitleRunes+1) + `"}`,
 		},
+		"one word title": {
+			Provider: "fake",
+			Model:    "fake-model",
+			Content:  `{"title":"Interview"}`,
+		},
+		"Markdown title": {
+			Provider: "fake",
+			Model:    "fake-model",
+			Content:  `{"title":"# Interview preparation"}`,
+		},
+		"emoji title": {
+			Provider: "fake",
+			Model:    "fake-model",
+			Content:  `{"title":"Interview preparation 🎯"}`,
+		},
+		"sentence title": {
+			Provider: "fake",
+			Model:    "fake-model",
+			Content:  `{"title":"Interview preparation!"}`,
+		},
 	}
 	for name, result := range tests {
 		t.Run(name, func(t *testing.T) {

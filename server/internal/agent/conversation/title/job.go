@@ -14,6 +14,8 @@ import (
 const (
 	MaxTitleRunes            = 32
 	MaxTitleBytes            = 128
+	MinTitleWords            = 2
+	MaxTitleWords            = 12
 	DefaultWorkerMaxAttempts = 3
 )
 
@@ -39,11 +41,40 @@ func ValidTitle(value string) bool {
 		return false
 	}
 	for _, value := range value {
-		if unicode.IsControl(value) {
+		if unicode.IsControl(value) || unicode.IsSymbol(value) ||
+			strings.ContainsRune("#*_~`[]{}<>\\|", value) ||
+			strings.ContainsRune("\"'“”‘’：:", value) {
 			return false
 		}
 	}
-	return true
+	if strings.ContainsRune(".!?。！？;；,，", []rune(value)[runes-1]) {
+		return false
+	}
+	words := titleWordCount(value)
+	return words >= MinTitleWords && words <= MaxTitleWords
+}
+
+func titleWordCount(value string) int {
+	words := 0
+	inAlphabeticWord := false
+	for _, value := range value {
+		switch {
+		case unicode.Is(unicode.Han, value) ||
+			unicode.Is(unicode.Hiragana, value) ||
+			unicode.Is(unicode.Katakana, value) ||
+			unicode.Is(unicode.Hangul, value):
+			words++
+			inAlphabeticWord = false
+		case unicode.IsLetter(value) || unicode.IsDigit(value):
+			if !inAlphabeticWord {
+				words++
+				inAlphabeticWord = true
+			}
+		default:
+			inAlphabeticWord = false
+		}
+	}
+	return words
 }
 
 func ValidFailureKind(value string) bool {
