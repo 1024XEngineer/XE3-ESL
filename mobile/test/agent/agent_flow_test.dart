@@ -166,7 +166,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('conversation-menu-button')));
       await tester.pumpAndSettle();
-      expect(find.text('已连接当前账号'), findsOneWidget);
+      expect(find.text('新建聊天'), findsOneWidget);
       expect(find.textContaining('本地 Fake 预览'), findsNothing);
       Navigator.of(tester.element(find.byType(Drawer))).pop();
       await tester.pumpAndSettle();

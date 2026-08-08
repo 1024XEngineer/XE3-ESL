@@ -637,27 +637,16 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('新对话')),
-      findsNWidgets(2),
-    );
-    expect(
-      find.descendant(of: drawer, matching: find.text('当前对话')),
+      find.descendant(of: drawer, matching: find.text('新建聊天')),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('本地 Fake 预览，未连接正式账号')),
+      find.descendant(of: drawer, matching: find.text('最近')),
       findsOneWidget,
     );
     expect(
-      find.descendant(
-        of: drawer,
-        matching: find.byKey(const Key('focused-conversation-indicator')),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: drawer, matching: find.text('近期对话')),
-      findsOneWidget,
+      find.descendant(of: drawer, matching: find.byTooltip('删除对话')),
+      findsNothing,
     );
     expect(
       find.descendant(of: drawer, matching: find.text('场景')),
@@ -730,7 +719,9 @@ void main() {
 
     await tester.tap(find.byKey(const Key('conversation-menu-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(Key('delete-conversation-$originalThreadId')));
+    await tester.longPress(
+      find.byKey(Key('conversation-thread-$originalThreadId')),
+    );
     await tester.pumpAndSettle();
     expect(find.text('删除对话？'), findsOneWidget);
     await tester.tap(find.byKey(const Key('confirm-delete-conversation')));
@@ -740,7 +731,9 @@ void main() {
       findsNothing,
     );
 
-    await tester.tap(find.byKey(Key('delete-conversation-$currentThreadId')));
+    await tester.longPress(
+      find.byKey(Key('conversation-thread-$currentThreadId')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('confirm-delete-conversation')));
     await tester.pumpAndSettle();
@@ -1014,16 +1007,12 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('no-recent-conversations')).hitTestable(),
-        findsOneWidget,
-      );
+      expect(find.text('新建聊天').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.drag(find.byType(ListView), const Offset(0, 1000));
       await tester.pumpAndSettle();
-      final accountLabel = find.text('本地 Fake 预览，未连接正式账号');
-      expect(accountLabel.hitTestable(), findsOneWidget);
+      expect(find.byTooltip('关闭对话菜单').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
