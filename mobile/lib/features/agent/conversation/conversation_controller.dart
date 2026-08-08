@@ -224,7 +224,7 @@ final class ConversationController extends ChangeNotifier {
     if (pendingFocusThreadId != null) {
       return selectThread(pendingFocusThreadId);
     }
-    return _createNewThread();
+    return _createNewThread(reuseBlankCurrent: true);
   }
 
   /// Creates a new Thread for a caller that requires an isolated workspace.
@@ -239,7 +239,7 @@ final class ConversationController extends ChangeNotifier {
     return _createNewThread();
   }
 
-  Future<bool> _createNewThread() async {
+  Future<bool> _createNewThread({bool reuseBlankCurrent = false}) async {
     if (_disposed) {
       return false;
     }
@@ -254,10 +254,22 @@ final class ConversationController extends ChangeNotifier {
       if (!_isCurrent(accountEpoch)) {
         return false;
       }
+      if (reuseBlankCurrent && _canReuseCurrentBlankThread) {
+        return true;
+      }
       return await _transitionThread(historyClient, createNew: true);
     } finally {
       _finishThreadTransition(transitionGeneration);
     }
+  }
+
+  bool get _canReuseCurrentBlankThread {
+    final current = _currentThreadSummary;
+    return _threadId != null &&
+        current?.id == _threadId &&
+        current?.activeGoalId == null &&
+        _messages.isEmpty &&
+        _retry == null;
   }
 
   Future<bool> selectThread(String threadId) async {
@@ -972,6 +984,55 @@ final class ConversationController extends ChangeNotifier {
         return;
       case null:
         return;
+    }
+  }
+
+  Future<void> refreshThreadHistory() async {
+    final threadId = _threadId;
+    if (_disposed || !_initialized || isBusy || threadId == null) {
+      return;
+    }
+    final fence = _captureOperationFence(threadId: threadId);
+    try {
+      final page = await client.listThreads();
+      _validateThreadPage(page);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      final refreshedIds = <String>{
+        for (final thread in page.threads) thread.id,
+      };
+      final boundary = page.threads.lastOrNull;
+      final preservedOlderThreads = boundary == null
+          ? const <AgentThreadSummary>[]
+          : <AgentThreadSummary>[
+              for (final thread in _threads)
+                if (!refreshedIds.contains(thread.id) &&
+                    _threadSortsAfter(thread, boundary))
+                  thread,
+            ];
+      final previousCursor = _nextThreadCursor;
+      _threads = <AgentThreadSummary>[
+        ...page.threads,
+        ...preservedOlderThreads,
+      ];
+      _nextThreadCursor = preservedOlderThreads.isEmpty
+          ? page.nextCursor
+          : previousCursor;
+      _currentThreadSummary =
+          page.threads.where((thread) => thread.id == threadId).firstOrNull ??
+          preservedOlderThreads
+              .where((thread) => thread.id == threadId)
+              .firstOrNull ??
+          _currentThreadSummary;
+      _resolveThreadPageRefresh();
+      notifyListeners();
+    } catch (_) {
+      if (_isOperationCurrent(fence)) {
+        _requireThreadPageRefresh();
+        _threadHistoryErrorMessage = '对话列表暂时无法刷新，请稍后再试。';
+        notifyListeners();
+      }
     }
   }
 

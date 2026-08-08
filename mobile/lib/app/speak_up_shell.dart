@@ -366,7 +366,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         restingComposerBottom: composerBottomInset,
         threadId: widget.conversationController.threadId,
         displayName: widget.authController?.profile?.displayName,
-        onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
+        onOpenMenu: () {
+          _scaffoldKey.currentState?.openDrawer();
+          if (!widget.previewMode) {
+            unawaited(widget.conversationController.refreshThreadHistory());
+          }
+        },
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
@@ -522,6 +527,7 @@ class _ConversationDrawer extends StatelessWidget {
     final recentThreads = <AgentThreadSummary>[
       for (final thread in controller.threads)
         if (thread.id != currentThreadId &&
+            thread.activeGoalId == null &&
             !hiddenThreadIds.contains(thread.id))
           thread,
     ];
@@ -535,7 +541,7 @@ class _ConversationDrawer extends StatelessWidget {
           enabled: !busy,
           onTap: () => Navigator.of(context).pop(),
         )
-      else
+      else if (current?.activeGoalId == null)
         _ConversationThreadTile(
           key: Key('conversation-thread-$currentThreadId'),
           title: current?.title ?? '新对话',
@@ -587,65 +593,78 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: Stack(
                 children: [
-                  if (controller.threadHistoryErrorMessage case final message?)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(
-                        message,
-                        key: const Key('conversation-history-error'),
-                        style: SpeakUpDesign.meta.copyWith(
-                          color: SpeakUpDesign.error,
-                        ),
-                      ),
+                  Positioned.fill(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                      children: [
+                        if (controller.threadHistoryErrorMessage
+                            case final message?)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text(
+                              message,
+                              key: const Key('conversation-history-error'),
+                              style: SpeakUpDesign.meta.copyWith(
+                                color: SpeakUpDesign.error,
+                              ),
+                            ),
+                          ),
+                        if (threadWidgets.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            child: Text('暂无聊天', style: SpeakUpDesign.body),
+                          )
+                        else
+                          ...threadWidgets,
+                        if (controller.hasMoreThreads) ...[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            key: const Key('load-more-conversations'),
+                            onPressed: controller.isLoadingMoreThreads || busy
+                                ? null
+                                : controller.loadMoreThreads,
+                            child: Text(
+                              controller.isLoadingMoreThreads
+                                  ? '正在加载…'
+                                  : '加载更早',
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4, bottom: 8),
-                    child: Text('最近', style: SpeakUpDesign.label),
                   ),
-                  ...threadWidgets,
-                  if (controller.hasMoreThreads) ...[
-                    const SizedBox(height: 8),
-                    TextButton(
-                      key: const Key('load-more-conversations'),
-                      onPressed: controller.isLoadingMoreThreads || busy
+                  Positioned(
+                    left: 16,
+                    bottom: 16,
+                    child: FilledButton.icon(
+                      key: const Key('new-conversation-button'),
+                      onPressed: busy
                           ? null
-                          : controller.loadMoreThreads,
-                      child: Text(
-                        controller.isLoadingMoreThreads ? '正在加载…' : '加载更早',
+                          : () async {
+                              final created = await controller.createThread();
+                              if (!context.mounted || !created) {
+                                return;
+                              }
+                              Navigator.of(context).pop();
+                            },
+                      icon: const Icon(Icons.edit_outlined, size: 22),
+                      label: const Text('聊天'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        backgroundColor: SpeakUpDesign.primary,
+                        foregroundColor: SpeakUpDesign.canvas,
+                        shape: const StadiumBorder(),
+                        textStyle: SpeakUpDesign.cardTitle,
                       ),
                     ),
-                  ],
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: FilledButton.icon(
-                key: const Key('new-conversation-button'),
-                onPressed: busy
-                    ? null
-                    : () async {
-                        final created = await controller.createThread();
-                        if (!context.mounted || !created) {
-                          return;
-                        }
-                        Navigator.of(context).pop();
-                      },
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('新建聊天'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  backgroundColor: SpeakUpDesign.primary,
-                  foregroundColor: SpeakUpDesign.canvas,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(
-                      SpeakUpDesign.radiusControl,
-                    ),
                   ),
-                ),
+                ],
               ),
             ),
           ],

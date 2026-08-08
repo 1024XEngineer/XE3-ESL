@@ -504,7 +504,10 @@ void main() {
       expect(harness.workspaceController.currentPracticeThreadId, isNull);
       final originalHomeThreadId = harness.conversationController.threadId;
 
-      expect(await harness.conversationController.createThread(), isTrue);
+      expect(
+        await harness.conversationController.createIndependentThread(),
+        isTrue,
+      );
       final latestHomeThreadId = harness.conversationController.threadId;
       expect(latestHomeThreadId, isNot(originalHomeThreadId));
 

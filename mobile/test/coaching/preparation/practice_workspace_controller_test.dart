@@ -98,7 +98,7 @@ void main() {
       expect(firstWorkspace.resumableHasProgress, isFalse);
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
       expect(harness.conversation.threadId, homeThreadId);
-      expect(await harness.conversation.createThread(), isTrue);
+      expect(await harness.conversation.createIndependentThread(), isTrue);
       final newerHomeThreadId = harness.conversation.threadId;
       expect(newerHomeThreadId, isNot(homeThreadId));
       firstWorkspace.dispose();
@@ -196,7 +196,7 @@ void main() {
 
       // The user switches to a different conversation (e.g. via the drawer)
       // while the practice stays parked and resumable.
-      await harness.conversation.createThread();
+      await harness.conversation.createIndependentThread();
       final otherHomeThreadId = harness.conversation.threadId;
       expect(otherHomeThreadId, isNot(launchHomeThreadId));
 

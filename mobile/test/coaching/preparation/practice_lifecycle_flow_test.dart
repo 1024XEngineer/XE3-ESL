@@ -190,7 +190,7 @@ void main() {
       await _leavePractice(tester);
       expect(conversationController.threadId, homeThreadId);
 
-      expect(await conversationController.createThread(), isTrue);
+      expect(await conversationController.createIndependentThread(), isTrue);
       final unrelatedPracticeThreadId = conversationController.threadId!;
       final unrelatedScene = testScene(
         id: 'unrelated-practice',
