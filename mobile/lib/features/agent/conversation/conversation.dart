@@ -129,6 +129,9 @@ class ConversationPage extends StatefulWidget {
     required VoidCallback? onLoadEarlierMessages,
     required bool showJumpToLatest,
     required VoidCallback onJumpToLatest,
+    required double composerHeight,
+    required GlobalKey composerKey,
+    required VoidCallback onComposerSizeChanged,
   }) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
@@ -147,6 +150,8 @@ class ConversationPage extends StatefulWidget {
       _ => false,
     };
     final replyPending = isBusy || voiceShowsReplyProgress;
+    const topOverlayExtent = 76.0;
+    final bottomOverlayExtent = composerBottom + composerHeight + 16;
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -158,232 +163,279 @@ class ConversationPage extends StatefulWidget {
           Positioned.fill(
             child: SafeArea(
               bottom: false,
-              child: Padding(
-                padding: EdgeInsets.only(bottom: composerBottom),
-                child: Column(
-                  children: [
-                    Padding(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: SingleChildScrollView(
+                      key: const Key('agent-conversation-scroll'),
+                      controller: scrollController,
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
-                        12,
+                        topOverlayExtent,
                         horizontalPadding,
-                        8,
+                        bottomOverlayExtent,
                       ),
-                      child: _AgentTopBar(
-                        previewMode: previewMode,
-                        onOpenMenu: onOpenMenu,
-                        onNavigateBack: onNavigateBack,
-                        onCreateConversation: onCreateConversation,
-                        isBusy: isBusy,
-                      ),
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        padding: EdgeInsets.fromLTRB(
-                          horizontalPadding,
-                          8,
-                          horizontalPadding,
-                          0,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              height: hasFocusedThread && messages.isNotEmpty
-                                  ? 4
-                                  : width < 350
-                                  ? 16
-                                  : 24,
-                            ),
-                            if (messages.isEmpty) ...[
-                              _Greeting(displayName: displayName),
-                              if (displayName != null) ...[
-                                const SizedBox(height: 5),
-                                Text(
-                                  '今天想练什么？',
-                                  style: TextStyle(
-                                    color: SpeakUpDesign.ink,
-                                    fontSize: titleSize,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.12,
-                                    letterSpacing: -0.8,
-                                  ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            height: hasFocusedThread && messages.isNotEmpty
+                                ? 4
+                                : width < 350
+                                ? 16
+                                : 24,
+                          ),
+                          if (messages.isEmpty) ...[
+                            _Greeting(displayName: displayName),
+                            if (displayName != null) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                '今天想练什么？',
+                                style: TextStyle(
+                                  color: SpeakUpDesign.ink,
+                                  fontSize: titleSize,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.12,
+                                  letterSpacing: -0.8,
                                 ),
-                              ],
-                              SizedBox(height: emptyHomeActionGap),
-                              if (practiceAvailable)
-                                _QuickActions(
-                                  onCreatePlan: onCreatePlan,
-                                  onBrowseScenes: onBrowseScenes,
-                                  onContinuePractice: onContinuePractice,
-                                  onOpenReview: onOpenReview,
-                                )
-                              else
-                                const _PracticeUnavailableNotice(),
-                            ] else ...[
-                              if (activeSceneName case final sceneName?) ...[
-                                Row(
-                                  children: [
-                                    const Text(
-                                      '当前场景',
-                                      style: TextStyle(
-                                        color: SpeakUpDesign.secondary,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
+                              ),
+                            ],
+                            SizedBox(height: emptyHomeActionGap),
+                            if (practiceAvailable)
+                              _QuickActions(
+                                onCreatePlan: onCreatePlan,
+                                onBrowseScenes: onBrowseScenes,
+                                onContinuePractice: onContinuePractice,
+                                onOpenReview: onOpenReview,
+                              )
+                            else
+                              const _PracticeUnavailableNotice(),
+                          ] else ...[
+                            if (activeSceneName case final sceneName?) ...[
+                              Row(
+                                children: [
+                                  const Text(
+                                    '当前场景',
+                                    style: TextStyle(
+                                      color: SpeakUpDesign.secondary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      sceneName,
+                                      key: const Key('agent-thread-title'),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: SpeakUpDesign.ink,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
-                                    Flexible(
-                                      child: Text(
-                                        sceneName,
-                                        key: const Key('agent-thread-title'),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: SpeakUpDesign.ink,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            if (hasEarlierMessages) ...[
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  key: const Key('load-earlier-agent-messages'),
+                                  onPressed:
+                                      isLoadingEarlierMessages ||
+                                          onLoadEarlierMessages == null
+                                      ? null
+                                      : onLoadEarlierMessages,
+                                  icon: isLoadingEarlierMessages
+                                      ? const SizedBox.square(
+                                          dimension: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.history_rounded,
+                                          size: 18,
                                         ),
+                                  label: Text(
+                                    isLoadingEarlierMessages
+                                        ? '正在加载更早消息'
+                                        : '加载更早消息',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                            ],
+                            _MessageList(
+                              messages: messages,
+                              suppressLoadingFeedback: replyPending,
+                              messageAudioController: messageAudioController,
+                              onTranslateMessage: onTranslateMessage,
+                              onHandoff: onMessageHandoff,
+                              onRefreshImage: onRefreshMessageImage,
+                              feedbackPresenter: feedbackPresenter,
+                              onSameThreadRepractice:
+                                  !isBusy && onStartVoice != null
+                                  ? () => unawaited(
+                                      Future<void>.sync(onStartVoice!),
+                                    )
+                                  : null,
+                            ),
+                          ],
+                          if (isBusy && !voiceShowsReplyProgress) ...[
+                            const SizedBox(height: 14),
+                            Center(
+                              child: Semantics(
+                                label: 'SpeakUp 正在处理',
+                                child: const Wrap(
+                                  key: Key('agent-operation-progress'),
+                                  alignment: WrapAlignment.center,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 10,
+                                  children: [
+                                    SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
                                       ),
+                                    ),
+                                    Text(
+                                      'SpeakUp 正在回复…',
+                                      style: SpeakUpDesign.meta,
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 8),
-                              ],
-                              if (hasEarlierMessages) ...[
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    key: const Key(
-                                      'load-earlier-agent-messages',
-                                    ),
-                                    onPressed:
-                                        isLoadingEarlierMessages ||
-                                            onLoadEarlierMessages == null
-                                        ? null
-                                        : onLoadEarlierMessages,
-                                    icon: isLoadingEarlierMessages
-                                        ? const SizedBox.square(
-                                            dimension: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Icon(
-                                            Icons.history_rounded,
-                                            size: 18,
-                                          ),
-                                    label: Text(
-                                      isLoadingEarlierMessages
-                                          ? '正在加载更早消息'
-                                          : '加载更早消息',
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                              ],
-                              _MessageList(
-                                messages: messages,
-                                suppressLoadingFeedback: replyPending,
-                                messageAudioController: messageAudioController,
-                                onTranslateMessage: onTranslateMessage,
-                                onHandoff: onMessageHandoff,
-                                onRefreshImage: onRefreshMessageImage,
-                                feedbackPresenter: feedbackPresenter,
-                                onSameThreadRepractice:
-                                    !isBusy && onStartVoice != null
-                                    ? () => unawaited(
-                                        Future<void>.sync(onStartVoice!),
-                                      )
-                                    : null,
                               ),
-                            ],
-                            if (isBusy && !voiceShowsReplyProgress) ...[
-                              const SizedBox(height: 14),
-                              Center(
-                                child: Semantics(
-                                  label: 'SpeakUp 正在处理',
-                                  child: const Wrap(
-                                    key: Key('agent-operation-progress'),
-                                    alignment: WrapAlignment.center,
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    spacing: 10,
-                                    children: [
-                                      SizedBox.square(
-                                        dimension: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                      Text(
-                                        'SpeakUp 正在回复…',
-                                        style: SpeakUpDesign.meta,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                            if (errorMessage case final message?) ...[
-                              const SizedBox(height: 14),
-                              _InlineError(
-                                message: message,
-                                onRetry: onRetryOperation,
-                              ),
-                            ],
+                            ),
                           ],
+                          if (errorMessage case final message?) ...[
+                            const SizedBox(height: 14),
+                            _InlineError(
+                              message: message,
+                              onRetry: onRetryOperation,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    height: topOverlayExtent + 28,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        key: const Key('agent-top-overlay-scrim'),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              SpeakUpDesign.canvas,
+                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
+                              SpeakUpDesign.canvas.withValues(alpha: 0),
+                            ],
+                            stops: const [0, 0.7, 1],
+                          ),
                         ),
                       ),
                     ),
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        16,
-                        horizontalPadding,
-                        0,
-                      ),
-                      child: AgentComposer(
-                        threadId: threadId,
-                        draftThreadRecoveryGeneration:
-                            draftThreadRecoveryGeneration,
-                        keyboardVisible: keyboardVisible,
-                        acceptedUserMessageId: acceptedUserMessage?.id,
-                        acceptedUserMessageText: acceptedUserMessage?.text,
-                        onStartVoice: onStartVoice,
-                        voiceController: voiceController,
-                        voiceEnabled: voiceController != null && !isBusy,
-                        onSubmitText: onSubmitText,
-                        enabled: canCompose,
-                        isBusy: isBusy,
-                        pendingImages: pendingImages,
-                        imageErrorMessage: imageErrorMessage,
-                        imageSelectionInFlight: imageSelectionInFlight,
-                        onPickImages: onPickImages,
-                        onTakePhoto: onTakePhoto,
-                        onRemovePendingImage: onRemovePendingImage,
-                        onRetryPendingImage: onRetryPendingImage,
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: bottomOverlayExtent + 52,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        key: const Key('agent-bottom-overlay-scrim'),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              SpeakUpDesign.canvas.withValues(alpha: 0),
+                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
+                              SpeakUpDesign.canvas,
+                            ],
+                            stops: const [0, 0.38, 1],
+                          ),
+                        ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  Positioned(
+                    left: horizontalPadding,
+                    top: 12,
+                    right: horizontalPadding,
+                    child: _AgentTopBar(
+                      previewMode: previewMode,
+                      onOpenMenu: onOpenMenu,
+                      onNavigateBack: onNavigateBack,
+                      onCreateConversation: onCreateConversation,
+                      isBusy: isBusy,
+                    ),
+                  ),
+                  Positioned(
+                    left: horizontalPadding,
+                    right: horizontalPadding,
+                    bottom: composerBottom,
+                    child: NotificationListener<SizeChangedLayoutNotification>(
+                      onNotification: (_) {
+                        onComposerSizeChanged();
+                        return false;
+                      },
+                      child: SizeChangedLayoutNotifier(
+                        key: const Key('agent-composer-overlay'),
+                        child: KeyedSubtree(
+                          key: composerKey,
+                          child: AgentComposer(
+                            threadId: threadId,
+                            draftThreadRecoveryGeneration:
+                                draftThreadRecoveryGeneration,
+                            keyboardVisible: keyboardVisible,
+                            acceptedUserMessageId: acceptedUserMessage?.id,
+                            acceptedUserMessageText: acceptedUserMessage?.text,
+                            onStartVoice: onStartVoice,
+                            voiceController: voiceController,
+                            voiceEnabled: voiceController != null && !isBusy,
+                            onSubmitText: onSubmitText,
+                            enabled: canCompose,
+                            isBusy: isBusy,
+                            pendingImages: pendingImages,
+                            imageErrorMessage: imageErrorMessage,
+                            imageSelectionInFlight: imageSelectionInFlight,
+                            onPickImages: onPickImages,
+                            onTakePhoto: onTakePhoto,
+                            onRemovePendingImage: onRemovePendingImage,
+                            onRetryPendingImage: onRetryPendingImage,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (showJumpToLatest)
+                    Positioned(
+                      right: horizontalPadding,
+                      bottom: bottomOverlayExtent,
+                      child: FloatingActionButton.small(
+                        key: const Key('agent-jump-to-latest'),
+                        tooltip: '查看最新回复',
+                        onPressed: onJumpToLatest,
+                        backgroundColor: SpeakUpDesign.surface,
+                        foregroundColor: SpeakUpDesign.primary,
+                        child: const Icon(Icons.arrow_downward_rounded),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          if (showJumpToLatest)
-            Positioned(
-              right: horizontalPadding,
-              bottom: composerBottom + 92,
-              child: FloatingActionButton.small(
-                key: const Key('agent-jump-to-latest'),
-                tooltip: '查看最新回复',
-                onPressed: onJumpToLatest,
-                backgroundColor: SpeakUpDesign.surface,
-                foregroundColor: SpeakUpDesign.primary,
-                child: const Icon(Icons.arrow_downward_rounded),
-              ),
-            ),
         ],
       ),
     );
@@ -392,10 +444,13 @@ class ConversationPage extends StatefulWidget {
 
 class _ConversationPageState extends State<ConversationPage> {
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _composerKey = GlobalKey();
   _ConversationScrollAnchor? _earlierMessagesAnchor;
   int _scrollRequestGeneration = 0;
   bool _showJumpToLatest = false;
   bool _voiceRebuildScheduled = false;
+  bool _composerMeasurementScheduled = false;
+  double _composerHeight = 54;
 
   @override
   void initState() {
@@ -482,6 +537,28 @@ class _ConversationPageState extends State<ConversationPage> {
     if (_showJumpToLatest && _isNearLatest()) {
       setState(() => _showJumpToLatest = false);
     }
+  }
+
+  void _scheduleComposerMeasurement() {
+    if (_composerMeasurementScheduled) {
+      return;
+    }
+    _composerMeasurementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _composerMeasurementScheduled = false;
+      if (!mounted) {
+        return;
+      }
+      final height = _composerKey.currentContext?.size?.height;
+      if (height == null || (height - _composerHeight).abs() < 0.5) {
+        return;
+      }
+      final keepLatestVisible = _isNearLatest();
+      setState(() => _composerHeight = height);
+      if (keepLatestVisible) {
+        _scheduleScrollToLatest();
+      }
+    });
   }
 
   void _setJumpToLatestVisible(bool value) {
@@ -594,6 +671,7 @@ class _ConversationPageState extends State<ConversationPage> {
 
   @override
   Widget build(BuildContext context) {
+    _scheduleComposerMeasurement();
     return widget._build(
       context,
       scrollController: _scrollController,
@@ -602,6 +680,9 @@ class _ConversationPageState extends State<ConversationPage> {
           : _handleLoadEarlierMessages,
       showJumpToLatest: _showJumpToLatest,
       onJumpToLatest: _scheduleScrollToLatest,
+      composerHeight: _composerHeight,
+      composerKey: _composerKey,
+      onComposerSizeChanged: _scheduleComposerMeasurement,
     );
   }
 }
