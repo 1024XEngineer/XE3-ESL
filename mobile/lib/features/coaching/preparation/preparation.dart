@@ -539,107 +539,120 @@ class _PreparationPageState extends State<PreparationPage> {
     if (selectedHub != null) {
       return _buildHub(controller, selectedHub);
     }
-    return ListView(
+    final Widget catalogBody;
+    if (controller.isLoadingScenes) {
+      catalogBody = const Center(
+        child: _CatalogLoading(key: Key('preparation-catalog-loading')),
+      );
+    } else if (controller.errorMessage case final message?) {
+      catalogBody = Align(
+        alignment: Alignment.topCenter,
+        child: _CatalogFailure(
+          key: const Key('preparation-catalog-error'),
+          message: message,
+          onRetry: controller.retryLastFailure,
+        ),
+      );
+    } else if (controller.scenes.isEmpty) {
+      catalogBody = const Align(
+        alignment: Alignment.topCenter,
+        child: _CatalogEmpty(),
+      );
+    } else {
+      catalogBody = _buildPracticeHubCarousel();
+    }
+    return Padding(
       key: const Key('preparation-catalog-list'),
-      primary: false,
       padding: PreparationDesign.pagePadding(
         context,
         hasPrimaryNavigation: !widget.showBackButton,
         top: 18,
       ),
-      children: [
-        const SpeakUpDisplayTitle(
-          title: 'Practice',
-          semanticLabel: '训练',
-          key: Key('training-center-title'),
-        ),
-        if (widget.launchController?.workspaceErrorMessage case final message?)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  message,
-                  key: const Key('practice-workspace-error'),
-                  style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
-                ),
-                if (widget.launchController?.canRetryWorkspaceActivation ??
-                    false)
-                  TextButton(
-                    key: const Key('retry-practice-workspace-activation'),
-                    onPressed: () => unawaited(
-                      widget.launchController!.retryWorkspaceActivation(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SpeakUpDisplayTitle(
+            title: 'Practice',
+            semanticLabel: '训练',
+            key: Key('training-center-title'),
+          ),
+          if (widget.launchController?.workspaceErrorMessage
+              case final message?)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message,
+                    key: const Key('practice-workspace-error'),
+                    style: const TextStyle(
+                      color: Color(0xFF9A332A),
+                      height: 1.4,
                     ),
-                    child: const Text('重试读取练习记录'),
                   ),
-              ],
+                  if (widget.launchController?.canRetryWorkspaceActivation ??
+                      false)
+                    TextButton(
+                      key: const Key('retry-practice-workspace-activation'),
+                      onPressed: () => unawaited(
+                        widget.launchController!.retryWorkspaceActivation(),
+                      ),
+                      child: const Text('重试读取练习记录'),
+                    ),
+                ],
+              ),
             ),
-          ),
-        const SizedBox(height: 16),
-        if (controller.isLoadingScenes)
-          const _CatalogLoading(key: Key('preparation-catalog-loading'))
-        else if (controller.errorMessage case final message?)
-          _CatalogFailure(
-            key: const Key('preparation-catalog-error'),
-            message: message,
-            onRetry: controller.retryLastFailure,
-          )
-        else if (controller.scenes.isEmpty)
-          const _CatalogEmpty()
-        else ...[
-          _PracticeHubEntry(
-            key: const Key('practice-hub-interview'),
-            title: '英文面试',
-            description: '模拟面试与轮次专项练习',
-            icon: Icons.work_outline_rounded,
-            accentColor: PreparationDesign.interview,
-            tintColor: PreparationDesign.interviewTint,
-            assetPath: 'assets/images/scenes/interview-hero.jpg',
-            onPressed: _openInterviewCatalog,
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-exam'),
-            title: 'IELTS 口语',
-            description: 'Part 1、2、3 与完整模考',
-            icon: Icons.school_outlined,
-            accentColor: PreparationDesign.ielts,
-            tintColor: PreparationDesign.ieltsTint,
-            assetPath: 'assets/images/scenes/ielts-hero.jpg',
-            onPressed: () {
-              final ielts = widget.ieltsController;
-              if (ielts == null) {
-                throw StateError('IELTS controller is not configured.');
-              }
-              setState(() => _selectedHub = _PracticeHub.ielts);
-              unawaited(ielts.loadIfNeeded());
-            },
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-workplace'),
-            title: '职场英语',
-            description: '会议、协作与客户沟通',
-            icon: Icons.business_center_outlined,
-            accentColor: PreparationDesign.scenario,
-            tintColor: PreparationDesign.scenarioTint,
-            assetPath: 'assets/images/scenes/workplace-scene.jpg',
-            onPressed: () =>
-                setState(() => _selectedHub = _PracticeHub.workplace),
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-life'),
-            title: '生活与旅行',
-            description: '日常交流与出行场景实战',
-            icon: Icons.travel_explore_outlined,
-            accentColor: PreparationDesign.scenario,
-            tintColor: PreparationDesign.scenarioTint,
-            assetPath: 'assets/images/scenes/travel-scene.jpg',
-            onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
-          ),
+          const SizedBox(height: 14),
+          Expanded(child: catalogBody),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPracticeHubCarousel() {
+    return _PracticeHubCarousel(
+      items: [
+        _PracticeHubItem(
+          key: const Key('practice-hub-interview'),
+          title: '英文面试',
+          description: '模拟面试与轮次专项练习',
+          assetPath: 'assets/images/scenes/practice-interview.webp',
+          fallbackIcon: Icons.work_outline_rounded,
+          onPressed: _openInterviewCatalog,
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-exam'),
+          title: 'IELTS 口语',
+          description: 'Part 1、2、3 与完整模考',
+          assetPath: 'assets/images/scenes/practice-ielts.webp',
+          fallbackIcon: Icons.school_outlined,
+          onPressed: () {
+            final ielts = widget.ieltsController;
+            if (ielts == null) {
+              throw StateError('IELTS controller is not configured.');
+            }
+            setState(() => _selectedHub = _PracticeHub.ielts);
+            unawaited(ielts.loadIfNeeded());
+          },
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-workplace'),
+          title: '职场英语',
+          description: '会议、协作与客户沟通',
+          assetPath: 'assets/images/scenes/practice-workplace.webp',
+          fallbackIcon: Icons.business_center_outlined,
+          onPressed: () =>
+              setState(() => _selectedHub = _PracticeHub.workplace),
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-life'),
+          title: '生活与旅行',
+          description: '日常交流与出行场景实战',
+          assetPath: 'assets/images/scenes/practice-travel.webp',
+          fallbackIcon: Icons.travel_explore_outlined,
+          onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
+        ),
       ],
     );
   }
@@ -742,73 +755,32 @@ class _PreparationPageState extends State<PreparationPage> {
         ],
       );
     }
-    return ListView(
-      primary: false,
+    return Padding(
       padding: PreparationDesign.pagePadding(
         context,
         hasPrimaryNavigation: !widget.showBackButton,
         top: 18,
       ),
-      children: [
-        const SpeakUpDisplayTitle(
-          title: 'Practice',
-          semanticLabel: '训练',
-          key: Key('training-center-title'),
-        ),
-        if (!widget.previewMode) ...[
-          const SizedBox(height: 8),
-          const Text(
-            '练习内容暂时无法加载，请稍后重试。',
-            key: Key('practice-availability-message'),
-            style: PreparationDesign.body,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SpeakUpDisplayTitle(
+            title: 'Practice',
+            semanticLabel: '训练',
+            key: Key('training-center-title'),
           ),
+          if (!widget.previewMode) ...[
+            const SizedBox(height: 8),
+            const Text(
+              '练习内容暂时无法加载，请稍后重试。',
+              key: Key('practice-availability-message'),
+              style: PreparationDesign.body,
+            ),
+          ],
+          const SizedBox(height: 14),
+          Expanded(child: _buildPracticeHubCarousel()),
         ],
-        const SizedBox(height: 16),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-interview'),
-          title: '英文面试',
-          description: '创建并管理你的模拟面试',
-          icon: Icons.work_outline_rounded,
-          accentColor: PreparationDesign.interview,
-          tintColor: PreparationDesign.interviewTint,
-          assetPath: 'assets/images/scenes/interview-hero.jpg',
-          onPressed: _openInterviewCatalog,
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-exam'),
-          title: 'IELTS 口语',
-          description: 'Part 1、2、3 与完整模考',
-          icon: Icons.school_outlined,
-          accentColor: PreparationDesign.ielts,
-          tintColor: PreparationDesign.ieltsTint,
-          assetPath: 'assets/images/scenes/ielts-hero.jpg',
-          onPressed: () => setState(() => _selectedHub = _PracticeHub.ielts),
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-workplace'),
-          title: '职场英语',
-          description: '会议、协作与客户沟通',
-          icon: Icons.business_center_outlined,
-          accentColor: PreparationDesign.scenario,
-          tintColor: PreparationDesign.scenarioTint,
-          assetPath: 'assets/images/scenes/workplace-scene.jpg',
-          onPressed: () =>
-              setState(() => _selectedHub = _PracticeHub.workplace),
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-life'),
-          title: '生活与旅行',
-          description: '日常交流与出行场景实战',
-          icon: Icons.travel_explore_outlined,
-          accentColor: PreparationDesign.scenario,
-          tintColor: PreparationDesign.scenarioTint,
-          assetPath: 'assets/images/scenes/travel-scene.jpg',
-          onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -982,129 +954,237 @@ class _CatalogEmpty extends StatelessWidget {
   }
 }
 
-class _PracticeHubEntry extends StatelessWidget {
-  const _PracticeHubEntry({
-    required this.title,
-    required this.description,
-    required this.icon,
-    required this.accentColor,
-    required this.tintColor,
-    required this.assetPath,
-    required this.onPressed,
-    super.key,
-  });
+class _PracticeHubCarousel extends StatefulWidget {
+  const _PracticeHubCarousel({required this.items});
 
-  final String title;
-  final String description;
-  final IconData icon;
-  final Color accentColor;
-  final Color tintColor;
-  final String assetPath;
-  final VoidCallback onPressed;
+  final List<_PracticeHubItem> items;
+
+  @override
+  State<_PracticeHubCarousel> createState() => _PracticeHubCarouselState();
+}
+
+class _PracticeHubCarouselState extends State<_PracticeHubCarousel> {
+  late final PageController _controller;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController(initialPage: 1, viewportFraction: 0.88);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final compact = MediaQuery.sizeOf(context).width < 360 || textScale > 1.35;
-    final mediaWidth = compact ? 88.0 : 118.0;
+    final pageCount = widget.items.length + 2;
+    return Column(
+      children: [
+        Expanded(
+          child: PageView.builder(
+            key: const Key('practice-hub-carousel'),
+            controller: _controller,
+            allowImplicitScrolling: true,
+            itemCount: pageCount,
+            onPageChanged: _handlePageChanged,
+            itemBuilder: (context, page) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: _PracticeHubEntry(
+                item: widget.items[_itemIndexForPage(page)],
+                entryKey: _entryKeyForPage(page),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Semantics(
+          label: '第 ${_currentPage + 1} 页，共 ${widget.items.length} 页',
+          liveRegion: true,
+          child: ExcludeSemantics(
+            child: Row(
+              key: const Key('practice-hub-page-indicator'),
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var index = 0; index < widget.items.length; index++)
+                  AnimatedContainer(
+                    key: Key('practice-hub-page-dot-$index'),
+                    duration: const Duration(milliseconds: 180),
+                    width: index == _currentPage ? 18 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: index == _currentPage
+                          ? PreparationDesign.ink
+                          : PreparationDesign.border,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  int _itemIndexForPage(int page) {
+    if (page == 0) {
+      return widget.items.length - 1;
+    }
+    if (page == widget.items.length + 1) {
+      return 0;
+    }
+    return page - 1;
+  }
+
+  Key _entryKeyForPage(int page) {
+    if (page == 0) {
+      return const Key('practice-hub-loop-leading');
+    }
+    if (page == widget.items.length + 1) {
+      return const Key('practice-hub-loop-trailing');
+    }
+    return widget.items[page - 1].key;
+  }
+
+  void _handlePageChanged(int page) {
+    final logicalPage = _itemIndexForPage(page);
+    if (_currentPage != logicalPage) {
+      setState(() => _currentPage = logicalPage);
+    }
+    if (page == 0 || page == widget.items.length + 1) {
+      final destination = page == 0 ? widget.items.length : 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _controller.hasClients) {
+          _controller.jumpToPage(destination);
+        }
+      });
+    }
+  }
+}
+
+class _PracticeHubItem {
+  const _PracticeHubItem({
+    required this.key,
+    required this.title,
+    required this.description,
+    required this.assetPath,
+    required this.fallbackIcon,
+    required this.onPressed,
+  });
+
+  final Key key;
+  final String title;
+  final String description;
+  final String assetPath;
+  final IconData fallbackIcon;
+  final VoidCallback onPressed;
+}
+
+class _PracticeHubEntry extends StatelessWidget {
+  const _PracticeHubEntry({required this.item, required this.entryKey});
+
+  final _PracticeHubItem item;
+  final Key entryKey;
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
-      color: PreparationDesign.surface,
+      key: entryKey,
+      color: PreparationDesign.surfaceMuted,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(PreparationDesign.radiusMedia),
+        borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
         side: const BorderSide(color: PreparationDesign.border),
       ),
       child: Semantics(
         button: true,
-        label: '$title。$description',
-        onTap: onPressed,
+        label: '${item.title}。${item.description}',
+        onTap: item.onPressed,
         excludeSemantics: true,
         child: InkWell(
-          onTap: onPressed,
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 112),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 17, 12, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: PreparationDesign.sectionTitle,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            description,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: PreparationDesign.label.copyWith(
-                              color: PreparationDesign.secondary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Text(
-                                '进入',
-                                style: PreparationDesign.label.copyWith(
-                                  color: accentColor,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Icon(
-                                Icons.arrow_forward_rounded,
-                                size: 18,
-                                color: accentColor,
-                              ),
-                            ],
-                          ),
-                        ],
+          onTap: item.onPressed,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                item.assetPath,
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+                errorBuilder: (_, _, _) => ColoredBox(
+                  color: PreparationDesign.surfaceMuted,
+                  child: Icon(
+                    item.fallbackIcon,
+                    color: PreparationDesign.ink,
+                    size: 44,
+                  ),
+                ),
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment(0, -0.15),
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0xD9000000)],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 22,
+                right: 22,
+                bottom: 22,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: PreparationDesign.pageTitle.copyWith(
+                        color: Colors.white,
                       ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  width: mediaWidth,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ColoredBox(color: tintColor),
-                      Image.asset(
-                        assetPath,
-                        fit: BoxFit.cover,
-                        alignment: Alignment.topCenter,
-                        errorBuilder: (_, _, _) => ColoredBox(
-                          color: tintColor,
-                          child: Icon(icon, color: accentColor, size: 36),
+                    const SizedBox(height: 6),
+                    Text(
+                      item.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: PreparationDesign.body.copyWith(
+                        color: Colors.white.withValues(alpha: 0.82),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 48),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.94),
+                        borderRadius: BorderRadius.circular(
+                          PreparationDesign.radiusControl,
                         ),
                       ),
-                      Positioned(
-                        top: 10,
-                        right: 10,
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.88),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(icon, color: accentColor, size: 19),
-                        ),
+                      child: Text(
+                        '开始练习',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: PreparationDesign.cardTitle,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

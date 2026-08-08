@@ -20,11 +20,23 @@ Future<void> _openFamily(WidgetTester tester, String family) async {
     'DAILY' => 'practice-hub-life',
     _ => throw ArgumentError.value(family, 'family'),
   };
-  final hub = find.byKey(Key(hubKey));
-  await tester.ensureVisible(hub);
-  await tester.pumpAndSettle();
+  final hub = await _showHub(tester, Key(hubKey));
   await tester.tap(hub);
   await tester.pumpAndSettle();
+}
+
+Future<Finder> _showHub(WidgetTester tester, Key key) async {
+  final hub = find.byKey(key).hitTestable();
+  for (var attempt = 0; attempt < 4 && hub.evaluate().isEmpty; attempt++) {
+    final carousel = find.byKey(const Key('practice-hub-carousel'));
+    await tester.drag(
+      carousel,
+      Offset(-tester.getSize(carousel).width * 0.8, 0),
+    );
+    await tester.pumpAndSettle();
+  }
+  expect(hub, findsOneWidget);
+  return hub;
 }
 
 void main() {
@@ -117,14 +129,7 @@ void main() {
       'practice-hub-workplace',
       'practice-hub-life',
     ]) {
-      final entry = find.byKey(Key(hub));
-      await tester.scrollUntilVisible(
-        entry,
-        160,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      expect(entry, findsOneWidget);
+      expect(await _showHub(tester, Key(hub)), findsOneWidget);
     }
   });
 

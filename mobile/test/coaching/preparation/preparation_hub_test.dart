@@ -30,16 +30,50 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('practice-hub-interview')), findsOneWidget);
-    expect(find.byKey(const Key('practice-hub-exam')), findsOneWidget);
-    expect(find.byKey(const Key('practice-hub-workplace')), findsOneWidget);
-    expect(find.byKey(const Key('practice-hub-life')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hub-carousel')), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-hub-page-indicator')),
+      findsOneWidget,
+    );
+    for (final key in const [
+      Key('practice-hub-interview'),
+      Key('practice-hub-exam'),
+      Key('practice-hub-workplace'),
+      Key('practice-hub-life'),
+    ]) {
+      await _showModule(tester, key);
+      expect(find.byKey(key).hitTestable(), findsOneWidget);
+    }
     expect(find.byKey(const Key('practice-continuation')), findsNothing);
     expect(find.text('最近练习'), findsNothing);
     expect(find.byKey(const Key('preparation-family-INTERVIEW')), findsNothing);
     expect(find.byKey(const Key('preparation-family-EXAM')), findsNothing);
     expect(find.byKey(const Key('preparation-family-WORKPLACE')), findsNothing);
     expect(find.byKey(const Key('preparation-family-DAILY')), findsNothing);
+  });
+
+  testWidgets('loops seamlessly between the first and last practice entries', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+
+    final carousel = find.byKey(const Key('practice-hub-carousel'));
+    final swipeDistance = tester.getSize(carousel).width * 0.8;
+    await tester.drag(carousel, Offset(swipeDistance, 0));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-hub-life')).hitTestable(),
+      findsOneWidget,
+    );
+
+    await tester.drag(carousel, Offset(-swipeDistance, 0));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-hub-interview')).hitTestable(),
+      findsOneWidget,
+    );
   });
 
   testWidgets('opens the English interview module from the hub', (
@@ -153,13 +187,7 @@ void main() {
       (key: Key('practice-hub-workplace'), title: '职场英语'),
       (key: Key('practice-hub-life'), title: '生活与旅行'),
     ]) {
-      final entry = find.byKey(entryData.key);
-      await tester.scrollUntilVisible(
-        entry,
-        180,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _showModule(tester, entryData.key);
       expect(find.text(entryData.title).hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
@@ -222,14 +250,9 @@ void main() {
     addTearDown(controller.dispose);
     await _pumpHub(tester, controller);
 
-    final entry = find.byKey(const Key('practice-hub-workplace'));
-    await tester.scrollUntilVisible(
-      entry,
-      180,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -100));
-    await tester.pumpAndSettle();
+    const key = Key('practice-hub-workplace');
+    await _showModule(tester, key);
+    final entry = find.byKey(key).hitTestable();
     await tester.tap(entry);
     await tester.pumpAndSettle();
 
@@ -266,13 +289,8 @@ void main() {
         scene: Key('catalog-scene-scn_workplace_progress_risk_update'),
       ),
     ]) {
-      final entry = find.byKey(module.entry);
-      await tester.scrollUntilVisible(
-        entry,
-        120,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _showModule(tester, module.entry);
+      final entry = find.byKey(module.entry).hitTestable();
       await tester.tapAt(tester.getTopLeft(entry) + const Offset(24, 24));
       await tester.pumpAndSettle();
 
@@ -318,13 +336,8 @@ void main() {
         (key: Key('practice-hub-workplace'), label: '职场英语。会议、协作与客户沟通'),
         (key: Key('practice-hub-life'), label: '生活与旅行。日常交流与出行场景实战'),
       ]) {
-        final entry = find.byKey(entryData.key);
-        await tester.scrollUntilVisible(
-          entry,
-          180,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pumpAndSettle();
+        await _showModule(tester, entryData.key);
+        final entry = find.byKey(entryData.key).hitTestable();
         expect(
           tester.getSemantics(entry),
           isSemantics(
@@ -360,16 +373,24 @@ Future<void> _pumpHub(
 }
 
 Future<void> _openModule(WidgetTester tester, Key key) async {
-  final entry = find.byKey(key);
-  for (var attempt = 0; attempt < 12 && entry.evaluate().isEmpty; attempt++) {
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -180));
+  await _showModule(tester, key);
+  final entry = find.byKey(key).hitTestable();
+  expect(entry, findsOneWidget);
+  await tester.tap(entry);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _showModule(WidgetTester tester, Key key) async {
+  final entry = find.byKey(key).hitTestable();
+  for (var attempt = 0; attempt < 4 && entry.evaluate().isEmpty; attempt++) {
+    final carousel = find.byKey(const Key('practice-hub-carousel'));
+    await tester.drag(
+      carousel,
+      Offset(-tester.getSize(carousel).width * 0.8, 0),
+    );
     await tester.pumpAndSettle();
   }
   expect(entry, findsOneWidget);
-  await tester.ensureVisible(entry);
-  await tester.pumpAndSettle();
-  await tester.tap(entry);
-  await tester.pumpAndSettle();
 }
 
 final class _HubFixtureClient implements SceneClient {
