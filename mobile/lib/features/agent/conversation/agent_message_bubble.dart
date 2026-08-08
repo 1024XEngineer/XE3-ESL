@@ -114,6 +114,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
       margin: const EdgeInsets.only(bottom: 7),
+      padding: isUser && message.modality == AgentMessageModality.voice
+          ? const EdgeInsets.fromLTRB(14, 11, 12, 0)
+          : null,
       child: message.handoffs.isEmpty
           ? primaryContent
           : Column(
@@ -312,7 +315,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           key: Key('agent-user-voice-transcript-${message.id}'),
           style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
         ),
-        const SizedBox(height: 10),
         InlineLanguageFeedback(
           leading: _VoicePlaybackAction(
             key: Key('agent-user-voice-play-${message.id}'),
