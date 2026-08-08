@@ -1,13 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 
 void main() {
-  testWidgets('iOS leaves touch handling to the native tab bar', (
+  testWidgets('iOS delegates touches and forwards native tab selection', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    int? selectedIndex;
 
     final destinations = <PlatformNavigationDestination>[
       PlatformNavigationDestination(
@@ -51,7 +53,10 @@ void main() {
             bottomNavigationBar: PlatformNavigationBar(
               destinations: destinations,
               selectedIndex: 0,
-              onDestinationSelected: (index) async => index,
+              onDestinationSelected: (index) async {
+                selectedIndex = index;
+                return index;
+              },
             ),
           ),
         ),
@@ -72,6 +77,19 @@ void main() {
             },
         ],
       });
+
+      platformView.onPlatformViewCreated?.call(7);
+      final response = await tester.binding.defaultBinaryMessenger
+          .handlePlatformMessage(
+            'speakup/native_tab_bar/7',
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('onSelected', 2),
+            ),
+            null,
+          );
+
+      expect(selectedIndex, 2);
+      expect(const StandardMethodCodec().decodeEnvelope(response!), 2);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
