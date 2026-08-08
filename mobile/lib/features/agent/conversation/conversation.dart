@@ -150,6 +150,7 @@ class ConversationPage extends StatefulWidget {
       _ => false,
     };
     final replyPending = isBusy || voiceShowsReplyProgress;
+    const topContentInset = 64.0;
     const topOverlayExtent = 76.0;
     final bottomOverlayExtent = composerBottom + composerHeight + 16;
 
@@ -171,7 +172,7 @@ class ConversationPage extends StatefulWidget {
                       controller: scrollController,
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
-                        topOverlayExtent,
+                        topContentInset,
                         horizontalPadding,
                         bottomOverlayExtent,
                       ),
@@ -327,7 +328,7 @@ class ConversationPage extends StatefulWidget {
                     left: 0,
                     top: 0,
                     right: 0,
-                    height: topOverlayExtent + 28,
+                    height: topOverlayExtent,
                     child: IgnorePointer(
                       child: DecoratedBox(
                         key: const Key('agent-top-overlay-scrim'),
