@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 
 void main() {
-  testWidgets('iOS native tab bar exposes destination keys and forwards taps', (
+  testWidgets('iOS leaves touch handling to the native tab bar', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
@@ -45,28 +45,33 @@ void main() {
     ];
 
     try {
-      final selectedIndexes = <int>[];
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             bottomNavigationBar: PlatformNavigationBar(
               destinations: destinations,
               selectedIndex: 0,
-              onDestinationSelected: (index) async {
-                selectedIndexes.add(index);
-                return index;
-              },
+              onDestinationSelected: (index) async => index,
             ),
           ),
         ),
       );
 
-      expect(find.byKey(const Key('primary-tab-scenes')), findsOneWidget);
-      expect(find.byKey(const Key('primary-tab-profile')), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-      await tester.pump();
-      expect(selectedIndexes, [1]);
+      expect(find.byType(UiKitView), findsOneWidget);
+      expect(find.byType(GestureDetector), findsNothing);
+      final platformView = tester.widget<UiKitView>(find.byType(UiKitView));
+      expect(platformView.viewType, 'speakup/native_tab_bar');
+      expect(platformView.creationParams, <String, Object>{
+        'selectedIndex': 0,
+        'items': <Map<String, String>>[
+          for (final destination in destinations)
+            <String, String>{
+              'label': destination.label,
+              'systemImage': destination.iosSystemImage,
+              'selectedSystemImage': destination.iosSelectedSystemImage,
+            },
+        ],
+      });
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

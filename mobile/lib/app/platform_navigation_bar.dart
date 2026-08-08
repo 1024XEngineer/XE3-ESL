@@ -46,35 +46,10 @@ class PlatformNavigationBar extends StatelessWidget {
       return SizedBox(
         key: const Key('primary-navigation'),
         height: contentHeight + MediaQuery.viewPaddingOf(context).bottom,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: _NativeIosTabBar(
-                destinations: destinations,
-                selectedIndex: selectedIndex,
-                onDestinationSelected: onDestinationSelected,
-              ),
-            ),
-            // A native UITabBar platform view is opaque to the Flutter widget
-            // tree, so widget tests and integration tests cannot locate or tap
-            // its items. Overlay a transparent Flutter hit target per item,
-            // reusing each destination's key and forwarding to the same
-            // selection callback the native view would invoke.
-            Positioned.fill(
-              child: Row(
-                children: [
-                  for (final (index, destination) in destinations.indexed)
-                    Expanded(
-                      child: GestureDetector(
-                        key: destination.key,
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => unawaited(onDestinationSelected(index)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
+        child: _NativeIosTabBar(
+          destinations: destinations,
+          selectedIndex: selectedIndex,
+          onDestinationSelected: onDestinationSelected,
         ),
       );
     }
