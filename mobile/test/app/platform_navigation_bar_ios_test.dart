@@ -1,13 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 
 void main() {
-  testWidgets('iOS native tab bar exposes destination keys and forwards taps', (
+  testWidgets('iOS delegates touches and forwards native tab selection', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    int? selectedIndex;
 
     final destinations = <PlatformNavigationDestination>[
       PlatformNavigationDestination(
@@ -45,7 +47,6 @@ void main() {
     ];
 
     try {
-      final selectedIndexes = <int>[];
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -53,7 +54,7 @@ void main() {
               destinations: destinations,
               selectedIndex: 0,
               onDestinationSelected: (index) async {
-                selectedIndexes.add(index);
+                selectedIndex = index;
                 return index;
               },
             ),
@@ -61,12 +62,34 @@ void main() {
         ),
       );
 
-      expect(find.byKey(const Key('primary-tab-scenes')), findsOneWidget);
-      expect(find.byKey(const Key('primary-tab-profile')), findsOneWidget);
+      expect(find.byType(UiKitView), findsOneWidget);
+      expect(find.byType(GestureDetector), findsNothing);
+      final platformView = tester.widget<UiKitView>(find.byType(UiKitView));
+      expect(platformView.viewType, 'speakup/native_tab_bar');
+      expect(platformView.creationParams, <String, Object>{
+        'selectedIndex': 0,
+        'items': <Map<String, String>>[
+          for (final destination in destinations)
+            <String, String>{
+              'label': destination.label,
+              'systemImage': destination.iosSystemImage,
+              'selectedSystemImage': destination.iosSelectedSystemImage,
+            },
+        ],
+      });
 
-      await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-      await tester.pump();
-      expect(selectedIndexes, [1]);
+      platformView.onPlatformViewCreated?.call(7);
+      final response = await tester.binding.defaultBinaryMessenger
+          .handlePlatformMessage(
+            'speakup/native_tab_bar/7',
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('onSelected', 2),
+            ),
+            null,
+          );
+
+      expect(selectedIndex, 2);
+      expect(const StandardMethodCodec().decodeEnvelope(response!), 2);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
