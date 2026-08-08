@@ -623,6 +623,59 @@ void main() {
     },
   );
 
+  test(
+    'refresh keeps a selected older Thread that is absent from the first page',
+    () async {
+      final client = _HistoryAgentClient(
+        refreshedThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[_historySummaryOne],
+          nextCursor: 'older_threads',
+        ),
+      );
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.loadMoreThreads();
+      expect(await controller.selectThread(_historyThreadTwo), isTrue);
+
+      await controller.refreshThreadHistory();
+
+      expect(controller.threadId, _historyThreadTwo);
+      expect(controller.currentThreadSummary?.id, _historyThreadTwo);
+      expect(controller.threadHistoryErrorMessage, isNull);
+    },
+  );
+
+  test('refresh preserves loaded older pages and their cursor', () async {
+    final generatedTitle = AgentThreadSummary(
+      id: _historyThreadOne,
+      title: '产品经理面试准备',
+      createdAt: _historySummaryOne.createdAt,
+      updatedAt: _historySummaryOne.updatedAt,
+    );
+    final client = _HistoryAgentClient(
+      refreshedThreadPage: AgentThreadPage(
+        threads: <AgentThreadSummary>[generatedTitle],
+        nextCursor: 'older_threads',
+      ),
+    );
+    final controller = ConversationController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.loadMoreThreads();
+
+    expect(controller.hasMoreThreads, isFalse);
+    await controller.refreshThreadHistory();
+
+    expect(controller.threads.map((thread) => thread.id), [
+      _historyThreadOne,
+      _historyThreadTwo,
+    ]);
+    expect(controller.threads.first.title, '产品经理面试准备');
+    expect(controller.hasMoreThreads, isFalse);
+    expect(controller.threadHistoryErrorMessage, isNull);
+  });
+
   test('rejects overlapping and out-of-bound Thread pages', () async {
     final invalidPages = <AgentThreadPage>[
       AgentThreadPage(threads: <AgentThreadSummary>[_historySummaryOne]),

@@ -102,7 +102,7 @@ void main() {
       final oldThreadId = conversationController.threadId;
       final stagedAssetId = composerController.pendingImages.single.asset!.id;
 
-      expect(await conversationController.createThread(), isTrue);
+      expect(await conversationController.createIndependentThread(), isTrue);
       await Future<void>.delayed(Duration.zero);
 
       expect(conversationController.threadId, isNot(oldThreadId));
@@ -130,7 +130,7 @@ void main() {
 
     final selection = composerController.pickAgentImages();
     await imageClient.uploadStarted.future;
-    expect(await conversationController.createThread(), isTrue);
+    expect(await conversationController.createIndependentThread(), isTrue);
     imageClient.completeUpload(threadId: oldThreadId);
     await selection;
     await Future<void>.delayed(Duration.zero);

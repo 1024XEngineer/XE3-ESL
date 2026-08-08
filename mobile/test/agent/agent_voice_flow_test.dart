@@ -43,7 +43,7 @@ void main() {
       final voiceController = composerController.voiceController!;
 
       player.failNextStop = true;
-      expect(await conversationController.createThread(), isTrue);
+      expect(await conversationController.createIndependentThread(), isTrue);
       await Future<void>.delayed(Duration.zero);
 
       expect(conversationController.threadId, isNot(oldThreadId));
