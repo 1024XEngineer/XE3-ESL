@@ -83,6 +83,14 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const Key('scenario-live-subtitle')), findsOneWidget);
+    final staticAvatar = tester.widget<Image>(
+      find.byKey(const Key('scenario-avatar-placeholder')),
+    );
+    expect(staticAvatar.fit, BoxFit.cover);
+    expect(
+      (staticAvatar.image as AssetImage).assetName,
+      'assets/images/scenes/static-avatar-van-gogh.jpg',
+    );
     expect(find.text(question), findsNWidgets(2));
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),

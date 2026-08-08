@@ -56,6 +56,10 @@ void main() {
     'SPEAKUP_API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8080',
   );
+  const avatarEnabled = bool.fromEnvironment(
+    'SPEAKUP_AVATAR_ENABLED',
+    defaultValue: true,
+  );
   final dependencies = createProductionAppDependencies(
     baseUri: Uri.parse(apiBaseUrl),
   );
@@ -73,7 +77,9 @@ void main() {
       preparationLaunchController: dependencies.preparationLaunchController,
       practicePlanHandoffController: dependencies.practicePlanHandoffController,
       reviewHistoryController: dependencies.reviewHistoryController,
-      avatarControllerFactory: dependencies.avatarControllerFactory,
+      avatarControllerFactory: avatarEnabled
+          ? dependencies.avatarControllerFactory
+          : null,
       interviewReportController: dependencies.interviewReportController,
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
       speechFeedbackController: dependencies.speechFeedbackController,
