@@ -911,15 +911,19 @@ class _MessageList extends StatelessWidget {
       key: const Key('agent-message-list'),
       children: [
         for (final message in messages)
-          AgentMessageBubble(
-            message: message,
-            messageAudioController: messageAudioController,
-            onTranslate: onTranslateMessage,
-            onHandoff: onHandoff,
-            onRefreshImage: onRefreshImage,
-            correction: feedbackPresenter?.correctionFor(message),
-            polish: feedbackPresenter?.polishFor(message),
-          ),
+          if (!suppressLoadingFeedback ||
+              message.role != AgentMessageRole.assistant ||
+              !message.isStreaming ||
+              message.text.isNotEmpty)
+            AgentMessageBubble(
+              message: message,
+              messageAudioController: messageAudioController,
+              onTranslate: onTranslateMessage,
+              onHandoff: onHandoff,
+              onRefreshImage: onRefreshImage,
+              correction: feedbackPresenter?.correctionFor(message),
+              polish: feedbackPresenter?.polishFor(message),
+            ),
       ],
     );
   }
