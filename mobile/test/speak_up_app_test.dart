@@ -596,12 +596,24 @@ void main() {
       final menuBefore = tester.getRect(menu);
       final createBefore = tester.getRect(create);
       final titleBefore = tester.getRect(fixedTitle);
-      final scroll = find.byType(SingleChildScrollView);
+      final scroll = find.byKey(const Key('agent-conversation-scroll'));
+      final scrollRect = tester.getRect(scroll);
+      final composerRect = tester.getRect(
+        find.byKey(const Key('agent-composer-surface')),
+      );
+      expect(scrollRect.top, lessThan(menuBefore.bottom));
+      expect(scrollRect.bottom, greaterThan(composerRect.bottom));
       final scrollController = tester
           .widget<SingleChildScrollView>(scroll)
           .controller!;
       final pixelsBefore = scrollController.position.pixels;
       expect(pixelsBefore, greaterThan(0));
+      expect(
+        tester
+            .getRect(find.byKey(const Key('agent-message-scroll-message-27')))
+            .bottom,
+        lessThanOrEqualTo(composerRect.top - 15),
+      );
 
       await tester.drag(scroll, const Offset(0, 360));
       await tester.pumpAndSettle();
@@ -612,6 +624,59 @@ void main() {
       expect(tester.getRect(fixedTitle), titleBefore);
     },
   );
+
+  testWidgets('keeps the latest Message clear of a growing composer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    String? imageErrorMessage;
+    late StateSetter update;
+    final messages = List<AgentMessage>.generate(
+      16,
+      (index) => AgentMessage(
+        id: 'resized-composer-message-$index',
+        role: index.isEven ? AgentMessageRole.user : AgentMessageRole.assistant,
+        text: 'Message $index keeps the conversation scrollable.',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              imageErrorMessage: imageErrorMessage,
+              onSubmitText: (_) async => true,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final composer = find.byKey(const Key('agent-composer-overlay'));
+    final initialComposerTop = tester.getRect(composer).top;
+
+    update(() {
+      imageErrorMessage = '图片上传失败，请重试后再发送这条消息。';
+    });
+    await tester.pumpAndSettle();
+
+    final grownComposerTop = tester.getRect(composer).top;
+    expect(grownComposerTop, lessThan(initialComposerTop));
+    expect(
+      tester
+          .getRect(
+            find.byKey(const Key('agent-message-resized-composer-message-15')),
+          )
+          .bottom,
+      lessThanOrEqualTo(grownComposerTop - 15),
+    );
+  });
 
   testWidgets('keeps available Agent actions above the composer on iPhone', (
     tester,
