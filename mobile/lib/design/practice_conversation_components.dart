@@ -31,6 +31,7 @@ class InlineLanguageFeedback extends StatefulWidget {
     this.suggestionLoading = false,
     this.suggestionPlaying = false,
     this.optimizeIconOnly = false,
+    this.onExpandedChanged,
     this.foregroundColor = SpeakUpDesign.primary,
     this.textColor = SpeakUpDesign.ink,
     super.key,
@@ -46,6 +47,7 @@ class InlineLanguageFeedback extends StatefulWidget {
   final bool suggestionLoading;
   final bool suggestionPlaying;
   final bool optimizeIconOnly;
+  final ValueChanged<bool>? onExpandedChanged;
   final Color foregroundColor;
   final Color textColor;
 
@@ -65,7 +67,9 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
   }
 
   void _toggle() {
-    setState(() => _expanded = !_expanded);
+    final expanded = !_expanded;
+    setState(() => _expanded = expanded);
+    widget.onExpandedChanged?.call(expanded);
   }
 
   @override

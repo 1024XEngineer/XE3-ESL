@@ -39,6 +39,7 @@ final class AgentMessageBubble extends StatefulWidget {
 
 class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   late _AgentMessageAudioSnapshot _audioSnapshot;
+  bool _languageFeedbackExpanded = false;
 
   @override
   void initState() {
@@ -50,6 +51,10 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   @override
   void didUpdateWidget(covariant AgentMessageBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id ||
+        (widget.correction == null && widget.polish == null)) {
+      _languageFeedbackExpanded = false;
+    }
     if (oldWidget.messageAudioController != widget.messageAudioController) {
       oldWidget.messageAudioController?.removeListener(_handleAudioController);
       widget.messageAudioController?.addListener(_handleAudioController);
@@ -101,6 +106,10 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget build(BuildContext context) {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
+    final voiceNeedsBottomInset =
+        isUser &&
+        message.modality == AgentMessageModality.voice &&
+        (_languageFeedbackExpanded || _audioSnapshot.error != null);
     const foreground = SpeakUpDesign.ink;
     final primaryContent = switch (message.modality) {
       AgentMessageModality.voice => _buildUserVoice(context, foreground),
@@ -114,6 +123,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
       margin: const EdgeInsets.only(bottom: 7),
+      padding: isUser && message.modality == AgentMessageModality.voice
+          ? EdgeInsets.fromLTRB(14, 11, 12, voiceNeedsBottomInset ? 11 : 0)
+          : null,
       child: message.handoffs.isEmpty
           ? primaryContent
           : Column(
@@ -312,7 +324,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           key: Key('agent-user-voice-transcript-${message.id}'),
           style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
         ),
-        const SizedBox(height: 10),
         InlineLanguageFeedback(
           leading: _VoicePlaybackAction(
             key: Key('agent-user-voice-play-${message.id}'),
@@ -326,6 +337,12 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           correction: widget.correction,
           polish: widget.polish,
           optimizeIconOnly: true,
+          onExpandedChanged: (expanded) {
+            if (_languageFeedbackExpanded == expanded) {
+              return;
+            }
+            setState(() => _languageFeedbackExpanded = expanded);
+          },
           suggestionLoading: previewLoading,
           suggestionPlaying: previewPlaying,
           onSpeakSuggestion: audioController == null

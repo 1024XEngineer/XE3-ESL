@@ -189,6 +189,10 @@ void main() {
     await tester.tap(find.byKey(const Key('inline-language-optimize')));
     await tester.pump();
 
+    final expandedBubble = tester.widget<Container>(
+      find.byKey(const Key('agent-message-user-voice-polish')),
+    );
+    expect(expandedBubble.padding, const EdgeInsets.fromLTRB(14, 11, 12, 11));
     expect(find.text('纠错'), findsOneWidget);
     expect(find.text('更自然的表达'), findsOneWidget);
     expect(find.text('This plan sounds good.'), findsOneWidget);
@@ -218,6 +222,61 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  testWidgets('keeps voice actions compact without shrinking tap targets', (
+    tester,
+  ) async {
+    const message = AgentMessage(
+      id: 'user-voice-spacing',
+      role: AgentMessageRole.user,
+      text: 'Can you help me study knowledge about AI?',
+      modality: AgentMessageModality.voice,
+      audio: AgentMessageAudio(
+        id: 'audio-spacing',
+        status: AgentMessageAudioStatus.readable,
+        contentType: 'audio/mp4',
+        sizeBytes: 128,
+        duration: Duration(seconds: 3),
+        playbackPath: '/v1/agent-audio/audio-spacing/playback',
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: const [
+              AgentMessageBubble(
+                message: message,
+                correction: InlineLanguageSuggestion(
+                  originalText: 'study knowledge about AI',
+                  text: 'learn about AI',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final bubble = find.byKey(const Key('agent-message-user-voice-spacing'));
+    final transcript = find.byKey(
+      const Key('agent-user-voice-transcript-user-voice-spacing'),
+    );
+    final playback = find.byKey(
+      const Key('agent-user-voice-play-user-voice-spacing'),
+    );
+    final optimize = find.byKey(const Key('inline-language-optimize'));
+    final transcriptRect = tester.getRect(transcript);
+    final playbackRect = tester.getRect(playback);
+
+    expect(playbackRect.top, transcriptRect.bottom);
+    expect(
+      tester.widget<Container>(bubble).padding,
+      const EdgeInsets.fromLTRB(14, 11, 12, 0),
+    );
+    expect(tester.getSize(playback), const Size.square(44));
+    expect(tester.getSize(optimize), const Size.square(40));
   });
 
   testWidgets('renders and dispatches a practice plan handoff', (tester) async {

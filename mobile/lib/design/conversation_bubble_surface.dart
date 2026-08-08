@@ -8,6 +8,7 @@ class ConversationBubbleSurface extends StatelessWidget {
     this.bubbleKey,
     this.maxWidth = 340,
     this.margin = EdgeInsets.zero,
+    this.padding,
     this.semanticsLabel,
     super.key,
   });
@@ -17,6 +18,7 @@ class ConversationBubbleSurface extends StatelessWidget {
   final Key? bubbleKey;
   final double maxWidth;
   final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry? padding;
   final String? semanticsLabel;
 
   @override
@@ -25,9 +27,11 @@ class ConversationBubbleSurface extends StatelessWidget {
       key: bubbleKey,
       constraints: BoxConstraints(maxWidth: maxWidth),
       margin: margin,
-      padding: isUser
-          ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
-          : const EdgeInsets.fromLTRB(2, 7, 12, 9),
+      padding:
+          padding ??
+          (isUser
+              ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
+              : const EdgeInsets.fromLTRB(2, 7, 12, 9)),
       decoration: BoxDecoration(
         color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
         borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
