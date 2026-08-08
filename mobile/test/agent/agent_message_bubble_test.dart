@@ -189,6 +189,10 @@ void main() {
     await tester.tap(find.byKey(const Key('inline-language-optimize')));
     await tester.pump();
 
+    final expandedBubble = tester.widget<Container>(
+      find.byKey(const Key('agent-message-user-voice-polish')),
+    );
+    expect(expandedBubble.padding, const EdgeInsets.fromLTRB(14, 11, 12, 11));
     expect(find.text('纠错'), findsOneWidget);
     expect(find.text('更自然的表达'), findsOneWidget);
     expect(find.text('This plan sounds good.'), findsOneWidget);
