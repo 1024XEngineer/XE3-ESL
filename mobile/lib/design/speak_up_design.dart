@@ -48,6 +48,17 @@ abstract final class SpeakUpDesign {
     height: 1,
   );
 
+  static const secondaryDisplayTitle = TextStyle(
+    color: ink,
+    fontFamily: 'Georgia',
+    fontFamilyFallback: ['serif'],
+    fontSize: 34,
+    fontWeight: FontWeight.w600,
+    fontStyle: FontStyle.italic,
+    height: 1.05,
+    letterSpacing: -0.4,
+  );
+
   static const sectionTitle = TextStyle(
     color: ink,
     fontSize: 20,

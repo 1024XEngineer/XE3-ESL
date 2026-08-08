@@ -1,6 +1,7 @@
 import '../../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -113,6 +114,53 @@ void main() {
     expect(find.text('进度与风险汇报'), findsNothing);
   });
 
+  testWidgets('uses English display titles for all four practice hubs', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+
+    for (final hub in const [
+      (
+        entry: Key('practice-hub-interview'),
+        titleKey: Key('practice-hub-title-interview'),
+        title: 'Interview',
+        semanticLabel: '英文面试',
+      ),
+      (
+        entry: Key('practice-hub-exam'),
+        titleKey: Key('practice-hub-title-ielts'),
+        title: 'IELTS',
+        semanticLabel: 'IELTS 口语',
+      ),
+      (
+        entry: Key('practice-hub-workplace'),
+        titleKey: Key('practice-hub-title-workplace'),
+        title: 'Workplace',
+        semanticLabel: '职场英语',
+      ),
+      (
+        entry: Key('practice-hub-life'),
+        titleKey: Key('practice-hub-title-life'),
+        title: 'Travel',
+        semanticLabel: '生活与旅行',
+      ),
+    ]) {
+      await _openModule(tester, hub.entry);
+
+      final title = tester.widget<Text>(find.byKey(hub.titleKey));
+      expect(title.data, hub.title);
+      expect(title.style, SpeakUpDesign.secondaryDisplayTitle);
+      expect(find.bySemanticsLabel(hub.semanticLabel), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('preparation-back-to-families')).hitTestable(),
+      );
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets(
     'opens IELTS from one scene with four server-defined practice options',
     (tester) async {
@@ -161,7 +209,7 @@ void main() {
 
     await _openModule(tester, const Key('practice-hub-workplace'));
 
-    expect(find.text('职场英语'), findsOneWidget);
+    expect(find.text('Workplace'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsOneWidget);
     expect(find.text('酒店入住与问题处理'), findsNothing);
     expect(find.byKey(const Key('scenario-filter-workplace')), findsNothing);
@@ -175,7 +223,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openModule(tester, const Key('practice-hub-life'));
 
-    expect(find.text('生活与旅行'), findsOneWidget);
+    expect(find.text('Travel'), findsOneWidget);
     expect(find.text('酒店入住与问题处理'), findsOneWidget);
     expect(find.text('餐厅点餐'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsNothing);

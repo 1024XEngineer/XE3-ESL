@@ -236,6 +236,8 @@ class SpeakUpNavigationHeader extends StatelessWidget {
     this.onBack,
     this.backButtonKey,
     this.titleKey,
+    this.titleStyle,
+    this.semanticLabel,
     this.trailing,
     super.key,
   });
@@ -244,6 +246,8 @@ class SpeakUpNavigationHeader extends StatelessWidget {
   final VoidCallback? onBack;
   final Key? backButtonKey;
   final Key? titleKey;
+  final TextStyle? titleStyle;
+  final String? semanticLabel;
   final Widget? trailing;
 
   @override
@@ -255,10 +259,12 @@ class SpeakUpNavigationHeader extends StatelessWidget {
         Expanded(
           child: Semantics(
             header: true,
+            label: semanticLabel,
+            excludeSemantics: semanticLabel != null,
             child: Text(
               title,
               key: titleKey,
-              style: Theme.of(context).textTheme.titleLarge,
+              style: titleStyle ?? Theme.of(context).textTheme.titleLarge,
             ),
           ),
         ),
