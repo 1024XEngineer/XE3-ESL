@@ -291,7 +291,8 @@ Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
     SceneCategory.lifeTravel => const Key('practice-hub-life'),
     _ => throw ArgumentError.value(definition.category, 'category'),
   };
-  await _tapVisible(tester, find.byKey(hubKey));
+  await _showPracticeHub(tester, hubKey);
+  await _tapVisible(tester, find.byKey(hubKey).hitTestable());
   final scene = find.byKey(Key('catalog-scene-${definition.id}'));
   expect(scene, findsOneWidget);
   await tester.ensureVisible(scene);
@@ -300,6 +301,19 @@ Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
   await _confirmScenarioPreparation(tester);
+}
+
+Future<void> _showPracticeHub(WidgetTester tester, Key key) async {
+  final hub = find.byKey(key).hitTestable();
+  for (var attempt = 0; attempt < 4 && hub.evaluate().isEmpty; attempt++) {
+    final carousel = find.byKey(const Key('practice-hub-carousel'));
+    await tester.drag(
+      carousel,
+      Offset(-tester.getSize(carousel).width * 0.8, 0),
+    );
+    await tester.pumpAndSettle();
+  }
+  expect(hub, findsOneWidget);
 }
 
 Future<void> _confirmScenarioPreparation(WidgetTester tester) async {
