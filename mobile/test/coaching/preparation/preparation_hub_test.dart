@@ -76,6 +76,21 @@ void main() {
     );
   });
 
+  testWidgets('preview opens IELTS without an injected controller', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: PreparationPage(previewMode: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
+    expect(find.text('连接场景服务后即可查看练习。'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('opens the English interview module from the hub', (
     tester,
   ) async {

@@ -630,7 +630,8 @@ class _PreparationPageState extends State<PreparationPage> {
           onPressed: () {
             final ielts = widget.ieltsController;
             if (ielts == null) {
-              throw StateError('IELTS controller is not configured.');
+              setState(() => _selectedHub = _PracticeHub.ielts);
+              return;
             }
             setState(() => _selectedHub = _PracticeHub.ielts);
             unawaited(ielts.loadIfNeeded());
