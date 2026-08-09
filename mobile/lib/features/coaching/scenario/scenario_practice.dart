@@ -954,8 +954,10 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
             seconds: widget.recordingSeconds,
             capture: capture,
           ),
-          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
+          PracticeRecordingState.transcribing => PracticeTranscribingComposer(
             label: '正在识别你的回答…',
+            transcript: widget.controller.transcript ?? '',
+            keyPrefix: 'scenario',
           ),
           PracticeRecordingState.awaitingConfirmation =>
             PracticeTranscriptComposer(

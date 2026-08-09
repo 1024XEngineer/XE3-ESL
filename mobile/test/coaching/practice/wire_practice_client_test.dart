@@ -3,10 +3,12 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -179,6 +181,11 @@ void main() {
       endpoints.transcribePath(opaque, opaque),
       '/v1/voice-practice-sessions/$encoded/questions/'
       '$encoded/transcription-candidates',
+    );
+    expect(
+      endpoints.transcribeRealtimePath(opaque, opaque),
+      '/v1/voice-practice-sessions/$encoded/questions/'
+      '$encoded/transcription-candidates/realtime',
     );
     expect(
       endpoints.submitTextPath(opaque, opaque),
@@ -425,6 +432,116 @@ void main() {
 
     expect(candidate.id, _candidateId);
     transport.expectDone();
+  });
+
+  test('streams a Practice transcript before PCM capture finishes', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final handled = Completer<void>();
+    server.listen((request) async {
+      expect(
+        request.uri.path,
+        '/v1/voice-practice-sessions/$_sessionId/questions/'
+        '$_questionId/transcription-candidates/realtime',
+      );
+      expect(
+        request.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer sess_practice',
+      );
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (protocols) => 'speakup.voice-input.v1',
+      );
+      var sentUpdate = false;
+      await for (final message in socket) {
+        if (message is List<int> && !sentUpdate) {
+          sentUpdate = true;
+          socket.add(
+            jsonEncode(<String, Object>{
+              'type': 'transcription.updated',
+              'data': <String, Object>{
+                'transcript': 'I led the migration',
+                'final': false,
+              },
+            }),
+          );
+        }
+        if (message is String &&
+            (jsonDecode(message) as Map<String, dynamic>)['type'] == 'finish') {
+          socket.add(
+            jsonEncode(<String, Object>{
+              'type': 'candidate.ready',
+              'data': <String, Object>{
+                'candidate': <String, Object>{
+                  'candidate_id': _candidateId,
+                  'practice_session_id': _sessionId,
+                  'question_id': _questionId,
+                  'respondent_participant_id': 'participant-user',
+                  'transcript_id': 'transcript-realtime',
+                  'evidence_version': 1,
+                  'transcript': 'I led the migration safely.',
+                  'created_at': _timestamp,
+                },
+              },
+            }),
+          );
+          await socket.close();
+          if (!handled.isCompleted) {
+            handled.complete();
+          }
+        }
+      }
+    });
+    final client = WirePracticeClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => _credential,
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+      transport: _Transport(const <_Step>[]),
+    );
+    final chunks = StreamController<Uint8List>();
+    final update = Completer<PracticeTranscriptUpdated>();
+    final events = <PracticeTranscriptionEvent>[];
+    final completed = Completer<void>();
+    final subscription = client
+        .transcribeRealtime(
+          sessionId: _sessionId,
+          questionId: _questionId,
+          idempotencyKey: 'turn-realtime-001',
+          audioChunks: chunks.stream,
+        )
+        .listen(
+          (event) {
+            events.add(event);
+            if (event case final PracticeTranscriptUpdated value) {
+              if (!update.isCompleted) {
+                update.complete(value);
+              }
+            }
+          },
+          onError: completed.completeError,
+          onDone: completed.complete,
+        );
+    addTearDown(subscription.cancel);
+
+    chunks.add(Uint8List.fromList(<int>[1, 2]));
+    final firstUpdate = await update.future.timeout(const Duration(seconds: 2));
+    expect(firstUpdate.text, 'I led the migration');
+    expect(completed.isCompleted, isFalse);
+
+    chunks.add(Uint8List.fromList(<int>[3, 4]));
+    await chunks.close();
+    await completed.future;
+    await handled.future;
+
+    expect(events.last, isA<PracticeCandidateCompleted>());
+    expect(
+      (events.last as PracticeCandidateCompleted).candidate.text,
+      'I led the migration safely.',
+    );
   });
 
   test('submits text through the combined durable answer route', () async {

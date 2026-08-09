@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -34,6 +36,32 @@ abstract interface class PracticeClient {
     required String answerText,
     required String idempotencyKey,
   });
+}
+
+abstract interface class PracticeRealtimeTranscriptionClient {
+  Stream<PracticeTranscriptionEvent> transcribeRealtime({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required Stream<Uint8List> audioChunks,
+  });
+}
+
+sealed class PracticeTranscriptionEvent {
+  const PracticeTranscriptionEvent();
+}
+
+final class PracticeTranscriptUpdated extends PracticeTranscriptionEvent {
+  const PracticeTranscriptUpdated({required this.text, required this.isFinal});
+
+  final String text;
+  final bool isFinal;
+}
+
+final class PracticeCandidateCompleted extends PracticeTranscriptionEvent {
+  const PracticeCandidateCompleted(this.candidate);
+
+  final TranscriptionCandidate candidate;
 }
 
 abstract interface class PracticeLifecycleClient {

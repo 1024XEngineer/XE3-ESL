@@ -2105,7 +2105,10 @@ class _RecorderDock extends StatelessWidget {
                 onCancel: onCancelConvertedAnswer,
               )
             : working
-            ? _IeltsRecorderWorkingState(state: state)
+            ? _IeltsRecorderWorkingState(
+                state: state,
+                transcript: controller.transcript ?? '',
+              )
             : _IeltsVoiceCaptureDock(
                 phase: phase,
                 capture: capture,
@@ -2171,9 +2174,13 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
 }
 
 class _IeltsRecorderWorkingState extends StatelessWidget {
-  const _IeltsRecorderWorkingState({required this.state});
+  const _IeltsRecorderWorkingState({
+    required this.state,
+    required this.transcript,
+  });
 
   final PracticeRecordingState state;
+  final String transcript;
 
   @override
   Widget build(BuildContext context) {
@@ -2183,9 +2190,16 @@ class _IeltsRecorderWorkingState extends StatelessWidget {
       PracticeRecordingState.submitting => 'Answer sent. Agent is replying…',
       _ => 'Working…',
     };
+    final content = state == PracticeRecordingState.transcribing
+        ? PracticeTranscribingComposer(
+            label: label,
+            transcript: transcript,
+            keyPrefix: 'ielts-mock',
+          )
+        : PracticeLoadingComposer(label: label);
     return KeyedSubtree(
       key: const Key('ielts-mock-recorder-working'),
-      child: PracticeLoadingComposer(label: label),
+      child: content,
     );
   }
 }

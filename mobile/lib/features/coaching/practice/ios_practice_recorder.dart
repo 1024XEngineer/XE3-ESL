@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/platform/audio/pcm16_stream_capture.dart';
 
 abstract interface class NativePracticeRecorder {
   Future<bool> hasPermission();
@@ -13,7 +16,12 @@ abstract interface class NativePracticeRecorder {
   Future<String?> stop();
 }
 
-final class RecordNativePracticeRecorder implements NativePracticeRecorder {
+abstract interface class NativeStreamingPracticeRecorder {
+  Future<Stream<Uint8List>> startPcm16Stream();
+}
+
+final class RecordNativePracticeRecorder
+    implements NativePracticeRecorder, NativeStreamingPracticeRecorder {
   RecordNativePracticeRecorder([AudioRecorder? recorder])
     : _recorder = recorder ?? AudioRecorder();
 
@@ -39,10 +47,25 @@ final class RecordNativePracticeRecorder implements NativePracticeRecorder {
   }
 
   @override
+  Future<Stream<Uint8List>> startPcm16Stream() {
+    return _recorder.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+        autoGain: false,
+        echoCancel: false,
+        noiseSuppress: false,
+      ),
+    );
+  }
+
+  @override
   Future<String?> stop() => _recorder.stop();
 }
 
-final class IosPracticeRecorder implements PracticeRecorder {
+final class IosPracticeRecorder
+    implements PracticeRecorder, PracticeStreamingRecorder {
   IosPracticeRecorder({
     NativePracticeRecorder? recorder,
     Future<Directory> Function()? temporaryDirectory,
@@ -51,11 +74,13 @@ final class IosPracticeRecorder implements PracticeRecorder {
 
   static const _managedDirectoryName = 'speakup-practice-audio';
   static const _minimumWavBytes = 45;
+  static const _maximumPcmBytes = 7400000 - 44;
 
   final NativePracticeRecorder _recorder;
   final Future<Directory> Function() _temporaryDirectory;
   final Random _random = Random.secure();
   String? _activePath;
+  Pcm16StreamCapture? _streamCapture;
 
   @override
   Future<void> start() async {
@@ -76,6 +101,46 @@ final class IosPracticeRecorder implements PracticeRecorder {
       await _recorder.startWav(path);
     } catch (_) {
       _activePath = null;
+      await _deletePath(path);
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.unavailable,
+      );
+    }
+  }
+
+  @override
+  Future<Stream<Uint8List>> startAudioStream() async {
+    if (_activePath != null) {
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.alreadyRecording,
+      );
+    }
+    if (!await _recorder.hasPermission()) {
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.permissionDenied,
+      );
+    }
+    final directory = await _managedDirectory();
+    final path = '${directory.path}/${_newFileName()}';
+    _activePath = path;
+    try {
+      final native = _recorder;
+      if (native is! NativeStreamingPracticeRecorder) {
+        throw const PracticeRecordingException(
+          PracticeRecordingFailureKind.unavailable,
+        );
+      }
+      final input = await (native as NativeStreamingPracticeRecorder)
+          .startPcm16Stream();
+      final capture = Pcm16StreamCapture(
+        input: input,
+        maximumPcmBytes: _maximumPcmBytes,
+      );
+      _streamCapture = capture;
+      return capture.stream;
+    } catch (_) {
+      _activePath = null;
+      _streamCapture = null;
       await _deletePath(path);
       throw const PracticeRecordingException(
         PracticeRecordingFailureKind.unavailable,
@@ -131,10 +196,44 @@ final class IosPracticeRecorder implements PracticeRecorder {
   }
 
   @override
+  Future<RecordedPracticeAudio> stopAudioStream() async {
+    final path = _activePath;
+    final capture = _streamCapture;
+    if (path == null || capture == null) {
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.notRecording,
+      );
+    }
+    _activePath = null;
+    _streamCapture = null;
+    try {
+      await _recorder.stop();
+      final wav = await capture.finish();
+      await File(path).writeAsBytes(wav, flush: true);
+      return RecordedPracticeAudio(
+        path: path,
+        contentType: 'audio/wav',
+        sizeBytes: wav.lengthInBytes,
+      );
+    } on Pcm16StreamCaptureException catch (error) {
+      await _deletePath(path);
+      throw PracticeRecordingException(_mapStreamFailure(error.kind));
+    } catch (_) {
+      await _deletePath(path);
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.unavailable,
+      );
+    }
+  }
+
+  @override
   Future<void> discardCurrent() async {
     final path = _activePath;
+    final capture = _streamCapture;
     _activePath = null;
+    _streamCapture = null;
     if (path != null) {
+      await capture?.cancel();
       try {
         await _recorder.stop();
       } catch (_) {
@@ -214,3 +313,15 @@ final class IosPracticeRecorder implements PracticeRecorder {
     }
   }
 }
+
+PracticeRecordingFailureKind _mapStreamFailure(
+  Pcm16StreamCaptureFailureKind kind,
+) => switch (kind) {
+  Pcm16StreamCaptureFailureKind.emptyAudio =>
+    PracticeRecordingFailureKind.emptyAudio,
+  Pcm16StreamCaptureFailureKind.invalidAudio =>
+    PracticeRecordingFailureKind.invalidAudio,
+  Pcm16StreamCaptureFailureKind.unavailable ||
+  Pcm16StreamCaptureFailureKind.cancelled =>
+    PracticeRecordingFailureKind.unavailable,
+};

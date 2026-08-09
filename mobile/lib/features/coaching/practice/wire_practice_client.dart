@@ -10,7 +10,9 @@ import 'package:speakup/features/coaching/ielts/ielts_assignment_codec.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
+import 'package:speakup/identity/network/authenticated_web_socket.dart';
 import 'package:speakup/identity/network/transport_security.dart';
+import 'package:speakup/platform/audio/realtime_voice_input.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -27,6 +29,9 @@ final class PracticeWireEndpoints {
     this.transcribe =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates',
+    this.transcribeRealtime =
+        '/v1/voice-practice-sessions/{practice_session_id}/questions/'
+        '{question_id}/transcription-candidates/realtime',
     this.submitText =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/text-answers',
@@ -47,6 +52,7 @@ final class PracticeWireEndpoints {
   final String voiceActivation;
   final String voiceState;
   final String transcribe;
+  final String transcribeRealtime;
   final String submitText;
   final String questionTip;
   final String confirm;
@@ -68,6 +74,11 @@ final class PracticeWireEndpoints {
   String transcribePath(String sessionId, String questionId) => transcribe
       .replaceAll('{practice_session_id}', _pathSegment(sessionId))
       .replaceAll('{question_id}', _pathSegment(questionId));
+
+  String transcribeRealtimePath(String sessionId, String questionId) =>
+      transcribeRealtime
+          .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+          .replaceAll('{question_id}', _pathSegment(questionId));
 
   String confirmPath(String candidateId) =>
       confirm.replaceAll('{candidate_id}', _pathSegment(candidateId));
@@ -153,7 +164,8 @@ final class WirePracticeClient
         PracticeCompletionClient,
         PracticeSpeechFeedbackRetryClient,
         PracticeQuestionTipClient,
-        PracticeQuestionTranslationClient {
+        PracticeQuestionTranslationClient,
+        PracticeRealtimeTranscriptionClient {
   factory WirePracticeClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -161,6 +173,7 @@ final class WirePracticeClient
     PracticeWireTransport? transport,
     PracticeWireTransport Function()? transportFactory,
     PracticeWireEndpoints endpoints = const PracticeWireEndpoints(),
+    AuthenticatedWebSocketConnector? realtimeConnector,
     Duration jsonTimeout = const Duration(seconds: 30),
     Duration transcriptionTimeout = const Duration(seconds: 120),
   }) {
@@ -180,6 +193,16 @@ final class WirePracticeClient
       ownsTransport,
       createTransport,
       endpoints,
+      SessionAuthenticatedWebSocketConnector(
+        connector:
+            realtimeConnector ??
+            IoAuthenticatedWebSocketConnector(
+              protocols: const <String>[realtimeVoiceInputProtocol],
+            ),
+        credentialProvider: credentialProvider,
+        invalidateSession: invalidateSession,
+        trustedBaseUri: realtimeVoiceWebSocketBaseUri(baseUri),
+      ),
       jsonTimeout,
       transcriptionTimeout,
     );
@@ -194,6 +217,7 @@ final class WirePracticeClient
     this._ownsTransport,
     this._transportFactory,
     this._endpoints,
+    this._realtimeConnector,
     this._jsonTimeout,
     this._transcriptionTimeout,
   );
@@ -210,6 +234,7 @@ final class WirePracticeClient
   final bool _ownsTransport;
   final PracticeWireTransport Function() _transportFactory;
   final PracticeWireEndpoints _endpoints;
+  final SessionAuthenticatedWebSocketConnector _realtimeConnector;
   final Duration _jsonTimeout;
   final Duration _transcriptionTimeout;
 
@@ -290,6 +315,83 @@ final class WirePracticeClient
         expectedQuestionId: request.questionId,
       );
     });
+  }
+
+  @override
+  Stream<PracticeTranscriptionEvent> transcribeRealtime({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required Stream<Uint8List> audioChunks,
+  }) async* {
+    _requireOpaqueId(sessionId);
+    _requireOpaqueId(questionId);
+    _requireClientId(idempotencyKey);
+    final generation = _accountGeneration;
+    final uri = realtimeVoiceWebSocketBaseUri(
+      _baseUri,
+    ).resolve(_endpoints.transcribeRealtimePath(sessionId, questionId));
+    try {
+      final transport = RealtimeVoiceInputTransport(
+        connector: _realtimeConnector,
+      );
+      await for (final envelope in transport.stream(
+        uri: uri,
+        audioChunks: audioChunks,
+        idempotencyKey: idempotencyKey,
+        ensureCurrent: () => _requireGeneration(generation),
+        maximumChunkBytes: _maximumAudioBytes,
+      )) {
+        switch (envelope.type) {
+          case 'transcription.started':
+            if (envelope.data.isNotEmpty) {
+              throw _invalidResponse();
+            }
+          case 'transcription.updated':
+            final data = _exactObject(
+              envelope.data,
+              required: const {'transcript', 'final'},
+            );
+            yield PracticeTranscriptUpdated(
+              text: _string(data, 'transcript'),
+              isFinal: _boolean(data, 'final'),
+            );
+          case 'candidate.ready':
+            final data = _exactObject(
+              envelope.data,
+              required: const {'candidate'},
+            );
+            yield PracticeCandidateCompleted(
+              _decodeCandidate(
+                jsonEncode(data['candidate']),
+                expectedSessionId: sessionId,
+                expectedQuestionId: questionId,
+              ),
+            );
+          case 'candidate.failed':
+            final data = _exactObject(
+              envelope.data,
+              required: const {'kind', 'retryable'},
+            );
+            throw PracticeClientException(
+              kind: PracticeClientFailureKind.server,
+              errorCode: _string(data, 'kind', maxLength: 64),
+              retryable: _boolean(data, 'retryable'),
+            );
+          default:
+            throw _invalidResponse();
+        }
+      }
+    } on RealtimeVoiceInputException catch (error) {
+      throw PracticeClientException(
+        kind: error.kind == RealtimeVoiceInputFailureKind.authenticationRequired
+            ? PracticeClientFailureKind.authenticationRequired
+            : error.kind == RealtimeVoiceInputFailureKind.invalidResponse
+            ? PracticeClientFailureKind.invalidResponse
+            : PracticeClientFailureKind.network,
+        retryable: error.kind == RealtimeVoiceInputFailureKind.network,
+      );
+    }
   }
 
   @override

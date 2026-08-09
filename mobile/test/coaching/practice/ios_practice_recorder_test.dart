@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/ios_practice_recorder.dart';
@@ -98,6 +100,30 @@ void main() {
       expect(await unrelated.exists(), isTrue);
     },
   );
+
+  test('streaming recorder forwards PCM and retains a local WAV', () async {
+    final native = _StreamingNativeRecorder();
+    final recorder = IosPracticeRecorder(
+      recorder: native,
+      temporaryDirectory: () async => root,
+    );
+
+    final stream = await recorder.startAudioStream();
+    final forwarded = stream.expand((chunk) => chunk).toList();
+    native.add(Uint8List.fromList(<int>[0, 0, 1, 0]));
+    final audio = await recorder.stopAudioStream();
+
+    expect(await forwarded, <int>[0, 0, 1, 0]);
+    expect(audio.contentType, 'audio/wav');
+    expect(audio.sizeBytes, 48);
+    final bytes = await File(audio.path).readAsBytes();
+    expect(String.fromCharCodes(bytes.sublist(0, 4)), 'RIFF');
+    expect(String.fromCharCodes(bytes.sublist(8, 12)), 'WAVE');
+    expect(bytes.sublist(44), <int>[0, 0, 1, 0]);
+
+    await recorder.discard(audio);
+    expect(await File(audio.path).exists(), isFalse);
+  });
 }
 
 final class _NativeRecorder implements NativePracticeRecorder {
@@ -120,5 +146,27 @@ final class _NativeRecorder implements NativePracticeRecorder {
       throw error;
     }
     return stopResult ?? startedPath;
+  }
+}
+
+final class _StreamingNativeRecorder
+    implements NativePracticeRecorder, NativeStreamingPracticeRecorder {
+  final StreamController<Uint8List> _chunks = StreamController<Uint8List>();
+
+  void add(Uint8List chunk) => _chunks.add(chunk);
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> startWav(String path) => throw UnimplementedError();
+
+  @override
+  Future<Stream<Uint8List>> startPcm16Stream() async => _chunks.stream;
+
+  @override
+  Future<String?> stop() async {
+    await _chunks.close();
+    return null;
   }
 }
