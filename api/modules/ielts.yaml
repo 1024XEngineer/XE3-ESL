@@ -17,7 +17,98 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/ielts-speaking/answer-preparations:
+    post:
+      tags: [IELTS Speaking]
+      summary: Create or restore an actor-owned answer preparation
+      description: Creates one preparation for a stable bank/part/source/position locator. The prompt is resolved and snapshotted by the server; question text is never accepted as identity. AI output is a personal practice aid, not an official or scored answer.
+      operationId: createIeltsAnswerPreparation
+      parameters: [{$ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateIeltsAnswerPreparationRequest'}
+      responses:
+        '201': {description: Created preparation., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        '200': {description: Idempotently restored preparation., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}:
+    parameters:
+      - {$ref: '#/components/parameters/AnswerPreparationId'}
+    get:
+      tags: [IELTS Speaking]
+      summary: Get an actor-owned answer preparation
+      operationId: getIeltsAnswerPreparation
+      responses:
+        '200': {description: Current preparation., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+    patch:
+      tags: [IELTS Speaking]
+      summary: Replace personal points and target band
+      description: Requires the current version. A successful edit returns the resource to draft and removes obsolete generated fields.
+      operationId: updateIeltsAnswerPreparation
+      parameters: [{$ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UpdateIeltsAnswerPreparationRequest'}}}
+      responses:
+        '200': {description: Updated or idempotently restored preparation., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+    delete:
+      tags: [IELTS Speaking]
+      summary: Delete an actor-owned answer preparation
+      operationId: deleteIeltsAnswerPreparation
+      parameters:
+        - {$ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey}
+        - name: expected_version
+          in: query
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        '204': {description: Deleted or idempotently replayed.}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}/generations:
+    post:
+      tags: [IELTS Speaking]
+      summary: Generate or regenerate a personalized practice answer
+      description: Uses only the question and learner-supplied points. Provider failures persist failed with retryable semantics; the operation never creates or advances a Practice Session or Turn.
+      operationId: generateIeltsAnswerPreparation
+      parameters:
+        - {$ref: '#/components/parameters/AnswerPreparationId'}
+        - {$ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/GenerateIeltsAnswerPreparationRequest'}}}
+      responses:
+        '200': {description: Ready result or matching idempotent replay., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
+        '502': {description: Generation failed; response is the persisted failed resource and a fresh idempotency key may retry., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
 components:
+  parameters:
+    AnswerPreparationId:
+      name: answer_preparation_id
+      in: path
+      required: true
+      schema: {type: string, pattern: '^ielts_answer_[0-9a-f]{32}$'}
   schemas:
     ResourceId:
       type: string
@@ -104,6 +195,7 @@ components:
         questions:
           type: array
           minItems: 2
+          description: Ordered questions. The stable answer-preparation question_position is the one-based array position within this topic and bank_id.
           items: {type: string, minLength: 1}
     IeltsTopicGroup:
       type: object
@@ -128,6 +220,7 @@ components:
           type: array
           minItems: 1
           maxItems: 6
+          description: Ordered questions. The stable answer-preparation question_position is the one-based array position within this topic group and bank_id.
           items: {type: string, minLength: 1}
     IeltsPart2CueCard:
       type: object
@@ -139,3 +232,63 @@ components:
           type: array
           minItems: 3
           items: {type: string, minLength: 1}
+    IeltsQuestionReference:
+      type: object
+      additionalProperties: false
+      required: [bank_id, part, source_id, question_position]
+      properties:
+        bank_id: {$ref: '#/components/schemas/ResourceId'}
+        part: {type: string, enum: [PART_1, PART_2, PART_3]}
+        source_id: {$ref: '#/components/schemas/ResourceId'}
+        question_position:
+          type: integer
+          minimum: 1
+          description: One-based position within the source. Part 2 Cue Cards always use 1.
+    IeltsResolvedQuestion:
+      type: object
+      additionalProperties: false
+      required: [reference, prompt]
+      properties:
+        reference: {$ref: '#/components/schemas/IeltsQuestionReference'}
+        prompt: {type: string, minLength: 1, maxLength: 2048}
+    IeltsAnswerPreparation:
+      type: object
+      additionalProperties: false
+      required: [answer_preparation_id, question, personal_points, target_band, status, version, generation_revision, created_at, updated_at]
+      properties:
+        answer_preparation_id: {type: string, pattern: '^ielts_answer_[0-9a-f]{32}$'}
+        question: {$ref: '#/components/schemas/IeltsResolvedQuestion'}
+        personal_points: {type: array, maxItems: 12, items: {type: string, minLength: 1, maxLength: 500}}
+        target_band: {type: number, minimum: 4, maximum: 9, multipleOf: 0.5}
+        status: {type: string, enum: [draft, generating, ready, failed]}
+        answer: {type: string, minLength: 1}
+        outline: {type: array, minItems: 1, maxItems: 12, items: {type: string, minLength: 1}}
+        useful_expressions: {type: array, minItems: 1, maxItems: 16, items: {type: string, minLength: 1}}
+        speech_text: {type: string, minLength: 1}
+        failure_code: {type: string, enum: [provider_error, invalid_provider_response]}
+        version: {type: integer, minimum: 1}
+        generation_revision: {type: integer, minimum: 0}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CreateIeltsAnswerPreparationRequest:
+      type: object
+      additionalProperties: false
+      required: [question, personal_points, target_band]
+      properties:
+        question: {$ref: '#/components/schemas/IeltsQuestionReference'}
+        personal_points: {type: array, maxItems: 12, items: {type: string, minLength: 1, maxLength: 500}}
+        target_band: {type: number, minimum: 4, maximum: 9, multipleOf: 0.5}
+    UpdateIeltsAnswerPreparationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, personal_points, target_band]
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        personal_points: {type: array, maxItems: 12, items: {type: string, minLength: 1, maxLength: 500}}
+        target_band: {type: number, minimum: 4, maximum: 9, multipleOf: 0.5}
+    GenerateIeltsAnswerPreparationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version: {type: integer, minimum: 1}

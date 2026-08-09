@@ -58,6 +58,12 @@ func run() int {
 		logger.Error("Preparation job target generation startup failed")
 		return 1
 	}
+	ieltsAnswerGenerator, err :=
+		bootstrap.NewIELTSAnswerPreparationGenerator(textConfig)
+	if err != nil {
+		logger.Error("IELTS answer preparation generation startup failed")
+		return 1
+	}
 	evaluationScoringGenerator, err :=
 		bootstrap.NewEvaluationScoringGenerator(textConfig)
 	if err != nil {
@@ -207,6 +213,23 @@ func run() int {
 	ieltsQuestionBank, err := ielts.NewPostgresStore(databasePool.Native())
 	if err != nil {
 		logger.Error("IELTS question bank startup failed", slog.Any("error", err))
+		return 1
+	}
+	ieltsAnswerService, err := ielts.NewAnswerPreparationService(
+		ieltsQuestionBank,
+		ieltsQuestionBank,
+		ieltsAnswerGenerator,
+		ielts.SecureAnswerPreparationIDGenerator{},
+	)
+	if err != nil {
+		logger.Error("IELTS answer preparation startup failed")
+		return 1
+	}
+	ieltsAnswerHTTP, err := ielts.NewAnswerPreparationHTTPHandler(
+		ieltsAnswerService,
+	)
+	if err != nil {
+		logger.Error("IELTS answer preparation HTTP startup failed")
 		return 1
 	}
 
@@ -458,6 +481,7 @@ func run() int {
 	}
 	protectedRegistrars := []bootstrap.ProtectedRouteRegistrar{
 		avatarHTTP,
+		ieltsAnswerHTTP,
 		evaluationComposition.HTTPHandler(),
 		speechFeedbackComposition.HTTPHandler(),
 		speechFeedbackComposition.RetryHTTPHandler(),

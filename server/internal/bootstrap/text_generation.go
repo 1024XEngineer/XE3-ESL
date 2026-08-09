@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
@@ -70,6 +71,16 @@ func NewPreparationJobTargetGenerator(
 		return nil, err
 	}
 	return qianwen.NewPreparationJobTargetGenerator(providerConfig, apiKey)
+}
+
+func NewIELTSAnswerPreparationGenerator(
+	configuration config.TextGenerationConfig,
+) (ielts.AnswerPreparationGenerator, error) {
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewIELTSAnswerPreparationGenerator(providerConfig, apiKey)
 }
 
 func NewEvaluationScoringGenerator(
