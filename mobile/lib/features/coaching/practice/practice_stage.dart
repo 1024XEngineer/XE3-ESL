@@ -3,8 +3,8 @@ import 'package:speakup/design/speak_up_design.dart';
 
 /// Responsive shell shared by avatar-led practice experiences.
 ///
-/// The avatar occupies the leading 44% of the available space: above the
-/// content in portrait and to its left in landscape.
+/// The avatar occupies 34% of the available height in portrait and the
+/// leading 44% of the available width in landscape.
 class PracticeStageLayout extends StatelessWidget {
   const PracticeStageLayout({
     required this.avatar,
@@ -38,7 +38,7 @@ class PracticeStageLayout extends StatelessWidget {
           children: [
             SizedBox(
               key: avatarRegionKey,
-              height: constraints.maxHeight * 0.44,
+              height: constraints.maxHeight * 0.34,
               child: avatar,
             ),
             Expanded(child: content),
@@ -57,12 +57,9 @@ class PracticeAvatarStage extends StatelessWidget {
     required this.onExit,
     this.surfaceBuilder,
     this.statusLabel,
-    this.subtitle,
     this.exitInFlight = false,
     this.exitButtonKey,
     this.statusKey,
-    this.subtitleKey,
-    this.subtitleTextKey,
     super.key,
   });
 
@@ -71,12 +68,9 @@ class PracticeAvatarStage extends StatelessWidget {
   final VoidCallback onExit;
   final WidgetBuilder? surfaceBuilder;
   final String? statusLabel;
-  final String? subtitle;
   final bool exitInFlight;
   final Key? exitButtonKey;
   final Key? statusKey;
-  final Key? subtitleKey;
-  final Key? subtitleTextKey;
 
   @override
   Widget build(BuildContext context) {
@@ -174,36 +168,6 @@ class PracticeAvatarStage extends StatelessWidget {
               ],
             ),
           ),
-          if (subtitle case final text?)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 14,
-              child: Container(
-                key: subtitleKey,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 15,
-                  vertical: 11,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.58),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  text,
-                  key: subtitleTextKey,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.35,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );

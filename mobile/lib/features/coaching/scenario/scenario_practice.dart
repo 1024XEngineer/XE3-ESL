@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -27,7 +26,7 @@ class ScenarioPracticePage extends StatefulWidget {
   const ScenarioPracticePage({
     required this.practiceController,
     this.avatarSurfaceBuilder,
-    this.avatarStatusLabel = '正在准备画面',
+    this.avatarStatusLabel,
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
@@ -472,18 +471,9 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                         ? null
                         : widget.avatarSurfaceBuilder,
                     statusLabel: widget.avatarStatusLabel,
-                    subtitle:
-                        widget.practiceController.practiceExperience ==
-                            PracticeExperience.interview
-                        ? null
-                        : _latestAssistantMessage(
-                            widget.practiceController.practiceMessages,
-                          )?.text,
                     exitInFlight: _exitInFlight,
                     exitButtonKey: const Key('scenario-exit'),
                     statusKey: const Key('scenario-avatar-status'),
-                    subtitleKey: const Key('scenario-live-subtitle'),
-                    subtitleTextKey: const Key('scenario-live-subtitle-text'),
                     onExit: _requestExit,
                   ),
                   content: _ConversationPanel(
@@ -1048,15 +1038,6 @@ String _scenarioFeedbackSourceKey(
   PracticeController controller,
   PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
-
-PracticeMessage? _latestAssistantMessage(List<PracticeMessage> messages) {
-  for (final message in messages.reversed) {
-    if (message.role == PracticeMessageRole.assistant) {
-      return message;
-    }
-  }
-  return null;
-}
 
 bool _canTriggerScenarioReplay(PracticeController controller) {
   if (controller.isBusy) {

@@ -30,7 +30,7 @@ void main() {
     expect(find.byKey(const Key('custom-content')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const Key('avatar-region'))).height,
-      closeTo(844 * 0.44, 0.1),
+      closeTo(844 * 0.34, 0.1),
     );
 
     await pumpAt(const Size(844, 390));
@@ -41,7 +41,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('avatar stage accepts a surface and shared chrome content', (
+  testWidgets('avatar stage accepts a surface and shared chrome', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -55,10 +55,8 @@ void main() {
           surfaceBuilder: (_) =>
               const ColoredBox(key: Key('custom-surface'), color: Colors.green),
           statusLabel: 'Connected',
-          subtitle: 'Try answering in one complete sentence.',
           exitButtonKey: const Key('custom-exit'),
           statusKey: const Key('custom-status'),
-          subtitleKey: const Key('custom-subtitle'),
           onExit: () {},
         ),
       ),
@@ -68,13 +66,8 @@ void main() {
     expect(find.byKey(const Key('custom-fallback')), findsNothing);
     expect(find.text('Custom practice'), findsOneWidget);
     expect(find.text('Connected'), findsOneWidget);
-    expect(
-      find.text('Try answering in one complete sentence.'),
-      findsOneWidget,
-    );
     expect(find.byKey(const Key('custom-exit')), findsOneWidget);
     expect(find.byKey(const Key('custom-status')), findsOneWidget);
-    expect(find.byKey(const Key('custom-subtitle')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
