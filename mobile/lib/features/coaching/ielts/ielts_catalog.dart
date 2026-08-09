@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -167,7 +170,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           ),
           itemBuilder: (context, index) => _IeltsTopicCard(
             item: items[index],
-            onPressed: () => _open(items[index]),
+            onPressed: () => unawaited(_open(items[index])),
           ),
         ),
     ];
@@ -187,6 +190,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             release: topic.releaseStatus,
             tags: topic.tagCodes,
             imagePath: _topicImageFor(topic.tagCodes, topic.id),
+            questions: topic.questions,
             searchable:
                 '${topic.titleZh} ${topic.titleEn} ${topic.questions.join(' ')}',
           ),
@@ -204,6 +208,8 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             release: group.releaseStatus,
             tags: [group.cueCardType, ...group.tagCodes],
             imagePath: _topicImageFor(group.tagCodes, '${group.id}-part2'),
+            questions: group.part3Questions,
+            cueCard: group.cueCard,
             searchable:
                 '${group.title} ${group.cueCard.prompt} ${group.cueCard.points.join(' ')} ${group.part3Questions.join(' ')}',
           ),
@@ -219,6 +225,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             release: group.releaseStatus,
             tags: [group.cueCardType, ...group.tagCodes],
             imagePath: _topicImageFor(group.tagCodes, '${group.id}-part3'),
+            questions: group.part3Questions,
             searchable:
                 '${group.title} ${group.cueCard.prompt} ${group.part3Questions.join(' ')}',
           ),
@@ -235,15 +242,27 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
         .toList(growable: false);
   }
 
-  void _open(_CatalogItem item) {
+  Future<void> _open(_CatalogItem item) async {
     final scene = ieltsSceneForMode(widget.scenes, item.mode);
-    if (scene == null) return;
-    widget.onSelectionPressed(
-      scene,
-      item.mode,
-      IeltsPracticeSelection(
-        part1SetId: item.mode == PracticeMode.part1 ? item.id : null,
-        topicGroupId: item.mode == PracticeMode.part1 ? null : item.id,
+    final selection = IeltsPracticeSelection(
+      part1SetId: item.mode == PracticeMode.part1 ? item.id : null,
+      topicGroupId: item.mode == PracticeMode.part1 ? null : item.id,
+    );
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => IeltsSetDetailPage(
+          mode: item.mode,
+          title: item.title,
+          subtitle: item.subtitle,
+          questions: item.questions,
+          cueCard: item.cueCard,
+          onStart: scene == null
+              ? null
+              : () {
+                  Navigator.of(context).pop();
+                  widget.onSelectionPressed(scene, item.mode, selection);
+                },
+        ),
       ),
     );
   }
@@ -422,7 +441,9 @@ final class _CatalogItem {
     required this.release,
     required this.tags,
     required this.imagePath,
+    required this.questions,
     required this.searchable,
+    this.cueCard,
   });
   final String id;
   final PracticeMode mode;
@@ -431,6 +452,8 @@ final class _CatalogItem {
   final String release;
   final List<String> tags;
   final String? imagePath;
+  final List<String> questions;
+  final IeltsCueCard? cueCard;
   final String searchable;
 }
 
