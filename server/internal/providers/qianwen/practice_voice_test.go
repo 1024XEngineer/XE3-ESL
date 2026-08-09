@@ -85,7 +85,7 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 	}
 	if _, err := recognizer.TranscribeStream(
 		context.Background(),
-		practicevoice.TranscriptionRequest{},
+		practicevoice.StreamingTranscriptionRequest{},
 		&practiceVoiceObserverRecorder{},
 	); !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("streaming recognizer error = %v", err)
@@ -148,7 +148,7 @@ func TestPracticeVoiceStreamingRejectsNonRealtimeModel(t *testing.T) {
 	}
 	_, err := recognizer.TranscribeStream(
 		context.Background(),
-		practicevoice.TranscriptionRequest{},
+		practicevoice.StreamingTranscriptionRequest{},
 		&practiceVoiceObserverRecorder{},
 	)
 	if !isPracticeVoiceConfigurationError(err) {

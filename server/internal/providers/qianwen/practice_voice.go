@@ -58,7 +58,7 @@ func (recognizer *PracticeVoiceRecognizer) Transcribe(
 
 func (recognizer *PracticeVoiceRecognizer) TranscribeStream(
 	ctx context.Context,
-	request practicevoice.TranscriptionRequest,
+	request practicevoice.StreamingTranscriptionRequest,
 	observer practicevoice.TranscriptionObserver,
 ) (practicevoice.TranscriptionResult, error) {
 	if recognizer == nil || recognizer.recognizer == nil || observer == nil ||
@@ -71,9 +71,10 @@ func (recognizer *PracticeVoiceRecognizer) TranscribeStream(
 				errors.New("Qianwen streaming Practice Voice recognizer is required"),
 			)
 	}
-	result, err := recognizer.recognizer.TranscribeStream(
+	result, err := recognizer.recognizer.transcribeRealtimePCM(
 		ctx,
-		protocol.TranscriptionRequest{Audio: request.Audio},
+		request.PCM,
+		request.SampleRate,
 		practiceVoiceTranscriptionObserver{observer: observer},
 	)
 	if err != nil {

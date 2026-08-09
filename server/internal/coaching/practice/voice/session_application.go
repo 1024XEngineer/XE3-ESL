@@ -277,7 +277,7 @@ func (application *SessionApplication) Transcribe(
 func (application *SessionApplication) TranscribeStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	command TranscribeVoiceCommand,
+	command TranscribeVoiceStreamCommand,
 	observer TranscriptionObserver,
 ) (TranscriptionCandidate, error) {
 	return application.orchestrator.TranscribeStream(

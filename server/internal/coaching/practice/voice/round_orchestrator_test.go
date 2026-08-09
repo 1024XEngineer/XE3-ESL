@@ -82,7 +82,7 @@ func (c *roundVoice) TranscribeStream(
 	context.Context,
 	requestcontext.Actor,
 	string,
-	TranscribeVoiceCommand,
+	TranscribeVoiceStreamCommand,
 	TranscriptionObserver,
 ) (TranscriptionCandidate, error) {
 	return c.candidate, nil

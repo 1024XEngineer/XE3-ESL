@@ -41,7 +41,7 @@ type Application interface {
 	TranscribeStream(
 		context.Context,
 		requestcontext.Actor,
-		practicevoice.TranscribeVoiceCommand,
+		practicevoice.TranscribeVoiceStreamCommand,
 		practicevoice.TranscriptionObserver,
 	) (practicevoice.TranscriptionCandidate, error)
 	SubmitText(

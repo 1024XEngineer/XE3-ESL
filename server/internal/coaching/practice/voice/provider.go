@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"io"
 
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 )
@@ -115,9 +116,17 @@ type StreamingSpeechRecognizer interface {
 	SpeechRecognizer
 	TranscribeStream(
 		context.Context,
-		TranscriptionRequest,
+		StreamingTranscriptionRequest,
 		TranscriptionObserver,
 	) (TranscriptionResult, error)
+}
+
+// StreamingTranscriptionRequest carries the PCM frames that arrive during a
+// live capture. The durable Practice recording is assembled and validated by
+// VoiceRoundService after the stream ends.
+type StreamingTranscriptionRequest struct {
+	PCM        io.Reader
+	SampleRate int
 }
 
 type TranscriptionObserver interface {

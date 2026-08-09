@@ -3,9 +3,9 @@ package voicehttp
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -79,40 +79,58 @@ func (handler *Handler) transcribeCandidateRealtime(c *gin.Context) {
 		writePracticeRealtimeFailure(connection, "invalid_request", false)
 		return
 	}
-	pcm, err := readPracticeRealtimePCM(connection, handler.readTimeout)
-	if err != nil {
-		writePracticeRealtimeFailure(connection, "stream_interrupted", true)
-		return
-	}
-	wav, err := practicePCM16MonoWAV(pcm, start.SampleRate)
-	if err != nil {
-		writePracticeRealtimeFailure(connection, "invalid_audio", false)
-		return
-	}
 	observer := &practiceRealtimeTranscriptionWriter{connection: connection}
 	if err := observer.write("transcription.started", gin.H{}); err != nil {
 		return
 	}
-	candidate, err := handler.application.TranscribeStream(
-		c.Request.Context(),
-		actor,
-		practicevoice.TranscribeVoiceCommand{
-			SessionID:      sessionID,
-			QuestionID:     questionID,
-			IdempotencyKey: start.IdempotencyKey,
-			ContentType:    platformmedia.ContentTypeWAV,
-			Audio:          bytes.NewReader(wav),
-		},
-		observer,
+	streamContext, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	reader, writer := io.Pipe()
+	type transcriptionResult struct {
+		candidate practicevoice.TranscriptionCandidate
+		err       error
+	}
+	result := make(chan transcriptionResult, 1)
+	go func() {
+		defer reader.Close()
+		candidate, transcribeErr := handler.application.TranscribeStream(
+			streamContext,
+			actor,
+			practicevoice.TranscribeVoiceStreamCommand{
+				SessionID:      sessionID,
+				QuestionID:     questionID,
+				IdempotencyKey: start.IdempotencyKey,
+				PCM:            reader,
+				SampleRate:     start.SampleRate,
+			},
+			observer,
+		)
+		result <- transcriptionResult{candidate: candidate, err: transcribeErr}
+	}()
+	streamErr := streamPracticeRealtimePCM(
+		connection,
+		writer,
+		handler.readTimeout,
 	)
-	if err != nil {
-		kind, retryable := practiceRealtimeFailure(err)
+	if streamErr != nil {
+		cancel()
+		_ = writer.CloseWithError(streamErr)
+	} else {
+		_ = writer.Close()
+	}
+	completed := <-result
+	if completed.err != nil {
+		kind, retryable := practiceRealtimeFailure(completed.err)
 		writePracticeRealtimeFailure(connection, kind, retryable)
+		return
+	}
+	if streamErr != nil {
+		writePracticeRealtimeFailure(connection, "stream_interrupted", true)
 		return
 	}
 	_ = observer.write(
 		"candidate.ready",
-		gin.H{"candidate": TranscriptionCandidateResponse(candidate)},
+		gin.H{"candidate": TranscriptionCandidateResponse(completed.candidate)},
 	)
 }
 
@@ -137,76 +155,60 @@ func readPracticeRealtimeStart(
 	return frame, nil
 }
 
-func readPracticeRealtimePCM(
+func streamPracticeRealtimePCM(
 	connection *websocket.Conn,
+	destination io.Writer,
 	readTimeout time.Duration,
-) ([]byte, error) {
-	var pcm bytes.Buffer
+) error {
+	written := 0
 	for {
 		if err := connection.SetReadDeadline(
 			time.Now().Add(readTimeout),
 		); err != nil {
-			return nil, err
+			return err
 		}
 		messageType, payload, err := connection.ReadMessage()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		switch messageType {
 		case websocket.BinaryMessage:
 			if len(payload) == 0 ||
-				pcm.Len()+len(payload) > maxPracticeRealtimePCMBytes {
-				return nil,
-					errors.New("practice voice realtime audio exceeds the accepted size")
+				written+len(payload) > maxPracticeRealtimePCMBytes {
+				return errors.New(
+					"practice voice realtime audio exceeds the accepted size",
+				)
 			}
-			_, _ = pcm.Write(payload)
+			if _, err := destination.Write(payload); err != nil {
+				return err
+			}
+			written += len(payload)
 		case websocket.TextMessage:
 			var frame practiceRealtimeControlFrame
 			decoder := json.NewDecoder(bytes.NewReader(payload))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&frame); err != nil {
-				return nil, err
+				return err
 			}
 			switch frame.Type {
 			case "finish":
-				if pcm.Len() == 0 || pcm.Len()%2 != 0 {
-					return nil,
-						errors.New("practice voice realtime audio is incomplete")
+				if written == 0 || written%2 != 0 {
+					return errors.New(
+						"practice voice realtime audio is incomplete",
+					)
 				}
-				return pcm.Bytes(), nil
+				return nil
 			case "cancel":
-				return nil, context.Canceled
+				return context.Canceled
 			default:
-				return nil,
-					errors.New("practice voice realtime control frame is invalid")
+				return errors.New(
+					"practice voice realtime control frame is invalid",
+				)
 			}
 		default:
-			return nil,
-				errors.New("practice voice realtime frame type is invalid")
+			return errors.New("practice voice realtime frame type is invalid")
 		}
 	}
-}
-
-func practicePCM16MonoWAV(pcm []byte, sampleRate int) ([]byte, error) {
-	if len(pcm) == 0 || len(pcm)%2 != 0 || sampleRate != 16_000 {
-		return nil, errors.New("practice voice realtime PCM is invalid")
-	}
-	result := make([]byte, 44+len(pcm))
-	copy(result[0:4], "RIFF")
-	binary.LittleEndian.PutUint32(result[4:8], uint32(len(result)-8))
-	copy(result[8:12], "WAVE")
-	copy(result[12:16], "fmt ")
-	binary.LittleEndian.PutUint32(result[16:20], 16)
-	binary.LittleEndian.PutUint16(result[20:22], 1)
-	binary.LittleEndian.PutUint16(result[22:24], 1)
-	binary.LittleEndian.PutUint32(result[24:28], uint32(sampleRate))
-	binary.LittleEndian.PutUint32(result[28:32], uint32(sampleRate*2))
-	binary.LittleEndian.PutUint16(result[32:34], 2)
-	binary.LittleEndian.PutUint16(result[34:36], 16)
-	copy(result[36:40], "data")
-	binary.LittleEndian.PutUint32(result[40:44], uint32(len(pcm)))
-	copy(result[44:], pcm)
-	return result, nil
 }
 
 type practiceRealtimeTranscriptionWriter struct {

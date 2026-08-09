@@ -19,7 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func TestPracticeRealtimeVoiceInputUsesCurrentQuestionAndDurableCandidate(
+func TestPracticeRealtimeVoiceInputStreamsBeforeFinishAndPersistsCandidate(
 	t *testing.T,
 ) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
@@ -72,32 +72,44 @@ func TestPracticeRealtimeVoiceInputUsesCurrentQuestionAndDurableCandidate(
 	}); err != nil {
 		t.Fatalf("write start: %v", err)
 	}
+	type realtimeEvent struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	readEvent := func() realtimeEvent {
+		t.Helper()
+		_, payload, readErr := connection.ReadMessage()
+		if readErr != nil {
+			t.Fatalf("read realtime event: %v", readErr)
+		}
+		var event realtimeEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("decode event: %v", err)
+		}
+		return event
+	}
+	events := []realtimeEvent{readEvent()}
 	if err := connection.WriteMessage(
 		websocket.BinaryMessage,
 		make([]byte, 3_200),
 	); err != nil {
 		t.Fatalf("write audio: %v", err)
 	}
+	if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set live update deadline: %v", err)
+	}
+	events = append(events, readEvent())
+	if events[1].Type != "transcription.updated" {
+		t.Fatalf("event before finish = %#v", events[1])
+	}
 	if err := connection.WriteJSON(map[string]string{"type": "finish"}); err != nil {
 		t.Fatalf("write finish: %v", err)
 	}
-	var events []struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
+	if err := connection.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set completion deadline: %v", err)
 	}
 	for len(events) < 4 {
-		_, payload, readErr := connection.ReadMessage()
-		if readErr != nil {
-			t.Fatalf("read event %d: %v", len(events), readErr)
-		}
-		var event struct {
-			Type string          `json:"type"`
-			Data json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(payload, &event); err != nil {
-			t.Fatalf("decode event: %v", err)
-		}
-		events = append(events, event)
+		events = append(events, readEvent())
 	}
 	wantTypes := []string{
 		"transcription.started",
@@ -121,7 +133,8 @@ func TestPracticeRealtimeVoiceInputUsesCurrentQuestionAndDurableCandidate(
 		application.streamSessionID != "session-1" ||
 		application.streamQuestionID != "question-1" ||
 		application.streamKey != "practice-voice-realtime-1" ||
-		application.streamBytes != 3_244 {
+		application.streamBytes != 3_200 ||
+		application.streamSampleRate != 16_000 {
 		t.Fatalf("ready = %#v, application = %#v", ready, application)
 	}
 }
@@ -246,6 +259,7 @@ type practiceRealtimeHTTPApplication struct {
 	streamQuestionID string
 	streamKey        string
 	streamBytes      int
+	streamSampleRate int
 }
 
 func (application *practiceRealtimeHTTPApplication) Start(
@@ -279,24 +293,36 @@ func (application *practiceRealtimeHTTPApplication) Transcribe(
 func (application *practiceRealtimeHTTPApplication) TranscribeStream(
 	ctx context.Context,
 	_ requestcontext.Actor,
-	command practicevoice.TranscribeVoiceCommand,
+	command practicevoice.TranscribeVoiceStreamCommand,
 	observer practicevoice.TranscriptionObserver,
 ) (practicevoice.TranscriptionCandidate, error) {
-	body, err := io.ReadAll(command.Audio)
+	firstFrame := make([]byte, 3_200)
+	if _, err := io.ReadFull(command.PCM, firstFrame); err != nil {
+		return practicevoice.TranscriptionCandidate{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		practicevoice.TranscriptionUpdate{Transcript: "A complete"},
+	); err != nil {
+		return practicevoice.TranscriptionCandidate{}, err
+	}
+	remainder, err := io.ReadAll(command.PCM)
 	if err != nil {
 		return practicevoice.TranscriptionCandidate{}, err
 	}
 	application.streamSessionID = command.SessionID
 	application.streamQuestionID = command.QuestionID
 	application.streamKey = command.IdempotencyKey
-	application.streamBytes = len(body)
-	for _, update := range []practicevoice.TranscriptionUpdate{
-		{Transcript: "A complete", Final: false},
-		{Transcript: "A complete practice answer.", Final: true},
-	} {
-		if err := observer.OnTranscriptionUpdate(ctx, update); err != nil {
-			return practicevoice.TranscriptionCandidate{}, err
-		}
+	application.streamBytes = len(firstFrame) + len(remainder)
+	application.streamSampleRate = command.SampleRate
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		practicevoice.TranscriptionUpdate{
+			Transcript: "A complete practice answer.",
+			Final:      true,
+		},
+	); err != nil {
+		return practicevoice.TranscriptionCandidate{}, err
 	}
 	return application.candidate, nil
 }

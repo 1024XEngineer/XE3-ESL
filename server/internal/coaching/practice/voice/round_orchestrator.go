@@ -23,7 +23,7 @@ type RoundPort interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
-		TranscribeVoiceCommand,
+		TranscribeVoiceStreamCommand,
 		TranscriptionObserver,
 	) (TranscriptionCandidate, error)
 	GetTranscriptionCandidate(
@@ -136,7 +136,7 @@ func (orchestrator *RoundOrchestrator) Transcribe(
 func (orchestrator *RoundOrchestrator) TranscribeStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	command TranscribeVoiceCommand,
+	command TranscribeVoiceStreamCommand,
 	observer TranscriptionObserver,
 ) (TranscriptionCandidate, error) {
 	if err := validateVoiceActor(ctx, actor); err != nil || observer == nil {
