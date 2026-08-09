@@ -1201,10 +1201,7 @@ void main() {
       final composerRect = tester.getRect(
         find.byKey(const Key('agent-composer-surface')),
       );
-      expect(
-        composerRect.top - lastActionRect.bottom,
-        greaterThanOrEqualTo(16),
-      );
+      expect(composerRect.top - lastActionRect.bottom, closeTo(16, 0.01));
       expect(lastAction.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
 
