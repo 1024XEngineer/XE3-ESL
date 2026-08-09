@@ -7,10 +7,12 @@ import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 
 void main() {
   testWidgets('shows exactly the four product-level practice entries', (
@@ -299,10 +301,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ielts-set-detail-cue-card')), findsOneWidget);
-    expect(
-      find.text('Describe a skill you would like to learn'),
-      findsOneWidget,
-    );
+    expect(find.text('Describe a skill you would like to learn'), findsWidgets);
     expect(find.text('What'), findsOneWidget);
     expect(find.text('Benefit'), findsOneWidget);
     expect(find.text('同组 Part 3 · 5 题'), findsOneWidget);
@@ -322,6 +321,118 @@ void main() {
 
     expect(selectedMode, PracticeMode.part2);
     expect(selectedSet, const IeltsPracticeSelection(topicGroupId: 'p23-001'));
+  });
+
+  testWidgets('reads an IELTS question with the configured system speaker', (
+    tester,
+  ) async {
+    final speaker = _DetailPromptSpeaker();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Do you enjoy music?', 'Do you sing?'],
+          onStart: () {},
+          promptSpeaker: speaker,
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const Key('ielts-set-detail-speak-1')).hitTestable(),
+    );
+    await tester.pump();
+
+    expect(speaker.spoken, ['Do you enjoy music?']);
+    expect(speaker.stopCalls, 1);
+    expect(
+      find.byKey(const Key('ielts-set-detail-speech-error')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('shows an example and polishes it from the experience drawer', (
+    tester,
+  ) async {
+    final client = _AnswerPreparationClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Do you prefer sad or happy music?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: client,
+          onStart: () {},
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tip：先直接回答，再补一个原因或小例子。'), findsOneWidget);
+    expect(find.text('示例回答'), findsOneWidget);
+    expect(find.text('播放'), findsOneWidget);
+    expect(find.text('润色'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ielts-polish-answer-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('ielts-polish-experience')),
+      'I listen to upbeat music on my commute.',
+    );
+    await tester.tap(find.byKey(const Key('ielts-polish-generate')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('It gives me energy on my commute.'), findsOneWidget);
+    expect(find.text('我的表达'), findsOneWidget);
+    expect(find.text('重新润色'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reuses an existing answer when reopening a question', (
+    tester,
+  ) async {
+    final client = _AnswerPreparationClient(
+      existingAnswer: 'I already have a saved answer.',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Do you prefer sad or happy music?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: client,
+          onStart: () {},
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('I already have a saved answer.'), findsOneWidget);
+    expect(find.text('答案已在其他页面更新，请重新进入后再试。'), findsNothing);
+    expect(client.createCalls, 1);
+    expect(client.generateCalls, 0);
   });
 
   testWidgets('keeps the detail action reachable on a narrow large-text view', (
@@ -627,6 +738,138 @@ Future<void> _showModule(WidgetTester tester, Key key) async {
     await tester.pumpAndSettle();
   }
   expect(entry, findsOneWidget);
+}
+
+final class _DetailPromptSpeaker implements PracticePromptSpeaker {
+  final List<String> spoken = <String>[];
+  int stopCalls = 0;
+
+  @override
+  Future<void> speak(String text) async {
+    spoken.add(text);
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
+  _AnswerPreparationClient({this.existingAnswer});
+
+  final String? existingAnswer;
+  List<String> _personalPoints = const [];
+  int createCalls = 0;
+  int generateCalls = 0;
+
+  @override
+  Future<IeltsAnswerPreparation> create({
+    required IeltsAnswerQuestionReference question,
+    required List<String> personalPoints,
+    required double targetBand,
+  }) async {
+    createCalls++;
+    if (existingAnswer case final answer?) {
+      return IeltsAnswerPreparation(
+        id: 'ielts_answer_00000000000000000000000000000000',
+        question: question,
+        personalPoints: const [],
+        targetBand: targetBand,
+        status: IeltsAnswerPreparationStatus.ready,
+        version: 3,
+        generationRevision: 1,
+        answer: answer,
+        outline: const ['Preference', 'Reason'],
+        usefulExpressions: const ['saved answer'],
+        speechText: answer,
+      );
+    }
+    _personalPoints = personalPoints;
+    return IeltsAnswerPreparation(
+      id: 'ielts_answer_00000000000000000000000000000000',
+      question: question,
+      personalPoints: personalPoints,
+      targetBand: targetBand,
+      status: IeltsAnswerPreparationStatus.draft,
+      version: 1,
+      generationRevision: 0,
+      answer: null,
+      outline: const [],
+      usefulExpressions: const [],
+      speechText: null,
+    );
+  }
+
+  @override
+  Future<IeltsAnswerPreparation> generate({
+    required String id,
+    required int expectedVersion,
+  }) async {
+    generateCalls++;
+    final personalized = _personalPoints.isNotEmpty;
+    final answer = personalized
+        ? 'It gives me energy on my commute.'
+        : 'I usually prefer happy music because it lifts my mood.';
+    return IeltsAnswerPreparation(
+      id: 'ielts_answer_00000000000000000000000000000000',
+      question: const IeltsAnswerQuestionReference(
+        bankId: 'bank-1',
+        part: 'PART_1',
+        sourceId: 'music',
+        questionPosition: 1,
+      ),
+      personalPoints: _personalPoints,
+      targetBand: 7,
+      status: IeltsAnswerPreparationStatus.ready,
+      version: personalized ? 5 : 3,
+      generationRevision: personalized ? 2 : 1,
+      answer: answer,
+      outline: const ['Preference', 'Reason'],
+      usefulExpressions: const ['lifts my mood'],
+      speechText: answer,
+    );
+  }
+
+  @override
+  Future<void> delete({
+    required String id,
+    required int expectedVersion,
+  }) async {}
+
+  @override
+  Future<IeltsAnswerPreparation> get(String id) => throw UnimplementedError();
+
+  @override
+  Future<IeltsAnswerPreparation> update({
+    required String id,
+    required int expectedVersion,
+    required List<String> personalPoints,
+    required double targetBand,
+  }) async {
+    _personalPoints = personalPoints;
+    return IeltsAnswerPreparation(
+      id: id,
+      question: const IeltsAnswerQuestionReference(
+        bankId: 'bank-1',
+        part: 'PART_1',
+        sourceId: 'music',
+        questionPosition: 1,
+      ),
+      personalPoints: personalPoints,
+      targetBand: targetBand,
+      status: IeltsAnswerPreparationStatus.draft,
+      version: expectedVersion + 1,
+      generationRevision: 1,
+      answer: null,
+      outline: const [],
+      usefulExpressions: const [],
+      speechText: null,
+    );
+  }
 }
 
 final class _HubFixtureClient implements SceneClient {
