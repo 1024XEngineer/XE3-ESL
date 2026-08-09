@@ -9,6 +9,8 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
+import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
 
 void main() {
   testWidgets('shows exactly the four product-level practice entries', (
@@ -202,6 +204,153 @@ void main() {
     expect(find.textContaining('对应 Part 2'), findsNothing);
     expect(find.textContaining('完成后继续同组 Part 3'), findsNothing);
     expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+  });
+
+  testWidgets('opens Part 1 details before emitting the exact selection', (
+    tester,
+  ) async {
+    final ieltsController = IeltsPreparationController(
+      client: _HubQuestionBankClient(),
+    );
+    addTearDown(ieltsController.dispose);
+    SceneDefinition? selectedScene;
+    PracticeMode? selectedMode;
+    IeltsPracticeSelection? selectedSet;
+    await ieltsController.loadIfNeeded();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IeltsCatalog(
+            controller: ieltsController,
+            scenes: _hubScenes,
+            onRetry: ieltsController.retryLoad,
+            onSelectionPressed: (scene, mode, selection) {
+              selectedScene = scene;
+              selectedMode = mode;
+              selectedSet = selection;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ielts-part1-set-p1-topic-001')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-set-detail')), findsOneWidget);
+    expect(find.text('家乡'), findsOneWidget);
+    expect(find.text('Hometown'), findsOneWidget);
+    expect(find.text('Q1'), findsOneWidget);
+    expect(find.text('Q2'), findsOneWidget);
+    final topicBottom = tester.getBottomLeft(
+      find.byKey(const Key('ielts-set-detail-topic')),
+    );
+    final questionsTop = tester.getTopLeft(
+      find.byKey(const Key('ielts-set-detail-question-1')),
+    );
+    expect(topicBottom.dy, lessThanOrEqualTo(questionsTop.dy));
+    expect(find.byKey(const Key('ielts-set-detail-title')), findsOneWidget);
+    expect(find.text('开始整组练习'), findsOneWidget);
+    expect(selectedSet, isNull);
+
+    await tester.tap(find.byKey(const Key('ielts-set-detail-start')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-set-detail')), findsNothing);
+    expect(selectedScene?.id, 'scene_ielts_speaking');
+    expect(selectedMode, PracticeMode.part1);
+    expect(
+      selectedSet,
+      const IeltsPracticeSelection(part1SetId: 'p1-topic-001'),
+    );
+  });
+
+  testWidgets('shows the real Cue Card and linked Part 3 questions', (
+    tester,
+  ) async {
+    final ieltsController = IeltsPreparationController(
+      client: _HubQuestionBankClient(),
+    );
+    addTearDown(ieltsController.dispose);
+    await ieltsController.loadIfNeeded();
+    PracticeMode? selectedMode;
+    IeltsPracticeSelection? selectedSet;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IeltsCatalog(
+            controller: ieltsController,
+            scenes: _hubScenes,
+            onRetry: ieltsController.retryLoad,
+            onSelectionPressed: (_, mode, selection) {
+              selectedMode = mode;
+              selectedSet = selection;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ielts-part2-set-p23-001')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-set-detail-cue-card')), findsOneWidget);
+    expect(find.text('Describe a skill you would like to learn'), findsWidgets);
+    expect(find.text('What'), findsOneWidget);
+    expect(find.text('Benefit'), findsOneWidget);
+    expect(find.text('同组 Part 3 · 5 题'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-set-detail-question-5')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('ielts-set-detail-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ielts-part2-set-p23-001')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ielts-set-detail-start')));
+    await tester.pumpAndSettle();
+
+    expect(selectedMode, PracticeMode.part2);
+    expect(selectedSet, const IeltsPracticeSelection(topicGroupId: 'p23-001'));
+  });
+
+  testWidgets('keeps the detail action reachable on a narrow large-text view', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part2,
+          title: _ieltsBank.topicGroups.single.title,
+          subtitle: _ieltsBank.topicGroups.single.cueCard.prompt,
+          cueCard: _ieltsBank.topicGroups.single.cueCard,
+          questions: _ieltsBank.topicGroups.single.part3Questions,
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('ielts-set-detail-start')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ielts-set-detail-scroll')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('keeps IELTS filters available in the compact catalog', (
