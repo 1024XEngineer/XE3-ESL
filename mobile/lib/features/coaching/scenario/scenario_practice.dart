@@ -11,6 +11,7 @@ import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart'
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
+import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
@@ -461,230 +462,60 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
         body: SafeArea(
           child: scene == null
               ? const Center(child: Text('请先选择一个情景开始对话。'))
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final landscape =
-                        constraints.maxWidth > constraints.maxHeight;
-                    final avatar = _AvatarStage(
-                      scene: scene,
-                      surfaceBuilder:
-                          _exitApproved ||
-                              !widget.practiceController.canUseAvatar
-                          ? null
-                          : widget.avatarSurfaceBuilder,
-                      statusLabel: widget.avatarStatusLabel,
-                      latestAssistantMessage:
-                          widget.practiceController.practiceExperience ==
-                              PracticeExperience.interview
-                          ? null
-                          : _latestAssistantMessage(
-                              widget.practiceController.practiceMessages,
-                            ),
-                      exitInFlight: _exitInFlight,
-                      onExit: _requestExit,
-                    );
-                    final conversation = _ConversationPanel(
-                      controller: widget.practiceController,
-                      scrollController: _conversationScrollController,
-                      textController: _textController,
-                      textFocusNode: _textFocusNode,
-                      textMode: _textMode,
-                      recordingSeconds: _recordingSeconds,
-                      previewMode: widget.previewMode,
-                      onBeforeStartRecording: _beforeStartRecording,
-                      onReplayQuestion: widget.onReplayQuestion,
-                      speechFeedbackController: widget.speechFeedbackController,
-                      replayLoading: widget.replayLoading,
-                      replayPlaying: widget.replayPlaying,
-                      onToggleTextMode: _toggleTextMode,
-                      onSubmitText: _submitText,
-                      onTranslateQuestion:
-                          widget.practiceController.canTranslateQuestion &&
-                              widget.practiceController.client
-                                  is PracticeQuestionTranslationClient
-                          ? _translateQuestion
-                          : null,
-                      onShowTip: _showQuestionTip,
-                      onHideTip: _hideQuestionTip,
-                      onSpeakTip: _speakQuestionTip,
-                      visibleTipQuestionId: _visibleTipQuestionId,
-                      onPracticeCompleted: _completePractice,
-                      onCompleteRequested: _requestUserControlledCompletion,
-                    );
-                    if (landscape) {
-                      return Row(
-                        children: [
-                          SizedBox(
-                            key: const Key('scenario-avatar-region'),
-                            width: constraints.maxWidth * 0.44,
-                            child: avatar,
-                          ),
-                          Expanded(child: conversation),
-                        ],
-                      );
-                    }
-                    return Column(
-                      children: [
-                        SizedBox(
-                          key: const Key('scenario-avatar-region'),
-                          height: constraints.maxHeight * 0.44,
-                          child: avatar,
-                        ),
-                        Expanded(child: conversation),
-                      ],
-                    );
-                  },
+              : PracticeStageLayout(
+                  avatarRegionKey: const Key('scenario-avatar-region'),
+                  avatar: PracticeAvatarStage(
+                    title: scene.name,
+                    fallback: const _AvatarPlaceholder(),
+                    surfaceBuilder:
+                        _exitApproved || !widget.practiceController.canUseAvatar
+                        ? null
+                        : widget.avatarSurfaceBuilder,
+                    statusLabel: widget.avatarStatusLabel,
+                    subtitle:
+                        widget.practiceController.practiceExperience ==
+                            PracticeExperience.interview
+                        ? null
+                        : _latestAssistantMessage(
+                            widget.practiceController.practiceMessages,
+                          )?.text,
+                    exitInFlight: _exitInFlight,
+                    exitButtonKey: const Key('scenario-exit'),
+                    statusKey: const Key('scenario-avatar-status'),
+                    subtitleKey: const Key('scenario-live-subtitle'),
+                    subtitleTextKey: const Key('scenario-live-subtitle-text'),
+                    onExit: _requestExit,
+                  ),
+                  content: _ConversationPanel(
+                    controller: widget.practiceController,
+                    scrollController: _conversationScrollController,
+                    textController: _textController,
+                    textFocusNode: _textFocusNode,
+                    textMode: _textMode,
+                    recordingSeconds: _recordingSeconds,
+                    previewMode: widget.previewMode,
+                    onBeforeStartRecording: _beforeStartRecording,
+                    onReplayQuestion: widget.onReplayQuestion,
+                    speechFeedbackController: widget.speechFeedbackController,
+                    replayLoading: widget.replayLoading,
+                    replayPlaying: widget.replayPlaying,
+                    onToggleTextMode: _toggleTextMode,
+                    onSubmitText: _submitText,
+                    onTranslateQuestion:
+                        widget.practiceController.canTranslateQuestion &&
+                            widget.practiceController.client
+                                is PracticeQuestionTranslationClient
+                        ? _translateQuestion
+                        : null,
+                    onShowTip: _showQuestionTip,
+                    onHideTip: _hideQuestionTip,
+                    onSpeakTip: _speakQuestionTip,
+                    visibleTipQuestionId: _visibleTipQuestionId,
+                    onPracticeCompleted: _completePractice,
+                    onCompleteRequested: _requestUserControlledCompletion,
+                  ),
                 ),
         ),
-      ),
-    );
-  }
-}
-
-class _AvatarStage extends StatelessWidget {
-  const _AvatarStage({
-    required this.scene,
-    required this.surfaceBuilder,
-    required this.statusLabel,
-    required this.latestAssistantMessage,
-    required this.exitInFlight,
-    required this.onExit,
-  });
-
-  final SceneDefinition scene;
-  final ScenarioAvatarSurfaceBuilder? surfaceBuilder;
-  final String? statusLabel;
-  final PracticeMessage? latestAssistantMessage;
-  final bool exitInFlight;
-  final VoidCallback onExit;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFFE5E9E5),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (surfaceBuilder case final builder?)
-            builder(context)
-          else
-            const _AvatarPlaceholder(),
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Color(0x33000000),
-                      Colors.transparent,
-                      Color(0x4D000000),
-                    ],
-                    stops: [0, 0.45, 1],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            top: 10,
-            child: Row(
-              children: [
-                IconButton.filledTonal(
-                  key: const Key('scenario-exit'),
-                  tooltip: '返回',
-                  onPressed: exitInFlight ? null : onExit,
-                  icon: exitInFlight
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.arrow_back_rounded),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.9),
-                    foregroundColor: SpeakUpDesign.ink,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    scene.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      shadows: [
-                        Shadow(color: Color(0x66000000), blurRadius: 8),
-                      ],
-                    ),
-                  ),
-                ),
-                if (statusLabel case final label?)
-                  Flexible(
-                    child: Semantics(
-                      liveRegion: true,
-                      child: Container(
-                        key: const Key('scenario-avatar-status'),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.46),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (latestAssistantMessage case final message?)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 14,
-              child: Container(
-                key: const Key('scenario-live-subtitle'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 15,
-                  vertical: 11,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.58),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  message.text,
-                  key: const Key('scenario-live-subtitle-text'),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.35,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }
