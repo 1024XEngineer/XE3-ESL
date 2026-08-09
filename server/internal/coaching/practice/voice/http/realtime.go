@@ -17,7 +17,7 @@ import (
 )
 
 const practiceVoiceInputWebSocketProtocol = "speakup.voice-input.v1"
-const maxPracticeRealtimePCMBytes = 16_000 * 2 * 60
+const maxPracticeRealtimePCMBytes = 16_000 * 2 * 120
 
 type practiceRealtimeStartFrame struct {
 	Type           string `json:"type"`
