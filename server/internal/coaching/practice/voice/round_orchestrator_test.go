@@ -78,6 +78,16 @@ func (c *roundVoice) Transcribe(
 	return c.candidate, nil
 }
 
+func (c *roundVoice) TranscribeStream(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	TranscribeVoiceStreamCommand,
+	TranscriptionObserver,
+) (TranscriptionCandidate, error) {
+	return c.candidate, nil
+}
+
 func (c *roundVoice) GetTranscriptionCandidate(
 	context.Context,
 	requestcontext.Actor,

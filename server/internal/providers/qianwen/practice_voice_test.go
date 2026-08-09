@@ -83,6 +83,13 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 	); !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("recognizer error = %v", err)
 	}
+	if _, err := recognizer.TranscribeStream(
+		context.Background(),
+		practicevoice.StreamingTranscriptionRequest{},
+		&practiceVoiceObserverRecorder{},
+	); !isPracticeVoiceConfigurationError(err) {
+		t.Fatalf("streaming recognizer error = %v", err)
+	}
 
 	var synthesizer *PracticeVoiceSynthesizer
 	if _, err := synthesizer.Synthesize(
@@ -115,6 +122,50 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 	); !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("Tip generator error = %v", err)
 	}
+}
+
+func TestPracticeVoiceStreamingObserverMapsProviderSnapshot(t *testing.T) {
+	recorder := &practiceVoiceObserverRecorder{}
+	adapter := practiceVoiceTranscriptionObserver{observer: recorder}
+	if err := adapter.OnTranscriptionUpdate(
+		context.Background(),
+		protocol.TranscriptionUpdate{
+			Transcript: "An answer in progress.",
+			Final:      true,
+		},
+	); err != nil {
+		t.Fatalf("observe update: %v", err)
+	}
+	if recorder.update.Transcript != "An answer in progress." ||
+		!recorder.update.Final {
+		t.Fatalf("mapped update = %#v", recorder.update)
+	}
+}
+
+func TestPracticeVoiceStreamingRejectsNonRealtimeModel(t *testing.T) {
+	recognizer := &PracticeVoiceRecognizer{
+		recognizer: &speechRecognizer{model: "fun-asr-flash-2026-06-15"},
+	}
+	_, err := recognizer.TranscribeStream(
+		context.Background(),
+		practicevoice.StreamingTranscriptionRequest{},
+		&practiceVoiceObserverRecorder{},
+	)
+	if !isPracticeVoiceConfigurationError(err) {
+		t.Fatalf("non-realtime model error = %v", err)
+	}
+}
+
+type practiceVoiceObserverRecorder struct {
+	update practicevoice.TranscriptionUpdate
+}
+
+func (recorder *practiceVoiceObserverRecorder) OnTranscriptionUpdate(
+	_ context.Context,
+	update practicevoice.TranscriptionUpdate,
+) error {
+	recorder.update = update
+	return nil
 }
 
 func isTranslationConfigurationError(err error) bool {

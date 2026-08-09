@@ -18,6 +18,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 	t.Parallel()
 	const apiKey = "test-realtime-key"
 	audio := bytes.Repeat([]byte{1, 2, 3, 4}, realtimeASRChunkBytes)
+	formats := make(chan string, 2)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -56,11 +57,11 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 		}
 		if run.Header.Action != "run-task" ||
 			run.Payload.Model != "fun-asr-realtime" ||
-			run.Payload.Parameters.Format != "wav" ||
 			run.Payload.Parameters.SampleRate != 16_000 {
 			t.Errorf("unexpected run-task: %#v", run)
 			return
 		}
+		formats <- run.Payload.Parameters.Format
 		if err := connection.WriteJSON(map[string]any{
 			"header": map[string]any{
 				"task_id": run.Header.TaskID, "event": "task-started",
@@ -157,6 +158,9 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transcribe realtime: %v", err)
 	}
+	if format := <-formats; format != "wav" {
+		t.Fatalf("validated source format = %q, want wav", format)
+	}
 	if result.Transcript != "I practice English for interviews." ||
 		result.Model != "fun-asr-realtime" ||
 		result.Usage.AudioSeconds != 4 {
@@ -167,6 +171,25 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 		!updates[len(updates)-1].Final ||
 		updates[len(updates)-1].Transcript != result.Transcript {
 		t.Fatalf("stream updates = %#v", updates)
+	}
+
+	pcmObserver := &recordingTranscriptionObserver{}
+	pcmResult, err := recognizer.transcribeRealtimePCM(
+		context.Background(),
+		bytes.NewReader(audio),
+		16_000,
+		pcmObserver,
+	)
+	if err != nil {
+		t.Fatalf("transcribe realtime PCM: %v", err)
+	}
+	if format := <-formats; format != "pcm" {
+		t.Fatalf("live capture format = %q, want pcm", format)
+	}
+	pcmUpdates := pcmObserver.Updates()
+	if pcmResult.Transcript != result.Transcript || len(pcmUpdates) == 0 ||
+		!pcmUpdates[len(pcmUpdates)-1].Final {
+		t.Fatalf("PCM result = %#v, updates = %#v", pcmResult, pcmUpdates)
 	}
 }
 

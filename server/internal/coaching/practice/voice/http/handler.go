@@ -1,6 +1,7 @@
 package voicehttp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -20,6 +21,58 @@ import (
 
 const defaultReadTimeout = 15 * time.Second
 
+type Application interface {
+	Start(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+	) (practicevoice.SessionState, error)
+	Resume(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (practicevoice.SessionState, error)
+	Transcribe(
+		context.Context,
+		requestcontext.Actor,
+		practicevoice.TranscribeVoiceCommand,
+	) (practicevoice.TranscriptionCandidate, error)
+	TranscribeStream(
+		context.Context,
+		requestcontext.Actor,
+		practicevoice.TranscribeVoiceStreamCommand,
+		practicevoice.TranscriptionObserver,
+	) (practicevoice.TranscriptionCandidate, error)
+	SubmitText(
+		context.Context,
+		requestcontext.Actor,
+		practicevoice.SubmitTextAnswerCommand,
+	) (practicevoice.SessionState, error)
+	Confirm(
+		context.Context,
+		requestcontext.Actor,
+		practicevoice.ConfirmVoiceTurnCommand,
+	) (practicevoice.SessionState, error)
+	QuestionSpeech(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (practicevoice.QuestionSpeech, error)
+	QuestionTranslation(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (practicevoice.QuestionTranslation, error)
+	EnsureQuestionTip(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		string,
+	) (practicevoice.QuestionTipResult, error)
+}
+
 type Options struct {
 	AudioReadTimeout  time.Duration
 	SameQuestionRetry *practicevoice.SameQuestionRetryApplication
@@ -27,7 +80,7 @@ type Options struct {
 }
 
 type Handler struct {
-	application *practicevoice.SessionApplication
+	application Application
 	retry       *practicevoice.SameQuestionRetryApplication
 	audioAssets AudioAssetHTTPService
 	readTimeout time.Duration
@@ -35,7 +88,7 @@ type Handler struct {
 }
 
 func NewHandler(
-	application *practicevoice.SessionApplication,
+	application Application,
 	options Options,
 	errorRenderer *httpresponse.Renderer,
 ) (*Handler, error) {
@@ -69,6 +122,10 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST(
 		"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates",
 		handler.transcribeCandidate,
+	)
+	routes.GET(
+		"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates/realtime",
+		handler.transcribeCandidateRealtime,
 	)
 	routes.POST(
 		"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/text-answers",

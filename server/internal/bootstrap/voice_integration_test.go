@@ -1680,6 +1680,67 @@ func (adapter practiceVoiceRecognizerAdapter) Transcribe(
 	}, err
 }
 
+func (adapter practiceVoiceRecognizerAdapter) TranscribeStream(
+	ctx context.Context,
+	request practicevoice.StreamingTranscriptionRequest,
+	observer practicevoice.TranscriptionObserver,
+) (practicevoice.TranscriptionResult, error) {
+	if request.PCM == nil || request.SampleRate != 16_000 {
+		return practicevoice.TranscriptionResult{}, errors.New(
+			"streaming test PCM is required",
+		)
+	}
+	if _, err := io.Copy(
+		io.Discard,
+		io.LimitReader(request.PCM, platformmedia.MaxAudioBytes),
+	); err != nil {
+		return practicevoice.TranscriptionResult{}, err
+	}
+	audio, err := platformmedia.CaptureTemporaryAudio(
+		"",
+		platformmedia.ContentTypeWAV,
+		bytes.NewReader(testWAV()),
+	)
+	if err != nil {
+		return practicevoice.TranscriptionResult{}, err
+	}
+	defer audio.Close()
+	recognizer, ok := adapter.recognizer.(agentvoice.StreamingSpeechRecognizer)
+	if !ok {
+		return practicevoice.TranscriptionResult{}, errors.New(
+			"streaming test recognizer is required",
+		)
+	}
+	result, err := recognizer.TranscribeStream(
+		ctx,
+		agentvoice.TranscriptionRequest{Audio: audio},
+		practiceVoiceTranscriptionObserverAdapter{observer: observer},
+	)
+	return practicevoice.TranscriptionResult{
+		ID:         result.ID,
+		Provider:   result.Provider,
+		Model:      result.Model,
+		Transcript: result.Transcript,
+	}, err
+}
+
+type practiceVoiceTranscriptionObserverAdapter struct {
+	observer practicevoice.TranscriptionObserver
+}
+
+func (adapter practiceVoiceTranscriptionObserverAdapter) OnTranscriptionUpdate(
+	ctx context.Context,
+	update agentvoice.TranscriptionUpdate,
+) error {
+	return adapter.observer.OnTranscriptionUpdate(
+		ctx,
+		practicevoice.TranscriptionUpdate{
+			Transcript: update.Transcript,
+			Final:      update.Final,
+		},
+	)
+}
+
 type practiceVoiceSynthesizerAdapter struct {
 	synthesizer agentvoice.SpeechSynthesizer
 }

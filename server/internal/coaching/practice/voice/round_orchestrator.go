@@ -19,6 +19,13 @@ type RoundPort interface {
 		string,
 		TranscribeVoiceCommand,
 	) (TranscriptionCandidate, error)
+	TranscribeStream(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		TranscribeVoiceStreamCommand,
+		TranscriptionObserver,
+	) (TranscriptionCandidate, error)
 	GetTranscriptionCandidate(
 		context.Context,
 		requestcontext.Actor,
@@ -123,6 +130,35 @@ func (orchestrator *RoundOrchestrator) Transcribe(
 		actor,
 		participantID,
 		command,
+	)
+}
+
+func (orchestrator *RoundOrchestrator) TranscribeStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command TranscribeVoiceStreamCommand,
+	observer TranscriptionObserver,
+) (TranscriptionCandidate, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil || observer == nil {
+		return TranscriptionCandidate{}, ErrInvalidRequest
+	}
+	participantID, err := orchestrator.practice.ResolveActorParticipant(
+		ctx,
+		actor,
+		command.SessionID,
+	)
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	if strings.TrimSpace(participantID) == "" {
+		return TranscriptionCandidate{}, ErrInvalidContext
+	}
+	return orchestrator.rounds.TranscribeStream(
+		ctx,
+		actor,
+		participantID,
+		command,
+		observer,
 	)
 }
 

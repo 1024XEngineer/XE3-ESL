@@ -39,6 +39,12 @@ type realtimeASREvent struct {
 	} `json:"payload"`
 }
 
+type realtimeASRAudio struct {
+	format     string
+	sampleRate int
+	open       func() (io.ReadCloser, error)
+}
+
 func (recognizer *speechRecognizer) transcribeRealtime(
 	ctx context.Context,
 	request protocol.TranscriptionRequest,
@@ -64,6 +70,51 @@ func (recognizer *speechRecognizer) transcribeRealtime(
 			err,
 		)
 	}
+	return recognizer.transcribeRealtimeAudio(
+		ctx,
+		realtimeASRAudio{
+			format:     "wav",
+			sampleRate: request.Audio.SampleRate(),
+			open:       request.Audio.Open,
+		},
+		observer,
+	)
+}
+
+func (recognizer *speechRecognizer) transcribeRealtimePCM(
+	ctx context.Context,
+	pcm io.Reader,
+	sampleRate int,
+	observer protocol.TranscriptionObserver,
+) (protocol.TranscriptionResult, error) {
+	if ctx == nil || pcm == nil || sampleRate < 8_000 || sampleRate > 48_000 {
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			errors.New("realtime PCM transcription input is invalid"),
+		)
+	}
+	return recognizer.transcribeRealtimeAudio(
+		ctx,
+		realtimeASRAudio{
+			format:     "pcm",
+			sampleRate: sampleRate,
+			open: func() (io.ReadCloser, error) {
+				return io.NopCloser(pcm), nil
+			},
+		},
+		observer,
+	)
+}
+
+func (recognizer *speechRecognizer) transcribeRealtimeAudio(
+	ctx context.Context,
+	audio realtimeASRAudio,
+	observer protocol.TranscriptionObserver,
+) (protocol.TranscriptionResult, error) {
 	callContext, cancel := context.WithTimeout(ctx, recognizer.timeout)
 	defer cancel()
 	header := http.Header{}
@@ -106,7 +157,7 @@ func (recognizer *speechRecognizer) transcribeRealtime(
 			"task_group": "audio", "task": "asr", "function": "recognition",
 			"model": recognizer.model,
 			"parameters": map[string]any{
-				"format": "wav", "sample_rate": request.Audio.SampleRate(),
+				"format": audio.format, "sample_rate": audio.sampleRate,
 				"max_sentence_silence": 400,
 			},
 			"input": map[string]any{},
@@ -137,7 +188,7 @@ func (recognizer *speechRecognizer) transcribeRealtime(
 			err:        readErr,
 		}
 	}()
-	if err := streamRealtimeASRAudio(connection, request.Audio); err != nil {
+	if err := streamRealtimeASRAudio(connection, audio.open); err != nil {
 		_ = connection.Close()
 		return protocol.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
@@ -186,9 +237,9 @@ func waitForRealtimeASRStart(connection *websocket.Conn, taskID string) error {
 
 func streamRealtimeASRAudio(
 	connection *websocket.Conn,
-	source interface{ Open() (io.ReadCloser, error) },
+	open func() (io.ReadCloser, error),
 ) error {
-	reader, err := source.Open()
+	reader, err := open()
 	if err != nil {
 		return err
 	}

@@ -105,6 +105,161 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundStreamsProviderSnapshotsAndPersistsFinalCandidate(
+	t *testing.T,
+) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recognizer := &streamingVoiceTestRecognizer{}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundService(
+		store,
+		vault,
+		recognizer,
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	command := func(pcm io.Reader) TranscribeVoiceStreamCommand {
+		return TranscribeVoiceStreamCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-stream-question-1",
+			PCM:            pcm,
+			SampleRate:     16_000,
+		}
+	}
+	observer := &voiceTestTranscriptionObserver{
+		observed: make(chan TranscriptionUpdate, 2),
+	}
+	reader, writer := io.Pipe()
+	type streamResult struct {
+		candidate TranscriptionCandidate
+		err       error
+	}
+	completed := make(chan streamResult, 1)
+	go func() {
+		candidate, streamErr := service.TranscribeStream(
+			context.Background(),
+			voiceTestActor("a"),
+			"participant-a",
+			command(reader),
+			observer,
+		)
+		completed <- streamResult{candidate: candidate, err: streamErr}
+	}()
+	pcm := voiceTestPCM()
+	if _, err := writer.Write(pcm[:320]); err != nil {
+		t.Fatalf("write first live PCM frame: %v", err)
+	}
+	select {
+	case update := <-observer.observed:
+		if update.Transcript != "A complete" || update.Final {
+			t.Fatalf("live update before stream end = %#v", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no transcription update before the PCM stream ended")
+	}
+	if _, err := writer.Write(pcm[320:]); err != nil {
+		t.Fatalf("write remaining live PCM: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close live PCM: %v", err)
+	}
+	result := <-completed
+	if result.err != nil {
+		t.Fatalf("stream transcription: %v", result.err)
+	}
+	candidate := result.candidate
+	if candidate.Transcript != "A complete streaming answer." ||
+		candidate.ProviderRequestID != "asr-stream-request" ||
+		recognizer.streamCalls != 1 || recognizer.transcribeCalls != 0 {
+		t.Fatalf("candidate = %#v, recognizer = %#v", candidate, recognizer)
+	}
+	wantUpdates := []TranscriptionUpdate{
+		{Transcript: "A complete", Final: false},
+		{Transcript: "A complete streaming answer.", Final: true},
+	}
+	if !reflect.DeepEqual(observer.updates, wantUpdates) {
+		t.Fatalf("updates = %#v, want %#v", observer.updates, wantUpdates)
+	}
+	replayObserver := &voiceTestTranscriptionObserver{}
+	replayed, err := service.TranscribeStream(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command(bytes.NewReader(voiceTestPCM())),
+		replayObserver,
+	)
+	if err != nil || replayed.ID != candidate.ID ||
+		recognizer.streamCalls != 1 || len(replayObserver.updates) != 0 {
+		t.Fatalf(
+			"replay = %#v, err = %v, calls = %d, updates = %#v",
+			replayed,
+			err,
+			recognizer.streamCalls,
+			replayObserver.updates,
+		)
+	}
+}
+
+func TestVoiceRoundStreamingRequiresStreamingRecognizer(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundService(
+		store,
+		vault,
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = service.TranscribeStream(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		TranscribeVoiceStreamCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-stream-question-1",
+			PCM:            bytes.NewReader(voiceTestPCM()),
+			SampleRate:     16_000,
+		},
+		&voiceTestTranscriptionObserver{},
+	)
+	var providerError *ProviderError
+	if !errors.As(err, &providerError) ||
+		providerError.Kind != ProviderErrorConfiguration ||
+		providerError.Retryable() {
+		t.Fatalf("streaming error = %#v", err)
+	}
+}
+
 func TestVoiceRoundTextAnswerUsesDurableCandidateWithoutASR(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
@@ -1204,6 +1359,74 @@ type voiceTestRecognizer struct {
 	err   error
 }
 
+type streamingVoiceTestRecognizer struct {
+	streamCalls     int
+	transcribeCalls int
+}
+
+func (recognizer *streamingVoiceTestRecognizer) Transcribe(
+	_ context.Context,
+	request TranscriptionRequest,
+) (TranscriptionResult, error) {
+	recognizer.transcribeCalls++
+	return TranscriptionResult{}, platformmedia.ValidateAudioSource(request.Audio)
+}
+
+func (recognizer *streamingVoiceTestRecognizer) TranscribeStream(
+	ctx context.Context,
+	request StreamingTranscriptionRequest,
+	observer TranscriptionObserver,
+) (TranscriptionResult, error) {
+	recognizer.streamCalls++
+	if request.PCM == nil || request.SampleRate != 16_000 {
+		return TranscriptionResult{}, ErrVoiceRoundInvalid
+	}
+	first := make([]byte, 320)
+	if _, err := io.ReadFull(request.PCM, first); err != nil {
+		return TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		TranscriptionUpdate{Transcript: "A complete"},
+	); err != nil {
+		return TranscriptionResult{}, err
+	}
+	if _, err := io.Copy(io.Discard, request.PCM); err != nil {
+		return TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		TranscriptionUpdate{
+			Transcript: "A complete streaming answer.",
+			Final:      true,
+		},
+	); err != nil {
+		return TranscriptionResult{}, err
+	}
+	return TranscriptionResult{
+		ID:         "asr-stream-request",
+		Provider:   "fake",
+		Model:      "fake-streaming-asr-v1",
+		Transcript: "A complete streaming answer.",
+	}, nil
+}
+
+type voiceTestTranscriptionObserver struct {
+	updates  []TranscriptionUpdate
+	observed chan TranscriptionUpdate
+}
+
+func (observer *voiceTestTranscriptionObserver) OnTranscriptionUpdate(
+	_ context.Context,
+	update TranscriptionUpdate,
+) error {
+	observer.updates = append(observer.updates, update)
+	if observer.observed != nil {
+		observer.observed <- update
+	}
+	return nil
+}
+
 type cancelingVoiceRecognizer struct {
 	cancel context.CancelFunc
 	err    error
@@ -1390,4 +1613,8 @@ func voiceTestWAV() []byte {
 	_ = binary.Write(buffer, binary.LittleEndian, uint32(dataSize))
 	buffer.Write(make([]byte, dataSize))
 	return buffer.Bytes()
+}
+
+func voiceTestPCM() []byte {
+	return make([]byte, 3_200)
 }

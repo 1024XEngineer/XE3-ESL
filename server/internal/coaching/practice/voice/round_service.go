@@ -366,6 +366,15 @@ func (service *VoiceRoundService) Transcribe(
 	respondentParticipantID string,
 	command TranscribeVoiceCommand,
 ) (candidate TranscriptionCandidate, returnErr error) {
+	return service.transcribe(ctx, actor, respondentParticipantID, command)
+}
+
+func (service *VoiceRoundService) transcribe(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	respondentParticipantID string,
+	command TranscribeVoiceCommand,
+) (candidate TranscriptionCandidate, returnErr error) {
 	if err := validateVoiceContext(ctx, actor); err != nil ||
 		strings.TrimSpace(respondentParticipantID) == "" ||
 		strings.TrimSpace(command.SessionID) == "" ||
@@ -482,33 +491,42 @@ func (service *VoiceRoundService) Transcribe(
 	}
 
 	startedAt := service.now()
-	result, err := service.recognizer.Transcribe(
-		ctx,
-		TranscriptionRequest{Audio: source},
-	)
+	request := TranscriptionRequest{Audio: source}
+	result, err := service.recognizer.Transcribe(ctx, request)
 	if err != nil {
-		attempt := safeAttempt(
-			err,
-			ProviderOperationTranscription,
-			service.now().Sub(startedAt),
-			service.now(),
-		)
-		persistenceContext, cancel := voicePersistenceContext(ctx)
-		saveErr := service.store.FailTranscription(
-			persistenceContext,
+		if saveErr := service.failTranscription(
+			ctx,
 			actor,
-			FailTranscriptionCommand{
-				ReservationID: reservation.ID,
-				LeaseToken:    reservation.LeaseToken,
-				Attempt:       attempt,
-			},
-		)
-		cancel()
-		if saveErr != nil {
+			reservation,
+			err,
+			startedAt,
+		); saveErr != nil {
 			return TranscriptionCandidate{}, saveErr
 		}
 		return TranscriptionCandidate{}, err
 	}
+	return service.completeTranscription(
+		ctx,
+		actor,
+		reservation,
+		result,
+		startedAt,
+		command.SessionID,
+		command.QuestionID,
+		respondentParticipantID,
+	)
+}
+
+func (service *VoiceRoundService) completeTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservation TranscriptionReservation,
+	result TranscriptionResult,
+	startedAt time.Time,
+	sessionID string,
+	questionID string,
+	respondentParticipantID string,
+) (TranscriptionCandidate, error) {
 	transcript := strings.TrimSpace(result.Transcript)
 	if !validTranscriptionResult(result, transcript) {
 		attempt := SafeProcessingAttempt{
@@ -536,7 +554,7 @@ func (service *VoiceRoundService) Transcribe(
 		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}
 	persistenceContext, cancel := voicePersistenceContext(ctx)
-	candidate, err = service.store.CompleteTranscription(
+	candidate, err := service.store.CompleteTranscription(
 		persistenceContext,
 		actor,
 		CompleteTranscriptionCommand{
@@ -559,13 +577,39 @@ func (service *VoiceRoundService) Transcribe(
 	}
 	if !validTranscriptionCandidate(
 		candidate,
-		command.SessionID,
-		command.QuestionID,
+		sessionID,
+		questionID,
 		respondentParticipantID,
 	) {
 		return TranscriptionCandidate{}, ErrVoiceRoundConflict
 	}
 	return candidate, nil
+}
+
+func (service *VoiceRoundService) failTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservation TranscriptionReservation,
+	err error,
+	startedAt time.Time,
+) error {
+	attempt := safeAttempt(
+		err,
+		ProviderOperationTranscription,
+		service.now().Sub(startedAt),
+		service.now(),
+	)
+	persistenceContext, cancel := voicePersistenceContext(ctx)
+	defer cancel()
+	return service.store.FailTranscription(
+		persistenceContext,
+		actor,
+		FailTranscriptionCommand{
+			ReservationID: reservation.ID,
+			LeaseToken:    reservation.LeaseToken,
+			Attempt:       attempt,
+		},
+	)
 }
 
 type ConfirmVoiceTurnCommand struct {
