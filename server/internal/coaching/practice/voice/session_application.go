@@ -274,6 +274,20 @@ func (application *SessionApplication) Transcribe(
 	return application.orchestrator.Transcribe(ctx, actor, command)
 }
 
+func (application *SessionApplication) TranscribeStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command TranscribeVoiceCommand,
+	observer TranscriptionObserver,
+) (TranscriptionCandidate, error) {
+	return application.orchestrator.TranscribeStream(
+		ctx,
+		actor,
+		command,
+		observer,
+	)
+}
+
 func (application *SessionApplication) Confirm(
 	ctx context.Context,
 	actor requestcontext.Actor,

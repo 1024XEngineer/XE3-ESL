@@ -1680,6 +1680,47 @@ func (adapter practiceVoiceRecognizerAdapter) Transcribe(
 	}, err
 }
 
+func (adapter practiceVoiceRecognizerAdapter) TranscribeStream(
+	ctx context.Context,
+	request practicevoice.TranscriptionRequest,
+	observer practicevoice.TranscriptionObserver,
+) (practicevoice.TranscriptionResult, error) {
+	recognizer, ok := adapter.recognizer.(agentvoice.StreamingSpeechRecognizer)
+	if !ok {
+		return practicevoice.TranscriptionResult{}, errors.New(
+			"streaming test recognizer is required",
+		)
+	}
+	result, err := recognizer.TranscribeStream(
+		ctx,
+		agentvoice.TranscriptionRequest{Audio: request.Audio},
+		practiceVoiceTranscriptionObserverAdapter{observer: observer},
+	)
+	return practicevoice.TranscriptionResult{
+		ID:         result.ID,
+		Provider:   result.Provider,
+		Model:      result.Model,
+		Transcript: result.Transcript,
+	}, err
+}
+
+type practiceVoiceTranscriptionObserverAdapter struct {
+	observer practicevoice.TranscriptionObserver
+}
+
+func (adapter practiceVoiceTranscriptionObserverAdapter) OnTranscriptionUpdate(
+	ctx context.Context,
+	update agentvoice.TranscriptionUpdate,
+) error {
+	return adapter.observer.OnTranscriptionUpdate(
+		ctx,
+		practicevoice.TranscriptionUpdate{
+			Transcript: update.Transcript,
+			Final:      update.Final,
+		},
+	)
+}
+
 type practiceVoiceSynthesizerAdapter struct {
 	synthesizer agentvoice.SpeechSynthesizer
 }

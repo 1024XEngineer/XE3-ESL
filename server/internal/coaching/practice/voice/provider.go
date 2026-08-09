@@ -109,6 +109,26 @@ type SpeechRecognizer interface {
 	) (TranscriptionResult, error)
 }
 
+// StreamingSpeechRecognizer exposes provider-authored transcript snapshots;
+// the final TranscriptionResult remains the only durable result.
+type StreamingSpeechRecognizer interface {
+	SpeechRecognizer
+	TranscribeStream(
+		context.Context,
+		TranscriptionRequest,
+		TranscriptionObserver,
+	) (TranscriptionResult, error)
+}
+
+type TranscriptionObserver interface {
+	OnTranscriptionUpdate(context.Context, TranscriptionUpdate) error
+}
+
+type TranscriptionUpdate struct {
+	Transcript string
+	Final      bool
+}
+
 type SynthesisRequest struct {
 	Text string
 }

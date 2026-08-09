@@ -105,6 +105,130 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundStreamsProviderSnapshotsAndPersistsFinalCandidate(
+	t *testing.T,
+) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recognizer := &streamingVoiceTestRecognizer{}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundService(
+		store,
+		vault,
+		recognizer,
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	command := func() TranscribeVoiceCommand {
+		return TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-stream-question-1",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		}
+	}
+	observer := &voiceTestTranscriptionObserver{}
+	candidate, err := service.TranscribeStream(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command(),
+		observer,
+	)
+	if err != nil {
+		t.Fatalf("stream transcription: %v", err)
+	}
+	if candidate.Transcript != "A complete streaming answer." ||
+		candidate.ProviderRequestID != "asr-stream-request" ||
+		recognizer.streamCalls != 1 || recognizer.transcribeCalls != 0 {
+		t.Fatalf("candidate = %#v, recognizer = %#v", candidate, recognizer)
+	}
+	wantUpdates := []TranscriptionUpdate{
+		{Transcript: "A complete", Final: false},
+		{Transcript: "A complete streaming answer.", Final: true},
+	}
+	if !reflect.DeepEqual(observer.updates, wantUpdates) {
+		t.Fatalf("updates = %#v, want %#v", observer.updates, wantUpdates)
+	}
+	replayObserver := &voiceTestTranscriptionObserver{}
+	replayed, err := service.TranscribeStream(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command(),
+		replayObserver,
+	)
+	if err != nil || replayed.ID != candidate.ID ||
+		recognizer.streamCalls != 1 || len(replayObserver.updates) != 0 {
+		t.Fatalf(
+			"replay = %#v, err = %v, calls = %d, updates = %#v",
+			replayed,
+			err,
+			recognizer.streamCalls,
+			replayObserver.updates,
+		)
+	}
+}
+
+func TestVoiceRoundStreamingRequiresStreamingRecognizer(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundService(
+		store,
+		vault,
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = service.TranscribeStream(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-stream-question-1",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		},
+		&voiceTestTranscriptionObserver{},
+	)
+	var providerError *ProviderError
+	if !errors.As(err, &providerError) ||
+		providerError.Kind != ProviderErrorConfiguration ||
+		providerError.Retryable() {
+		t.Fatalf("streaming error = %#v", err)
+	}
+}
+
 func TestVoiceRoundTextAnswerUsesDurableCandidateWithoutASR(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
@@ -1202,6 +1326,56 @@ func (store *voiceTestStore) replaceTurn(turn practice.Turn) {
 type voiceTestRecognizer struct {
 	calls int
 	err   error
+}
+
+type streamingVoiceTestRecognizer struct {
+	streamCalls     int
+	transcribeCalls int
+}
+
+func (recognizer *streamingVoiceTestRecognizer) Transcribe(
+	_ context.Context,
+	request TranscriptionRequest,
+) (TranscriptionResult, error) {
+	recognizer.transcribeCalls++
+	return TranscriptionResult{}, platformmedia.ValidateAudioSource(request.Audio)
+}
+
+func (recognizer *streamingVoiceTestRecognizer) TranscribeStream(
+	ctx context.Context,
+	request TranscriptionRequest,
+	observer TranscriptionObserver,
+) (TranscriptionResult, error) {
+	recognizer.streamCalls++
+	if err := platformmedia.ValidateAudioSource(request.Audio); err != nil {
+		return TranscriptionResult{}, err
+	}
+	for _, update := range []TranscriptionUpdate{
+		{Transcript: "A complete", Final: false},
+		{Transcript: "A complete streaming answer.", Final: true},
+	} {
+		if err := observer.OnTranscriptionUpdate(ctx, update); err != nil {
+			return TranscriptionResult{}, err
+		}
+	}
+	return TranscriptionResult{
+		ID:         "asr-stream-request",
+		Provider:   "fake",
+		Model:      "fake-streaming-asr-v1",
+		Transcript: "A complete streaming answer.",
+	}, nil
+}
+
+type voiceTestTranscriptionObserver struct {
+	updates []TranscriptionUpdate
+}
+
+func (observer *voiceTestTranscriptionObserver) OnTranscriptionUpdate(
+	_ context.Context,
+	update TranscriptionUpdate,
+) error {
+	observer.updates = append(observer.updates, update)
+	return nil
 }
 
 type cancelingVoiceRecognizer struct {

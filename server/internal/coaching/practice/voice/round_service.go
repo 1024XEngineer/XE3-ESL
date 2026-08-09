@@ -366,6 +366,41 @@ func (service *VoiceRoundService) Transcribe(
 	respondentParticipantID string,
 	command TranscribeVoiceCommand,
 ) (candidate TranscriptionCandidate, returnErr error) {
+	return service.transcribe(
+		ctx,
+		actor,
+		respondentParticipantID,
+		command,
+		nil,
+	)
+}
+
+func (service *VoiceRoundService) TranscribeStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	respondentParticipantID string,
+	command TranscribeVoiceCommand,
+	observer TranscriptionObserver,
+) (candidate TranscriptionCandidate, returnErr error) {
+	if observer == nil {
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
+	}
+	return service.transcribe(
+		ctx,
+		actor,
+		respondentParticipantID,
+		command,
+		observer,
+	)
+}
+
+func (service *VoiceRoundService) transcribe(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	respondentParticipantID string,
+	command TranscribeVoiceCommand,
+	observer TranscriptionObserver,
+) (candidate TranscriptionCandidate, returnErr error) {
 	if err := validateVoiceContext(ctx, actor); err != nil ||
 		strings.TrimSpace(respondentParticipantID) == "" ||
 		strings.TrimSpace(command.SessionID) == "" ||
@@ -482,10 +517,27 @@ func (service *VoiceRoundService) Transcribe(
 	}
 
 	startedAt := service.now()
-	result, err := service.recognizer.Transcribe(
-		ctx,
-		TranscriptionRequest{Audio: source},
-	)
+	request := TranscriptionRequest{Audio: source}
+	var result TranscriptionResult
+	if observer == nil {
+		result, err = service.recognizer.Transcribe(ctx, request)
+	} else {
+		streamingRecognizer, ok := service.recognizer.(StreamingSpeechRecognizer)
+		if !ok {
+			err = NewProviderError(
+				ProviderOperationTranscription,
+				ProviderErrorConfiguration,
+				"",
+				errors.New("practice voice: streaming recognizer is required"),
+			)
+		} else {
+			result, err = streamingRecognizer.TranscribeStream(
+				ctx,
+				request,
+				observer,
+			)
+		}
+	}
 	if err != nil {
 		attempt := safeAttempt(
 			err,

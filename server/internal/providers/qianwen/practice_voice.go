@@ -56,6 +56,59 @@ func (recognizer *PracticeVoiceRecognizer) Transcribe(
 	}, nil
 }
 
+func (recognizer *PracticeVoiceRecognizer) TranscribeStream(
+	ctx context.Context,
+	request practicevoice.TranscriptionRequest,
+	observer practicevoice.TranscriptionObserver,
+) (practicevoice.TranscriptionResult, error) {
+	if recognizer == nil || recognizer.recognizer == nil || observer == nil ||
+		recognizer.recognizer.model != "fun-asr-realtime" {
+		return practicevoice.TranscriptionResult{},
+			practicevoice.NewProviderError(
+				practicevoice.ProviderOperationTranscription,
+				practicevoice.ProviderErrorConfiguration,
+				"",
+				errors.New("Qianwen streaming Practice Voice recognizer is required"),
+			)
+	}
+	result, err := recognizer.recognizer.TranscribeStream(
+		ctx,
+		protocol.TranscriptionRequest{Audio: request.Audio},
+		practiceVoiceTranscriptionObserver{observer: observer},
+	)
+	if err != nil {
+		return practicevoice.TranscriptionResult{},
+			mapPracticeVoiceError(
+				err,
+				practicevoice.ProviderOperationTranscription,
+			)
+	}
+	return practicevoice.TranscriptionResult{
+		ID:         result.ID,
+		Provider:   result.Provider,
+		Model:      result.Model,
+		Transcript: result.Transcript,
+		Usage:      mapPracticeVoiceUsage(result.Usage),
+	}, nil
+}
+
+type practiceVoiceTranscriptionObserver struct {
+	observer practicevoice.TranscriptionObserver
+}
+
+func (observer practiceVoiceTranscriptionObserver) OnTranscriptionUpdate(
+	ctx context.Context,
+	update protocol.TranscriptionUpdate,
+) error {
+	return observer.observer.OnTranscriptionUpdate(
+		ctx,
+		practicevoice.TranscriptionUpdate{
+			Transcript: update.Transcript,
+			Final:      update.Final,
+		},
+	)
+}
+
 type PracticeVoiceSynthesizer struct {
 	synthesizer *speechSynthesizer
 }
@@ -264,8 +317,8 @@ func mapPracticeVoiceErrorKind(kind protocol.ErrorKind) practicevoice.ProviderEr
 }
 
 var (
-	_ practicevoice.SpeechRecognizer   = (*PracticeVoiceRecognizer)(nil)
-	_ practicevoice.SpeechSynthesizer  = (*PracticeVoiceSynthesizer)(nil)
-	_ practicevoice.QuestionGenerator  = (*PracticeVoiceQuestionGenerator)(nil)
-	_ practicevoice.AnswerTipGenerator = (*PracticeVoiceAnswerTipGenerator)(nil)
+	_ practicevoice.StreamingSpeechRecognizer = (*PracticeVoiceRecognizer)(nil)
+	_ practicevoice.SpeechSynthesizer         = (*PracticeVoiceSynthesizer)(nil)
+	_ practicevoice.QuestionGenerator         = (*PracticeVoiceQuestionGenerator)(nil)
+	_ practicevoice.AnswerTipGenerator        = (*PracticeVoiceAnswerTipGenerator)(nil)
 )
