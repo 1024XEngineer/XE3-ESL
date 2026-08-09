@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ func TestPostgresAnswerPreparationsEnforceIdentityIdempotencyVersionAndCleanup(t
 			t.Fatalf("insert identity: %v", err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-2026',3,'2026-05-08','season','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,display_order) VALUES('bank-2026','p1-topic-001','音乐','Music','new',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-2026','p1-topic-001',1,'Do you enjoy music?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-2026'`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-2026',3,'2026-05-08','season','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,display_order) VALUES('bank-2026','p1-topic-001','音乐','Music','new',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-2026','p1-topic-001',1,'Do you enjoy music?'),('bank-2026','p1-topic-001',2,'Do you play music?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-2026'`); err != nil {
 		t.Fatalf("insert question: %v", err)
 	}
 	store, _ := NewPostgresStore(pool)
@@ -40,6 +42,36 @@ func TestPostgresAnswerPreparationsEnforceIdentityIdempotencyVersionAndCleanup(t
 	restored, replayed, err := service.Create(ctx, owner, "create-key-1", request)
 	if err != nil || !replayed || restored.ID != created.ID {
 		t.Fatalf("replay = %#v replay=%t err=%v", restored, replayed, err)
+	}
+	existingRequest := request
+	existingRequest.PersonalPoints = nil
+	existing, replayed, err := service.Create(ctx, owner, "create-key-existing", existingRequest)
+	if err != nil || !replayed || existing.ID != created.ID || existing.PersonalPoints[0] != "I play piano" {
+		t.Fatalf("existing = %#v replay=%t err=%v", existing, replayed, err)
+	}
+	concurrentService, _ := NewAnswerPreparationService(store, store, &answerGeneratorStub{}, SecureAnswerPreparationIDGenerator{})
+	concurrentRequest := request
+	concurrentRequest.Question.QuestionPosition = 2
+	type createResult struct {
+		value    AnswerPreparation
+		replayed bool
+		err      error
+	}
+	results := make([]createResult, 2)
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for index := range results {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			<-start
+			results[index].value, results[index].replayed, results[index].err = concurrentService.Create(ctx, owner, fmt.Sprintf("create-key-concurrent-%d", index), concurrentRequest)
+		}(index)
+	}
+	close(start)
+	group.Wait()
+	if results[0].err != nil || results[1].err != nil || results[0].value.ID != results[1].value.ID || results[0].replayed == results[1].replayed {
+		t.Fatalf("concurrent Create = %#v", results)
 	}
 	changed := request
 	changed.TargetBand = 7
@@ -71,6 +103,9 @@ func TestPostgresAnswerPreparationsEnforceIdentityIdempotencyVersionAndCleanup(t
 	}
 	if _, err := service.Delete(ctx, owner, created.ID, "delete-key-1", ready.Version); err != nil {
 		t.Fatalf("idempotent Delete: %v", err)
+	}
+	if _, err := service.Delete(ctx, owner, results[0].value.ID, "delete-key-concurrent", results[0].value.Version); err != nil {
+		t.Fatalf("delete concurrent Create result: %v", err)
 	}
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ielts_answer_preparation_idempotency WHERE owner_user_id=$1 AND resource_id IS NOT NULL`, owner.UserID).Scan(&count); err != nil || count != 0 {
