@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
@@ -671,17 +672,7 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 8,
       ),
       children: [
-        SpeakUpNavigationHeader(
-          title: _practiceHubLabel(hub),
-          backButtonKey: const Key('preparation-back-to-families'),
-          titleKey: Key('practice-hub-title-${hub.name}'),
-          onBack: () => setState(() => _selectedHub = null),
-          trailing: hub == _PracticeHub.interview
-              ? InterviewCatalogCreateButton(
-                  onPressed: widget.onOpenJobPreparation,
-                )
-              : null,
-        ),
+        _buildHubHeader(hub),
         SizedBox(height: hub == _PracticeHub.interview ? 20 : 16),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
@@ -740,17 +731,7 @@ class _PreparationPageState extends State<PreparationPage> {
           top: 8,
         ),
         children: [
-          SpeakUpNavigationHeader(
-            title: _practiceHubLabel(selectedHub),
-            backButtonKey: const Key('preparation-back-to-families'),
-            titleKey: Key('practice-hub-title-${selectedHub.name}'),
-            onBack: () => setState(() => _selectedHub = null),
-            trailing: selectedHub == _PracticeHub.interview
-                ? InterviewCatalogCreateButton(
-                    onPressed: widget.onOpenJobPreparation,
-                  )
-                : null,
-          ),
+          _buildHubHeader(selectedHub),
           SizedBox(height: selectedHub == _PracticeHub.interview ? 20 : 16),
           const PreparationCatalogEmpty(message: '连接场景服务后即可查看练习。'),
         ],
@@ -782,6 +763,20 @@ class _PreparationPageState extends State<PreparationPage> {
           Expanded(child: _buildPracticeHubCarousel()),
         ],
       ),
+    );
+  }
+
+  Widget _buildHubHeader(_PracticeHub hub) {
+    return SpeakUpNavigationHeader(
+      title: _practiceHubDisplayTitle(hub),
+      semanticLabel: _practiceHubLabel(hub),
+      titleStyle: SpeakUpDesign.secondaryDisplayTitle,
+      backButtonKey: const Key('preparation-back-to-families'),
+      titleKey: Key('practice-hub-title-${hub.name}'),
+      onBack: () => setState(() => _selectedHub = null),
+      trailing: hub == _PracticeHub.interview
+          ? InterviewCatalogCreateButton(onPressed: widget.onOpenJobPreparation)
+          : null,
     );
   }
 }
@@ -1199,6 +1194,15 @@ String _practiceHubLabel(_PracticeHub hub) {
     _PracticeHub.ielts => 'IELTS 口语',
     _PracticeHub.workplace => '职场英语',
     _PracticeHub.life => '生活与旅行',
+  };
+}
+
+String _practiceHubDisplayTitle(_PracticeHub hub) {
+  return switch (hub) {
+    _PracticeHub.interview => 'Interview',
+    _PracticeHub.ielts => 'IELTS',
+    _PracticeHub.workplace => 'Workplace',
+    _PracticeHub.life => 'Travel',
   };
 }
 
