@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -435,6 +437,77 @@ void main() {
     expect(client.generateCalls, 0);
   });
 
+  testWidgets('keeps answer preparation limited to Part 1', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part3,
+          title: 'Watches',
+          subtitle: 'Part 3',
+          questions: const ['Why do people wear expensive watches?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_3',
+              sourceId: 'watches',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: _AnswerPreparationClient(),
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-set-detail-expand-1')), findsNothing);
+    expect(find.byKey(const Key('ielts-answer-panel-1')), findsNothing);
+  });
+
+  testWidgets('tracks answer loading independently for each question', (
+    tester,
+  ) async {
+    final client = _DelayedAnswerPreparationClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Question one?', 'Question two?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 2,
+            ),
+          ],
+          answerPreparationClient: client,
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-set-detail-expand-2')));
+    await tester.pump();
+
+    client.complete(1);
+    await tester.pump();
+    expect(find.text('正在准备表达…'), findsOneWidget);
+
+    client.complete(2);
+    await tester.pump();
+    expect(find.text('Example for question 2.'), findsOneWidget);
+    expect(find.text('正在准备表达…'), findsNothing);
+  });
+
   testWidgets('keeps the detail action reachable on a narrow large-text view', (
     tester,
   ) async {
@@ -870,6 +943,67 @@ final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
       speechText: null,
     );
   }
+}
+
+final class _DelayedAnswerPreparationClient
+    implements IeltsAnswerPreparationClient {
+  final Map<int, Completer<IeltsAnswerPreparation>> _creates = {};
+
+  void complete(int position) {
+    final question = IeltsAnswerQuestionReference(
+      bankId: 'bank-1',
+      part: 'PART_1',
+      sourceId: 'music',
+      questionPosition: position,
+    );
+    _creates[position]!.complete(
+      IeltsAnswerPreparation(
+        id: 'ielts_answer_$position',
+        question: question,
+        personalPoints: const [],
+        targetBand: 7,
+        status: IeltsAnswerPreparationStatus.ready,
+        version: 1,
+        generationRevision: 1,
+        answer: 'Example for question $position.',
+        outline: const [],
+        usefulExpressions: const [],
+        speechText: 'Example for question $position.',
+      ),
+    );
+  }
+
+  @override
+  Future<IeltsAnswerPreparation> create({
+    required IeltsAnswerQuestionReference question,
+    required List<String> personalPoints,
+    required double targetBand,
+  }) {
+    final completer = Completer<IeltsAnswerPreparation>();
+    _creates[question.questionPosition] = completer;
+    return completer.future;
+  }
+
+  @override
+  Future<void> delete({required String id, required int expectedVersion}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<IeltsAnswerPreparation> generate({
+    required String id,
+    required int expectedVersion,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<IeltsAnswerPreparation> get(String id) => throw UnimplementedError();
+
+  @override
+  Future<IeltsAnswerPreparation> update({
+    required String id,
+    required int expectedVersion,
+    required List<String> personalPoints,
+    required double targetBand,
+  }) => throw UnimplementedError();
 }
 
 final class _HubFixtureClient implements SceneClient {

@@ -42,10 +42,11 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   int? _speakingQuestionIndex;
   int? _speakingAnswerIndex;
   int? _expandedQuestionIndex;
-  int? _generatingQuestionIndex;
   final Map<int, IeltsAnswerPreparation> _preparations = {};
+  final Set<int> _generatingQuestionIndexes = {};
+  final Map<int, String> _answerErrors = {};
+  final Map<int, int> _answerRequests = {};
   String? _speechError;
-  String? _answerError;
   int _speechRequest = 0;
 
   String get _partLabel => switch (widget.mode) {
@@ -76,8 +77,28 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   }
 
   bool get _canPrepareAnswers =>
+      widget.mode == PracticeMode.part1 &&
       widget.answerPreparationClient != null &&
       widget.questionReferences.length == widget.questions.length;
+
+  int _startAnswerRequest(int index) {
+    final request = (_answerRequests[index] ?? 0) + 1;
+    setState(() {
+      _answerRequests[index] = request;
+      _generatingQuestionIndexes.add(index);
+      _answerErrors.remove(index);
+    });
+    return request;
+  }
+
+  bool _isCurrentAnswerRequest(int index, int request) =>
+      mounted && _answerRequests[index] == request;
+
+  void _finishAnswerRequest(int index, int request) {
+    if (_isCurrentAnswerRequest(index, request)) {
+      setState(() => _generatingQuestionIndexes.remove(index));
+    }
+  }
 
   @override
   void dispose() {
@@ -171,10 +192,10 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     if (points == null || !mounted) {
       return;
     }
-    setState(() {
-      _generatingQuestionIndex = index;
-      _answerError = null;
-    });
+    if (_generatingQuestionIndexes.contains(index)) {
+      return;
+    }
+    final request = _startAnswerRequest(index);
     try {
       final existing = _preparations[index];
       var draft =
@@ -198,35 +219,31 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
         id: draft.id,
         expectedVersion: draft.version,
       );
-      if (mounted) {
+      if (_isCurrentAnswerRequest(index, request)) {
         setState(() {
           _preparations[index] = ready;
-          _answerError = null;
+          _answerErrors.remove(index);
         });
       }
     } on IeltsAnswerPreparationException catch (error) {
-      if (mounted) {
-        setState(() => _answerError = _answerFailureMessage(error));
+      if (_isCurrentAnswerRequest(index, request)) {
+        setState(() => _answerErrors[index] = _answerFailureMessage(error));
       }
     } catch (_) {
-      if (mounted) {
-        setState(() => _answerError = '暂时无法生成答案，请稍后重试。');
+      if (_isCurrentAnswerRequest(index, request)) {
+        setState(() => _answerErrors[index] = '暂时无法生成答案，请稍后重试。');
       }
     } finally {
-      if (mounted) {
-        setState(() => _generatingQuestionIndex = null);
-      }
+      _finishAnswerRequest(index, request);
     }
   }
 
   Future<void> _ensureExample(int index) async {
-    if (_preparations.containsKey(index) || _generatingQuestionIndex == index) {
+    if (_preparations.containsKey(index) ||
+        _generatingQuestionIndexes.contains(index)) {
       return;
     }
-    setState(() {
-      _generatingQuestionIndex = index;
-      _answerError = null;
-    });
+    final request = _startAnswerRequest(index);
     try {
       final draft = await widget.answerPreparationClient!.create(
         question: widget.questionReferences[index],
@@ -234,10 +251,10 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
         targetBand: 7,
       );
       if (draft.status == IeltsAnswerPreparationStatus.ready) {
-        if (mounted) {
+        if (_isCurrentAnswerRequest(index, request)) {
           setState(() {
             _preparations[index] = draft;
-            _answerError = null;
+            _answerErrors.remove(index);
           });
         }
         return;
@@ -246,20 +263,18 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
         id: draft.id,
         expectedVersion: draft.version,
       );
-      if (mounted) {
+      if (_isCurrentAnswerRequest(index, request)) {
         setState(() {
           _preparations[index] = example;
-          _answerError = null;
+          _answerErrors.remove(index);
         });
       }
     } on IeltsAnswerPreparationException catch (error) {
-      if (mounted) {
-        setState(() => _answerError = _answerFailureMessage(error));
+      if (_isCurrentAnswerRequest(index, request)) {
+        setState(() => _answerErrors[index] = _answerFailureMessage(error));
       }
     } finally {
-      if (mounted) {
-        setState(() => _generatingQuestionIndex = null);
-      }
+      _finishAnswerRequest(index, request);
     }
   }
 
@@ -354,7 +369,7 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                                     _expandedQuestionIndex = opening
                                         ? index
                                         : null;
-                                    _answerError = null;
+                                    _answerErrors.remove(index);
                                   });
                                   if (opening) {
                                     unawaited(_ensureExample(index));
@@ -367,8 +382,10 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                           _QuestionAnswerPanel(
                             index: index,
                             preparation: _preparations[index],
-                            generating: _generatingQuestionIndex == index,
-                            errorMessage: _answerError,
+                            generating: _generatingQuestionIndexes.contains(
+                              index,
+                            ),
+                            errorMessage: _answerErrors[index],
                             speaking: _speakingAnswerIndex == index,
                             onPrepare: () => _prepareAnswer(index),
                             onRetry: () => _ensureExample(index),

@@ -261,16 +261,20 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           subtitle: item.subtitle,
           questions: item.questions,
           cueCard: item.cueCard,
-          answerPreparationClient: widget.controller.answerPreparationClient,
-          questionReferences: [
-            for (var index = 0; index < item.questions.length; index++)
-              IeltsAnswerQuestionReference(
-                bankId: bank.bankId,
-                part: item.mode == PracticeMode.part1 ? 'PART_1' : 'PART_3',
-                sourceId: item.id,
-                questionPosition: index + 1,
-              ),
-          ],
+          answerPreparationClient: item.mode == PracticeMode.part1
+              ? widget.controller.answerPreparationClient
+              : null,
+          questionReferences: item.mode == PracticeMode.part1
+              ? [
+                  for (var index = 0; index < item.questions.length; index++)
+                    IeltsAnswerQuestionReference(
+                      bankId: bank.bankId,
+                      part: 'PART_1',
+                      sourceId: item.id,
+                      questionPosition: index + 1,
+                    ),
+                ]
+              : const [],
           onStart: scene == null
               ? null
               : () {
