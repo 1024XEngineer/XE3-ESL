@@ -63,4 +63,31 @@ void main() {
     expect(playbackCalls, 1);
     expect(find.text('介绍一下你的角色。'), findsOneWidget);
   });
+
+  testWidgets('keeps actions attached to a user message', (tester) async {
+    var actionCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PracticeMessageBubble(
+            message: const PracticeMessage(
+              id: 'practice-user-actions',
+              role: PracticeMessageRole.user,
+              text: 'I led the migration.',
+            ),
+            actions: TextButton(
+              key: const Key('practice-user-action'),
+              onPressed: () => actionCalls++,
+              child: const Text('查看反馈'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('practice-user-action')));
+
+    expect(actionCalls, 1);
+    expect(find.text('查看反馈'), findsOneWidget);
+  });
 }

@@ -55,12 +55,13 @@ final class ConversationTextMessageContent extends StatelessWidget {
       maintainState: true,
       child: _messageText(),
     );
-    if (isUser || hasFailed) {
+    if (hasFailed) {
       return content;
     }
-    final translate = isStreaming ? null : onTranslate;
+    final translate = isUser || isStreaming ? null : onTranslate;
     final hasActions = leadingActions.isNotEmpty || translate != null;
-    if (!hasActions && mediaError == null) {
+    final visibleMediaError = isUser ? null : mediaError;
+    if (!hasActions && visibleMediaError == null) {
       return content;
     }
     return Column(
@@ -76,7 +77,7 @@ final class ConversationTextMessageContent extends StatelessWidget {
             onTranslate: translate,
             leadingActions: leadingActions,
           ),
-        if (mediaError case final error?) ...[
+        if (visibleMediaError case final error?) ...[
           const SizedBox(height: 3),
           Text(
             error,
