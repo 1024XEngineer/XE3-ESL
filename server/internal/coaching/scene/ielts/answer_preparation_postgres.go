@@ -77,12 +77,25 @@ func (store *PostgresStore) Create(ctx context.Context, actor requestcontext.Act
 		return replay, found, err
 	}
 	points, _ := json.Marshal(command.Request.PersonalPoints)
-	_, err = tx.Exec(ctx, `INSERT INTO ielts_answer_preparations (owner_user_id, answer_preparation_id, bank_id, part, source_id, question_position, question_prompt, personal_points, target_band) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, actor.UserID, command.ID, command.Question.Reference.BankID, command.Question.Reference.Part, command.Question.Reference.SourceID, command.Question.Reference.QuestionPosition, command.Question.Prompt, points, command.Request.TargetBand)
+	tag, err := tx.Exec(ctx, `INSERT INTO ielts_answer_preparations (owner_user_id, answer_preparation_id, bank_id, part, source_id, question_position, question_prompt, personal_points, target_band) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (owner_user_id, bank_id, part, source_id, question_position) DO NOTHING`, actor.UserID, command.ID, command.Question.Reference.BankID, command.Question.Reference.Part, command.Question.Reference.SourceID, command.Question.Reference.QuestionPosition, command.Question.Prompt, points, command.Request.TargetBand)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return AnswerPreparation{}, false, ErrAnswerPreparationConflict
 		}
 		return AnswerPreparation{}, false, answerDatabaseError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		existing, err := getAnswerPreparationByQuestion(ctx, tx, actor.UserID, command.Question.Reference)
+		if err != nil {
+			return AnswerPreparation{}, false, err
+		}
+		if err := persistAnswerMutation(ctx, tx, actor.UserID, command.Intent, existing.ID, existing, false); err != nil {
+			return AnswerPreparation{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AnswerPreparation{}, false, answerDatabaseError(err)
+		}
+		return existing, true, nil
 	}
 	created, err := getAnswerPreparation(ctx, tx, actor.UserID, command.ID)
 	if err != nil {
@@ -303,6 +316,15 @@ type answerQueryer interface {
 
 func getAnswerPreparation(ctx context.Context, query answerQueryer, owner, id string) (AnswerPreparation, error) {
 	row := query.QueryRow(ctx, `SELECT `+answerPreparationColumns+` FROM ielts_answer_preparations WHERE owner_user_id=$1 AND answer_preparation_id=$2`, owner, id)
+	return scanAnswerPreparation(row)
+}
+
+func getAnswerPreparationByQuestion(ctx context.Context, query answerQueryer, owner string, reference QuestionReference) (AnswerPreparation, error) {
+	row := query.QueryRow(ctx, `SELECT `+answerPreparationColumns+` FROM ielts_answer_preparations WHERE owner_user_id=$1 AND bank_id=$2 AND part=$3 AND source_id=$4 AND question_position=$5`, owner, reference.BankID, reference.Part, reference.SourceID, reference.QuestionPosition)
+	return scanAnswerPreparation(row)
+}
+
+func scanAnswerPreparation(row pgx.Row) (AnswerPreparation, error) {
 	var value AnswerPreparation
 	var points, outline, expressions []byte
 	err := row.Scan(&value.ID, &value.Question.Reference.BankID, &value.Question.Reference.Part, &value.Question.Reference.SourceID, &value.Question.Reference.QuestionPosition, &value.Question.Prompt, &points, &value.TargetBand, &value.Status, &value.Answer, &outline, &expressions, &value.SpeechText, &value.FailureCode, &value.Version, &value.GenerationRevision, &value.CreatedAt, &value.UpdatedAt)
