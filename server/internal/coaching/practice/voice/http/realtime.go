@@ -17,7 +17,10 @@ import (
 )
 
 const practiceVoiceInputWebSocketProtocol = "speakup.voice-input.v1"
-const maxPracticeRealtimePCMBytes = 16_000 * 2 * 120
+
+// This is a transport-capacity boundary, not an IELTS answer timer. The
+// Practice flow owns any exam-specific timing and stops capture accordingly.
+const maxPracticeRealtimePCMBytes = int(platformmedia.MaxAudioBytes) - 44
 
 type practiceRealtimeStartFrame struct {
 	Type           string `json:"type"`
