@@ -47,14 +47,14 @@ void main() {
     expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
     expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
     expect(find.text('画面已连接'), findsOneWidget);
-    expect(find.byKey(const Key('scenario-live-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
     expect(
       find.byKey(const Key('scenario-toggle-conversation-text')),
       findsNothing,
     );
     expect(
       tester.getSize(find.byKey(const Key('scenario-avatar-region'))).height,
-      closeTo(844 * 0.44, 0.1),
+      closeTo(844 * 0.34, 0.1),
     );
     expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
     expect(find.textContaining('评分'), findsNothing);
@@ -62,9 +62,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps scenario text and avatar subtitle visible', (
-    tester,
-  ) async {
+  testWidgets('keeps scenario text in the conversation panel', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -82,7 +80,9 @@ void main() {
       find.byKey(const Key('scenario-toggle-conversation-text')),
       findsNothing,
     );
-    expect(find.byKey(const Key('scenario-live-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
+    expect(find.byKey(const Key('scenario-avatar-status')), findsNothing);
+    expect(find.text('正在准备画面'), findsNothing);
     final staticAvatar = tester.widget<Image>(
       find.byKey(const Key('scenario-avatar-placeholder')),
     );
@@ -91,7 +91,7 @@ void main() {
       (staticAvatar.image as AssetImage).assetName,
       'assets/images/scenes/static-avatar-van-gogh.jpg',
     );
-    expect(find.text(question), findsNWidgets(2));
+    expect(find.text(question), findsOneWidget);
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),
     );

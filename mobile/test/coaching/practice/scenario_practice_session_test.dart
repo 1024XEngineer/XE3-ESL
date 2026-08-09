@@ -379,6 +379,35 @@ void main() {
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
 
+  testWidgets('routes a scenario to the static avatar without loading status', (
+    tester,
+  ) async {
+    final practiceController = await _scenarioPracticeController();
+    addTearDown(practiceController.dispose);
+
+    await tester.pumpWidget(
+      SpeakUpApp.preview(practiceController: practiceController),
+    );
+    await tester.pumpAndSettle();
+
+    Navigator.of(
+      tester.element(find.byType(SpeakUpShell)),
+    ).pushNamed(AppRoutes.practice);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
+    expect(
+      find.byKey(const Key('scenario-avatar-placeholder')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('scenario-avatar-status')), findsNothing);
+    expect(find.text('正在准备画面'), findsNothing);
+    expect(
+      find.byKey(const Key('scenario-record')).hitTestable(),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('routes interview practice through avatar with Tips', (
     tester,
   ) async {
