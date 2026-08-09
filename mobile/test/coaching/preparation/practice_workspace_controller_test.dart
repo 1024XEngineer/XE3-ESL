@@ -71,6 +71,42 @@ void main() {
     },
   );
 
+  test('active committed practice resumes without restoring again', () async {
+    final harness = await _createHarness();
+    final workspace = PracticeWorkspaceController(
+      conversationController: harness.conversation,
+      practiceController: harness.practiceController,
+      recordStore: _InspectableRecordStore(),
+    );
+    addTearDown(() {
+      workspace.dispose();
+      harness.dispose();
+    });
+    await workspace.activateAccount('account-1');
+    final launched = await _launchPractice(
+      harness: harness,
+      workspace: workspace,
+      operationId: 'launch-active-operation',
+      sceneId: 'interview-screening',
+      sceneTitle: '招聘初筛',
+      sessionId: 'practice-active-session',
+    );
+
+    expect(workspace.hasResumable, isTrue);
+    expect(harness.practiceController.hasActivePractice, isTrue);
+    expect(harness.practiceClient.restoreCalls, 0);
+
+    expect(await workspace.resumeCurrentPractice(), isTrue);
+
+    expect(harness.practiceClient.restoreCalls, 0);
+    expect(harness.conversation.threadId, launched.lease.practiceThreadId);
+    expect(harness.conversation.activeGoalId, launched.goal.id);
+    expect(
+      harness.practiceController.practiceSessionId,
+      'practice-active-session',
+    );
+  });
+
   test(
     'committed practice parks on home and resumes by exact identities',
     () async {
@@ -114,7 +150,9 @@ void main() {
       expect(restoredWorkspace.currentTitle, '招聘初筛');
       expect(restoredWorkspace.currentSceneId, 'interview-screening');
       expect(restoredWorkspace.hasResumable, isTrue);
+      expect(harness.practiceClient.restoreCalls, 0);
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
+      expect(harness.practiceClient.restoreCalls, 1);
       expect(harness.conversation.threadId, launched.lease.practiceThreadId);
       expect(harness.conversation.activeGoalId, launched.goal.id);
       expect(
@@ -1258,6 +1296,7 @@ final class _WorkspacePracticeClient
       <String, PracticeSessionSnapshot>{};
   final Map<String, String> _sessionsByThread = <String, String>{};
   final List<String> endedSessionIds = <String>[];
+  int restoreCalls = 0;
   int endFailures = 0;
   _StartSeed? _nextStart;
   Completer<PracticeTurnConfirmation>? _pendingTextSubmission;
@@ -1328,6 +1367,7 @@ final class _WorkspacePracticeClient
   Future<PracticeSessionSnapshot> restorePractice({
     required String sessionId,
   }) async {
+    restoreCalls++;
     return _sessions[sessionId] ??
         (throw StateError('No exact Practice Session was prepared.'));
   }

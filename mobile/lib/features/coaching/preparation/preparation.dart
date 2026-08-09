@@ -26,6 +26,8 @@ enum _PracticeHub { interview, ielts, workplace, life }
 
 enum _ExistingPracticeAction { continuePractice, replace }
 
+typedef PracticeStartedCallback = FutureOr<void> Function();
+
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
@@ -52,7 +54,7 @@ class PreparationPage extends StatefulWidget {
   final VoidCallback? onOpenJobPreparation;
   final ValueChanged<String>? onOpenInterviewPlan;
   final VoidCallback? onSceneSelected;
-  final VoidCallback? onPracticeStarted;
+  final PracticeStartedCallback? onPracticeStarted;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
@@ -224,13 +226,16 @@ class _PreparationPageState extends State<PreparationPage> {
           ieltsSelection,
         );
       }
+      await widget.onPracticeStarted?.call();
+      if (!mounted) {
+        return;
+      }
       catalog.showSceneList();
       setState(() {
         _selectedHub = null;
         _launchingIeltsSelection = null;
         _scenarioFormVisible = false;
       });
-      widget.onPracticeStarted?.call();
     }
   }
 
@@ -250,13 +255,16 @@ class _PreparationPageState extends State<PreparationPage> {
           );
         }
       }
+      await widget.onPracticeStarted?.call();
+      if (!mounted) {
+        return;
+      }
       catalog?.showSceneList();
       setState(() {
         _selectedHub = null;
         _launchingIeltsSelection = null;
         _scenarioFormVisible = false;
       });
-      widget.onPracticeStarted?.call();
     }
   }
 
@@ -421,14 +429,17 @@ class _PreparationPageState extends State<PreparationPage> {
     if (launch?.hasResumablePractice ?? false) {
       final resumed = await launch!.resumeCurrentPractice();
       if (resumed && mounted) {
+        await widget.onPracticeStarted?.call();
+        if (!mounted) {
+          return;
+        }
         widget.preparationController?.showSceneList();
         setState(() => _selectedHub = null);
-        widget.onPracticeStarted?.call();
       }
       return;
     }
     if (widget.practiceController?.hasActivePractice ?? false) {
-      widget.onPracticeStarted?.call();
+      await widget.onPracticeStarted?.call();
     } else if (widget.onSceneSelected case final callback?) {
       callback();
     } else if (widget.showBackButton) {

@@ -254,9 +254,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openPractice() {
-    unawaited(_openPracticeRoute());
-  }
+  Future<void> _openPractice() => _openPracticeRoute();
 
   Future<void> _confirmAgentHandoff(AgentHandoff handoff) async {
     final controller = widget.practicePlanHandoffController;
