@@ -404,8 +404,11 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             onOpenInterviewPlan: widget.jobPreparationController == null
                 ? null
                 : (planId) => unawaited(_openSavedInterviewPlan(planId)),
-            onPracticeStarted: () => _navigatorKey.currentState
-                ?.pushReplacementNamed(AppRoutes.practice),
+            onPracticeStarted: () async {
+              await _navigatorKey.currentState?.pushReplacementNamed(
+                AppRoutes.practice,
+              );
+            },
           ),
           AppRoutes.jobPreparation
               when widget.jobPreparationController != null =>
@@ -413,8 +416,11 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
               controller: widget.jobPreparationController!,
               catalogController: widget.preparationController,
               resumeController: widget.resumeController,
-              onPracticeStarted: () => _navigatorKey.currentState
-                  ?.pushReplacementNamed(AppRoutes.practice),
+              onPracticeStarted: () async {
+                await _navigatorKey.currentState?.pushReplacementNamed(
+                  AppRoutes.practice,
+                );
+              },
               onPlanCreated: () => _navigatorKey.currentState?.pop(),
             ),
           AppRoutes.practice => _buildPracticePage(),

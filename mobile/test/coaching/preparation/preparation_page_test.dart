@@ -171,6 +171,7 @@ void main() {
     );
     final launchClient = _PageLaunchClient();
     var navigations = 0;
+    final practiceRoute = Completer<void>();
     final launchController = PreparationLaunchController(
       client: launchClient,
       contextProvider: () => _pageContext,
@@ -198,7 +199,10 @@ void main() {
         home: PreparationPage(
           preparationController: preparationController,
           launchController: launchController,
-          onPracticeStarted: () => navigations++,
+          onPracticeStarted: () {
+            navigations++;
+            return practiceRoute.future;
+          },
         ),
       ),
     );
@@ -239,10 +243,20 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(submit);
-    await tester.pumpAndSettle();
+    for (var attempt = 0; attempt < 20 && navigations == 0; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
     expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
     expect(navigations, 1);
+    expect(
+      find.byKey(const Key('preparation-scene-launch-status')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('preparation-catalog-list')), findsNothing);
+    practiceRoute.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('preparation-catalog-list')), findsOneWidget);
     expect(launchClient.lastProfileInput?.kind, PreparationKind.scenario);
     expect(
       launchClient.lastProfileInput?.scenario,

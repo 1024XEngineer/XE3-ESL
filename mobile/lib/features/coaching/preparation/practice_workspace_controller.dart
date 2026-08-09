@@ -334,6 +334,20 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       _setError('没有可以继续的练习。');
       return false;
     }
+    final activeScene = practiceController.scene;
+    if (practiceController.hasActivePractice &&
+        conversationController.threadId == current.practiceThreadId &&
+        practiceController.practiceSessionId == current.sessionId &&
+        (current.goalId == null ||
+            conversationController.activeGoalId == current.goalId) &&
+        activeScene?.id == current.scene!.id &&
+        activeScene?.version == current.scene!.version) {
+      if (_errorMessage != null) {
+        _errorMessage = null;
+        notifyListeners();
+      }
+      return true;
+    }
     final accountGeneration = _accountGeneration;
     final operationGeneration = ++_operationGeneration;
     _beginOperation();

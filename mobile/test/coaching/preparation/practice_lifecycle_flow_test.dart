@@ -137,6 +137,7 @@ void main() {
       );
       expect(workspaceController.currentSessionId, firstSessionId);
       expect(conversationController.threads, hasLength(2));
+      expect(practiceClient.restoreCalls, 0);
 
       await _tapVisible(
         tester,
@@ -525,6 +526,7 @@ final class _LifecyclePracticeClient
   final Map<String, PracticeSessionSnapshot> _sessions =
       <String, PracticeSessionSnapshot>{};
   final List<String> endedSessionIds = <String>[];
+  int restoreCalls = 0;
   _StartSeed? _nextStart;
 
   PracticeSessionSnapshot? snapshotFor(String sessionId) =>
@@ -555,6 +557,7 @@ final class _LifecyclePracticeClient
   Future<PracticeSessionSnapshot> restorePractice({
     required String sessionId,
   }) async {
+    restoreCalls++;
     return _sessions[sessionId] ??
         (throw StateError('No exact lifecycle session was prepared.'));
   }
