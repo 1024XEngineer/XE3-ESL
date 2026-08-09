@@ -43,6 +43,7 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/ielts/wire_ielts_answer_preparation_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
@@ -144,6 +145,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? reviewHistoryTransport,
   IdentityHttpTransport? interviewReportTransport,
   IdentityHttpTransport? ieltsSpeakingReportTransport,
+  IdentityHttpTransport? ieltsAnswerPreparationTransport,
   IdentityHttpTransport? speechFeedbackTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
@@ -368,6 +370,18 @@ ProductionAppDependencies createProductionAppDependencies({
         },
     transport: ieltsSpeakingReportTransport,
   );
+  final ieltsAnswerPreparationClient = WireIeltsAnswerPreparationClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: ieltsAnswerPreparationTransport,
+  );
   final ieltsSpeakingReportController = IeltsSpeakingReportController(
     client: ieltsSpeakingReportClient,
   );
@@ -390,6 +404,7 @@ ProductionAppDependencies createProductionAppDependencies({
   );
   final ieltsPreparationController = IeltsPreparationController(
     client: ieltsQuestionBankClient,
+    answerPreparationClient: ieltsAnswerPreparationClient,
     historyStore: const SecureIeltsPracticeHistoryStore(),
   );
   final practiceWorkspaceController = PracticeWorkspaceController(

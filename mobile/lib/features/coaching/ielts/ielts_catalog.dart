@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
@@ -243,6 +244,10 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
   }
 
   Future<void> _open(_CatalogItem item) async {
+    final bank = widget.controller.questionBank;
+    if (bank == null) {
+      return;
+    }
     final scene = ieltsSceneForMode(widget.scenes, item.mode);
     final selection = IeltsPracticeSelection(
       part1SetId: item.mode == PracticeMode.part1 ? item.id : null,
@@ -256,6 +261,20 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           subtitle: item.subtitle,
           questions: item.questions,
           cueCard: item.cueCard,
+          answerPreparationClient: item.mode == PracticeMode.part1
+              ? widget.controller.answerPreparationClient
+              : null,
+          questionReferences: item.mode == PracticeMode.part1
+              ? [
+                  for (var index = 0; index < item.questions.length; index++)
+                    IeltsAnswerQuestionReference(
+                      bankId: bank.bankId,
+                      part: 'PART_1',
+                      sourceId: item.id,
+                      questionPosition: index + 1,
+                    ),
+                ]
+              : const [],
           onStart: scene == null
               ? null
               : () {
