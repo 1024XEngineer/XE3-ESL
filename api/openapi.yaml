@@ -34,7 +34,7 @@ tags:
   - name: Scene
     description: Versioned training Scenes, roles, and practice options.
   - name: IELTS Speaking
-    description: Published IELTS Speaking question-bank resources.
+    description: Published question-bank resources and actor-owned answer preparation.
   - name: Preparation
     description: User materials, immutable snapshots, and versioned practice plans.
   - name: Practice
@@ -103,6 +103,12 @@ paths:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
   /v1/ielts-speaking/question-bank:
     $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1question-bank
+  /v1/ielts-speaking/answer-preparations:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations~1{answer_preparation_id}
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}/generations:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations~1{answer_preparation_id}~1generations
   /v1/goals:
     $ref: ./modules/goal.yaml#/paths/~1v1~1goals
   /v1/goals/{goal_id}:
@@ -352,6 +358,10 @@ components:
       $ref: ./modules/ielts.yaml#/components/schemas/IeltsTopicGroup
     IeltsPart2CueCard:
       $ref: ./modules/ielts.yaml#/components/schemas/IeltsPart2CueCard
+    IeltsQuestionReference:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsQuestionReference
+    IeltsAnswerPreparation:
+      $ref: ./modules/ielts.yaml#/components/schemas/IeltsAnswerPreparation
     PreparationProfile:
       $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
     PreparationSnapshot:
