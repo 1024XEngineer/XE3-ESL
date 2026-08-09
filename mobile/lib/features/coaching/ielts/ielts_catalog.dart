@@ -9,7 +9,6 @@ class IeltsCatalog extends StatefulWidget {
   const IeltsCatalog({
     required this.controller,
     required this.scenes,
-    required this.onFullMockPressed,
     required this.onSelectionPressed,
     required this.onRetry,
     super.key,
@@ -17,7 +16,6 @@ class IeltsCatalog extends StatefulWidget {
 
   final IeltsPreparationController controller;
   final List<SceneDefinition> scenes;
-  final ValueChanged<SceneDefinition> onFullMockPressed;
   final void Function(
     SceneDefinition scene,
     PracticeMode mode,
@@ -55,28 +53,9 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
   @override
   Widget build(BuildContext context) {
     final bank = widget.controller.questionBank;
-    final fullMockScene = ieltsSceneForMode(
-      widget.scenes,
-      PracticeMode.fullMock,
-    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (fullMockScene != null) ...[
-          PreparationFeaturedScene(
-            key: const Key('ielts-mode-full'),
-            eyebrow: '完整模拟',
-            title: '快速开始整轮模考',
-            description: '服务端按本季题库组装 Part 1、2、3。',
-            actionLabel: '开始模考',
-            icon: Icons.timer_outlined,
-            color: PreparationDesign.ielts,
-            foregroundColor: Colors.white,
-            assetPath: 'assets/images/scenes/ielts-hero.jpg',
-            onPressed: () => widget.onFullMockPressed(fullMockScene),
-          ),
-          const SizedBox(height: 22),
-        ],
         if (widget.controller.isLoading && bank == null)
           const Center(
             child: Padding(
@@ -99,51 +78,80 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
   List<Widget> _catalog(IeltsQuestionBank bank) {
     final items = _filteredItems(bank);
     return [
-      TextField(
-        key: const Key('ielts-browser-search'),
-        controller: _search,
-        textInputAction: TextInputAction.search,
-        decoration: InputDecoration(
-          hintText: '搜索中英文题目…',
-          prefixIcon: const Icon(Icons.search_rounded),
-          suffixIcon: _search.text.isEmpty
-              ? null
-              : IconButton(
-                  onPressed: _search.clear,
-                  icon: const Icon(Icons.close_rounded),
-                ),
-          filled: true,
-          fillColor: PreparationDesign.surface,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(PreparationDesign.radiusCard),
-            borderSide: const BorderSide(color: PreparationDesign.border),
+      SizedBox(
+        height: 44,
+        child: TextField(
+          key: const Key('ielts-browser-search'),
+          controller: _search,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: '搜索中英文题目…',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: _search.text.isEmpty
+                ? null
+                : IconButton(
+                    onPressed: _search.clear,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+            filled: true,
+            fillColor: PreparationDesign.surfaceMuted,
+            contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                PreparationDesign.radiusControl,
+              ),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                PreparationDesign.radiusControl,
+              ),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                PreparationDesign.radiusControl,
+              ),
+              borderSide: const BorderSide(color: PreparationDesign.ink),
+            ),
           ),
         ),
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 12),
       _FilterRow(
-        allLabel: '全部题季',
-        options: bank.filters.releases,
-        selected: _release,
-        onSelected: (value) => setState(() => _release = value),
-      ),
-      const SizedBox(height: 8),
-      _FilterRow(
-        allLabel: '全部 Part',
+        semanticLabel: 'Part 筛选',
+        allLabel: '全部',
         options: bank.filters.parts,
         selected: _part,
         onSelected: (value) => setState(() => _part = value),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 4),
       _FilterRow(
-        allLabel: '全部标签',
+        key: const Key('ielts-release-filter'),
+        semanticLabel: '题季筛选',
+        allLabel: '全部',
+        options: bank.filters.releases,
+        selected: _release,
+        onSelected: (value) => setState(() => _release = value),
+      ),
+      const SizedBox(height: 4),
+      _FilterRow(
+        key: const Key('ielts-tag-filter'),
+        semanticLabel: '标签筛选',
+        allLabel: '全部',
         options: [...bank.filters.cueCardTypes, ...bank.filters.topicTags],
         selected: _tag,
         onSelected: (value) => setState(() => _tag = value),
       ),
-      const SizedBox(height: 20),
-      Text('共 ${items.length} 道专项题', style: PreparationDesign.sectionTitle),
       const SizedBox(height: 12),
+      Text(
+        '${items.length} 道题',
+        style: PreparationDesign.sectionTitle.copyWith(
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 10),
       if (items.isEmpty)
         const PreparationCatalogEmpty(message: '没有符合当前筛选条件的题目。')
       else
@@ -155,7 +163,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             crossAxisCount: 2,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 1.08,
+            mainAxisExtent: 128,
           ),
           itemBuilder: (context, index) => _IeltsTopicCard(
             item: items[index],
@@ -174,11 +182,11 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           _CatalogItem(
             id: topic.id,
             mode: PracticeMode.part1,
-            partLabel: 'PART 1',
             title: topic.titleZh,
             subtitle: topic.titleEn,
             release: topic.releaseStatus,
             tags: topic.tagCodes,
+            imagePath: _topicImageFor(topic.tagCodes, topic.id),
             searchable:
                 '${topic.titleZh} ${topic.titleEn} ${topic.questions.join(' ')}',
           ),
@@ -191,11 +199,11 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           _CatalogItem(
             id: group.id,
             mode: PracticeMode.part2,
-            partLabel: 'PART 2',
             title: group.title,
-            subtitle: '${group.cueCard.prompt} · 完成后继续同组 Part 3',
+            subtitle: group.cueCard.prompt,
             release: group.releaseStatus,
             tags: [group.cueCardType, ...group.tagCodes],
+            imagePath: _topicImageFor(group.tagCodes, '${group.id}-part2'),
             searchable:
                 '${group.title} ${group.cueCard.prompt} ${group.cueCard.points.join(' ')} ${group.part3Questions.join(' ')}',
           ),
@@ -206,11 +214,11 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           _CatalogItem(
             id: group.id,
             mode: PracticeMode.part3,
-            partLabel: 'PART 3',
             title: group.title,
-            subtitle: '对应 Part 2：${group.cueCard.prompt}',
+            subtitle: group.cueCard.prompt,
             release: group.releaseStatus,
             tags: [group.cueCardType, ...group.tagCodes],
+            imagePath: _topicImageFor(group.tagCodes, '${group.id}-part3'),
             searchable:
                 '${group.title} ${group.cueCard.prompt} ${group.part3Questions.join(' ')}',
           ),
@@ -241,39 +249,93 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
   }
 }
 
+class IeltsFullMockButton extends StatelessWidget {
+  const IeltsFullMockButton({required this.onPressed, super.key});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => FilledButton.icon(
+    key: const Key('ielts-mode-full'),
+    onPressed: onPressed,
+    icon: const Icon(Icons.timer_outlined, size: 18),
+    label: const Text('模考'),
+    style: FilledButton.styleFrom(
+      minimumSize: const Size(88, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 13),
+      backgroundColor: PreparationDesign.ink,
+      foregroundColor: Colors.white,
+      textStyle: PreparationDesign.label,
+      shape: const StadiumBorder(),
+    ),
+  );
+}
+
 class _FilterRow extends StatelessWidget {
   const _FilterRow({
+    required this.semanticLabel,
     required this.allLabel,
     required this.options,
     required this.selected,
     required this.onSelected,
+    super.key,
   });
 
+  final String semanticLabel;
   final String allLabel;
   final List<IeltsFilterOption> options;
   final String? selected;
   final ValueChanged<String?> onSelected;
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: Row(
-      children: [
-        ChoiceChip(
-          label: Text(allLabel),
-          selected: selected == null,
-          onSelected: (_) => onSelected(null),
-        ),
-        for (final option in options) ...[
-          const SizedBox(width: 8),
-          ChoiceChip(
-            label: Text(option.label),
-            selected: selected == option.code,
-            onSelected: (_) => onSelected(option.code),
+  Widget build(BuildContext context) {
+    final choices = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _FilterChoice(
+            label: Text(allLabel),
+            selected: selected == null,
+            onSelected: (_) => onSelected(null),
           ),
+          for (final option in options) ...[
+            const SizedBox(width: 6),
+            _FilterChoice(
+              label: Text(option.label),
+              selected: selected == option.code,
+              onSelected: (_) => onSelected(option.code),
+            ),
+          ],
         ],
-      ],
+      ),
+    );
+    return Semantics(container: true, label: semanticLabel, child: choices);
+  }
+}
+
+class _FilterChoice extends StatelessWidget {
+  const _FilterChoice({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final Widget label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+
+  @override
+  Widget build(BuildContext context) => ChoiceChip(
+    label: label,
+    selected: selected,
+    showCheckmark: false,
+    selectedColor: PreparationDesign.ink,
+    backgroundColor: PreparationDesign.surfaceMuted,
+    side: BorderSide.none,
+    labelStyle: PreparationDesign.label.copyWith(
+      color: selected ? Colors.white : PreparationDesign.ink,
     ),
+    onSelected: onSelected,
   );
 }
 
@@ -284,77 +346,156 @@ class _IeltsTopicCard extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: PreparationDesign.surface,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(PreparationDesign.radiusCard),
-      side: const BorderSide(color: PreparationDesign.border),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: InkWell(
-      key: Key('ielts-${item.mode.name}-set-${item.id}'),
-      onTap: onPressed,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) {
+    final hasImage = item.imagePath != null;
+    return Material(
+      color: PreparationDesign.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(PreparationDesign.radiusCard),
+        side: const BorderSide(color: PreparationDesign.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key('ielts-${item.mode.name}-set-${item.id}'),
+        onTap: onPressed,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: PreparationDesign.ieltsTint,
-                borderRadius: BorderRadius.circular(8),
+            if (hasImage)
+              Image.asset(
+                item.imagePath!,
+                fit: BoxFit.cover,
+                excludeFromSemantics: true,
               ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Text(
-                  item.partLabel,
-                  style: PreparationDesign.meta.copyWith(
-                    color: PreparationDesign.ielts,
-                    fontWeight: FontWeight.w900,
+            if (hasImage)
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0xD9000000)],
+                    stops: [0.28, 1],
                   ),
                 ),
               ),
-            ),
-            const Spacer(),
-            Text(
-              item.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: PreparationDesign.cardTitle,
-            ),
-            const SizedBox(height: 5),
-            Text(
-              item.subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: PreparationDesign.meta,
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Spacer(),
+                  Text(
+                    item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: PreparationDesign.cardTitle.copyWith(
+                      color: hasImage ? Colors.white : PreparationDesign.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    item.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: PreparationDesign.meta.copyWith(
+                      color: hasImage
+                          ? Colors.white.withValues(alpha: 0.78)
+                          : PreparationDesign.inkSecondary,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 final class _CatalogItem {
   const _CatalogItem({
     required this.id,
     required this.mode,
-    required this.partLabel,
     required this.title,
     required this.subtitle,
     required this.release,
     required this.tags,
+    required this.imagePath,
     required this.searchable,
   });
   final String id;
   final PracticeMode mode;
-  final String partLabel;
   final String title;
   final String subtitle;
   final String release;
   final List<String> tags;
+  final String? imagePath;
   final String searchable;
+}
+
+const _topicImages = <String, List<String>>{
+  'daily_life': [
+    'assets/images/scenes/ielts-topic-daily-life.webp',
+    'assets/images/scenes/ielts-topic-daily-life-2.webp',
+    'assets/images/scenes/ielts-topic-daily-life-3.webp',
+  ],
+  'work_study': [
+    'assets/images/scenes/ielts-topic-work-study.webp',
+    'assets/images/scenes/ielts-topic-work-study-2.webp',
+    'assets/images/scenes/ielts-topic-work-study-3.webp',
+  ],
+  'people_relationships': [
+    'assets/images/scenes/ielts-topic-people-relationships.webp',
+    'assets/images/scenes/ielts-topic-people-relationships-2.webp',
+    'assets/images/scenes/ielts-topic-people-relationships-3.webp',
+  ],
+  'technology_media': [
+    'assets/images/scenes/ielts-topic-technology-media.webp',
+    'assets/images/scenes/ielts-topic-technology-media-2.webp',
+    'assets/images/scenes/ielts-topic-technology-media-3.webp',
+  ],
+  'culture_entertainment': [
+    'assets/images/scenes/ielts-topic-culture-entertainment.webp',
+    'assets/images/scenes/ielts-topic-culture-entertainment-2.webp',
+    'assets/images/scenes/ielts-topic-culture-entertainment-3.webp',
+  ],
+  'travel_places': [
+    'assets/images/scenes/ielts-topic-travel-places.webp',
+    'assets/images/scenes/ielts-topic-travel-places-2.webp',
+    'assets/images/scenes/ielts-topic-travel-places-3.webp',
+  ],
+  'nature_environment': [
+    'assets/images/scenes/ielts-topic-nature-environment.webp',
+    'assets/images/scenes/ielts-topic-nature-environment-2.webp',
+    'assets/images/scenes/ielts-topic-nature-environment-3.webp',
+  ],
+  'society_rules': [
+    'assets/images/scenes/ielts-topic-society-rules.webp',
+    'assets/images/scenes/ielts-topic-society-rules-2.webp',
+    'assets/images/scenes/ielts-topic-society-rules-3.webp',
+  ],
+  'personal_growth': [
+    'assets/images/scenes/ielts-topic-personal-growth.webp',
+    'assets/images/scenes/ielts-topic-personal-growth-2.webp',
+    'assets/images/scenes/ielts-topic-personal-growth-3.webp',
+  ],
+  'health_sports': [
+    'assets/images/scenes/ielts-topic-health-sports.webp',
+    'assets/images/scenes/ielts-topic-health-sports-2.webp',
+    'assets/images/scenes/ielts-topic-health-sports-3.webp',
+  ],
+};
+
+String? _topicImageFor(List<String> tags, String itemId) {
+  final candidates = <String>[];
+  for (final tag in tags) {
+    final images = _topicImages[tag];
+    if (images != null) candidates.addAll(images);
+  }
+  if (candidates.isEmpty) return null;
+  final index = itemId.codeUnits.fold(0, (sum, codeUnit) => sum + codeUnit);
+  return candidates[index % candidates.length];
 }
 
 SceneDefinition? ieltsSceneForMode(

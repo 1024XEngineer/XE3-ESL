@@ -662,6 +662,9 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildHub(PreparationController controller, _PracticeHub hub) {
     final scenes = _scenesForHub(controller.scenes, hub);
     final ielts = widget.ieltsController;
+    final fullMockScene = hub == _PracticeHub.ielts
+        ? ieltsSceneForMode(scenes, PracticeMode.fullMock)
+        : null;
     final routeKey = hub.name;
     return ListView(
       key: Key('preparation-hub-list-$routeKey'),
@@ -672,7 +675,15 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 8,
       ),
       children: [
-        _buildHubHeader(hub),
+        _buildHubHeader(
+          hub,
+          trailing: fullMockScene == null
+              ? null
+              : IeltsFullMockButton(
+                  onPressed: () =>
+                      unawaited(_startIeltsFullMock(controller, fullMockScene)),
+                ),
+        ),
         SizedBox(height: hub == _PracticeHub.interview ? 20 : 16),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
@@ -692,8 +703,6 @@ class _PreparationPageState extends State<PreparationPage> {
           IeltsCatalog(
             controller: ielts!,
             scenes: scenes,
-            onFullMockPressed: (scene) =>
-                unawaited(_startIeltsFullMock(controller, scene)),
             onRetry: ielts.retryLoad,
             onSelectionPressed: (scene, mode, selection) => unawaited(
               _startSceneDirectly(
@@ -766,7 +775,7 @@ class _PreparationPageState extends State<PreparationPage> {
     );
   }
 
-  Widget _buildHubHeader(_PracticeHub hub) {
+  Widget _buildHubHeader(_PracticeHub hub, {Widget? trailing}) {
     return SpeakUpNavigationHeader(
       title: _practiceHubDisplayTitle(hub),
       semanticLabel: _practiceHubLabel(hub),
@@ -774,9 +783,13 @@ class _PreparationPageState extends State<PreparationPage> {
       backButtonKey: const Key('preparation-back-to-families'),
       titleKey: Key('practice-hub-title-${hub.name}'),
       onBack: () => setState(() => _selectedHub = null),
-      trailing: hub == _PracticeHub.interview
-          ? InterviewCatalogCreateButton(onPressed: widget.onOpenJobPreparation)
-          : null,
+      trailing:
+          trailing ??
+          (hub == _PracticeHub.interview
+              ? InterviewCatalogCreateButton(
+                  onPressed: widget.onOpenJobPreparation,
+                )
+              : null),
     );
   }
 }

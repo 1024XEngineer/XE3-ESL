@@ -137,10 +137,8 @@ class ConversationPage extends StatefulWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final titleSize = width < 350 ? 27.0 : 30.0;
-    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.27).clamp(
-      152.0,
-      228.0,
-    );
+    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.325)
+        .clamp(180.0, 274.0);
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
@@ -347,29 +345,30 @@ class ConversationPage extends StatefulWidget {
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    height: bottomOverlayExtent + 52,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        key: const Key('agent-bottom-overlay-scrim'),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              SpeakUpDesign.canvas.withValues(alpha: 0),
-                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                              SpeakUpDesign.canvas,
-                            ],
-                            stops: const [0, 0.38, 1],
+                  if (messages.isNotEmpty)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: bottomOverlayExtent + 52,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          key: const Key('agent-bottom-overlay-scrim'),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                SpeakUpDesign.canvas.withValues(alpha: 0),
+                                SpeakUpDesign.canvas.withValues(alpha: 0.94),
+                                SpeakUpDesign.canvas,
+                              ],
+                              stops: const [0, 0.38, 1],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                   Positioned(
                     left: horizontalPadding,
                     top: 12,
@@ -899,7 +898,7 @@ class _QuickActions extends StatelessWidget {
       children: [
         for (var index = 0; index < actions.length; index++) ...[
           actions[index],
-          if (index != actions.length - 1) const SizedBox(height: 2),
+          if (index != actions.length - 1) const SizedBox.shrink(),
         ],
       ],
     );
@@ -935,10 +934,10 @@ class _QuickActionButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Container(
-            constraints: const BoxConstraints(minHeight: 58),
+            constraints: const BoxConstraints(minHeight: 52),
             padding: const EdgeInsets.symmetric(
               horizontal: SpeakUpDesign.space4,
-              vertical: SpeakUpDesign.space12,
+              vertical: SpeakUpDesign.space8,
             ),
             child: Row(
               children: [

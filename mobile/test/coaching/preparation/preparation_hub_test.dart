@@ -171,7 +171,8 @@ void main() {
       await _openModule(tester, const Key('practice-hub-exam'));
 
       expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
-      expect(find.text('快速开始整轮模考'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mode-full')), findsOneWidget);
+      expect(find.text('模考'), findsOneWidget);
       expect(find.text('Part 1'), findsWidgets);
       expect(find.text('Part 2'), findsOneWidget);
       expect(find.text('Part 3'), findsOneWidget);
@@ -192,12 +193,32 @@ void main() {
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
 
-    expect(find.text('共 3 道专项题'), findsOneWidget);
+    expect(find.text('3 道题'), findsOneWidget);
     expect(
       find.textContaining('Describe a skill you would like to learn'),
       findsWidgets,
     );
+    expect(find.text('PART 1'), findsNothing);
+    expect(find.textContaining('对应 Part 2'), findsNothing);
+    expect(find.textContaining('完成后继续同组 Part 3'), findsNothing);
     expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+  });
+
+  testWidgets('keeps IELTS filters available in the compact catalog', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    expect(find.byKey(const Key('ielts-release-filter')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-tag-filter')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '本季新增'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 道题'), findsOneWidget);
   });
 
   testWidgets('separates workplace from life and travel scenes', (
