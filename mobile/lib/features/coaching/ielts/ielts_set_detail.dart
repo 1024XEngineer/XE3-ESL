@@ -82,7 +82,7 @@ class IeltsSetDetailPage extends StatelessWidget {
                         key: const Key('ielts-set-detail-title'),
                         style: PreparationDesign.pageTitle,
                       ),
-                      if (subtitle.isNotEmpty) ...[
+                      if (cueCard == null && subtitle.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text(
                           subtitle,

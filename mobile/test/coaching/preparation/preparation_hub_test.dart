@@ -299,7 +299,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ielts-set-detail-cue-card')), findsOneWidget);
-    expect(find.text('Describe a skill you would like to learn'), findsWidgets);
+    expect(
+      find.text('Describe a skill you would like to learn'),
+      findsOneWidget,
+    );
     expect(find.text('What'), findsOneWidget);
     expect(find.text('Benefit'), findsOneWidget);
     expect(find.text('同组 Part 3 · 5 题'), findsOneWidget);
