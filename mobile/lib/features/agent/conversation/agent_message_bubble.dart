@@ -1,9 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
-import 'package:speakup/design/message_translation.dart';
+import 'package:speakup/design/conversation_message_content.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -117,7 +116,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         context,
         foreground,
       ),
-      AgentMessageModality.text => _buildTextMessage(context, foreground),
+      AgentMessageModality.text => _buildTextMessage(),
     };
     return ConversationBubbleSurface(
       bubbleKey: Key('agent-message-${message.id}'),
@@ -148,36 +147,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     );
   }
 
-  Widget _buildTextMessage(BuildContext context, Color foreground) {
+  Widget _buildTextMessage() {
     final message = widget.message;
     final audioController = widget.messageAudioController;
-    if (message.role == AgentMessageRole.user) {
-      return Text(
-        message.text,
-        style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
-      );
-    }
-    final markdown = _AssistantMarkdown(
-      key: Key('agent-assistant-text-${message.id}'),
-      data: message.text,
-      foreground: foreground,
-    );
-    if (message.isStreaming && message.text.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 6),
-        child: SizedBox.square(
-          key: Key('agent-assistant-streaming'),
-          dimension: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-    if (message.hasFailed) {
-      return markdown;
-    }
-    if (audioController == null && widget.onTranslate == null) {
-      return markdown;
-    }
     final loading = audioController?.loadingMessageId == message.id;
     final playing = audioController?.playingMessageId == message.id;
     final error = audioController?.errorMessageId == message.id
@@ -238,33 +210,27 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         ),
       ]);
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        markdown,
-        MessageTranslationDisclosure(
-          sourceId: message.id,
-          buttonKey: Key('agent-assistant-translate-${message.id}'),
-          contentKey: Key('agent-assistant-translation-${message.id}'),
-          errorKey: Key('agent-assistant-translation-error-${message.id}'),
-          onTranslate: widget.onTranslate == null || message.isStreaming
-              ? null
-              : () => widget.onTranslate!(message),
-          leadingActions: actions,
-        ),
-        if (error != null) ...[
-          const SizedBox(height: 3),
-          Text(
-            error,
-            key: Key('agent-message-media-error-${message.id}'),
-            style: const TextStyle(
-              color: SpeakUpDesign.error,
-              fontSize: 12,
-              height: 1.35,
-            ),
-          ),
-        ],
-      ],
+    return ConversationTextMessageContent(
+      sourceId: message.id,
+      text: message.text,
+      isUser: message.role == AgentMessageRole.user,
+      isStreaming: message.isStreaming,
+      hasFailed: message.hasFailed,
+      textKey: message.role == AgentMessageRole.assistant
+          ? Key('agent-assistant-text-${message.id}')
+          : null,
+      streamingKey: const Key('agent-assistant-streaming'),
+      translationButtonKey: Key('agent-assistant-translate-${message.id}'),
+      translationContentKey: Key('agent-assistant-translation-${message.id}'),
+      translationErrorKey: Key(
+        'agent-assistant-translation-error-${message.id}',
+      ),
+      onTranslate: widget.onTranslate == null
+          ? null
+          : () => widget.onTranslate!(message),
+      leadingActions: actions,
+      mediaError: error,
+      mediaErrorKey: Key('agent-message-media-error-${message.id}'),
     );
   }
 
@@ -466,65 +432,6 @@ class _MessageImageThumbnail extends StatelessWidget {
                 errorBuilder: (_, _, _) => placeholder,
               ),
             ),
-    );
-  }
-}
-
-class _AssistantMarkdown extends StatelessWidget {
-  const _AssistantMarkdown({
-    required this.data,
-    required this.foreground,
-    super.key,
-  });
-
-  final String data;
-  final Color foreground;
-
-  @override
-  Widget build(BuildContext context) {
-    final body = TextStyle(color: foreground, fontSize: 15, height: 1.48);
-    return MarkdownBody(
-      data: data,
-      selectable: true,
-      fitContent: true,
-      styleSheet: MarkdownStyleSheet(
-        a: body,
-        p: body,
-        pPadding: EdgeInsets.zero,
-        em: body.copyWith(fontStyle: FontStyle.italic),
-        strong: body.copyWith(fontWeight: FontWeight.w700),
-        code: body.copyWith(
-          fontFamily: 'monospace',
-          fontSize: 13.5,
-          backgroundColor: SpeakUpDesign.surfaceMuted,
-        ),
-        h1: body.copyWith(fontSize: 20, fontWeight: FontWeight.w700),
-        h2: body.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
-        h3: body.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
-        h4: body.copyWith(fontWeight: FontWeight.w700),
-        h5: body.copyWith(fontWeight: FontWeight.w700),
-        h6: body.copyWith(fontWeight: FontWeight.w700),
-        blockquote: body.copyWith(color: SpeakUpDesign.secondary),
-        listBullet: body,
-        listIndent: 20,
-        blockSpacing: 8,
-        blockquotePadding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
-        blockquoteDecoration: const BoxDecoration(
-          color: SpeakUpDesign.surfaceMuted,
-          border: Border(
-            left: BorderSide(color: SpeakUpDesign.primary, width: 3),
-          ),
-        ),
-        codeblockPadding: const EdgeInsets.all(10),
-        codeblockDecoration: BoxDecoration(
-          color: SpeakUpDesign.surfaceMuted,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-      imageBuilder: (uri, title, alt) => Text(
-        alt == null || alt.trim().isEmpty ? '[图片已隐藏]' : '[图片：$alt]',
-        style: body.copyWith(color: SpeakUpDesign.secondary),
-      ),
     );
   }
 }

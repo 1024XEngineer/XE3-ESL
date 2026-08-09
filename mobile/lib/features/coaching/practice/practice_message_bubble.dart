@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
-import 'package:speakup/design/message_translation.dart';
+import 'package:speakup/design/conversation_message_content.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/inline_speech_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
@@ -44,25 +44,27 @@ final class _PracticeMessageBubbleState extends State<PracticeMessageBubble> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Visibility(
-            key: Key('practice-message-text-${message.id}'),
-            visible: widget.messageTextVisible,
-            maintainAnimation: true,
-            maintainSize: true,
-            maintainState: true,
-            child: Text(
-              message.text,
-              style: TextStyle(color: SpeakUpDesign.ink, height: 1.45),
-            ),
-          ),
-          MessageTranslationDisclosure(
+          ConversationTextMessageContent(
             sourceId: message.id,
-            buttonKey: Key('practice-assistant-translate-${message.id}'),
-            contentKey: Key('practice-assistant-translation-${message.id}'),
-            errorKey: Key('practice-assistant-translation-error-${message.id}'),
+            text: message.text,
+            isUser: user,
+            textVisible: widget.messageTextVisible,
+            textVisibilityKey: Key('practice-message-text-${message.id}'),
+            translationButtonKey: Key(
+              'practice-assistant-translate-${message.id}',
+            ),
+            translationContentKey: Key(
+              'practice-assistant-translation-${message.id}',
+            ),
+            translationErrorKey: Key(
+              'practice-assistant-translation-error-${message.id}',
+            ),
             onTranslate: widget.onTranslate == null
                 ? null
                 : () => widget.onTranslate!(message),
+            leadingActions: widget.actions == null
+                ? const <Widget>[]
+                : <Widget>[widget.actions!],
           ),
           if (user && widget.feedbackProjection != null) ...[
             const SizedBox(height: SpeakUpDesign.space4),
@@ -70,10 +72,6 @@ final class _PracticeMessageBubbleState extends State<PracticeMessageBubble> {
               projection: widget.feedbackProjection,
               onRepractice: widget.onFeedbackRepractice,
             ),
-          ],
-          if (widget.actions != null) ...[
-            const SizedBox(height: 6),
-            widget.actions!,
           ],
         ],
       ),
