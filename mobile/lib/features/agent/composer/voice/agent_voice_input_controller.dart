@@ -10,7 +10,14 @@ typedef AgentVoiceInputIdFactory = String Function(String scope);
 typedef AgentVoiceInputClock = DateTime Function();
 typedef AgentVoiceInputSubmit = Future<bool> Function(String transcript);
 
-enum AgentVoiceInputState { idle, starting, recording, completing, failed }
+enum AgentVoiceInputState {
+  idle,
+  starting,
+  recording,
+  completing,
+  submitting,
+  failed,
+}
 
 /// Owns ephemeral microphone input until its transcript is submitted as text.
 ///
@@ -46,6 +53,7 @@ final class AgentVoiceInputController extends ChangeNotifier
   String? _threadId;
   AgentVoiceInputState _state = AgentVoiceInputState.idle;
   String _liveTranscript = '';
+  String? _pendingSubmitTranscript;
   String? _errorMessage;
   bool _canRetry = false;
   DateTime? _recordingStartedAt;
@@ -308,15 +316,39 @@ final class AgentVoiceInputController extends ChangeNotifier
     }
     final transcript = completedTranscript!;
     _liveTranscript = transcript;
+    _pendingSubmitTranscript = transcript;
+    await _submitPendingTranscript(fence);
+  }
+
+  Future<void> _submitPendingTranscript(_AgentVoiceInputFence fence) async {
+    final transcript = _pendingSubmitTranscript;
+    if (transcript == null || !_isCurrent(fence)) {
+      return;
+    }
+    _state = AgentVoiceInputState.submitting;
+    _errorMessage = null;
+    _canRetry = false;
+    notifyListeners();
+    bool submitted;
     try {
-      await submitTranscript(transcript);
+      submitted = await submitTranscript(transcript);
     } catch (error) {
       if (_isCurrent(fence)) {
-        _showFailure(fence, error);
+        _state = AgentVoiceInputState.failed;
+        _errorMessage = _submissionFailureMessage(error);
+        _canRetry = _isRetryable(error);
+        notifyListeners();
       }
       return;
     }
     if (!_isCurrent(fence)) {
+      return;
+    }
+    if (!submitted) {
+      _state = AgentVoiceInputState.failed;
+      _errorMessage = '消息未发送，请重试。';
+      _canRetry = true;
+      notifyListeners();
       return;
     }
     _resetPresentation();
@@ -418,6 +450,10 @@ final class AgentVoiceInputController extends ChangeNotifier
     }
     await _workflowCleanup;
     if (!_canRetry || _state != AgentVoiceInputState.failed) {
+      return;
+    }
+    if (_pendingSubmitTranscript != null) {
+      await _submitPendingTranscript(_captureFence());
       return;
     }
     _resetPresentation();
@@ -544,6 +580,7 @@ final class AgentVoiceInputController extends ChangeNotifier
     }
     _cancelRecordingTimers();
     _liveTranscript = '';
+    _pendingSubmitTranscript = null;
     _state = AgentVoiceInputState.failed;
     _errorMessage = _failureMessage(error);
     _canRetry = _isRetryable(error);
@@ -553,6 +590,7 @@ final class AgentVoiceInputController extends ChangeNotifier
   void _resetPresentation() {
     _state = AgentVoiceInputState.idle;
     _liveTranscript = '';
+    _pendingSubmitTranscript = null;
     _errorMessage = null;
     _canRetry = false;
     _recordingElapsed = Duration.zero;
@@ -641,6 +679,12 @@ final class AgentVoiceInputController extends ChangeNotifier
     TimeoutException() => '语音识别连接中断，请重试。',
     AgentVoiceInputFailure() => '语音识别失败，请重试。',
     _ => '暂时无法识别语音，请重试。',
+  };
+
+  String _submissionFailureMessage(Object error) => switch (error) {
+    AgentClientException(kind: AgentClientFailureKind.authenticationRequired) =>
+      '登录状态已失效，请重新登录。',
+    _ => '消息未发送，请重试。',
   };
 
   static void _completeTerminal(

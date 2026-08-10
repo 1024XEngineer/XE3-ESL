@@ -9,6 +9,7 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.d
 import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_composer.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
@@ -130,6 +131,88 @@ void main() {
     },
   );
 
+  test('failed automatic send retains transcript and retries it', () async {
+    final recorder = _TrackingStreamingRecorder();
+    final submitted = <String>[];
+    var shouldSucceed = false;
+    final controller = AgentVoiceInputController(
+      client: FakeAgentVoiceInputClient(),
+      recorder: recorder,
+      idFactory: _sequentialIdFactory(),
+      submitTranscript: (transcript) async {
+        submitted.add(transcript);
+        return shouldSucceed;
+      },
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+
+    await controller.startRecording();
+    await Future<void>.delayed(Duration.zero);
+    await controller.stopRecording();
+
+    expect(controller.state, AgentVoiceInputState.failed);
+    expect(controller.canRetry, isTrue);
+    expect(
+      controller.liveTranscript,
+      'I explained the problem, the trade-off, and the result clearly.',
+    );
+
+    shouldSucceed = true;
+    await controller.retry();
+
+    expect(controller.state, AgentVoiceInputState.idle);
+    expect(submitted, hasLength(2));
+    expect(submitted.toSet(), hasLength(1));
+  });
+
+  test('automatic send cannot be cancelled after submission starts', () async {
+    final recorder = _TrackingStreamingRecorder();
+    final submission = Completer<bool>();
+    final controller = AgentVoiceInputController(
+      client: FakeAgentVoiceInputClient(),
+      recorder: recorder,
+      idFactory: _sequentialIdFactory(),
+      submitTranscript: (_) => submission.future,
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+    await controller.startRecording();
+    await Future<void>.delayed(Duration.zero);
+
+    final stopping = controller.stopRecording();
+    while (controller.state != AgentVoiceInputState.submitting) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(controller.liveTranscript, isNotEmpty);
+    submission.complete(true);
+    await stopping;
+    expect(controller.state, AgentVoiceInputState.idle);
+  });
+
+  testWidgets('submitting status does not expose a cancel action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentComposerVoiceStatusDock(
+            state: AgentVoiceInputState.submitting,
+            message: '正在发送…',
+            canCancel: false,
+            canRetry: false,
+            onCancel: () {},
+            onRetry: null,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
+    expect(find.text('正在发送…'), findsOneWidget);
+  });
+
   test(
     'local cleanup failure stays failed and retries retained cleanup',
     () async {
@@ -162,7 +245,7 @@ void main() {
     },
   );
 
-  testWidgets('automatic text send failure does not retain local audio', (
+  testWidgets('automatic text send failure retains text without local audio', (
     tester,
   ) async {
     final recorder = _TrackingStreamingRecorder();
@@ -194,17 +277,17 @@ void main() {
       tester,
       () =>
           composerController.voiceController?.state ==
-          AgentVoiceInputState.idle,
+          AgentVoiceInputState.failed,
     );
 
     expect(conversationController.messages, isEmpty);
     expect(recorder.stopAudioStreamAndDiscardCalls, 1);
     expect(recorder.discardedRecordings, 0);
     expect(recorder.hasCurrentRecording, isFalse);
-    expect(find.byKey(const Key('agent-composer-field')), findsNothing);
+    expect(find.text('消息未发送，请重试。'), findsOneWidget);
     expect(
-      composerController.voiceController?.state,
-      AgentVoiceInputState.idle,
+      composerController.voiceController?.liveTranscript,
+      'I explained the problem, the trade-off, and the result clearly.',
     );
   });
 

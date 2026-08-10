@@ -175,6 +175,7 @@ String agentComposerVoiceStateLabel(AgentVoiceInputState state) {
   return switch (state) {
     AgentVoiceInputState.starting => '正在打开麦克风…',
     AgentVoiceInputState.completing => '正在整理识别文字…',
+    AgentVoiceInputState.submitting => '正在发送…',
     _ => '正在处理…',
   };
 }

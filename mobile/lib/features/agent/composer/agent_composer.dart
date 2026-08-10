@@ -296,7 +296,9 @@ class _AgentComposerState extends State<AgentComposer> {
     final voiceState = voice?.state ?? AgentVoiceInputState.idle;
     final starting = voiceState == AgentVoiceInputState.starting;
     final recording = voiceState == AgentVoiceInputState.recording;
-    final voiceProgress = voiceState == AgentVoiceInputState.completing;
+    final voiceProgress =
+        voiceState == AgentVoiceInputState.completing ||
+        voiceState == AgentVoiceInputState.submitting;
     final voiceFailure = voiceState == AgentVoiceInputState.failed;
     final capturePhase = switch (voiceState) {
       AgentVoiceInputState.idle => VoiceCapturePhase.idle,
@@ -363,7 +365,7 @@ class _AgentComposerState extends State<AgentComposer> {
                         : voice?.liveTranscript.trim().isNotEmpty == true
                         ? voice!.liveTranscript
                         : agentComposerVoiceStateLabel(voiceState),
-                    canCancel: true,
+                    canCancel: voiceState != AgentVoiceInputState.submitting,
                     canRetry: voiceFailure && voice?.canRetry == true,
                     onCancel: _cancelVoice,
                     onRetry: voice?.retry,
