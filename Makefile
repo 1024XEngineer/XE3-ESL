@@ -14,6 +14,7 @@ SHELL := /bin/bash
 	check-go-format \
 	check-go-vet \
 	check-go-test \
+	check-qiniu-llm-live \
 	check-oss-live \
 	check-resume-ocr-live \
 	check-api \
@@ -30,6 +31,7 @@ help:
 		'  make check          Run Flutter, Go, API, and deterministic smoke checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
+		'  make check-qiniu-llm-live Run the real Qiniu text generation smoke test' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
@@ -70,6 +72,34 @@ check-go-vet: check-go-format
 
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
+
+check-qiniu-llm-live:
+	@set -euo pipefail; \
+	required=(TEXT_GENERATION_PROVIDER QINIU_AI_BASE_URL QINIU_AI_MODEL QINIU_AI_SPEECH_FEEDBACK_MODEL QINIU_AI_API_KEY QINIU_LLM_LIVE_TEST); \
+	missing=(); \
+	for name in "$${required[@]}"; do \
+		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
+	done; \
+	if (( $${#missing[@]} > 0 )); then \
+		printf '%s\n' 'This target intentionally does not load or execute .env.'; \
+		printf 'Export the required Qiniu AI variables before running this target. Missing:'; \
+		printf ' %s' "$${missing[@]}"; \
+		printf '\n'; \
+		exit 1; \
+	fi; \
+	if [[ "$${TEXT_GENERATION_PROVIDER}" != "qiniu" ]]; then \
+		printf '%s\n' 'Set and export TEXT_GENERATION_PROVIDER=qiniu.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${QINIU_LLM_LIVE_TEST}" != "1" ]]; then \
+		printf '%s\n' 'Set and export QINIU_LLM_LIVE_TEST=1 to opt in to billable requests.'; \
+		exit 1; \
+	fi; \
+	$(MAKE) --no-print-directory check-qiniu-llm-live-go
+
+.PHONY: check-qiniu-llm-live-go
+check-qiniu-llm-live-go:
+	cd server && go test -count=1 -run '^TestLiveQiniuTextGeneration$$' ./internal/providers/qiniu
 
 check-oss-live:
 	@set -euo pipefail; \

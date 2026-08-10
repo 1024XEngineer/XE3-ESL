@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qiniu"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
@@ -28,6 +29,21 @@ type AgentModelProviders struct {
 }
 
 func NewAgentModelProviders(
+	configuration config.TextGenerationConfig,
+) (AgentModelProviders, error) {
+	switch configuration.Provider {
+	case config.TextProviderQianwen:
+		return newQianwenAgentModelProviders(configuration)
+	case config.TextProviderQiniu:
+		return newQiniuAgentModelProviders(configuration)
+	default:
+		return AgentModelProviders{}, errors.New(
+			"bootstrap: text generation provider is not registered",
+		)
+	}
+}
+
+func newQianwenAgentModelProviders(
 	configuration config.TextGenerationConfig,
 ) (AgentModelProviders, error) {
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
@@ -63,9 +79,49 @@ func NewAgentModelProviders(
 	}, nil
 }
 
+func newQiniuAgentModelProviders(
+	configuration config.TextGenerationConfig,
+) (AgentModelProviders, error) {
+	providerConfig, apiKey, err := qiniuTextProvider(configuration)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	runGenerator, err := qiniu.NewAgentRunGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	memoryGenerator, err := qiniu.NewMemoryGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	summaryGenerator, err := qiniu.NewSummaryGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	titleGenerator, err := qiniu.NewTitleGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	translator, err := qiniu.NewTranslator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	return AgentModelProviders{
+		Run: runGenerator, Memory: memoryGenerator, Summary: summaryGenerator,
+		Title: titleGenerator, Translation: translator,
+	}, nil
+}
+
 func NewPreparationJobTargetGenerator(
 	configuration config.TextGenerationConfig,
 ) (preparation.JobTargetGenerator, error) {
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewPreparationJobTargetGenerator(providerConfig, apiKey)
+	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
@@ -76,6 +132,13 @@ func NewPreparationJobTargetGenerator(
 func NewIELTSAnswerPreparationGenerator(
 	configuration config.TextGenerationConfig,
 ) (ielts.AnswerPreparationGenerator, error) {
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewIELTSAnswerPreparationGenerator(providerConfig, apiKey)
+	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
@@ -86,6 +149,13 @@ func NewIELTSAnswerPreparationGenerator(
 func NewEvaluationScoringGenerator(
 	configuration config.TextGenerationConfig,
 ) (scoring.TextGenerator, error) {
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewEvaluationScoringGenerator(providerConfig, apiKey)
+	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
@@ -96,6 +166,14 @@ func NewEvaluationScoringGenerator(
 func NewEvaluationSpeechFeedbackGenerator(
 	configuration config.TextGenerationConfig,
 ) (speechfeedback.TextGenerator, error) {
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		providerConfig.Model = configuration.SpeechFeedbackModel
+		return qiniu.NewEvaluationSpeechFeedbackGenerator(providerConfig, apiKey)
+	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
@@ -107,6 +185,13 @@ func NewEvaluationSpeechFeedbackGenerator(
 func NewResumeFieldGenerator(
 	configuration config.TextGenerationConfig,
 ) (fieldextractor.Generator, error) {
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewResumeFieldGenerator(providerConfig, apiKey)
+	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
@@ -116,6 +201,23 @@ func NewResumeFieldGenerator(
 		return nil, err
 	}
 	return generator, nil
+}
+
+func qiniuTextProvider(
+	configuration config.TextGenerationConfig,
+) (qiniu.TextConfig, string, error) {
+	if configuration.Provider != config.TextProviderQiniu {
+		return qiniu.TextConfig{}, "", errors.New(
+			"bootstrap: text generation provider is not registered",
+		)
+	}
+	return qiniu.TextConfig{
+		Provider:        qiniu.TextProviderName,
+		BaseURL:         configuration.BaseURL,
+		Model:           configuration.Model,
+		Timeout:         configuration.Timeout,
+		MaxOutputTokens: configuration.MaxOutputTokens,
+	}, configuration.APIKey.Reveal(), nil
 }
 
 func qianwenTextProvider(

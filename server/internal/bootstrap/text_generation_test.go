@@ -41,6 +41,49 @@ func TestNewAgentAndPreparationGeneratorsRegisterConfiguredQianwen(
 	}
 }
 
+func TestTextGenerationCompositionRegistersConfiguredQiniu(t *testing.T) {
+	setBootstrapQiniuTextGenerationEnvironment(t, "server-only-qiniu-key")
+
+	configuration, err := config.LoadTextGeneration()
+	if err != nil {
+		t.Fatalf("load Qiniu text generation configuration: %v", err)
+	}
+	providers, err := NewAgentModelProviders(configuration)
+	if err != nil {
+		t.Fatalf("register Qiniu Agent model providers: %v", err)
+	}
+	if providers.Run == nil || providers.Memory == nil || providers.Summary == nil ||
+		providers.Title == nil || providers.Translation == nil {
+		t.Fatalf("Qiniu Agent model providers are incomplete: %#v", providers)
+	}
+	generators := []struct {
+		name string
+		new  func() (any, error)
+	}{
+		{name: "preparation", new: func() (any, error) {
+			return NewPreparationJobTargetGenerator(configuration)
+		}},
+		{name: "ielts answer", new: func() (any, error) {
+			return NewIELTSAnswerPreparationGenerator(configuration)
+		}},
+		{name: "evaluation", new: func() (any, error) {
+			return NewEvaluationScoringGenerator(configuration)
+		}},
+		{name: "speech feedback", new: func() (any, error) {
+			return NewEvaluationSpeechFeedbackGenerator(configuration)
+		}},
+		{name: "resume", new: func() (any, error) {
+			return NewResumeFieldGenerator(configuration)
+		}},
+	}
+	for _, generator := range generators {
+		created, createErr := generator.new()
+		if createErr != nil || created == nil {
+			t.Fatalf("register Qiniu %s generator = %T, %v", generator.name, created, createErr)
+		}
+	}
+}
+
 func TestNewResumeFieldGeneratorRejectsInsufficientBudget(t *testing.T) {
 	setBootstrapTextGenerationEnvironment(t, "server-only-test-key")
 
@@ -133,4 +176,16 @@ func setBootstrapTextGenerationEnvironment(t *testing.T, apiKey string) {
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
 	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 	t.Setenv("DASHSCOPE_API_KEY", apiKey)
+}
+
+func setBootstrapQiniuTextGenerationEnvironment(t *testing.T, apiKey string) {
+	t.Helper()
+	t.Setenv("TEXT_GENERATION_PROVIDER", config.TextProviderQiniu)
+	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
+	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_TIMEOUT", "")
+	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")
+	t.Setenv("QINIU_AI_API_KEY", apiKey)
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 }
