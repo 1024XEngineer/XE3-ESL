@@ -7,12 +7,15 @@ toolchain go1.26.5
 require (
 	github.com/PaddlePaddle/PaddleOCR/api_sdk/go v0.2.0
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3
+	github.com/aws/aws-sdk-go-v2 v1.43.4
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.34
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
+	github.com/aws/smithy-go v1.27.7
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
-	github.com/qiniu/go-sdk/v7 v7.27.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
 	golang.org/x/text v0.40.0
@@ -21,8 +24,14 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.3.2 // indirect
-	github.com/alex-ant/gomath v0.0.0-20160516115720-89013a210a82 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.35 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.15 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.28 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.35 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.36 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
@@ -33,7 +42,6 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
-	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -42,7 +50,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
@@ -58,5 +65,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
-	modernc.org/fileutil v1.0.0 // indirect
 )

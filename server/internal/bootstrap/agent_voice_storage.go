@@ -30,9 +30,6 @@ func AgentVoiceObjectReadAllowedHosts(
 		return nil, nil
 	}
 	origin := storageConfig.Endpoint
-	if storageConfig.Provider == config.ObjectStorageProviderQiniuKodo {
-		origin = storageConfig.Domain
-	}
 	endpoint, err := url.Parse(strings.TrimSpace(origin))
 	if err != nil ||
 		endpoint.Scheme != "https" ||
