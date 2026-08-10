@@ -71,8 +71,9 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 func TestLoadObjectStorageReadsQiniuKodoConfigurationWithoutSecrets(t *testing.T) {
 	t.Setenv("OSS_ENABLED", "1")
 	t.Setenv("OBJECT_STORAGE_PROVIDER", ObjectStorageProviderQiniuKodo)
-	t.Setenv("QINIU_KODO_BUCKET", "speakup-private")
-	t.Setenv("QINIU_KODO_DOMAIN", "https://private.example.com")
+	t.Setenv("QINIU_KODO_S3_REGION", "cn-east-1")
+	t.Setenv("QINIU_KODO_S3_ENDPOINT", "https://s3.cn-east-1.qiniucs.com")
+	t.Setenv("QINIU_KODO_S3_BUCKET", "speakup-private")
 	t.Setenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION", "true")
 	t.Setenv("QINIU_ACCESS_KEY", "must-not-be-copied")
 	t.Setenv("QINIU_SECRET_KEY", "must-not-be-copied")
@@ -84,10 +85,9 @@ func TestLoadObjectStorageReadsQiniuKodoConfigurationWithoutSecrets(t *testing.T
 	if !configuration.Enabled ||
 		configuration.Provider != ObjectStorageProviderQiniuKodo ||
 		configuration.Bucket != "speakup-private" ||
-		configuration.Domain != "https://private.example.com" ||
+		configuration.Region != "cn-east-1" ||
+		configuration.Endpoint != "https://s3.cn-east-1.qiniucs.com" ||
 		!configuration.ServerSideEncryption ||
-		configuration.Region != "" ||
-		configuration.Endpoint != "" ||
 		configuration.AudioPrefix != "audio/v1" ||
 		configuration.ImagePrefix != "image/v1" ||
 		configuration.ResumePrefix != "resume/v1" {
@@ -98,28 +98,35 @@ func TestLoadObjectStorageReadsQiniuKodoConfigurationWithoutSecrets(t *testing.T
 func TestLoadObjectStorageRejectsUnsafeQiniuKodoConfiguration(t *testing.T) {
 	testCases := []struct {
 		name       string
+		region     string
+		endpoint   string
 		bucket     string
-		domain     string
 		encryption string
 		expected   error
 	}{
 		{
-			name: "missing bucket", domain: "https://private.example.com",
+			name: "missing bucket", region: "cn-east-1",
+			endpoint:   "https://s3.cn-east-1.qiniucs.com",
 			encryption: "1", expected: ErrObjectStorageQiniuBucket,
 		},
 		{
-			name: "insecure domain", bucket: "speakup-private",
-			domain: "http://private.example.com", encryption: "1",
-			expected: ErrObjectStorageDomain,
+			name: "invalid region", region: "z0", bucket: "speakup-private",
+			endpoint: "https://s3.cn-east-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Region,
 		},
 		{
-			name: "domain credentials", bucket: "speakup-private",
-			domain: "https://user:secret@private.example.com", encryption: "1",
-			expected: ErrObjectStorageDomain,
+			name: "insecure endpoint", region: "cn-east-1", bucket: "speakup-private",
+			endpoint: "http://s3.cn-east-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Endpoint,
+		},
+		{
+			name: "endpoint region mismatch", region: "cn-east-1", bucket: "speakup-private",
+			endpoint: "https://s3.cn-south-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Endpoint,
 		},
 		{
 			name: "encryption not attested", bucket: "speakup-private",
-			domain: "https://private.example.com", encryption: "0",
+			region: "cn-east-1", endpoint: "https://s3.cn-east-1.qiniucs.com", encryption: "0",
 			expected: ErrObjectStorageEncryption,
 		},
 	}
@@ -128,8 +135,9 @@ func TestLoadObjectStorageRejectsUnsafeQiniuKodoConfiguration(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Setenv("OSS_ENABLED", "1")
 			t.Setenv("OBJECT_STORAGE_PROVIDER", ObjectStorageProviderQiniuKodo)
-			t.Setenv("QINIU_KODO_BUCKET", testCase.bucket)
-			t.Setenv("QINIU_KODO_DOMAIN", testCase.domain)
+			t.Setenv("QINIU_KODO_S3_REGION", testCase.region)
+			t.Setenv("QINIU_KODO_S3_ENDPOINT", testCase.endpoint)
+			t.Setenv("QINIU_KODO_S3_BUCKET", testCase.bucket)
 			t.Setenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION", testCase.encryption)
 
 			_, err := LoadObjectStorage()

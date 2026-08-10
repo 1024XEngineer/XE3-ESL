@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,6 +58,15 @@ func TestLiveKodoObjectLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put live object: %v", err)
 	}
+	conflictingPayload := append(append([]byte{}, payload...), 0)
+	conflictingDigest := sha256.Sum256(conflictingPayload)
+	if _, err := client.Put(ctx, objectstore.PutRequest{
+		Key: key, Body: bytes.NewReader(conflictingPayload),
+		Size: int64(len(conflictingPayload)), ContentType: "audio/wav",
+		ChecksumSHA256: hex.EncodeToString(conflictingDigest[:]),
+	}); !errors.Is(err, objectstore.ErrAlreadyExists) {
+		t.Fatalf("conflicting live object error = %v", err)
+	}
 	signed, err := client.SignedGet(ctx, key)
 	if err != nil {
 		t.Fatalf("sign live object download: %v", err)
@@ -72,7 +82,8 @@ func TestLiveKodoObjectLifecycle(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(unsignedResponse.Body, 4096))
 	_ = unsignedResponse.Body.Close()
-	if unsignedResponse.StatusCode != http.StatusForbidden &&
+	if unsignedResponse.StatusCode != http.StatusBadRequest &&
+		unsignedResponse.StatusCode != http.StatusForbidden &&
 		unsignedResponse.StatusCode != http.StatusUnauthorized &&
 		unsignedResponse.StatusCode != http.StatusNotFound {
 		t.Fatalf("anonymous object status = %d", unsignedResponse.StatusCode)

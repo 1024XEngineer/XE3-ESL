@@ -164,19 +164,19 @@ func TestAgentVoiceObjectReadAllowedHostsComeFromTrustedStorageConfig(
 	}
 }
 
-func TestAgentVoiceObjectReadAllowedHostsUseQiniuDownloadDomain(t *testing.T) {
+func TestAgentVoiceObjectReadAllowedHostsUseQiniuS3Endpoint(t *testing.T) {
 	hosts, err := AgentVoiceObjectReadAllowedHosts(
 		config.ObjectStorageConfig{
 			Enabled:  true,
 			Provider: config.ObjectStorageProviderQiniuKodo,
-			Domain:   "https://Private.Example.com",
+			Endpoint: "https://s3.cn-east-1.qiniucs.com",
 			Bucket:   "qiniu_bucket_name",
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hosts) != 1 || hosts[0] != "private.example.com" {
+	if len(hosts) != 1 || hosts[0] != "s3.cn-east-1.qiniucs.com" {
 		t.Fatalf("derived Qiniu signed-URL hosts = %#v", hosts)
 	}
 }

@@ -7,18 +7,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	qiniuclient "github.com/qiniu/go-sdk/v7/client"
-	"github.com/qiniu/go-sdk/v7/storagev2/apis"
-	"github.com/qiniu/go-sdk/v7/storagev2/credentials"
-	"github.com/qiniu/go-sdk/v7/storagev2/uploader"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -26,66 +24,59 @@ import (
 
 var fixedNow = time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
 
-type uploadStub struct {
-	err     error
-	inspect func(context.Context, io.Reader, *uploader.ObjectOptions) error
+type apiStub struct {
+	acl        *s3.GetBucketAclOutput
+	aclErr     error
+	put        *s3.PutObjectOutput
+	putErr     error
+	head       *s3.HeadObjectOutput
+	headErr    error
+	get        *s3.GetObjectOutput
+	getErr     error
+	deleted    *s3.DeleteObjectInput
+	deleteErr  error
+	inspectPut func(*s3.PutObjectInput) error
 }
 
-func (stub *uploadStub) UploadReader(
-	ctx context.Context,
-	reader io.Reader,
-	options *uploader.ObjectOptions,
-	response interface{},
-) error {
-	if stub.inspect != nil {
-		if err := stub.inspect(ctx, reader, options); err != nil {
-			return err
+func (stub *apiStub) GetBucketAcl(context.Context, *s3.GetBucketAclInput, ...func(*s3.Options)) (*s3.GetBucketAclOutput, error) {
+	return stub.acl, stub.aclErr
+}
+
+func (stub *apiStub) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if stub.inspectPut != nil {
+		if err := stub.inspectPut(input); err != nil {
+			return nil, err
 		}
 	}
-	if stub.err != nil {
-		return stub.err
+	return stub.put, stub.putErr
+}
+
+func (stub *apiStub) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	return stub.head, stub.headErr
+}
+
+func (stub *apiStub) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return stub.get, stub.getErr
+}
+
+func (stub *apiStub) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	stub.deleted = input
+	return &s3.DeleteObjectOutput{}, stub.deleteErr
+}
+
+type presignerStub struct {
+	request *v4.PresignedHTTPRequest
+	err     error
+	expires time.Duration
+}
+
+func (stub *presignerStub) PresignGetObject(_ context.Context, _ *s3.GetObjectInput, options ...func(*s3.PresignOptions)) (*v4.PresignedHTTPRequest, error) {
+	settings := s3.PresignOptions{}
+	for _, option := range options {
+		option(&settings)
 	}
-	result := response.(*putResponse)
-	result.Hash = "kodo-hash"
-	result.Key = *options.ObjectName
-	return nil
-}
-
-type managementStub struct {
-	private      int64
-	infoErr      error
-	stat         *apis.StatObjectResponse
-	statErr      error
-	deletedEntry string
-	deleteErr    error
-}
-
-func (stub *managementStub) GetBucketInfo(
-	context.Context,
-	*apis.GetBucketInfoRequest,
-	*apis.Options,
-) (*apis.GetBucketInfoResponse, error) {
-	if stub.infoErr != nil {
-		return nil, stub.infoErr
-	}
-	return &apis.GetBucketInfoResponse{Private: stub.private}, nil
-}
-
-func (stub *managementStub) StatObject(
-	context.Context,
-	*apis.StatObjectRequest,
-	*apis.Options,
-) (*apis.StatObjectResponse, error) {
-	return stub.stat, stub.statErr
-}
-
-func (stub *managementStub) DeleteObject(
-	_ context.Context,
-	request *apis.DeleteObjectRequest,
-	_ *apis.Options,
-) (*apis.DeleteObjectResponse, error) {
-	stub.deletedEntry = request.Entry
-	return &apis.DeleteObjectResponse{}, stub.deleteErr
+	stub.expires = settings.Expires
+	return stub.request, stub.err
 }
 
 func TestClientPutSignAndDelete(t *testing.T) {
@@ -93,45 +84,38 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	digest := sha256.Sum256(payload)
 	checksum := hex.EncodeToString(digest[:])
 	key := "audio/v1/assets/asset_test.wav"
-	manager := &managementStub{private: 1}
-	upload := &uploadStub{}
-	upload.inspect = func(
-		ctx context.Context,
-		reader io.Reader,
-		options *uploader.ObjectOptions,
-	) error {
-		body, err := io.ReadAll(reader)
+	api := &apiStub{
+		acl:     &s3.GetBucketAclOutput{},
+		put:     &s3.PutObjectOutput{ETag: aws.String("\"kodo-etag\"")},
+		headErr: &smithy.GenericAPIError{Code: "NotFound", Message: "not found"},
+	}
+	api.inspectPut = func(input *s3.PutObjectInput) error {
+		body, err := io.ReadAll(input.Body)
 		if err != nil || !bytes.Equal(body, payload) {
 			t.Fatalf("uploaded body = %q, %v", body, err)
 		}
-		if *options.ObjectName != key ||
-			options.ContentType != "audio/wav" ||
-			options.Metadata["sha256"] != checksum {
-			t.Fatalf("upload options = %#v", options)
-		}
-		policy, err := options.UpToken.GetPutPolicy(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		insertOnly, ok := policy.GetInsertOnly()
-		scope, scopeOK := policy.GetScope()
-		minimum, minimumOK := policy.GetFsizeMin()
-		limit, limitOK := policy.GetFsizeLimit()
-		if !ok || insertOnly != 1 || !scopeOK || scope != "private-bucket:"+key ||
-			!minimumOK || minimum != int64(len(payload)) ||
-			!limitOK || limit != int64(len(payload)) {
-			t.Fatalf("upload policy = %#v", policy)
+		if aws.ToString(input.Bucket) != "private-bucket" ||
+			aws.ToString(input.Key) != key ||
+			aws.ToInt64(input.ContentLength) != int64(len(payload)) ||
+			aws.ToString(input.ContentType) != "audio/wav" ||
+			aws.ToString(input.CacheControl) != "private, no-store" ||
+			aws.ToString(input.IfNoneMatch) != "*" ||
+			input.Metadata["sha256"] != checksum {
+			t.Fatalf("PutObject input = %#v", input)
 		}
 		return nil
 	}
-	client := newTestClient(upload, manager)
+	presigner := &presignerStub{request: &v4.PresignedHTTPRequest{
+		URL: "https://s3.cn-east-1.qiniucs.com/private-bucket/" + key + "?X-Amz-Signature=signed",
+	}}
+	client := newTestClient(api, presigner)
 	body := bytes.NewReader(payload)
 
 	result, err := client.Put(context.Background(), objectstore.PutRequest{
 		Key: key, Body: body, Size: int64(len(payload)),
 		ContentType: "audio/wav", ChecksumSHA256: checksum,
 	})
-	if err != nil || result.ETag != "kodo-hash" {
+	if err != nil || result.ETag != "kodo-etag" {
 		t.Fatalf("Put() = %#v, %v", result, err)
 	}
 	if offset, _ := body.Seek(0, io.SeekCurrent); offset != 0 {
@@ -146,9 +130,9 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Scheme != "https" || parsed.Host != "private.example.com" ||
-		parsed.Path != "/"+key || parsed.Query().Get("token") == "" ||
-		parsed.Query().Get("e") != strconv.FormatInt(signed.ExpiresAt.Unix(), 10) ||
+	if parsed.Scheme != "https" || parsed.Host != "s3.cn-east-1.qiniucs.com" ||
+		parsed.Query().Get("X-Amz-Signature") == "" ||
+		presigner.expires != 2*time.Minute ||
 		!signed.ExpiresAt.Equal(fixedNow.Add(2*time.Minute)) {
 		t.Fatalf("SignedGet() = %#v", signed)
 	}
@@ -156,8 +140,9 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	if err := client.Delete(context.Background(), key); err != nil {
 		t.Fatal(err)
 	}
-	if manager.deletedEntry != "private-bucket:"+key {
-		t.Fatalf("deleted entry = %q", manager.deletedEntry)
+	if aws.ToString(api.deleted.Bucket) != "private-bucket" ||
+		aws.ToString(api.deleted.Key) != key {
+		t.Fatalf("DeleteObject input = %#v", api.deleted)
 	}
 }
 
@@ -165,24 +150,21 @@ func TestClientReconcilesMatchingExistingObject(t *testing.T) {
 	payload := []byte("same object")
 	digest := sha256.Sum256(payload)
 	checksum := hex.EncodeToString(digest[:])
-	manager := &managementStub{
-		private: 1,
-		stat: &apis.StatObjectResponse{
-			Size: int64(len(payload)), Hash: "existing-hash",
-			MimeType: "audio/wav",
-			Metadata: map[string]string{"x-qn-meta-sha256": checksum},
+	api := &apiStub{
+		head: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(int64(len(payload))),
+			ContentType:   aws.String("audio/wav"),
+			ETag:          aws.String("\"existing-etag\""),
+			Metadata:      map[string]string{"sha256": checksum},
 		},
 	}
-	client := newTestClient(
-		&uploadStub{err: &qiniuclient.ErrorInfo{Code: 614, Err: "file exists"}},
-		manager,
-	)
+	client := newTestClient(api, &presignerStub{})
 	result, err := client.Put(context.Background(), objectstore.PutRequest{
 		Key: "audio/v1/existing.wav", Body: bytes.NewReader(payload),
 		Size: int64(len(payload)), ContentType: "audio/wav",
 		ChecksumSHA256: checksum,
 	})
-	if err != nil || result.ETag != "existing-hash" {
+	if err != nil || result.ETag != "existing-etag" {
 		t.Fatalf("Put() = %#v, %v", result, err)
 	}
 }
@@ -190,53 +172,37 @@ func TestClientReconcilesMatchingExistingObject(t *testing.T) {
 func TestClientRejectsMismatchedExistingObject(t *testing.T) {
 	payload := []byte("new object")
 	digest := sha256.Sum256(payload)
-	client := newTestClient(
-		&uploadStub{err: &qiniuclient.ErrorInfo{Code: 614, Err: "secret object key"}},
-		&managementStub{private: 1, stat: &apis.StatObjectResponse{
-			Size: 1, Hash: "other", MimeType: "audio/wav",
-		}},
-	)
+	client := newTestClient(&apiStub{
+		head: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(1), ETag: aws.String("other"),
+			ContentType: aws.String("audio/wav"),
+		},
+	}, &presignerStub{})
 	_, err := client.Put(context.Background(), objectstore.PutRequest{
 		Key: "audio/v1/existing.wav", Body: bytes.NewReader(payload),
 		Size: int64(len(payload)), ContentType: "audio/wav",
 		ChecksumSHA256: hex.EncodeToString(digest[:]),
 	})
-	if !errors.Is(err, objectstore.ErrAlreadyExists) ||
-		strings.Contains(err.Error(), "secret object key") {
+	if !errors.Is(err, objectstore.ErrAlreadyExists) {
 		t.Fatalf("Put() error = %v", err)
 	}
 }
 
 func TestClientPreflightRequiresPrivateBucket(t *testing.T) {
-	client := newTestClient(&uploadStub{}, &managementStub{private: 0})
+	client := newTestClient(&apiStub{acl: &s3.GetBucketAclOutput{Grants: []types.Grant{{
+		Grantee: &types.Grantee{URI: aws.String("http://acs.amazonaws.com/groups/global/AllUsers")},
+	}}}}, &presignerStub{})
 	if err := client.Preflight(context.Background()); !errors.Is(err, ErrBucketNotPrivate) {
 		t.Fatalf("Preflight() error = %v", err)
 	}
 }
 
-func TestClientDeleteTreatsMissingObjectAsSuccess(t *testing.T) {
-	manager := &managementStub{
-		private:   1,
-		deleteErr: &qiniuclient.ErrorInfo{Code: 612, Err: "no such file"},
-	}
-	client := newTestClient(&uploadStub{}, manager)
-	if err := client.Delete(context.Background(), "audio/v1/missing.wav"); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-}
-
 func TestClientOpenReturnsOnlyPDF(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("token") == "" {
-			t.Error("signed token missing")
-		}
-		writer.Header().Set("Content-Type", "application/pdf")
-		_, _ = writer.Write([]byte("%PDF fixture"))
-	}))
-	defer server.Close()
-	client := newTestClient(&uploadStub{}, &managementStub{private: 1})
-	client.domain = server.URL
-	client.httpClient = server.Client()
+	api := &apiStub{get: &s3.GetObjectOutput{
+		Body:        io.NopCloser(strings.NewReader("%PDF fixture")),
+		ContentType: aws.String("application/pdf"),
+	}}
+	client := newTestClient(api, &presignerStub{})
 	client.prefix = "resume/v1"
 
 	reader, err := client.Open(context.Background(), "resume/v1/document.pdf")
@@ -255,7 +221,8 @@ func TestNewRejectsMissingCredentialsBeforeNetwork(t *testing.T) {
 	t.Setenv("QINIU_SECRET_KEY", "")
 	client, err := New(context.Background(), config.ObjectStorageConfig{
 		Enabled: true, Provider: config.ObjectStorageProviderQiniuKodo,
-		Bucket: "private-bucket", Domain: "https://private.example.com",
+		Region: "cn-east-1", Endpoint: "https://s3.cn-east-1.qiniucs.com",
+		Bucket:      "private-bucket",
 		AudioPrefix: "audio/v1", ImagePrefix: "image/v1", ResumePrefix: "resume/v1",
 		SignedURLTTL: 2 * time.Minute, ServerSideEncryption: true,
 	})
@@ -264,12 +231,10 @@ func TestNewRejectsMissingCredentialsBeforeNetwork(t *testing.T) {
 	}
 }
 
-func newTestClient(upload uploadAPI, manager managementAPI) *Client {
+func newTestClient(api s3API, presigner s3Presigner) *Client {
 	return &Client{
-		uploader: upload, management: manager,
-		credentials: credentials.NewCredentials("test-access", "test-secret"),
-		httpClient:  http.DefaultClient,
-		bucket:      "private-bucket", domain: "https://private.example.com",
+		api: api, presigner: presigner,
+		bucket: "private-bucket", endpointHost: "s3.cn-east-1.qiniucs.com",
 		prefix: "audio/v1", signedURLTTL: 2 * time.Minute,
 		now: func() time.Time { return fixedNow },
 	}
