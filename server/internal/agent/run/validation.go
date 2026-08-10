@@ -1,6 +1,9 @@
 package run
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 const MaxBudget = 1_000_000
 
@@ -11,7 +14,7 @@ var uuidPattern = regexp.MustCompile(
 var providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 var modelPattern = regexp.MustCompile(
-	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
+	`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`,
 )
 
 func ValidUUID(value string) bool {
@@ -23,5 +26,8 @@ func ValidProviderID(value string) bool {
 }
 
 func ValidModelID(value string) bool {
-	return modelPattern.MatchString(value)
+	return modelPattern.MatchString(value) &&
+		!strings.HasSuffix(value, "/") &&
+		!strings.Contains(value, "//") &&
+		!strings.Contains(value, "..")
 }
