@@ -77,7 +77,7 @@ check-go-test: check-go-vet
 
 check-qiniu-llm-live:
 	@set -euo pipefail; \
-	required=(TEXT_GENERATION_PROVIDER QINIU_AI_BASE_URL QINIU_AI_MODEL QINIU_AI_SPEECH_FEEDBACK_MODEL QINIU_AI_API_KEY QINIU_LLM_LIVE_TEST); \
+	required=(TEXT_GENERATION_PROVIDER QINIU_AI_BASE_URL QINIU_AI_MODEL QINIU_AI_EVALUATION_MODEL QINIU_AI_SPEECH_FEEDBACK_MODEL QINIU_AI_API_KEY QINIU_LLM_LIVE_TEST); \
 	missing=(); \
 	for name in "$${required[@]}"; do \
 		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \

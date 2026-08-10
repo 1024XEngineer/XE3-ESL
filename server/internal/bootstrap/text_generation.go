@@ -154,12 +154,14 @@ func NewEvaluationScoringGenerator(
 		if err != nil {
 			return nil, err
 		}
+		providerConfig.Model = configuration.EvaluationModel
 		return qiniu.NewEvaluationScoringGenerator(providerConfig, apiKey)
 	}
 	providerConfig, apiKey, err := qianwenTextProvider(configuration)
 	if err != nil {
 		return nil, err
 	}
+	providerConfig.Model = configuration.EvaluationModel
 	return qianwen.NewEvaluationScoringGenerator(providerConfig, apiKey)
 }
 

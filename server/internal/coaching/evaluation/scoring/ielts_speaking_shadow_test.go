@@ -218,6 +218,59 @@ func TestIELTSSpeakingShadowRejectsProviderGateAndNumericScore(
 	}
 }
 
+func TestIELTSSpeakingShadowClassifiesProviderJSONContractFailures(
+	t *testing.T,
+) {
+	t.Parallel()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		payload []byte
+		want    error
+	}{
+		{
+			name:    "invalid JSON",
+			payload: []byte(`{"schema_version":`),
+			want:    errIELTSSpeakingProviderInvalidJSON,
+		},
+		{
+			name: "unknown field",
+			payload: []byte(`{"schema_version":"` +
+				IELTSSpeakingShadowProviderSchemaVersion +
+				`","criteria":[],"unexpected":true}`),
+			want: errIELTSSpeakingProviderSchemaMismatch,
+		},
+		{
+			name: "wrong schema version",
+			payload: []byte(
+				`{"schema_version":"wrong","criteria":[]}`,
+			),
+			want: errIELTSSpeakingProviderSchemaMismatch,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, normalizeErr := normalizeIELTSSpeakingProviderResult(
+				prepared,
+				IELTSSpeakingShadowProviderResult{
+					Payload:   test.payload,
+					Provider:  "provider",
+					Model:     "model",
+					RequestID: "request-1",
+				},
+			)
+			if !errors.Is(normalizeErr, test.want) ||
+				!errors.Is(normalizeErr, ErrInvalidIELTSSpeakingShadow) {
+				t.Fatalf("normalize error = %v", normalizeErr)
+			}
+		})
+	}
+}
+
 func TestIELTSSpeakingShadowRejectsNonFullMockEvaluationPolicy(t *testing.T) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
 	var payload evidence.SnapshotPayload

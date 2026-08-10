@@ -792,7 +792,9 @@ func interviewShadowFailure(
 	code string,
 ) EvaluationFailure {
 	switch code {
-	case "provider_invalid_response":
+	case "provider_invalid_json",
+		"provider_schema_mismatch",
+		"provider_invalid_response":
 		return EvaluationFailure{
 			ReasonCode: ReasonPolicyViolation,
 		}

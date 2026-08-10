@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"testing"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 func TestIELTSSpeakingShadowWorkerCompletesEvidenceBoundResult(
@@ -195,12 +196,11 @@ func TestIELTSSpeakingShadowWorkerReservesProviderRetryAfterAcousticWait(
 	}
 }
 
-func TestIELTSSpeakingShadowWorkerFailsAfterInvalidProviderPayloadExhaustion(
+func TestIELTSSpeakingShadowWorkerFailsSchemaMismatchWithoutRetry(
 	t *testing.T,
 ) {
 	t.Parallel()
 	claim := validIELTSSpeakingShadowClaim(t)
-	claim.AttemptCount = 3
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:      claim,
 		acquired:   true,
@@ -224,8 +224,8 @@ func TestIELTSSpeakingShadowWorkerFailsAfterInvalidProviderPayloadExhaustion(
 	}
 	if sweep.Failed != 1 ||
 		repository.failCalls != 1 ||
-		repository.failure.Code != "provider_invalid_response" ||
-		!repository.failure.Retryable ||
+		repository.failure.Code != "provider_schema_mismatch" ||
+		repository.failure.Retryable ||
 		repository.completeCalls != 0 ||
 		repository.result.Provider != nil ||
 		len(repository.result.Criteria) != 0 {
@@ -235,6 +235,80 @@ func TestIELTSSpeakingShadowWorkerFailsAfterInvalidProviderPayloadExhaustion(
 			repository.failure,
 		)
 	}
+}
+
+func TestClassifyIELTSSpeakingShadowFailureUsesStableProviderCodes(
+	t *testing.T,
+) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		cause     error
+		code      string
+		retryable bool
+	}{
+		{
+			name:  "invalid JSON",
+			cause: errIELTSSpeakingProviderInvalidJSON,
+			code:  "provider_invalid_json",
+		},
+		{
+			name:  "schema mismatch",
+			cause: errIELTSSpeakingProviderSchemaMismatch,
+			code:  "provider_schema_mismatch",
+		},
+		{
+			name:  "semantic response rejection",
+			cause: ErrInvalidIELTSSpeakingShadow,
+			code:  "provider_invalid_response",
+		},
+		{
+			name:  "invalid request",
+			cause: evaluation.ErrInvalidRequest,
+			code:  "provider_invalid_response",
+		},
+		{
+			name:      "timeout",
+			cause:     context.DeadlineExceeded,
+			code:      "provider_timeout",
+			retryable: true,
+		},
+		{
+			name: "provider timeout category",
+			cause: ieltsGenerationFailureStub{
+				category:  "timeout",
+				retryable: true,
+			},
+			code:      "provider_timeout",
+			retryable: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failure := classifyIELTSSpeakingShadowFailure(test.cause)
+			if failure.Code != test.code ||
+				failure.Retryable != test.retryable {
+				t.Fatalf("failure = %#v", failure)
+			}
+		})
+	}
+}
+
+type ieltsGenerationFailureStub struct {
+	category  string
+	retryable bool
+}
+
+func (failure ieltsGenerationFailureStub) Error() string {
+	return "provider generation failed"
+}
+
+func (failure ieltsGenerationFailureStub) StableCategory() string {
+	return failure.category
+}
+
+func (failure ieltsGenerationFailureStub) Retryable() bool {
+	return failure.retryable
 }
 
 func validIELTSSpeakingShadowRuntimeConfiguration() IELTSSpeakingShadowRuntimeConfiguration {

@@ -273,17 +273,20 @@ func (worker *IELTSSpeakingShadowWorker) recordFailure(
 	claim IELTSSpeakingShadowClaim,
 	cause error,
 ) (IELTSSpeakingShadowRuntimeStatus, error) {
-	if errors.Is(cause, ErrInvalidIELTSSpeakingShadow) {
+	failure := classifyIELTSSpeakingShadowFailure(cause)
+	if failure.Code == "provider_invalid_json" ||
+		failure.Code == "provider_schema_mismatch" ||
+		failure.Code == "provider_invalid_response" {
 		slog.Warn(
 			"IELTS Speaking provider response rejected",
-			"validation_error",
-			cause,
+			"failure_code",
+			failure.Code,
 		)
 	}
 	status, err := worker.repository.FailIELTSSpeakingShadow(
 		ctx,
 		claim,
-		classifyIELTSSpeakingShadowFailure(cause),
+		failure,
 		worker.configuration,
 	)
 	if err != nil {
@@ -316,11 +319,21 @@ func classifyIELTSSpeakingShadowFailure(
 			Code:      "acoustics_pending",
 			Retryable: true,
 		}
+	case errors.Is(cause, errIELTSSpeakingProviderInvalidJSON):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_invalid_json",
+			Retryable: false,
+		}
+	case errors.Is(cause, errIELTSSpeakingProviderSchemaMismatch):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_schema_mismatch",
+			Retryable: false,
+		}
 	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
 		errors.Is(cause, evaluation.ErrInvalidRequest):
 		return IELTSSpeakingShadowFailure{
 			Code:      "provider_invalid_response",
-			Retryable: errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
+			Retryable: false,
 		}
 	case errors.Is(cause, context.Canceled):
 		return IELTSSpeakingShadowFailure{
@@ -337,6 +350,9 @@ func classifyIELTSSpeakingShadowFailure(
 	if errors.As(cause, &generationError) {
 		code := strings.ToLower(generationError.StableCategory())
 		code = strings.NewReplacer("-", "_", " ", "_").Replace(code)
+		if code == "timeout" {
+			code = "provider_timeout"
+		}
 		if !durableSceneJobFailureCodePattern.MatchString(code) {
 			code = "provider_error"
 		}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
@@ -25,6 +26,24 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 		responseFormat protocol.TextResponseFormat
 		generate       func(*textClient) (string, string, string, error)
 	}{
+		{
+			name:           "Evaluation JSON",
+			systemPrompt:   "evaluate frozen evidence",
+			userPrompt:     "sanitized evidence payload",
+			responseFormat: protocol.TextResponseFormatJSON,
+			generate: func(client *textClient) (string, string, string, error) {
+				result, err := (&EvaluationScoringGenerator{
+					generator: client,
+				}).Generate(
+					context.Background(),
+					scoring.TextGenerationRequest{
+						SystemPrompt: "evaluate frozen evidence",
+						UserPrompt:   "sanitized evidence payload",
+					},
+				)
+				return result.Provider, result.Model, result.Content, err
+			},
+		},
 		{
 			name:           "Memory JSON",
 			systemPrompt:   "extract durable memory",
