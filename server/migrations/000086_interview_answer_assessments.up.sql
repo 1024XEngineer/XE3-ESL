@@ -35,6 +35,55 @@ BEGIN
     FOR constraint_name IN
         SELECT conname
         FROM pg_constraint
+        WHERE conrelid = 'practice_turns'::regclass
+          AND contype = 'c'
+          AND position(
+              'progress_recorded_at IS NULL'
+              IN pg_get_constraintdef(oid)
+          ) > 0
+          AND position(
+              'effective_turns > 0'
+              IN pg_get_constraintdef(oid)
+          ) > 0
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE practice_turns DROP CONSTRAINT %I',
+            constraint_name
+        );
+    END LOOP;
+END
+$$;
+
+ALTER TABLE practice_turns
+    ADD CONSTRAINT practice_turns_progress_shape_check CHECK (
+        (
+            progress_recorded_at IS NULL
+            AND effective_turns = 0
+            AND NOT session_completed
+        )
+        OR
+        (
+            progress_recorded_at IS NOT NULL
+            AND (
+                effective_turns > 0
+                OR (
+                    effective_turns = 0
+                    AND answer_assessment IS NOT NULL
+                    AND NOT advance_authorized
+                    AND NOT counts_toward_effective_turn_limit
+                    AND NOT session_completed
+                )
+            )
+        )
+    );
+
+DO $$
+DECLARE
+    constraint_name text;
+BEGIN
+    FOR constraint_name IN
+        SELECT conname
+        FROM pg_constraint
         WHERE conrelid = 'practice_turn_results'::regclass
           AND contype = 'c'
           AND position(

@@ -1,15 +1,5 @@
 BEGIN;
 
-ALTER TABLE practice_turns
-    DROP CONSTRAINT practice_turns_answer_assessment_shape_check,
-    DROP COLUMN advance_authorized,
-    DROP COLUMN assessment_policy_version,
-    DROP COLUMN answer_assessment;
-
-ALTER TABLE practice_questions
-    DROP CONSTRAINT practice_questions_dialogue_act_check,
-    DROP COLUMN dialogue_act;
-
 DO $$
 BEGIN
     IF EXISTS (
@@ -22,6 +12,31 @@ BEGIN
     END IF;
 END
 $$;
+
+ALTER TABLE practice_turns
+    DROP CONSTRAINT practice_turns_progress_shape_check,
+    ADD CONSTRAINT conversation_confirmed_turns_check CHECK (
+        (
+            progress_recorded_at IS NULL
+            AND effective_turns = 0
+            AND NOT session_completed
+        )
+        OR
+        (
+            progress_recorded_at IS NOT NULL
+            AND effective_turns > 0
+        )
+    );
+
+ALTER TABLE practice_turns
+    DROP CONSTRAINT practice_turns_answer_assessment_shape_check,
+    DROP COLUMN advance_authorized,
+    DROP COLUMN assessment_policy_version,
+    DROP COLUMN answer_assessment;
+
+ALTER TABLE practice_questions
+    DROP CONSTRAINT practice_questions_dialogue_act_check,
+    DROP COLUMN dialogue_act;
 
 ALTER TABLE practice_turn_results
     DROP CONSTRAINT practice_turn_results_effective_turns_check,

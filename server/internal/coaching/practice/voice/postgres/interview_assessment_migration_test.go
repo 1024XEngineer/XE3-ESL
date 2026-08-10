@@ -28,6 +28,10 @@ func TestInterviewAnswerAssessmentMigrationPersistsBoundedAuthority(t *testing.T
 		"jsonb_typeof(answer_assessment) = 'object'",
 		"FROM pg_constraint",
 		"pg_get_constraintdef(oid)",
+		"ADD CONSTRAINT practice_turns_progress_shape_check",
+		"AND answer_assessment IS NOT NULL",
+		"AND NOT advance_authorized",
+		"AND NOT counts_toward_effective_turn_limit",
 		"ALTER TABLE practice_turn_results DROP CONSTRAINT %I",
 		"effective_turns >= 0 AND effective_turns <= round_number",
 	} {
@@ -40,6 +44,8 @@ func TestInterviewAnswerAssessmentMigrationPersistsBoundedAuthority(t *testing.T
 		"DROP COLUMN assessment_policy_version",
 		"DROP COLUMN answer_assessment",
 		"DROP COLUMN dialogue_act",
+		"DROP CONSTRAINT practice_turns_progress_shape_check",
+		"ADD CONSTRAINT conversation_confirmed_turns_check",
 		"cannot roll back interview answer assessments while non-counting turn results exist",
 		"effective_turns = round_number",
 	} {
