@@ -97,7 +97,7 @@ func TestIELTSSpeakingAcousticSourceKeepsValidPartialEvidence(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingAcousticSourceSkipsMissingAndPendingEvidence(
+func TestIELTSSpeakingAcousticSourceWaitsForPendingEvidence(
 	t *testing.T,
 ) {
 	reader := &ieltsSpeakingFeedbackReaderStub{
@@ -120,12 +120,90 @@ func TestIELTSSpeakingAcousticSourceSkipsMissingAndPendingEvidence(
 		[]scoring.IELTSSpeakingAcousticRequest{
 			{TurnID: "turn_text", EvidenceRefID: "evidence_text"},
 			{
-				TurnID:        "turn_pending",
-				EvidenceRefID: "evidence_pending",
+				TurnID:              "turn_pending",
+				EvidenceRefID:       "evidence_pending",
+				RecordingDurationMS: 2000,
 			},
 		},
 	)
-	if err != nil || len(values) != 0 {
+	if !errors.Is(err, scoring.ErrIELTSSpeakingAcousticsPending) ||
+		len(values) != 0 {
+		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	}
+}
+
+func TestIELTSSpeakingAcousticSourceUsesSufficientReadyEvidenceWhilePending(
+	t *testing.T,
+) {
+	accuracy := 82.0
+	fluency := 79.0
+	reader := &ieltsSpeakingFeedbackReaderStub{
+		referenceByTurn: map[string]string{
+			"turn_ready":   "feedback_ready",
+			"turn_pending": "feedback_pending",
+		},
+		feedbackByID: map[string]SpeechFeedback{
+			"feedback_ready": {
+				FeedbackStatus: SpeechFeedbackReady,
+				AcousticAssessment: SpeechFeedbackAcousticAssessment{
+					Pronunciation:   SpeechFeedbackAssessed,
+					AcousticFluency: SpeechFeedbackAssessed,
+					AccuracyScore:   &accuracy,
+					FluencyScore:    &fluency,
+					Provider:        "xfyun_ise",
+					ProviderSession: "session-ready",
+				},
+			},
+			"feedback_pending": {FeedbackStatus: SpeechFeedbackRunning},
+		},
+	}
+	source, err := NewIELTSSpeakingAcousticSource(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := source.GetIELTSSpeakingAcoustics(
+		context.Background(),
+		"10000000-0000-4000-8000-000000000001",
+		[]scoring.IELTSSpeakingAcousticRequest{
+			{
+				TurnID:              "turn_ready",
+				EvidenceRefID:       "evidence_ready",
+				RecordingDurationMS: 3000,
+			},
+			{
+				TurnID:              "turn_pending",
+				EvidenceRefID:       "evidence_pending",
+				RecordingDurationMS: 2000,
+			},
+		},
+	)
+	if err != nil || len(values) != 1 || values[0].TurnID != "turn_ready" {
+		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	}
+}
+
+func TestIELTSSpeakingAcousticSourceWaitsForMissingRecordedTurn(
+	t *testing.T,
+) {
+	source, err := NewIELTSSpeakingAcousticSource(
+		&ieltsSpeakingFeedbackReaderStub{
+			referenceByTurn: map[string]string{},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := source.GetIELTSSpeakingAcoustics(
+		context.Background(),
+		"10000000-0000-4000-8000-000000000001",
+		[]scoring.IELTSSpeakingAcousticRequest{{
+			TurnID:              "turn_recorded",
+			EvidenceRefID:       "evidence_recorded",
+			RecordingDurationMS: 2000,
+		}},
+	)
+	if !errors.Is(err, scoring.ErrIELTSSpeakingAcousticsPending) ||
+		len(values) != 0 {
 		t.Fatalf("acoustics = %#v; err = %v", values, err)
 	}
 }

@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	runtimeLeaseDuration = 60 * time.Second
-	runtimeRetryDelay    = 5 * time.Second
-	runtimeMaxAttempts   = 3
+	runtimeLeaseDuration    = 60 * time.Second
+	runtimeRetryDelay       = 5 * time.Second
+	runtimeMaxAttempts      = 3
+	ieltsRuntimeMaxAttempts = 10
 )
 
 type Configuration struct {
@@ -95,6 +96,28 @@ func NewRuntime(
 	policies *EvaluationPolicyRegistry,
 	configuration Configuration,
 ) (*Runtime, error) {
+	return NewRuntimeWithIELTSAcoustics(
+		repository,
+		completions,
+		evidenceService,
+		evaluationService,
+		textGenerator,
+		policies,
+		configuration,
+		nil,
+	)
+}
+
+func NewRuntimeWithIELTSAcoustics(
+	repository RuntimeRepository,
+	completions practice.CompletionHandoffRepository,
+	evidenceService RuntimeEvidence,
+	evaluationService RuntimeEvaluations,
+	textGenerator TextGenerator,
+	policies *EvaluationPolicyRegistry,
+	configuration Configuration,
+	acoustics IELTSSpeakingAcousticSource,
+) (*Runtime, error) {
 	if repository == nil || completions == nil || evidenceService == nil ||
 		evaluationService == nil || textGenerator == nil || policies == nil ||
 		!configuration.valid() {
@@ -135,9 +158,16 @@ func NewRuntime(
 	if err != nil {
 		return nil, err
 	}
+	ieltsEngine := NewIELTSSpeakingShadowEngine(ieltsProvider)
+	if acoustics != nil {
+		ieltsEngine = NewIELTSSpeakingShadowEngineWithAcoustics(
+			ieltsProvider,
+			acoustics,
+		)
+	}
 	ieltsWorker, err := NewIELTSSpeakingShadowWorker(
 		repository,
-		NewIELTSSpeakingShadowEngine(ieltsProvider),
+		ieltsEngine,
 		ieltsConfiguration,
 	)
 	if err != nil {
@@ -383,7 +413,7 @@ func ieltsRuntimeConfiguration(
 		return IELTSSpeakingShadowRuntimeConfiguration{}, err
 	}
 	result := IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     configuration.maxAttempts,
+		MaxAttempts:     ieltsRuntimeMaxAttempts,
 		LeaseDuration:   configuration.leaseDuration,
 		StrategyRef:     IELTSSpeakingShadowStrategyRef,
 		PipelineVersion: IELTSSpeakingShadowPipelineVersion,

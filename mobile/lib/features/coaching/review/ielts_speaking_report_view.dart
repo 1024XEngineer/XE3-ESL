@@ -106,6 +106,12 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
+    if (controller.canRetry && controller.errorMessage != null) {
+      return _ReportFailure(
+        message: controller.errorMessage!,
+        onRetry: controller.retry,
+      );
+    }
     final envelope = controller.envelope;
     if (envelope == null) {
       return const _GeneratingReport();
@@ -121,6 +127,43 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
         message: '报告正在自动恢复，无需重新操作',
       ),
     };
+  }
+}
+
+class _ReportFailure extends StatelessWidget {
+  const _ReportFailure({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('ielts-speaking-report-failed'),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline_rounded, size: 48),
+            const SizedBox(height: 12),
+            const Text('报告暂时无法生成', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: SpeakUpDesign.body,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              key: const Key('ielts-speaking-report-retry'),
+              onPressed: () => unawaited(onRetry()),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重新生成报告'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -324,7 +367,11 @@ class _OverallScore extends StatelessWidget {
   Widget build(BuildContext context) {
     final band = report.speakingOverallBand;
     return Container(
-      key: const Key('ielts-speaking-overall-unavailable'),
+      key: Key(
+        band == null
+            ? 'ielts-speaking-overall-unavailable'
+            : 'ielts-speaking-overall-available',
+      ),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [SpeakUpDesign.primary, Color(0xFF2A6D7E)],

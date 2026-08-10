@@ -84,6 +84,33 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
+  testWidgets('renders all four Bands and rounded Overall', (tester) async {
+    final envelope = decodeIeltsSpeakingReport(
+      completeIeltsSpeakingReportContractFixture(),
+    );
+    final controller = IeltsSpeakingReportController(
+      client: _Client(envelope),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    await controller.load('session_ielts_report_001');
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('ielts-speaking-overall-available')),
+      findsOneWidget,
+    );
+    expect(find.text('6.5'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-band-pronunciation')),
+      findsOneWidget,
+    );
+    expect(find.text('发音'), findsWidgets);
+  });
+
   testWidgets('same-question list starts the selected question directly', (
     tester,
   ) async {
@@ -127,22 +154,34 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
-  testWidgets('technical failure stays in automatic recovery without retry', (
+  testWidgets('terminal technical failure offers an explicit retry', (
     tester,
   ) async {
-    final controller = await _controllerFor('failed');
+    final controller = IeltsSpeakingReportController(
+      client: _Client(
+        decodeIeltsSpeakingReport(
+          ieltsSpeakingReportContractFixture()['failed'],
+        ),
+      ),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+      maximumAutomaticRegenerations: 0,
+    );
     addTearDown(controller.dispose);
+    await controller.load('session_ielts_report_001');
 
     await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-speaking-report-generating')),
+      find.byKey(const Key('ielts-speaking-report-failed')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('ielts-speaking-report-retry')), findsNothing);
-    expect(find.byKey(const Key('ielts-speaking-report-failed')), findsNothing);
-    expect(find.textContaining('失败'), findsNothing);
+    expect(
+      find.byKey(const Key('ielts-speaking-report-retry')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('暂时无法生成'), findsOneWidget);
 
     controller.cancel('session_ielts_report_001');
   });

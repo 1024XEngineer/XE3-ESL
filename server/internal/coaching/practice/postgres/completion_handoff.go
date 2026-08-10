@@ -180,8 +180,14 @@ func (r *Repository) FailCompletionHandoff(
 		        THEN transaction_timestamp() + make_interval(secs => $7)
 		        ELSE available_at
 		    END,
-		    failure_code = CASE WHEN $6::boolean THEN NULL ELSE $4 END,
-		    failure_retryable = CASE WHEN $6::boolean THEN NULL ELSE $5 END,
+		    failure_code = CASE
+		        WHEN $6::boolean THEN NULL::text
+		        ELSE $4::text
+		    END,
+		    failure_retryable = CASE
+		        WHEN $6::boolean THEN NULL::boolean
+		        ELSE $5::boolean
+		    END,
 		    updated_at = transaction_timestamp()
 		WHERE owner_user_id = $1
 		  AND session_id = $2

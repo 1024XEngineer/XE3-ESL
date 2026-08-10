@@ -151,6 +151,31 @@ func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingPromptV5MigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(
+		t,
+		"000085_evaluation_ielts_speaking_prompt_v5.up.sql",
+	)
+	if !strings.Contains(
+		up,
+		"IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V5",
+	) {
+		t.Error("IELTS Prompt v5 migration must admit the new lineage")
+	}
+	down := readMigration(
+		t,
+		"000085_evaluation_ielts_speaking_prompt_v5.down.sql",
+	)
+	if strings.Contains(
+		down,
+		"IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V5",
+	) {
+		t.Error("IELTS Prompt v5 rollback must restore the v4 constraint")
+	}
+}
+
 func TestIELTSDedicatedAssignmentLimitsMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 

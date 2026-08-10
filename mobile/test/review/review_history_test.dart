@@ -1494,7 +1494,21 @@ ReviewHistoryItem _sceneItem({
     practiceSessionId: 'session-$id',
     revision: 1,
     sceneType: sceneType,
-    sceneCategory: 'INTERVIEW_PROFESSIONAL',
+    practiceExperience: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_AND_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE',
+    },
+    sceneCategory: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW_PROFESSIONAL',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE_GENERAL',
+    },
+    practiceMode: sceneType == EvaluationReportSceneType.ieltsSpeaking
+        ? 'FULL_MOCK'
+        : 'FULL_SIMULATION',
     scoreability: scoreability,
     summary: scoreability == EvaluationReportScoreability.insufficient
         ? '当前回答不足以形成可靠结论。'

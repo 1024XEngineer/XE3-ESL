@@ -430,6 +430,7 @@ type ieltsProviderStub struct {
 type ieltsAcousticSourceStub struct {
 	calls int
 	limit int
+	err   error
 }
 
 func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
@@ -438,6 +439,9 @@ func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
 	requests []IELTSSpeakingAcousticRequest,
 ) ([]IELTSSpeakingTurnAcoustics, error) {
 	source.calls++
+	if source.err != nil {
+		return nil, source.err
+	}
 	result := make([]IELTSSpeakingTurnAcoustics, 0, len(requests))
 	for _, request := range requests {
 		if source.limit > 0 && len(result) == source.limit {
