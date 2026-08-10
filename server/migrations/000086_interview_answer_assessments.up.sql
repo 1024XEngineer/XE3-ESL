@@ -28,8 +28,29 @@ ALTER TABLE practice_questions
         )
     );
 
+DO $$
+DECLARE
+    constraint_name text;
+BEGIN
+    FOR constraint_name IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'practice_turn_results'::regclass
+          AND contype = 'c'
+          AND position(
+              'effective_turns = round_number'
+              IN pg_get_constraintdef(oid)
+          ) > 0
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE practice_turn_results DROP CONSTRAINT %I',
+            constraint_name
+        );
+    END LOOP;
+END
+$$;
+
 ALTER TABLE practice_turn_results
-    DROP CONSTRAINT practice_turn_results_effective_turns_check,
     ADD CONSTRAINT practice_turn_results_effective_turns_check CHECK (
         effective_turns >= 0 AND effective_turns <= round_number
     );

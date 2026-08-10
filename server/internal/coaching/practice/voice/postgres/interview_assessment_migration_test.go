@@ -26,6 +26,9 @@ func TestInterviewAnswerAssessmentMigrationPersistsBoundedAuthority(t *testing.T
 		"ADD COLUMN advance_authorized boolean",
 		"ADD COLUMN dialogue_act text",
 		"jsonb_typeof(answer_assessment) = 'object'",
+		"FROM pg_constraint",
+		"pg_get_constraintdef(oid)",
+		"ALTER TABLE practice_turn_results DROP CONSTRAINT %I",
 		"effective_turns >= 0 AND effective_turns <= round_number",
 	} {
 		if !strings.Contains(string(up), fragment) {
