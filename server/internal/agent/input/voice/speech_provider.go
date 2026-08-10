@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -24,6 +25,22 @@ type StreamingSpeechRecognizer interface {
 		TranscriptionRequest,
 		TranscriptionObserver,
 	) (TranscriptionResult, error)
+}
+
+// PCMStreamingSpeechRecognizer consumes live PCM frames without requiring a
+// durable AudioSource. Callers retain ownership of the stream and cancel it
+// when the client disconnects or abandons transcription.
+type PCMStreamingSpeechRecognizer interface {
+	TranscribePCMStream(
+		context.Context,
+		PCMTranscriptionRequest,
+		TranscriptionObserver,
+	) (TranscriptionResult, error)
+}
+
+type PCMTranscriptionRequest struct {
+	PCM        io.Reader
+	SampleRate int
 }
 
 type TranscriptionObserver interface {

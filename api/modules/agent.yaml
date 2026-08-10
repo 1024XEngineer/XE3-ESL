@@ -335,6 +335,95 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/voice-transcriptions/realtime:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    get:
+      tags:
+        - Agent
+      summary: Stream one non-persistent Agent voice transcription
+      description: |
+        Upgrade to a Thread-scoped WebSocket that sends mono PCM s16le frames
+        directly to the configured realtime speech recognizer. The server
+        authenticates the Bearer Session, resolves Thread ownership, and
+        validates `Sec-WebSocket-Protocol` before upgrading. The accepted
+        connection is bound to that Actor and Thread; switching accounts
+        requires closing it and authenticating a new connection.
+
+        The client first sends `start` with an 8-128 character idempotency key
+        and `sample_rate=16000`, then binary PCM frames, followed by `finish` or
+        `cancel`. At most 1,920,000 PCM bytes are accepted. The server emits
+        `transcription.started`, zero or more `transcription.updated`, and one
+        `transcription.completed` or `transcription.failed` terminal event.
+        Idempotency keys validate the live attempt only; this ephemeral stream
+        does not persist or replay a prior result.
+
+        This operation never creates a Voice Candidate, Agent Message, audio
+        attachment, transcript evidence, or object-storage entry. After
+        `transcription.completed`, clients submit edited text through the
+        existing Agent Run endpoint.
+      operationId: streamAgentVoiceTranscription
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required Agent voice input subprotocol.
+          schema:
+            type: string
+            const: speakup.voice-input.v1
+      responses:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated Agent voice input protocol.
+              schema:
+                type: string
+                const: speakup.voice-input.v1
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+      x-websocket-client-text-frame-schema:
+        $ref: ../websocket/agent-voice-transcription.schema.json#/$defs/ClientTextFrame
+      x-websocket-event-schema:
+        $ref: ../websocket/agent-voice-transcription.schema.json#/$defs/ServerEvent
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - subprotocol
+            - upgrade
+          authentication_failure:
+            http_status: 401
+            error_code: authentication_required
+          resource_not_visible:
+            http_status: 404
+            error_code: resource_not_found
+        reconnect:
+          reauthenticate: true
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: thread_id
+          target_switch_allowed: false
+        subprotocol:
+          allowed:
+            - speakup.voice-input.v1
+          carries_credentials: false
   /v1/agent-threads/{thread_id}/voice-message-candidates:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'

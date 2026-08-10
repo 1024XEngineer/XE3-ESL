@@ -9,10 +9,40 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	"github.com/gorilla/websocket"
 )
+
+func TestAgentVoiceRecognizerExposesRealtimePCMCapabilityOnlyForRealtime(
+	t *testing.T,
+) {
+	t.Parallel()
+	for _, test := range []struct {
+		model string
+		want  bool
+	}{
+		{model: "fun-asr-realtime", want: true},
+		{model: "fun-asr-flash-2026-06-15", want: false},
+	} {
+		t.Run(test.model, func(t *testing.T) {
+			recognizer, err := NewAgentVoiceRecognizer(ASRConfig{
+				BaseURL: "https://dashscope.aliyuncs.com/api/v1",
+				Model:   test.model,
+				Timeout: time.Second,
+			}, "test-api-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got := recognizer.(agentvoice.PCMStreamingSpeechRecognizer)
+			if got != test.want {
+				t.Fatalf("PCM capability = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
 
 func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 	t.Parallel()
@@ -219,5 +249,69 @@ func TestRealtimeEndpointDerivesFromDashScopeHTTPBase(t *testing.T) {
 	got := realtimeASREndpoint("https://dashscope.aliyuncs.com/api/v1")
 	if got != "wss://dashscope.aliyuncs.com/api-ws/v1/inference/?heartbeat=true" {
 		t.Fatalf("endpoint = %q", got)
+	}
+}
+
+func TestRealtimeTranscribeClosesProviderConnectionOnCancellation(t *testing.T) {
+	providerConnected := make(chan struct{})
+	providerClosed := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer connection.Close()
+		if _, _, err := connection.ReadMessage(); err != nil {
+			t.Errorf("read run-task: %v", err)
+			return
+		}
+		close(providerConnected)
+		if _, _, err := connection.ReadMessage(); err == nil {
+			t.Error("provider connection remained open after cancellation")
+		}
+		close(providerClosed)
+	}))
+	defer server.Close()
+
+	recognizer := mustRecognizer(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("realtime recognition must not use HTTP generation")
+		return nil, nil
+	}), "test-realtime-key")
+	recognizer.model = "fun-asr-realtime"
+	recognizer.wsEndpoint = "ws" + strings.TrimPrefix(server.URL, "http")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := recognizer.transcribeRealtimePCM(
+			ctx,
+			bytes.NewReader([]byte{1, 2}),
+			16_000,
+			nil,
+		)
+		result <- err
+	}()
+	select {
+	case <-providerConnected:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not accept the realtime task")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("cancelled realtime transcription succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled realtime transcription did not return")
+	}
+	select {
+	case <-providerClosed:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled realtime transcription did not close provider")
 	}
 }

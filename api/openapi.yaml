@@ -131,6 +131,8 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-image-assets~1{image_asset_id}
   /v1/agent-threads/{thread_id}/voice-message-candidates:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-message-candidates
+  /v1/agent-threads/{thread_id}/voice-transcriptions/realtime:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-transcriptions~1realtime
   /v1/agent-voice-message-candidates/{candidate_id}:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}
   /v1/agent-voice-message-candidates/{candidate_id}/retries:

@@ -146,6 +146,7 @@ func buildIdentityAgentComposition(
 			"bootstrap: Agent Run dependencies are required",
 		)
 	}
+	realtimeRecognizer := agentRealtimePCMRecognizer(voiceConfigurations)
 	// 1. 装配身份、Goal 与 Conversation 主链。
 	identityContext, err := buildIdentityComposition(
 		database,
@@ -482,6 +483,19 @@ func buildIdentityAgentComposition(
 		translationHTTP,
 		runHTTP,
 	}
+	if realtimeRecognizer != nil {
+		ephemeralHTTP, ephemeralHTTPErr :=
+			agentvoicehttp.NewEphemeralTranscriptionHandler(
+				realtimeRecognizer,
+				agentService,
+				voiceConfigurations[0].AudioReadTimeout,
+				errorRenderer,
+			)
+		if ephemeralHTTPErr != nil {
+			return nil, ephemeralHTTPErr
+		}
+		registrars = append(registrars, ephemeralHTTP)
+	}
 	if agentImages != nil {
 		imageHTTP, imageHTTPErr := agentimagehttp.NewHandler(
 			agentImages,
@@ -562,6 +576,16 @@ func buildIdentityAgentComposition(
 		titleProcessor:      titleProcessor,
 		ids:                 ids,
 	}, nil
+}
+
+func agentRealtimePCMRecognizer(
+	configurations []VoiceConfiguration,
+) agentvoice.PCMStreamingSpeechRecognizer {
+	if len(configurations) != 1 || configurations[0].Recognizer == nil {
+		return nil
+	}
+	recognizer, _ := configurations[0].Recognizer.(agentvoice.PCMStreamingSpeechRecognizer)
+	return recognizer
 }
 
 func buildAgentImageApplication(
