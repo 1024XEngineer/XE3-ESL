@@ -12,6 +12,8 @@ void main() {
 
     expect(report.id, '20000000-0000-4000-8000-000000000002');
     expect(report.sceneType, EvaluationReportSceneType.interview);
+    expect(report.practiceExperience, 'INTERVIEW');
+    expect(report.practiceMode, 'FULL_SIMULATION');
     expect(report.scoreability, EvaluationReportScoreability.provisional);
     expect(report.dimensions.single.score, 82);
     expect(report.priorityActions.single.findingId, 'improvement_action');
@@ -25,6 +27,22 @@ void main() {
           .single
           .originalExcerpt,
       'I made the product better.',
+    );
+  });
+
+  test('rejects a practice context that conflicts with the scene type', () {
+    final mismatchedExperience = evaluationReportWireFixture()
+      ..['practice_experience'] = 'IELTS_SPEAKING';
+    final mismatchedMode = evaluationReportWireFixture()
+      ..['practice_mode'] = 'FULL_MOCK';
+
+    expect(
+      () => decodeEvaluationReport(mismatchedExperience),
+      throwsA(_decodeFailure),
+    );
+    expect(
+      () => decodeEvaluationReport(mismatchedMode),
+      throwsA(_decodeFailure),
     );
   });
 

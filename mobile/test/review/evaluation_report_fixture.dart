@@ -23,7 +23,21 @@ EvaluationReport evaluationReportFixture({
     practiceSessionId: practiceSessionId,
     revision: 1,
     sceneType: sceneType,
-    sceneCategory: 'INTERVIEW_PROFESSIONAL',
+    practiceExperience: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_AND_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE',
+    },
+    sceneCategory: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW_PROFESSIONAL',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE_GENERAL',
+    },
+    practiceMode: sceneType == EvaluationReportSceneType.ieltsSpeaking
+        ? 'FULL_MOCK'
+        : 'FULL_SIMULATION',
     scoreability: scoreability,
     summary: review.summary,
     dimensions: <EvaluationReportDimension>[
@@ -83,7 +97,9 @@ Map<String, Object?> evaluationReportWireFixture({
   String createdAt = '2026-07-26T10:00:00Z',
   double score = 82,
   String sceneType = 'INTERVIEW',
+  String practiceExperience = 'INTERVIEW',
   String sceneCategory = 'INTERVIEW_PROFESSIONAL',
+  String practiceMode = 'FULL_SIMULATION',
   String scoreability = 'PROVISIONAL',
 }) {
   final insufficient = scoreability == 'INSUFFICIENT';
@@ -95,7 +111,9 @@ Map<String, Object?> evaluationReportWireFixture({
     'revision': 1,
     'schema_version': 'evaluation-report/v1',
     'scene_type': sceneType,
+    'practice_experience': practiceExperience,
     'scene_category': sceneCategory,
+    'practice_mode': practiceMode,
     'scoreability_status': scoreability,
     'summary': insufficient ? '本次练习的有效证据不足，暂不形成能力结论。' : '本次练习已形成面试表达评估。',
     'dimensions': <Object?>[

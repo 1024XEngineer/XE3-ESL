@@ -20,7 +20,9 @@ EvaluationReport decodeEvaluationReport(Object? value) {
       'revision',
       'schema_version',
       'scene_type',
+      'practice_experience',
       'scene_category',
+      'practice_mode',
       'scoreability_status',
       'summary',
       'dimensions',
@@ -42,7 +44,17 @@ EvaluationReport decodeEvaluationReport(Object? value) {
     throw const EvaluationReportDecodeException();
   }
   final sceneType = _sceneType(root['scene_type']);
+  final practiceExperience = _version(root['practice_experience']);
   final sceneCategory = _version(root['scene_category']);
+  final practiceMode = _version(root['practice_mode']);
+  if (!_validPracticeContext(
+    sceneType: sceneType,
+    practiceExperience: practiceExperience,
+    sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
+  )) {
+    throw const EvaluationReportDecodeException();
+  }
   final scoreability = _scoreability(root['scoreability_status']);
   final summary = _text(root['summary'], maximumBytes: 2048);
   final findings = <String>{};
@@ -68,7 +80,9 @@ EvaluationReport decodeEvaluationReport(Object? value) {
     practiceSessionId: practiceSessionId,
     revision: revision,
     sceneType: sceneType,
+    practiceExperience: practiceExperience,
     sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
     scoreability: scoreability,
     summary: summary,
     dimensions: dimensions,
@@ -328,6 +342,41 @@ EvaluationReportSceneType _sceneType(Object? value) => switch (value) {
   'OVERSEAS_DAILY_LIFE' => EvaluationReportSceneType.overseasDailyLife,
   'OVERSEAS_WORKPLACE' => EvaluationReportSceneType.overseasWorkplace,
   _ => throw const EvaluationReportDecodeException(),
+};
+
+bool _validPracticeContext({
+  required EvaluationReportSceneType sceneType,
+  required String practiceExperience,
+  required String sceneCategory,
+  required String practiceMode,
+}) => switch (sceneType) {
+  EvaluationReportSceneType.ieltsSpeaking =>
+    practiceExperience == 'IELTS_SPEAKING' &&
+        sceneCategory == 'IELTS_SPEAKING' &&
+        const {
+          'FULL_MOCK',
+          'PART_1',
+          'PART_2',
+          'PART_3',
+        }.contains(practiceMode),
+  EvaluationReportSceneType.interview =>
+    practiceExperience == 'INTERVIEW' &&
+        const {
+          'INTERVIEW_RECRUITER',
+          'INTERVIEW_BEHAVIORAL',
+          'INTERVIEW_PROFESSIONAL',
+          'INTERVIEW_HIRING_MANAGER',
+          'INTERVIEW_CUSTOM',
+        }.contains(sceneCategory) &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
+  EvaluationReportSceneType.overseasDailyLife =>
+    practiceExperience == 'LIFE_AND_TRAVEL' &&
+        const {'LIFE_TRAVEL', 'LIFE_DAILY'}.contains(sceneCategory) &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
+  EvaluationReportSceneType.overseasWorkplace =>
+    practiceExperience == 'WORKPLACE' &&
+        sceneCategory == 'WORKPLACE_GENERAL' &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
 };
 
 EvaluationReportScoreability _scoreability(Object? value) => switch (value) {

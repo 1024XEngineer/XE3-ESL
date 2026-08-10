@@ -17,7 +17,9 @@ final class EvaluationReport {
     required this.practiceSessionId,
     required this.revision,
     required this.sceneType,
+    required this.practiceExperience,
     required this.sceneCategory,
+    required this.practiceMode,
     required this.scoreability,
     required this.summary,
     required this.dimensions,
@@ -33,7 +35,9 @@ final class EvaluationReport {
   final String practiceSessionId;
   final int revision;
   final EvaluationReportSceneType sceneType;
+  final String practiceExperience;
   final String sceneCategory;
+  final String practiceMode;
   final EvaluationReportScoreability scoreability;
   final String summary;
   final List<EvaluationReportDimension> dimensions;
