@@ -124,6 +124,60 @@ void main() {
     expect(controller.messages.last.hasFailed, isTrue);
   });
 
+  test(
+    'stops committed assistant speech when the stream fails after completion',
+    () async {
+      final client = _StreamingAgentClient();
+      final speechEvents = <String>[];
+      final controller = ConversationController(
+        client: client,
+        clientIdFactory: (_) => 'stream-completed-failure-message',
+        onAssistantStreamStarted: (messageId) async {
+          speechEvents.add('start:$messageId');
+        },
+        onAssistantStreamDelta: (messageId, delta) {
+          speechEvents.add('delta:$messageId:$delta');
+        },
+        onAssistantStreamCompleted: (messageId, message) {
+          speechEvents.add('complete:$messageId:${message.id}');
+        },
+        onAssistantStreamFailed: (messageId) {
+          speechEvents.add('fail:$messageId');
+        },
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.sendText('Please continue.'), isTrue);
+      client.events
+        ..add(const AgentAssistantStarted(runId: 'run-completed-failure'))
+        ..add(
+          const AgentAssistantDelta(
+            runId: 'run-completed-failure',
+            delta: 'The response is complete.',
+          ),
+        )
+        ..add(
+          const AgentRunCompleted(
+            runId: 'run-completed-failure',
+            assistantMessageId: 'assistant-completed-failure',
+          ),
+        )
+        ..addError(StateError('Stream failed after completion.'));
+      await client.events.close();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(speechEvents, <String>[
+        'start:stream-run-completed-failure',
+        'delta:stream-run-completed-failure:The response is complete.',
+        'complete:stream-run-completed-failure:assistant-completed-failure',
+        'fail:assistant-completed-failure',
+      ]);
+      expect(controller.messages.last.id, 'assistant-completed-failure');
+      expect(controller.messages.last.hasFailed, isTrue);
+    },
+  );
+
   test('speech presentation failure does not fail the text stream', () async {
     final client = _StreamingAgentClient();
     final controller = ConversationController(

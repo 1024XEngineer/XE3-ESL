@@ -924,6 +924,7 @@ final class ConversationController extends ChangeNotifier {
               );
               replaceMessage(assistantID, completed);
               _completeAssistantStream(assistantID, completed);
+              assistantID = assistantMessageId;
             }
           case AgentRunFailed(:final kind, :final retryable):
             throw AgentClientException(
