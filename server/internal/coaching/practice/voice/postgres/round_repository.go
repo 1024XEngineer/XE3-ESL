@@ -923,6 +923,9 @@ func (r *Repository) confirmTurnInTransaction(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return practice.Turn{}, safeDatabaseError(err)
 	}
+	if command.ReplayOnly {
+		return practice.Turn{}, practicevoice.ErrPersistenceNotFound
+	}
 
 	candidate, err := lockCandidate(ctx, tx, actor.UserID, command.CandidateID)
 	if err != nil {
@@ -1144,6 +1147,9 @@ func validConfirmation(
 	if command.AnswerAssessment != nil {
 		assessmentValid = command.AdvanceAuthorized != nil &&
 			strings.TrimSpace(command.AssessmentPolicyVersion) != ""
+	}
+	if command.ReplayOnly && command.AnswerAssessment != nil {
+		assessmentValid = false
 	}
 	return assessmentValid && validInputActor(actor) &&
 		strings.TrimSpace(command.CandidateID) != "" &&

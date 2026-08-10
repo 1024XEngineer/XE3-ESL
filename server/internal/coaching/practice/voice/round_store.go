@@ -333,6 +333,7 @@ func (store *roundStoreAdapter) ReserveConfirmation(
 			AdvanceAuthorized:       command.AdvanceAuthorized,
 			AnswerAssessment:        command.AnswerAssessment,
 			AssessmentPolicyVersion: command.AssessmentPolicyVersion,
+			ReplayOnly:              command.ReplayOnly,
 		},
 	)
 	if err != nil {
@@ -373,6 +374,7 @@ func (store *roundStoreAdapter) ReserveRecordingConfirmation(
 				AdvanceAuthorized:       command.AdvanceAuthorized,
 				AnswerAssessment:        command.AnswerAssessment,
 				AssessmentPolicyVersion: command.AssessmentPolicyVersion,
+				ReplayOnly:              command.ReplayOnly,
 			},
 			uploadRequestID,
 		)

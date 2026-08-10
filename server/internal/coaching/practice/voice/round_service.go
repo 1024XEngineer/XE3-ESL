@@ -100,6 +100,7 @@ type ReserveConfirmationCommand struct {
 	AdvanceAuthorized       *bool
 	AnswerAssessment        *practice.AnswerAssessment
 	AssessmentPolicyVersion string
+	ReplayOnly              bool
 }
 
 // VoiceRoundStore is owned by Practice Voice. Implementations must scope every
@@ -632,6 +633,7 @@ type ConfirmVoiceTurnCommand struct {
 	AdvanceAuthorized       *bool
 	AnswerAssessment        *practice.AnswerAssessment
 	AssessmentPolicyVersion string
+	ReplayOnly              bool
 }
 
 func (service *VoiceRoundService) Confirm(
@@ -651,6 +653,20 @@ func (service *VoiceRoundService) Confirm(
 	)
 	if err != nil {
 		return practice.Turn{}, err
+	}
+	if command.RetryTurnID == "" {
+		replayed, found, replayErr := service.replayConfirmation(
+			ctx,
+			actor,
+			candidate,
+			command,
+		)
+		if replayErr != nil {
+			return practice.Turn{}, replayErr
+		}
+		if found {
+			return replayed, nil
+		}
 	}
 	if command.RetryTurnID == "" {
 		assessment, advanceAuthorized, assessmentVersion, assessmentErr :=
@@ -718,6 +734,20 @@ func (service *VoiceRoundService) ConfirmText(
 	if err != nil {
 		return practice.Turn{}, err
 	}
+	if command.RetryTurnID == "" {
+		replayed, found, replayErr := service.replayConfirmation(
+			ctx,
+			actor,
+			candidate,
+			command,
+		)
+		if replayErr != nil {
+			return practice.Turn{}, replayErr
+		}
+		if found {
+			return replayed, nil
+		}
+	}
 	var assessment *practice.AnswerAssessment
 	var advanceAuthorized *bool
 	assessmentVersion := ""
@@ -747,6 +777,55 @@ func (service *VoiceRoundService) ConfirmText(
 		return practice.Turn{}, ErrVoiceRoundConflict
 	}
 	return turn, nil
+}
+
+func (service *VoiceRoundService) replayConfirmation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidate TranscriptionCandidate,
+	command ConfirmVoiceTurnCommand,
+) (practice.Turn, bool, error) {
+	command.ReplayOnly = true
+	if service.recordings != nil {
+		result, err := service.store.(VoiceRecordingConfirmationStore).
+			ReserveRecordingConfirmation(
+				ctx,
+				actor,
+				command,
+				candidate.ReservationID,
+			)
+		if errors.Is(err, ErrVoiceRoundNotFound) {
+			return practice.Turn{}, false, nil
+		}
+		if err != nil {
+			return practice.Turn{}, false, err
+		}
+		if !validRecordedVoiceTurn(
+			candidate,
+			result.Turn,
+			result.RecordingDeleted,
+		) {
+			return practice.Turn{}, false, ErrVoiceRoundConflict
+		}
+		return result.Turn, true, nil
+	}
+	turn, err := service.store.ReserveConfirmation(
+		ctx,
+		actor,
+		ReserveConfirmationCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: command.IdempotencyKey,
+			RetryTurnID:    command.RetryTurnID,
+			ReplayOnly:     true,
+		},
+	)
+	if errors.Is(err, ErrVoiceRoundNotFound) {
+		return practice.Turn{}, false, nil
+	}
+	if err != nil {
+		return practice.Turn{}, false, err
+	}
+	return turn, true, nil
 }
 
 // GetTranscriptionCandidate exposes an Actor-scoped voice-round resource to

@@ -1289,6 +1289,9 @@ func (store *voiceTestStore) ReserveConfirmation(
 		}
 		return turn, nil
 	}
+	if command.ReplayOnly {
+		return practice.Turn{}, ErrVoiceRoundNotFound
+	}
 	candidate, found := store.candidates[command.CandidateID]
 	if !found {
 		return practice.Turn{}, ErrVoiceRoundNotFound

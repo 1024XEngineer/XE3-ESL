@@ -151,6 +151,7 @@ type ConfirmTurnCommand struct {
 	AdvanceAuthorized       *bool
 	AnswerAssessment        *practice.AnswerAssessment
 	AssessmentPolicyVersion string
+	ReplayOnly              bool
 }
 
 // RecordingConfirmationStore is the narrow Practice Voice transaction

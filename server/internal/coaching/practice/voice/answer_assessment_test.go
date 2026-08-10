@@ -1,11 +1,92 @@
 package voice
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
+
+type replayAssessmentStore struct {
+	*voiceTestStore
+}
+
+func (store *replayAssessmentStore) GetInterviewAnswerContext(
+	_ context.Context,
+	_ requestcontext.Actor,
+	candidate TranscriptionCandidate,
+) (InterviewAnswerContext, error) {
+	return InterviewAnswerContext{
+		Applicable: true,
+		Question: practice.Question{
+			ID:      candidate.QuestionID,
+			Content: "Tell me about a difficult production incident.",
+		},
+		CurrentBlueprint: "Explore a production incident",
+	}, nil
+}
+
+type countingAnswerEvaluator struct {
+	calls int
+}
+
+func (evaluator *countingAnswerEvaluator) GenerateQuestion(
+	context.Context,
+	QuestionGenerationRequest,
+) (string, error) {
+	evaluator.calls++
+	return "", ErrInvalidContext
+}
+
+func TestConfirmationReplayDoesNotReevaluatePersistedAnswer(t *testing.T) {
+	baseStore := newVoiceTestStore()
+	candidate := TranscriptionCandidate{
+		ID:                      "candidate-replay",
+		SessionID:               "session-1",
+		QuestionID:              "question-1",
+		TranscriptID:            "transcript-replay",
+		EvidenceVersion:         1,
+		Transcript:              "I diagnosed the incident and rolled back safely.",
+		QuestionSpeakerID:       "participant-interviewer",
+		AddresseeParticipantIDs: []string{"participant-a"},
+		RespondentParticipantID: "participant-a",
+	}
+	baseStore.candidates[candidate.ID] = candidate
+	baseStore.confirmations["confirm-replay"] = practice.Turn{
+		ID:                      "turn-replay",
+		SessionID:               candidate.SessionID,
+		QuestionID:              candidate.QuestionID,
+		SpeakerParticipantID:    candidate.QuestionSpeakerID,
+		AddresseeParticipantIDs: candidate.AddresseeParticipantIDs,
+		RespondentParticipantID: candidate.RespondentParticipantID,
+		CandidateID:             candidate.ID,
+		TranscriptID:            candidate.TranscriptID,
+		EvidenceVersion:         candidate.EvidenceVersion,
+		AnswerText:              candidate.Transcript,
+	}
+	evaluator := &countingAnswerEvaluator{}
+	service := &VoiceRoundService{
+		store:           &replayAssessmentStore{voiceTestStore: baseStore},
+		answerEvaluator: evaluator,
+	}
+
+	turn, err := service.ConfirmText(
+		context.Background(),
+		voiceTestActor("a"),
+		ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: "confirm-replay",
+		},
+	)
+	if err != nil || turn.ID != "turn-replay" {
+		t.Fatalf("confirmation replay = %#v, %v", turn, err)
+	}
+	if evaluator.calls != 0 {
+		t.Fatalf("answer evaluator calls = %d, want 0", evaluator.calls)
+	}
+}
 
 func TestInterviewAnswerAssessmentRequestTreatsTranscriptAsUntrustedData(t *testing.T) {
 	request, err := interviewAnswerAssessmentRequest(
