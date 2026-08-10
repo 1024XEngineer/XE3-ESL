@@ -441,6 +441,55 @@ void main() {
     expect(client.generateCalls, 0);
   });
 
+  testWidgets('collapses and expands a long IELTS answer', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const longAnswer =
+        'I definitely lean towards happy music because it instantly boosts my '
+        'mood and energy levels. For instance, whenever I’m commuting to work, '
+        'I listen to upbeat pop songs to start my day on a positive note. It '
+        'just feels more motivating than melancholic tunes.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part3,
+          title: 'Tall buildings',
+          subtitle: 'Describe a tall building',
+          questions: const ['Are there many tall buildings in your country?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_3',
+              sourceId: 'buildings',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: _AnswerPreparationClient(
+            existingAnswer: longAnswer,
+          ),
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('ielts-answer-body'))).maxLines,
+      6,
+    );
+    expect(find.text('查看完整答案'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ielts-answer-expand-body')));
+    await tester.pump();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('ielts-answer-body'))).maxLines,
+      isNull,
+    );
+    expect(find.text('收起答案'), findsOneWidget);
+  });
+
   testWidgets('shows answer preparation for Part 3 questions', (tester) async {
     final client = _AnswerPreparationClient();
     await tester.pumpWidget(

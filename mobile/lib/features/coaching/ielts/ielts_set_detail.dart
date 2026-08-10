@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
@@ -780,7 +779,7 @@ class _QuestionAnswerPanel extends StatelessWidget {
     return Container(
       key: Key('ielts-answer-panel-${index + 1}'),
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(28, 16, 0, 20),
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 20),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: PreparationDesign.border)),
       ),
@@ -804,47 +803,57 @@ class _QuestionAnswerPanel extends StatelessWidget {
               ),
             )
           else if (ready) ...[
-            Text(
-              personalized ? '我的表达' : '示例回答',
-              style: PreparationDesign.label.copyWith(
-                color: PreparationDesign.inkSecondary,
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: PreparationDesign.surfaceMuted,
+                borderRadius: BorderRadius.circular(
+                  PreparationDesign.radiusCard,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            ConversationBubbleSurface(
-              isUser: false,
-              maxWidth: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Text(preparation!.answer!, style: PreparationDesign.body),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                TextButton.icon(
-                  key: Key('ielts-speak-answer-${index + 1}'),
-                  onPressed: onSpeak,
-                  icon: Icon(
-                    speaking ? Icons.stop_rounded : Icons.volume_up_outlined,
-                    size: 18,
-                  ),
-                  label: Text(speaking ? '停止' : '播放'),
-                  style: TextButton.styleFrom(
-                    backgroundColor: PreparationDesign.surfaceMuted,
-                    foregroundColor: PreparationDesign.ink,
-                  ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            personalized ? '我的表达' : '示例回答',
+                            style: PreparationDesign.label.copyWith(
+                              color: PreparationDesign.inkSecondary,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          key: Key('ielts-speak-answer-${index + 1}'),
+                          onPressed: onSpeak,
+                          icon: Icon(
+                            speaking
+                                ? Icons.stop_rounded
+                                : Icons.volume_up_outlined,
+                            size: 18,
+                          ),
+                          label: Text(speaking ? '停止' : '播放'),
+                          style: _answerActionStyle,
+                        ),
+                        TextButton.icon(
+                          key: Key('ielts-polish-answer-${index + 1}'),
+                          onPressed: onPrepare,
+                          icon: const Icon(
+                            Icons.auto_awesome_outlined,
+                            size: 18,
+                          ),
+                          label: Text(personalized ? '重新润色' : '润色'),
+                          style: _answerActionStyle,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _ExpandableAnswerText(text: preparation!.answer!),
+                  ],
                 ),
-                TextButton.icon(
-                  key: Key('ielts-polish-answer-${index + 1}'),
-                  onPressed: onPrepare,
-                  icon: const Icon(Icons.auto_awesome_outlined, size: 18),
-                  label: Text(personalized ? '重新润色' : '润色'),
-                  style: TextButton.styleFrom(
-                    backgroundColor: PreparationDesign.surfaceMuted,
-                    foregroundColor: PreparationDesign.ink,
-                  ),
-                ),
-              ],
+              ),
             ),
           ] else
             TextButton.icon(
@@ -866,6 +875,72 @@ class _QuestionAnswerPanel extends StatelessWidget {
       ),
     );
   }
+
+  static final ButtonStyle _answerActionStyle = TextButton.styleFrom(
+    minimumSize: const Size(0, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    foregroundColor: PreparationDesign.ink,
+  );
+}
+
+class _ExpandableAnswerText extends StatefulWidget {
+  const _ExpandableAnswerText({required this.text});
+
+  final String text;
+
+  @override
+  State<_ExpandableAnswerText> createState() => _ExpandableAnswerTextState();
+}
+
+class _ExpandableAnswerTextState extends State<_ExpandableAnswerText> {
+  static const _collapsedLines = 6;
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _ExpandableAnswerText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final style = PreparationDesign.body;
+      final painter = TextPainter(
+        text: TextSpan(text: widget.text, style: style),
+        textDirection: Directionality.of(context),
+      )..layout(maxWidth: constraints.maxWidth);
+      final canExpand = painter.computeLineMetrics().length > _collapsedLines;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.text,
+            key: const Key('ielts-answer-body'),
+            maxLines: _expanded ? null : _collapsedLines,
+            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            style: style,
+          ),
+          if (canExpand) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              key: const Key('ielts-answer-expand-body'),
+              onPressed: () => setState(() => _expanded = !_expanded),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 40),
+                padding: EdgeInsets.zero,
+                foregroundColor: PreparationDesign.ink,
+              ),
+              child: Text(_expanded ? '收起答案' : '查看完整答案'),
+            ),
+          ],
+        ],
+      );
+    },
+  );
 }
 
 class _PolishExperienceSheet extends StatefulWidget {
