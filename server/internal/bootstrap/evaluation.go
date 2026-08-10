@@ -8,6 +8,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,7 +57,13 @@ func NewEvaluationComposition(
 		evidenceRepository,
 	)
 	evaluationService := evaluation.NewService(repository, evidenceRepository)
-	runtime, err := scoring.NewRuntime(
+	ieltsAcoustics, err := speechfeedback.NewIELTSSpeakingAcousticSource(
+		speechfeedback.NewPostgresRepository(database),
+	)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := scoring.NewRuntimeWithIELTSAcoustics(
 		repository,
 		practiceRepository,
 		evidenceService,
@@ -64,6 +71,7 @@ func NewEvaluationComposition(
 		textGenerator,
 		policies,
 		configuration,
+		ieltsAcoustics,
 	)
 	if err != nil {
 		return nil, err

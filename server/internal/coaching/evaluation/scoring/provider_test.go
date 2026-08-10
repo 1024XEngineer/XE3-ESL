@@ -3,6 +3,7 @@ package scoring
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,7 +132,7 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 			RequestID: "request-ielts-1",
 			Provider:  "qianwen",
 			Model:     "qwen-plus",
-			Content:   `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v1","criteria":[]}`,
+			Content:   `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v2","criteria":[]}`,
 		},
 	}
 	provider, err := NewIELTSSpeakingShadowProvider(
@@ -195,6 +196,15 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		request.UserPrompt == "" ||
 		request.UserPrompt == request.SystemPrompt {
 		t.Fatalf("request = %#v", request)
+	}
+	for _, required := range []string{
+		IELTSSpeakingShadowProviderSchemaVersion,
+		"each assessable_criteria value exactly once",
+		"ielts.pr.*",
+	} {
+		if !strings.Contains(request.SystemPrompt, required) {
+			t.Fatalf("IELTS system contract is missing %q", required)
+		}
 	}
 }
 

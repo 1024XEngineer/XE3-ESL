@@ -217,6 +217,15 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 	}
 	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
 	if err != nil {
+		if errors.Is(err, ErrIELTSSpeakingAcousticsPending) &&
+			claim.AttemptCount >= worker.configuration.MaxAttempts {
+			result, err = worker.engine.evaluateWithoutAcoustics(
+				ctx,
+				claim.Snapshot,
+			)
+		}
+	}
+	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
 	}
 	if result.Provider != nil &&
@@ -287,6 +296,11 @@ func classifyIELTSSpeakingShadowFailure(
 	cause error,
 ) IELTSSpeakingShadowFailure {
 	switch {
+	case errors.Is(cause, ErrIELTSSpeakingAcousticsPending):
+		return IELTSSpeakingShadowFailure{
+			Code:      "acoustics_pending",
+			Retryable: true,
+		}
 	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
 		errors.Is(cause, evaluation.ErrInvalidRequest):
 		return IELTSSpeakingShadowFailure{

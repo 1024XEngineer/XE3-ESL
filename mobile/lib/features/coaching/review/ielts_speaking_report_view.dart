@@ -324,7 +324,11 @@ class _OverallScore extends StatelessWidget {
   Widget build(BuildContext context) {
     final band = report.speakingOverallBand;
     return Container(
-      key: const Key('ielts-speaking-overall-unavailable'),
+      key: Key(
+        band == null
+            ? 'ielts-speaking-overall-unavailable'
+            : 'ielts-speaking-overall-available',
+      ),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [SpeakUpDesign.primary, Color(0xFF2A6D7E)],

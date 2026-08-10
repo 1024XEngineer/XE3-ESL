@@ -49,6 +49,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		0,
 		len(requests),
 	)
+	pending := false
 	for _, request := range requests {
 		reference, found, err :=
 			source.feedback.FindSpeechFeedbackByConversationTurn(
@@ -60,9 +61,12 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 			return nil, err
 		}
 		if !found {
-			// Text answers and voice turns whose optional feedback projection has
-			// not been created are still valid IELTS evidence. The report must not
-			// wait forever for an acoustic row that may never exist.
+			// A confirmed recording normally creates SpeechFeedback in the same
+			// turn flow. Treat a missing projection as a short-lived race; text-only
+			// turns remain valid evidence and do not wait for an impossible row.
+			if request.RecordingDurationMS > 0 {
+				pending = true
+			}
 			continue
 		}
 		feedback, err := source.feedback.GetSpeechFeedback(
@@ -75,9 +79,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		}
 		switch feedback.FeedbackStatus {
 		case SpeechFeedbackQueued, SpeechFeedbackRunning:
-			// Acoustic feedback enriches a report when it is already available;
-			// it is not a report-generation prerequisite. This also prevents a
-			// slow ISE request from holding the completed mock report hostage.
+			pending = true
 			continue
 		case SpeechFeedbackFailed:
 			continue
@@ -110,6 +112,9 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 			Provider:             assessment.Provider,
 			ProviderRun:          acousticProviderRun(assessment.ProviderSession),
 		})
+	}
+	if pending {
+		return nil, scoring.ErrIELTSSpeakingAcousticsPending
 	}
 	return result, nil
 }

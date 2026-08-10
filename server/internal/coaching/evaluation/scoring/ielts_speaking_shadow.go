@@ -22,7 +22,7 @@ import (
 const (
 	IELTSSpeakingShadowSchemaVersion         = "ielts-speaking-full-mock-shadow/v1"
 	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v2"
-	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v4"
+	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v5"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
 	ieltsMaximumProviderPayload = 64 * 1024
@@ -181,8 +181,9 @@ type IELTSSpeakingProviderResponse struct {
 }
 
 type IELTSSpeakingAcousticRequest struct {
-	TurnID        string
-	EvidenceRefID string
+	TurnID              string
+	EvidenceRefID       string
+	RecordingDurationMS int64
 }
 
 type IELTSSpeakingTurnAcoustics struct {
@@ -299,6 +300,21 @@ func (engine *IELTSSpeakingShadowEngine) Evaluate(
 	ctx context.Context,
 	snapshot evidence.EvidenceSnapshot,
 ) (IELTSSpeakingShadowResult, error) {
+	return engine.evaluate(ctx, snapshot, true)
+}
+
+func (engine *IELTSSpeakingShadowEngine) evaluateWithoutAcoustics(
+	ctx context.Context,
+	snapshot evidence.EvidenceSnapshot,
+) (IELTSSpeakingShadowResult, error) {
+	return engine.evaluate(ctx, snapshot, false)
+}
+
+func (engine *IELTSSpeakingShadowEngine) evaluate(
+	ctx context.Context,
+	snapshot evidence.EvidenceSnapshot,
+	includeAcoustics bool,
+) (IELTSSpeakingShadowResult, error) {
 	if engine == nil || engine.provider == nil || ctx == nil {
 		return IELTSSpeakingShadowResult{}, evaluation.ErrInvalidRequest
 	}
@@ -310,7 +326,7 @@ func (engine *IELTSSpeakingShadowEngine) Evaluate(
 		IELTSSpeakingScoreabilityInsufficient {
 		return prepared.result, nil
 	}
-	if engine.acoustics != nil {
+	if includeAcoustics && engine.acoustics != nil {
 		prepared, err = engine.withAcoustics(ctx, snapshot, prepared)
 		if err != nil {
 			return IELTSSpeakingShadowResult{}, err
@@ -354,8 +370,9 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 			return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
 		}
 		requests = append(requests, IELTSSpeakingAcousticRequest{
-			TurnID:        question.Response.TurnID,
-			EvidenceRefID: question.Response.EvidenceRefID,
+			TurnID:              question.Response.TurnID,
+			EvidenceRefID:       question.Response.EvidenceRefID,
+			RecordingDurationMS: question.Response.RecordingDurationMS,
 		})
 	}
 	values, err := engine.acoustics.GetIELTSSpeakingAcoustics(

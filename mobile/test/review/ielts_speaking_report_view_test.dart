@@ -84,6 +84,33 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
+  testWidgets('renders all four Bands and rounded Overall', (tester) async {
+    final envelope = decodeIeltsSpeakingReport(
+      completeIeltsSpeakingReportContractFixture(),
+    );
+    final controller = IeltsSpeakingReportController(
+      client: _Client(envelope),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    await controller.load('session_ielts_report_001');
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('ielts-speaking-overall-available')),
+      findsOneWidget,
+    );
+    expect(find.text('6.5'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-band-pronunciation')),
+      findsOneWidget,
+    );
+    expect(find.text('发音'), findsWidgets);
+  });
+
   testWidgets('same-question list starts the selected question directly', (
     tester,
   ) async {
