@@ -294,6 +294,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       await _startShortRecording();
       return;
     }
+    await _stopQuestionTipSpeech();
     await _stopQuestionNarration();
     final beforeUserTurn = widget.onBeforeUserTurn;
     if (beforeUserTurn != null) {
@@ -986,7 +987,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     setState(() => _visibleTipQuestionId = null);
-    unawaited(_ownedTipSpeaker?.stop());
+    unawaited(_stopQuestionTipSpeech());
+  }
+
+  Future<void> _stopQuestionTipSpeech() async {
+    try {
+      await _ownedTipSpeaker?.stop();
+    } on Object {
+      // Recording must remain usable if platform TTS cannot stop cleanly.
+    }
   }
 
   void _syncRecordingTimer() {
@@ -1436,18 +1445,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _startShortRecording() async {
     _conversionRequested = false;
-    _hideQuestionTip();
+    await _stopQuestionTipSpeech();
     if (_answerLanguageError != null) {
       setState(() => _answerLanguageError = null);
     }
-    final beforeUserTurn = widget.onBeforeUserTurn;
-    if (beforeUserTurn == null) {
-      unawaited(_stopQuestionNarration());
-      await widget.controller.startRecording();
-      return;
-    }
     await _stopQuestionNarration();
-    await beforeUserTurn();
+    final beforeUserTurn = widget.onBeforeUserTurn;
+    await beforeUserTurn?.call();
     if (!mounted) {
       return;
     }

@@ -107,8 +107,6 @@ class _QuestionTipCardState extends State<QuestionTipCard> {
                     : const Icon(Icons.volume_up_outlined, size: 18),
                 label: Text(_speaking ? '正在朗读' : '朗读'),
               ),
-              const Spacer(),
-              const Text('可边看边说', style: SpeakUpDesign.meta),
             ],
           ),
           if (_speechError case final message?) ...[

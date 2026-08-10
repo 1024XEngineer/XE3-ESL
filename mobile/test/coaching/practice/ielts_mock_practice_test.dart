@@ -28,6 +28,57 @@ import 'package:speakup/features/coaching/review/ielts_speaking_report_controlle
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 
 void main() {
+  testWidgets('Part 1 keeps Tips visible while recording', (tester) async {
+    const capabilities = PracticeCapabilities(
+      retryAllowed: false,
+      questionTranslationAllowed: false,
+      questionTipsAllowed: true,
+      avatarAllowed: false,
+      speechFeedbackAllowed: false,
+    );
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 0,
+      capabilities: capabilities,
+    );
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('ielts-question-tip-question-1')),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    expect(find.text('可边看边说'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    await controller.cancelRecording();
+    await tester.pump();
+  });
+
   testWidgets(
     'Part 1 uses the shared avatar, conversation, and composer stage',
     (tester) async {
@@ -848,6 +899,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -1336,6 +1388,7 @@ void main() {
           home: IeltsSpeakingMockPage(
             controller: controller,
             progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -1374,6 +1427,7 @@ void main() {
           home: IeltsSpeakingMockPage(
             controller: controller,
             progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -1383,12 +1437,7 @@ void main() {
       await tester.pump();
       expect(find.text('0/1'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('ielts-mock-record')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-record')));
-      await tester.pump();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 220));
+      await _answerCurrentShortQuestion(tester, controller);
 
       expect(controller.completedTurns, 1);
       expect(find.text('Answer 1'), findsOneWidget);
@@ -1430,6 +1479,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -1565,7 +1615,15 @@ Future<void> _answerCurrentShortQuestion(
 ) async {
   final completedTurns = controller.completedTurns;
   await tester.tap(find.byKey(const Key('ielts-mock-record')));
-  await tester.pump();
+  for (
+    var attempt = 0;
+    attempt < 20 &&
+        controller.recordingState != PracticeRecordingState.recording;
+    attempt++
+  ) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  expect(controller.recordingState, PracticeRecordingState.recording);
   await tester.tap(find.byKey(const Key('ielts-mock-record')));
   for (
     var attempt = 0;
@@ -1613,12 +1671,14 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   }
 }
 
-final class _IeltsPracticeClient implements PracticeClient {
+final class _IeltsPracticeClient
+    implements PracticeClient, PracticeQuestionTipClient {
   _IeltsPracticeClient({
     required this.initialCompleted,
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
     this.transcriptionText,
+    this.capabilities = _practiceCapabilities,
   }) : completed = initialCompleted;
 
   final int initialCompleted;
@@ -1627,6 +1687,7 @@ final class _IeltsPracticeClient implements PracticeClient {
   final int turnLimit;
   int transcriptionFailuresRemaining;
   final String? transcriptionText;
+  final PracticeCapabilities capabilities;
   int completed;
   SceneDefinition? activeScene;
   PracticeMode activeMode = PracticeMode.fullMock;
@@ -1661,7 +1722,7 @@ final class _IeltsPracticeClient implements PracticeClient {
       practiceExperience: scene.experience,
       sceneCategory: scene.category,
       practiceMode: activeMode,
-      capabilities: _practiceCapabilities,
+      capabilities: capabilities,
       sessionVersion: completed + 1,
       completedTurns: completed,
       turnLimit: turnLimit,
@@ -1747,7 +1808,7 @@ final class _IeltsPracticeClient implements PracticeClient {
       practiceExperience: scene.experience,
       sceneCategory: scene.category,
       practiceMode: activeMode,
-      capabilities: _practiceCapabilities,
+      capabilities: capabilities,
       sessionVersion: completed + 1,
       nextQuestion: done ? null : _question(completed + 1),
     );
@@ -1762,6 +1823,19 @@ final class _IeltsPracticeClient implements PracticeClient {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  }) async => PracticeQuestionTip(
+    id: 'tip-$questionId',
+    sessionId: sessionId,
+    questionId: questionId,
+    content: 'Give a direct answer and one short reason.',
+    createdAt: DateTime.utc(2026, 8, 10),
+  );
 }
 
 final class _Recorder implements PracticeRecorder {
