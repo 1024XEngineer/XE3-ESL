@@ -815,14 +815,16 @@ class _QuestionAnswerPanel extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
-                        Expanded(
-                          child: Text(
-                            personalized ? '我的表达' : '示例回答',
-                            style: PreparationDesign.label.copyWith(
-                              color: PreparationDesign.inkSecondary,
-                            ),
+                        Text(
+                          personalized ? '我的表达' : '示例回答',
+                          style: PreparationDesign.label.copyWith(
+                            color: PreparationDesign.inkSecondary,
                           ),
                         ),
                         TextButton.icon(
@@ -911,6 +913,7 @@ class _ExpandableAnswerTextState extends State<_ExpandableAnswerText> {
       final painter = TextPainter(
         text: TextSpan(text: widget.text, style: style),
         textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
       )..layout(maxWidth: constraints.maxWidth);
       final canExpand = painter.computeLineMetrics().length > _collapsedLines;
 
