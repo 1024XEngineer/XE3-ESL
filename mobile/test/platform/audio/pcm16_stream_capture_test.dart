@@ -5,8 +5,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/platform/audio/pcm16_stream_capture.dart';
 
 void main() {
+  test('output cancellation preserves the local recording', () async {
+    final input = StreamController<Uint8List>();
+    final capture = Pcm16StreamCapture(
+      input: input.stream,
+      maximumPcmBytes: 32000,
+    );
+    final outputSubscription = capture.stream.listen((_) {});
+
+    await outputSubscription.cancel();
+    input.add(Uint8List.fromList(<int>[0, 0, 1, 0]));
+    await input.close();
+
+    final wav = await capture.finish();
+    expect(wav.sublist(44), <int>[0, 0, 1, 0]);
+  });
+
   test(
-    'output cancellation absorbs a concurrent native cancel failure',
+    'explicit cancellation absorbs a concurrent native cancel failure',
     () async {
       final capture = Pcm16StreamCapture(
         input: _CancelFailureStream(),
@@ -18,7 +34,7 @@ void main() {
         onError: outputErrors.add,
       );
 
-      await expectLater(outputSubscription.cancel(), completes);
+      await expectLater(capture.cancel(), completes);
 
       await expectLater(
         capture.finishAndDiscard(),
@@ -31,6 +47,7 @@ void main() {
         ),
       );
       expect(outputErrors, isEmpty);
+      await outputSubscription.cancel();
     },
   );
 }

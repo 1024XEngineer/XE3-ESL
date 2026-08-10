@@ -106,9 +106,6 @@ final class Pcm16StreamCapture {
       _failure ??= const Pcm16StreamCaptureException(
         Pcm16StreamCaptureFailureKind.cancelled,
       );
-      if (!_outputListenerCancelled && !_outputClosed) {
-        _output.addError(_failure!);
-      }
       await _cancelInput();
       _complete();
     }
@@ -128,7 +125,9 @@ final class Pcm16StreamCapture {
       return;
     }
     _pcm.add(chunk);
-    _output.add(chunk);
+    if (!_outputListenerCancelled && !_outputClosed) {
+      _output.add(chunk);
+    }
   }
 
   void _handleInputError(Object _, StackTrace _) {
@@ -141,18 +140,11 @@ final class Pcm16StreamCapture {
 
   void _handleInputDone() => _complete();
 
-  Future<void> _handleOutputCancel() async {
+  void _handleOutputCancel() {
     if (_done.isCompleted) {
       return;
     }
     _outputListenerCancelled = true;
-    _stopping = true;
-    _failure ??= const Pcm16StreamCaptureException(
-      Pcm16StreamCaptureFailureKind.cancelled,
-    );
-    await _cancelInput();
-    _complete();
-    _discardBufferedPcm();
   }
 
   void _fail(Pcm16StreamCaptureException failure) {
