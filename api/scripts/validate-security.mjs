@@ -1152,6 +1152,49 @@ assert.equal(
 );
 assert.equal(websocketParameters.after_sequence?.in, 'query');
 
+const agentVoiceTranscription = requireOperation(
+  'GET /v1/agent-threads/{thread_id}/voice-transcriptions/realtime',
+);
+assert.deepEqual(
+  agentVoiceTranscription.security ?? openApi.security,
+  bearerSecurity,
+  'Agent voice transcription must derive the Actor from BearerSession.',
+);
+const agentVoiceSecurity = agentVoiceTranscription['x-websocket-security'];
+assert.equal(agentVoiceSecurity?.credential_location, 'authorization_header');
+assert.equal(agentVoiceSecurity?.other_credential_locations_allowed, false);
+assert.deepEqual(agentVoiceSecurity?.pre_upgrade?.validation_order, [
+  'session',
+  'actor',
+  'resource_ownership',
+  'subprotocol',
+  'upgrade',
+]);
+assert.deepEqual(agentVoiceSecurity?.connection_binding, {
+  actor_fields: ['user_id', 'session_id'],
+  target_field: 'thread_id',
+  target_switch_allowed: false,
+});
+assert.deepEqual(agentVoiceSecurity?.subprotocol?.allowed, [
+  'speakup.voice-input.v1',
+]);
+const agentVoiceParameters = Object.fromEntries(
+  (agentVoiceTranscription.parameters ?? []).map((parameterValue) => {
+    const parameter = resolveLocalReference(parameterValue);
+    return [parameter.name, parameter];
+  }),
+);
+assert.equal(
+  agentVoiceParameters['Sec-WebSocket-Protocol']?.required,
+  true,
+);
+assert.equal(
+  resolveLocalReference(
+    agentVoiceParameters['Sec-WebSocket-Protocol']?.schema,
+  )?.const,
+  'speakup.voice-input.v1',
+);
+
 const interviewReport = requireOperation(
   'GET /v1/practice-sessions/{practice_session_id}/interview-report',
 );

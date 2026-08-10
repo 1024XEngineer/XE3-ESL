@@ -471,6 +471,14 @@ func providerUnavailable(cause error) error {
 }
 
 func (handler *Handler) write(c *gin.Context, err error) {
+	writeHTTPError(c, handler.errors, err)
+}
+
+func writeHTTPError(
+	c *gin.Context,
+	renderer *httpresponse.Renderer,
+	err error,
+) {
 	if appError, ok := apperror.From(err); ok {
 		if appError.Category() == apperror.Unauthenticated {
 			c.Header("WWW-Authenticate", "Bearer")
@@ -481,7 +489,7 @@ func (handler *Handler) write(c *gin.Context, err error) {
 			c.Header("Retry-After", "1")
 		}
 	}
-	handler.errors.Write(c, err)
+	renderer.Write(c, err)
 }
 
 func invalidRequest(cause error) error {

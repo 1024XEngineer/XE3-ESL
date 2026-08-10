@@ -141,6 +141,10 @@ func (recognizer *speechRecognizer) transcribeRealtimeAudio(
 		)
 	}
 	defer connection.Close()
+	stopCancellationClose := context.AfterFunc(callContext, func() {
+		_ = connection.Close()
+	})
+	defer stopCancellationClose()
 	if deadline, ok := callContext.Deadline(); ok {
 		_ = connection.SetReadDeadline(deadline)
 		_ = connection.SetWriteDeadline(deadline)
@@ -188,6 +192,14 @@ func (recognizer *speechRecognizer) transcribeRealtimeAudio(
 			err:        readErr,
 		}
 	}()
+	readCompleted := false
+	defer func() {
+		if readCompleted {
+			return
+		}
+		_ = connection.Close()
+		<-readResults
+	}()
 	if err := streamRealtimeASRAudio(connection, audio.open); err != nil {
 		_ = connection.Close()
 		return protocol.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
@@ -204,6 +216,7 @@ func (recognizer *speechRecognizer) transcribeRealtimeAudio(
 	var completed readResult
 	select {
 	case completed = <-readResults:
+		readCompleted = true
 	case <-callContext.Done():
 		return protocol.TranscriptionResult{}, realtimeASRTransportError(
 			callContext,

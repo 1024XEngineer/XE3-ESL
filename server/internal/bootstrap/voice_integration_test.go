@@ -30,6 +30,7 @@ import (
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,6 +38,234 @@ import (
 var testReviewHistoryCursorKey = []byte(
 	"0123456789abcdef0123456789abcdef",
 )
+
+func TestAgentEphemeralTranscriptionDoesNotPersistVoiceState(t *testing.T) {
+	tests := []struct {
+		name            string
+		email           string
+		withObjectStore bool
+	}{
+		{
+			name:  "OSS disabled",
+			email: "ephemeral-agent-voice-no-oss@example.com",
+		},
+		{
+			name:            "ObjectStore remains untouched",
+			email:           "ephemeral-agent-voice-store@example.com",
+			withObjectStore: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testAgentEphemeralTranscriptionDoesNotPersistVoiceState(t, test.email, test.withObjectStore)
+		})
+	}
+}
+
+func testAgentEphemeralTranscriptionDoesNotPersistVoiceState(
+	t *testing.T,
+	email string,
+	withObjectStore bool,
+) {
+	pool := voiceIntegrationDatabase(t)
+	text := &voiceTextGenerator{}
+	recognizer := &voiceRecognizer{}
+	var objects *voiceObjectStore
+	var recordingStore objectstore.Store
+	if withObjectStore {
+		objects = newVoiceObjectStore()
+		recordingStore = objects
+	}
+	catalog, err := scene.NewPostgresCatalog(
+		pool,
+		scoring.NewEvaluationPolicyRegistry(),
+	)
+	if err != nil {
+		t.Fatalf("build Preparation catalog: %v", err)
+	}
+	server := newVoiceProductionIntegrationServer(
+		t,
+		pool,
+		catalog,
+		text,
+		VoiceConfiguration{
+			Recognizer: recognizer,
+			Synthesizer: newFailingTestSpeechSynthesizer(
+				errors.New("tts unavailable"),
+			),
+			TemporaryAudio:         newVoiceTestVault(t),
+			ObjectStore:            recordingStore,
+			AudioStagedTTL:         time.Hour,
+			ASRLease:               5 * time.Second,
+			ReviewHistoryCursorKey: testReviewHistoryCursorKey,
+		},
+	)
+	token := registerAndLoginVoiceUser(
+		t,
+		server.URL,
+		email,
+	)
+	threadID := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads",
+		`{}`,
+		"",
+		http.StatusCreated,
+	)["thread_id"].(string)
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/v1/agent-threads/" + threadID +
+		"/voice-transcriptions/realtime"
+	connection, response, err := (&websocket.Dialer{
+		Subprotocols: []string{"speakup.voice-input.v1"},
+	}).Dial(
+		endpoint,
+		http.Header{"Authorization": []string{"Bearer " + token}},
+	)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial ephemeral transcription status = %d: %v", response.StatusCode, err)
+		}
+		t.Fatalf("dial ephemeral transcription: %v", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{
+		"type": "start", "idempotency_key": "ephemeral-bootstrap-1",
+		"sample_rate": 16_000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	if err := connection.ReadJSON(&event); err != nil ||
+		event.Type != "transcription.started" {
+		t.Fatalf("started event = %#v err = %v", event, err)
+	}
+	if err := connection.WriteMessage(
+		websocket.BinaryMessage,
+		make([]byte, 3_200),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.ReadJSON(&event); err != nil ||
+		event.Type != "transcription.updated" {
+		t.Fatalf("updated event = %#v err = %v", event, err)
+	}
+	if err := connection.WriteJSON(map[string]string{"type": "finish"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.ReadJSON(&event); err != nil ||
+		event.Type != "transcription.completed" {
+		t.Fatalf("completed event = %#v err = %v", event, err)
+	}
+	assertNoAgentVoicePersistence(t, pool, objects)
+
+	voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads/"+threadID+"/runs",
+		`{
+			"client_message_id":"ephemeral-text-1",
+			"content":"Confirmed answer number 1."
+		}`,
+		"",
+		http.StatusCreated,
+	)
+	messages := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/messages",
+		"",
+		"",
+		http.StatusOK,
+	)["messages"].([]any)
+	foundTextInput := false
+	for _, raw := range messages {
+		message := raw.(map[string]any)
+		if message["role"] != "user" {
+			continue
+		}
+		foundTextInput = true
+		if message["content"] != "Confirmed answer number 1." {
+			t.Fatalf("user Message = %#v", message)
+		}
+		if _, found := message["audio"]; found {
+			t.Fatalf("text Message gained audio: %#v", message)
+		}
+		if _, found := message["modality"]; found {
+			t.Fatalf("text Message exposed non-text modality: %#v", message)
+		}
+	}
+	if !foundTextInput {
+		t.Fatalf("text input was not persisted: %#v", messages)
+	}
+	var modality string
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT modality
+		   FROM agent_messages
+		  WHERE thread_id = $1
+		    AND role = 'user'
+		    AND content = $2`,
+		threadID,
+		"Confirmed answer number 1.",
+	).Scan(&modality); err != nil {
+		t.Fatalf("read confirmed text Message modality: %v", err)
+	}
+	if modality != "text" {
+		t.Fatalf("confirmed Message modality = %q", modality)
+	}
+	assertNoAgentVoicePersistence(t, pool, objects)
+}
+
+func assertNoAgentVoicePersistence(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	objects *voiceObjectStore,
+) {
+	t.Helper()
+	for _, table := range []string{
+		"agent_voice_candidates",
+		"agent_message_audios",
+		"agent_voice_transcript_evidence",
+		"practice_audio_assets",
+	} {
+		var count int
+		if err := pool.QueryRow(
+			context.Background(),
+			"SELECT count(*) FROM "+table,
+		).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s rows = %d", table, count)
+		}
+	}
+	if objects == nil {
+		return
+	}
+	objects.mu.Lock()
+	defer objects.mu.Unlock()
+	if len(objects.objects) != 0 {
+		t.Fatalf("ObjectStore entries = %d", len(objects.objects))
+	}
+	if objects.putCalls != 0 || objects.signedGetCalls != 0 ||
+		objects.deleteCalls != 0 {
+		t.Fatalf(
+			"ObjectStore calls: put=%d signed_get=%d delete=%d",
+			objects.putCalls,
+			objects.signedGetCalls,
+			objects.deleteCalls,
+		)
+	}
+}
 
 func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
@@ -1984,9 +2213,48 @@ func (recognizer *voiceRecognizer) TranscribeStream(
 	return result, nil
 }
 
+func (recognizer *voiceRecognizer) TranscribePCMStream(
+	ctx context.Context,
+	request agentvoice.PCMTranscriptionRequest,
+	observer agentvoice.TranscriptionObserver,
+) (agentvoice.TranscriptionResult, error) {
+	if request.PCM == nil || request.SampleRate != 16_000 || observer == nil {
+		return agentvoice.TranscriptionResult{}, errors.New(
+			"test realtime PCM transcription input is invalid",
+		)
+	}
+	first := make([]byte, 1024)
+	read, err := request.PCM.Read(first)
+	if err != nil || read == 0 {
+		return agentvoice.TranscriptionResult{}, errors.New(
+			"read test realtime PCM transcription input",
+		)
+	}
+	call := recognizer.calls.Add(1)
+	result := agentvoice.TranscriptionResult{
+		ID:         fmt.Sprintf("asr-result-%d", call),
+		Provider:   "fake",
+		Model:      "fake-asr-v1",
+		Transcript: fmt.Sprintf("Confirmed answer number %d.", call),
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		agentvoice.TranscriptionUpdate{Transcript: result.Transcript},
+	); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	if _, err := io.Copy(io.Discard, request.PCM); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	return result, nil
+}
+
 type voiceObjectStore struct {
-	mu      sync.Mutex
-	objects map[string][]byte
+	mu             sync.Mutex
+	objects        map[string][]byte
+	putCalls       int
+	signedGetCalls int
+	deleteCalls    int
 }
 
 func newVoiceObjectStore() *voiceObjectStore {
@@ -1999,6 +2267,7 @@ func (store *voiceObjectStore) Put(
 ) (objectstore.PutResult, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.putCalls++
 	audio, err := io.ReadAll(request.Body)
 	if err != nil || int64(len(audio)) != request.Size {
 		return objectstore.PutResult{}, objectstore.ErrInvalidObject
@@ -2019,6 +2288,7 @@ func (store *voiceObjectStore) SignedGet(
 ) (objectstore.SignedGetResult, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.signedGetCalls++
 	if _, found := store.objects[key]; !found {
 		return objectstore.SignedGetResult{},
 			objectstore.ErrOperationFailed
@@ -2036,6 +2306,7 @@ func (store *voiceObjectStore) Delete(
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.deleteCalls++
 	delete(store.objects, key)
 	return nil
 }

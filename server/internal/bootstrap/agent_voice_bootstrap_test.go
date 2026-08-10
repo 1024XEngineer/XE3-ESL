@@ -15,6 +15,31 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
+func TestAgentRealtimePCMRecognizerUsesAvailableCapability(t *testing.T) {
+	recognizer := newTestSpeechRecognizer(agentvoice.TranscriptionResult{
+		Transcript: "available",
+	})
+	configured := agentRealtimePCMRecognizer([]VoiceConfiguration{{
+		Recognizer: recognizer,
+	}})
+	if configured != recognizer {
+		t.Fatalf("configured realtime recognizer = %T", configured)
+	}
+
+	configured = agentRealtimePCMRecognizer([]VoiceConfiguration{{
+		Recognizer: durableOnlyAgentSpeechRecognizer{
+			StreamingSpeechRecognizer: recognizer,
+		},
+	}})
+	if configured != nil {
+		t.Fatalf("missing realtime capability = %T", configured)
+	}
+}
+
+type durableOnlyAgentSpeechRecognizer struct {
+	agentvoice.StreamingSpeechRecognizer
+}
+
 func TestBuildAgentVoiceInputApplicationRequiresExplicitEnablementAndStore(
 	t *testing.T,
 ) {
@@ -234,6 +259,11 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		{
 			http.MethodGet,
 			"/v1/agent-threads/" + resourceID +
+				"/voice-transcriptions/realtime",
+		},
+		{
+			http.MethodGet,
+			"/v1/agent-threads/" + resourceID +
 				"/voice-message-candidates/realtime",
 		},
 		{
@@ -279,6 +309,92 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 				response.Code,
 			)
 		}
+	}
+}
+
+func TestAgentEphemeralTranscriptionRegistersWithoutObjectStorage(t *testing.T) {
+	pool := voiceIntegrationDatabase(t)
+	textGenerator := &voiceTextGenerator{}
+	configuration := VoiceConfiguration{
+		Recognizer: newTestSpeechRecognizer(
+			agentvoice.TranscriptionResult{
+				ID:         "ephemeral-asr-result",
+				Provider:   "fake",
+				Model:      "fake-asr-v1",
+				Transcript: "An ephemeral transcript.",
+			},
+		),
+		Synthesizer:            newFailingTestSpeechSynthesizer(context.Canceled),
+		TemporaryAudio:         newVoiceTestVault(t),
+		AudioStagedTTL:         time.Hour,
+		ASRLease:               5 * time.Second,
+		AudioReadTimeout:       time.Second,
+		ReviewHistoryCursorKey: make([]byte, 32),
+	}
+	configuration.PracticeRecognizer = practiceVoiceRecognizerAdapter{
+		recognizer: configuration.Recognizer,
+	}
+	configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
+		synthesizer: configuration.Synthesizer,
+	}
+	configuration.QuestionGenerator = practiceVoiceQuestionGeneratorAdapter{
+		generator: textGenerator,
+	}
+	composition, err := buildIdentityAgentComposition(
+		context.Background(),
+		pool,
+		nil,
+		"",
+		testAgentModelProviders(textGenerator),
+		agentrun.Configuration{
+			Provider:           "fake",
+			Model:              "fake-text-v1",
+			MaxOutputTokens:    256,
+			MaxInputCharacters: 12000,
+		},
+		emptyBootstrapMemorySearcher{},
+		nil,
+		nil,
+		nil,
+		nil,
+		configuration,
+	)
+	if err != nil {
+		t.Fatalf("build composition without object storage: %v", err)
+	}
+	if composition.agentVoiceReclaimer != nil {
+		t.Fatal("ephemeral transcription constructed durable Voice storage")
+	}
+	router := NewRouterWithReadinessAndRoutes(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pool,
+		[]RouteRegistrar{
+			composition.identity.module,
+			composition.agentModule,
+		},
+	)
+	const threadID = "20000000-0000-4000-8000-000000000001"
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-transcriptions/realtime",
+		nil,
+	)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("ephemeral route status = %d", response.Code)
+	}
+
+	legacy := httptest.NewRecorder()
+	legacyRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+
+			"/voice-message-candidates/realtime",
+		nil,
+	)
+	router.ServeHTTP(legacy, legacyRequest)
+	if legacy.Code != http.StatusNotFound {
+		t.Fatalf("durable Voice route without storage status = %d", legacy.Code)
 	}
 }
 

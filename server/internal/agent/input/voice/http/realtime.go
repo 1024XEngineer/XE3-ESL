@@ -77,7 +77,10 @@ func (handler *Handler) uploadRealtime(c *gin.Context) {
 		writeRealtimeFailure(connection, "invalid_audio", false)
 		return
 	}
-	observer := &realtimeTranscriptionWriter{connection: connection}
+	observer := &realtimeTranscriptionWriter{
+		connection: connection,
+		timeout:    handler.readTimeout,
+	}
 	if err := observer.write("transcription.started", gin.H{}); err != nil {
 		return
 	}
@@ -188,6 +191,7 @@ func pcm16MonoWAV(pcm []byte, sampleRate int) ([]byte, error) {
 
 type realtimeTranscriptionWriter struct {
 	connection *websocket.Conn
+	timeout    time.Duration
 }
 
 func (writer *realtimeTranscriptionWriter) OnTranscriptionUpdate(
@@ -204,6 +208,11 @@ func (writer *realtimeTranscriptionWriter) write(
 	event string,
 	data any,
 ) error {
+	if err := writer.connection.SetWriteDeadline(
+		time.Now().Add(writer.timeout),
+	); err != nil {
+		return err
+	}
 	return writer.connection.WriteJSON(gin.H{"type": event, "data": data})
 }
 

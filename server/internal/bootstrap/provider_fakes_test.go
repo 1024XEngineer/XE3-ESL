@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"io"
 
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
@@ -186,6 +187,31 @@ func (recognizer *testSpeechRecognizer) TranscribeStream(
 	return result, nil
 }
 
+func (recognizer *testSpeechRecognizer) TranscribePCMStream(
+	ctx context.Context,
+	request agentvoice.PCMTranscriptionRequest,
+	observer agentvoice.TranscriptionObserver,
+) (agentvoice.TranscriptionResult, error) {
+	if request.PCM == nil || request.SampleRate != 16_000 || observer == nil {
+		return agentvoice.TranscriptionResult{}, errors.New(
+			"test realtime PCM transcription input is invalid",
+		)
+	}
+	pcm, err := io.ReadAll(request.PCM)
+	if err != nil || len(pcm) == 0 {
+		return agentvoice.TranscriptionResult{}, errors.New(
+			"read test realtime PCM transcription input",
+		)
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		agentvoice.TranscriptionUpdate{Transcript: recognizer.result.Transcript},
+	); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	return recognizer.result, nil
+}
+
 type failingTestSpeechSynthesizer struct {
 	err error
 }
@@ -208,6 +234,7 @@ func (synthesizer *failingTestSpeechSynthesizer) Synthesize(
 }
 
 var (
-	_ agentvoice.StreamingSpeechRecognizer = (*testSpeechRecognizer)(nil)
-	_ agentvoice.SpeechSynthesizer         = (*failingTestSpeechSynthesizer)(nil)
+	_ agentvoice.StreamingSpeechRecognizer    = (*testSpeechRecognizer)(nil)
+	_ agentvoice.PCMStreamingSpeechRecognizer = (*testSpeechRecognizer)(nil)
+	_ agentvoice.SpeechSynthesizer            = (*failingTestSpeechSynthesizer)(nil)
 )

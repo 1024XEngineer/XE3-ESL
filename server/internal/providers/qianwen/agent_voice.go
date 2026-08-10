@@ -13,6 +13,10 @@ type AgentVoiceRecognizer struct {
 	recognizer *speechRecognizer
 }
 
+type agentRealtimeVoiceRecognizer struct {
+	*AgentVoiceRecognizer
+}
+
 func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 	ctx context.Context,
 	consume func([]byte) error,
@@ -28,12 +32,18 @@ func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 func NewAgentVoiceRecognizer(
 	configuration ASRConfig,
 	apiKey string,
-) (*AgentVoiceRecognizer, error) {
+) (agentvoice.StreamingSpeechRecognizer, error) {
 	recognizer, err := newSpeechRecognizer(configuration, apiKey)
 	if err != nil {
 		return nil, err
 	}
-	return &AgentVoiceRecognizer{recognizer: recognizer}, nil
+	agentRecognizer := &AgentVoiceRecognizer{recognizer: recognizer}
+	if recognizer.model == "fun-asr-realtime" {
+		return &agentRealtimeVoiceRecognizer{
+			AgentVoiceRecognizer: agentRecognizer,
+		}, nil
+	}
+	return agentRecognizer, nil
 }
 
 func (recognizer *AgentVoiceRecognizer) Transcribe(
@@ -81,6 +91,38 @@ func (recognizer *AgentVoiceRecognizer) TranscribeStream(
 	result, err := recognizer.recognizer.TranscribeStream(
 		ctx,
 		protocol.TranscriptionRequest{Audio: request.Audio},
+		agentVoiceTranscriptionObserver{observer: observer},
+	)
+	if err != nil {
+		return agentvoice.TranscriptionResult{}, mapAgentVoiceError(
+			err,
+			agentvoice.SpeechOperationTranscription,
+		)
+	}
+	return agentVoiceTranscriptionResult(result), nil
+}
+
+func (recognizer *agentRealtimeVoiceRecognizer) TranscribePCMStream(
+	ctx context.Context,
+	request agentvoice.PCMTranscriptionRequest,
+	observer agentvoice.TranscriptionObserver,
+) (agentvoice.TranscriptionResult, error) {
+	if recognizer == nil || recognizer.AgentVoiceRecognizer == nil ||
+		recognizer.recognizer == nil || observer == nil ||
+		recognizer.recognizer.model != "fun-asr-realtime" {
+		return agentvoice.TranscriptionResult{}, agentvoice.NewSpeechError(
+			agentvoice.SpeechOperationTranscription,
+			agentvoice.ErrorConfiguration,
+			0,
+			"",
+			"",
+			errors.New("qianwen: realtime Agent Voice recognizer is required"),
+		)
+	}
+	result, err := recognizer.recognizer.transcribeRealtimePCM(
+		ctx,
+		request.PCM,
+		request.SampleRate,
 		agentVoiceTranscriptionObserver{observer: observer},
 	)
 	if err != nil {
@@ -235,6 +277,8 @@ func mapAgentVoiceErrorKind(kind protocol.ErrorKind) agentvoice.ErrorKind {
 
 var (
 	_ agentvoice.StreamingSpeechRecognizer         = (*AgentVoiceRecognizer)(nil)
+	_ agentvoice.StreamingSpeechRecognizer         = (*agentRealtimeVoiceRecognizer)(nil)
+	_ agentvoice.PCMStreamingSpeechRecognizer      = (*agentRealtimeVoiceRecognizer)(nil)
 	_ agentvoice.SpeechSynthesizer                 = (*AgentVoiceSynthesizer)(nil)
 	_ agentconversation.AssistantSpeechSynthesizer = (*AgentVoiceSynthesizer)(nil)
 )
