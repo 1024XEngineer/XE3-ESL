@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 
@@ -28,6 +30,39 @@ void main() {
       controller.dispose();
       conversation.dispose();
     });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Column(
+          children: [
+            AgentMessageBubble(
+              message: const AgentMessage(
+                id: 'plain-user-text',
+                role: AgentMessageRole.user,
+                text: 'I want to practice.',
+              ),
+              messageAudioController: controller,
+            ),
+            AgentMessageBubble(
+              message: const AgentMessage(
+                id: 'assistant-text',
+                role: AgentMessageRole.assistant,
+                text: 'Let us begin.',
+              ),
+              messageAudioController: controller,
+            ),
+          ],
+        ),
+      ),
+    );
+    expect(
+      find.byKey(const Key('agent-assistant-tts-plain-user-text')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('agent-assistant-tts-assistant-text')),
+      findsOneWidget,
+    );
 
     conversation.commitComposerMessages(const <AgentMessage>[
       AgentMessage(
