@@ -2109,6 +2109,7 @@ class _RecorderDock extends StatelessWidget {
             : _IeltsVoiceCaptureDock(
                 phase: phase,
                 capture: capture,
+                transcript: controller.transcript ?? '',
                 allowTextAnswer: allowTextAnswer,
                 onShowText: onOpenTextAnswer,
               );
@@ -2141,12 +2142,14 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
   const _IeltsVoiceCaptureDock({
     required this.phase,
     required this.capture,
+    required this.transcript,
     required this.allowTextAnswer,
     required this.onShowText,
   });
 
   final VoiceCapturePhase phase;
   final VoiceCaptureView capture;
+  final String transcript;
   final bool allowTextAnswer;
   final VoidCallback onShowText;
 
@@ -2161,6 +2164,8 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
       stopRecordingKey: const Key('ielts-mock-stop-recording'),
       stateLabelKey: const Key('ielts-mock-voice-state-label'),
       durationKey: const Key('ielts-mock-voice-target-duration'),
+      liveTranscript: transcript,
+      liveTranscriptKey: const Key('ielts-mock-live-transcript'),
       upwardCancelOnly: true,
       showTextAction: allowTextAnswer,
       directTapToSend: !allowTextAnswer,
@@ -2178,10 +2183,10 @@ class _IeltsRecorderWorkingState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = switch (state) {
-      PracticeRecordingState.transcribing => 'Transcribing your answer…',
-      PracticeRecordingState.awaitingConfirmation => 'Submitting your answer…',
-      PracticeRecordingState.submitting => 'Answer sent. Agent is replying…',
-      _ => 'Working…',
+      PracticeRecordingState.transcribing => '正在识别你的回答…',
+      PracticeRecordingState.awaitingConfirmation => '正在提交你的回答…',
+      PracticeRecordingState.submitting => '回答已发送，正在进入下一题…',
+      _ => '正在处理…',
     };
     return KeyedSubtree(
       key: const Key('ielts-mock-recorder-working'),

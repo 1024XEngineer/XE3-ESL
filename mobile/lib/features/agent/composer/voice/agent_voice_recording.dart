@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:speakup/platform/audio/pcm16_stream_capture.dart';
 
 import 'agent_voice_models.dart';
 
@@ -117,10 +118,7 @@ final class IosAgentVoiceRecorder
   final Random _random = Random.secure();
   String? _activePath;
   DateTime? _startedAt;
-  BytesBuilder? _activePCM;
-  StreamSubscription<Uint8List>? _pcmSubscription;
-  Completer<void>? _pcmDone;
-  StreamController<Uint8List>? _pcmOutput;
+  Pcm16StreamCapture? _streamCapture;
 
   @override
   Future<void> start() async {
@@ -166,42 +164,14 @@ final class IosAgentVoiceRecorder
     final path = '${directory.path}/${_newFileName()}';
     _activePath = path;
     _startedAt = _clock();
-    final pcm = BytesBuilder(copy: false);
-    final done = Completer<void>();
-    final output = StreamController<Uint8List>();
-    _activePCM = pcm;
-    _pcmDone = done;
-    _pcmOutput = output;
     try {
       final input = await _recorder.startPcm16Stream();
-      _pcmSubscription = input.listen(
-        (chunk) {
-          if (pcm.length + chunk.lengthInBytes > _maximumPCMBytes) {
-            output.addError(
-              const AgentVoiceRecordingException(
-                AgentVoiceRecordingFailureKind.invalidAudio,
-              ),
-            );
-            return;
-          }
-          pcm.add(chunk);
-          output.add(chunk);
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          output.addError(error, stackTrace);
-          if (!done.isCompleted) {
-            done.completeError(error, stackTrace);
-          }
-        },
-        onDone: () {
-          output.close();
-          if (!done.isCompleted) {
-            done.complete();
-          }
-        },
-        cancelOnError: true,
+      final capture = Pcm16StreamCapture(
+        input: input,
+        maximumPcmBytes: _maximumPCMBytes,
       );
-      return output.stream;
+      _streamCapture = capture;
+      return capture.stream;
     } catch (_) {
       _clearStreamingState();
       _activePath = null;
@@ -281,9 +251,8 @@ final class IosAgentVoiceRecorder
   Future<AgentVoiceLocalRecording> stopAudioStream() async {
     final path = _activePath;
     final startedAt = _startedAt;
-    final pcm = _activePCM;
-    final done = _pcmDone;
-    if (path == null || startedAt == null || pcm == null || done == null) {
+    final capture = _streamCapture;
+    if (path == null || startedAt == null || capture == null) {
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.notRecording,
       );
@@ -292,14 +261,7 @@ final class IosAgentVoiceRecorder
     _startedAt = null;
     try {
       await _recorder.stop();
-      await done.future.timeout(const Duration(seconds: 2));
-      final pcmBytes = pcm.takeBytes();
-      if (pcmBytes.isEmpty || pcmBytes.lengthInBytes.isOdd) {
-        throw const AgentVoiceRecordingException(
-          AgentVoiceRecordingFailureKind.emptyAudio,
-        );
-      }
-      final wav = _pcm16MonoWav(pcmBytes, sampleRate: 16000);
+      final wav = await capture.finish();
       await File(path).writeAsBytes(wav, flush: true);
       final elapsed = _boundedRecordingDuration(startedAt);
       return AgentVoiceLocalRecording(
@@ -308,10 +270,16 @@ final class IosAgentVoiceRecorder
         sizeBytes: wav.lengthInBytes,
         duration: elapsed,
       );
+    } on Pcm16StreamCaptureException catch (error) {
+      await capture.cancel();
+      await _deletePath(path);
+      throw AgentVoiceRecordingException(_mapStreamFailure(error.kind));
     } on AgentVoiceRecordingException {
+      await capture.cancel();
       await _deletePath(path);
       rethrow;
     } catch (_) {
+      await capture.cancel();
       await _deletePath(path);
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.unavailable,
@@ -324,18 +292,18 @@ final class IosAgentVoiceRecorder
   @override
   Future<void> discardCurrent() async {
     final path = _activePath;
+    final capture = _streamCapture;
     _activePath = null;
     _startedAt = null;
     if (path == null) {
       return;
     }
+    await capture?.cancel();
     try {
       await _recorder.stop();
     } catch (_) {
       // The owned path is still removed below.
     }
-    await _pcmSubscription?.cancel();
-    await _pcmOutput?.close();
     _clearStreamingState();
     await _deletePath(path);
   }
@@ -350,10 +318,7 @@ final class IosAgentVoiceRecorder
   }
 
   void _clearStreamingState() {
-    _activePCM = null;
-    _pcmSubscription = null;
-    _pcmDone = null;
-    _pcmOutput = null;
+    _streamCapture = null;
   }
 
   @override
@@ -427,25 +392,17 @@ final class IosAgentVoiceRecorder
   }
 }
 
-Uint8List _pcm16MonoWav(Uint8List pcm, {required int sampleRate}) {
-  final result = Uint8List(44 + pcm.lengthInBytes);
-  final data = ByteData.sublistView(result);
-  result.setRange(0, 4, 'RIFF'.codeUnits);
-  data.setUint32(4, result.lengthInBytes - 8, Endian.little);
-  result.setRange(8, 12, 'WAVE'.codeUnits);
-  result.setRange(12, 16, 'fmt '.codeUnits);
-  data.setUint32(16, 16, Endian.little);
-  data.setUint16(20, 1, Endian.little);
-  data.setUint16(22, 1, Endian.little);
-  data.setUint32(24, sampleRate, Endian.little);
-  data.setUint32(28, sampleRate * 2, Endian.little);
-  data.setUint16(32, 2, Endian.little);
-  data.setUint16(34, 16, Endian.little);
-  result.setRange(36, 40, 'data'.codeUnits);
-  data.setUint32(40, pcm.lengthInBytes, Endian.little);
-  result.setRange(44, result.lengthInBytes, pcm);
-  return result;
-}
+AgentVoiceRecordingFailureKind _mapStreamFailure(
+  Pcm16StreamCaptureFailureKind kind,
+) => switch (kind) {
+  Pcm16StreamCaptureFailureKind.emptyAudio =>
+    AgentVoiceRecordingFailureKind.emptyAudio,
+  Pcm16StreamCaptureFailureKind.invalidAudio =>
+    AgentVoiceRecordingFailureKind.invalidAudio,
+  Pcm16StreamCaptureFailureKind.unavailable ||
+  Pcm16StreamCaptureFailureKind.cancelled =>
+    AgentVoiceRecordingFailureKind.unavailable,
+};
 
 final class FakeAgentVoiceRecorder implements AgentVoiceRecorder {
   FakeAgentVoiceRecorder({

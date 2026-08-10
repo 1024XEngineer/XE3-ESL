@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 final class RecordedPracticeAudio {
   const RecordedPracticeAudio({
     required this.path,
@@ -20,6 +22,12 @@ abstract interface class PracticeRecorder {
   Future<void> discard(RecordedPracticeAudio audio);
 
   Future<void> clearAccountState();
+}
+
+abstract interface class PracticeStreamingRecorder {
+  Future<Stream<Uint8List>> startAudioStream();
+
+  Future<RecordedPracticeAudio> stopAudioStream();
 }
 
 final class PracticeRecordingException implements Exception {

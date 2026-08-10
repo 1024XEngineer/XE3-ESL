@@ -22,6 +22,8 @@ class VoiceComposerDock extends StatelessWidget {
     this.upwardCancelOnly = true,
     this.showTextAction = true,
     this.directTapToSend = false,
+    this.liveTranscript,
+    this.liveTranscriptKey,
     super.key,
   });
 
@@ -40,6 +42,8 @@ class VoiceComposerDock extends StatelessWidget {
   final bool upwardCancelOnly;
   final bool showTextAction;
   final bool directTapToSend;
+  final String? liveTranscript;
+  final Key? liveTranscriptKey;
 
   @override
   Widget build(BuildContext context) {
@@ -63,41 +67,64 @@ class VoiceComposerDock extends StatelessWidget {
         : capturing
         ? SpeakUpDesign.ink
         : SpeakUpDesign.secondary;
+    final visibleTranscript = capturing ? liveTranscript?.trim() ?? '' : '';
     final targetContent = ConstrainedBox(
       key: capturing ? stopRecordingKey : null,
       constraints: const BoxConstraints(minHeight: 48),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (capturing) ...[
-            Icon(Icons.graphic_eq_rounded, color: stateColor, size: 22),
-            const SizedBox(width: 9),
-          ],
-          Flexible(
-            child: Text(
-              label,
-              key: stateLabelKey,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: stateColor,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (capturing) ...[
+                Icon(Icons.graphic_eq_rounded, color: stateColor, size: 22),
+                const SizedBox(width: 9),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  key: stateLabelKey,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: stateColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
+              if (phase == VoiceCapturePhase.recording) ...[
+                const SizedBox(width: 10),
+                Text(
+                  _formatDuration(elapsed),
+                  key: durationKey,
+                  style: const TextStyle(
+                    color: SpeakUpDesign.secondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
           ),
-          if (phase == VoiceCapturePhase.recording) ...[
-            const SizedBox(width: 10),
-            Text(
-              _formatDuration(elapsed),
-              key: durationKey,
-              style: const TextStyle(
-                color: SpeakUpDesign.secondary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+          if (visibleTranscript.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+              child: Text(
+                visibleTranscript,
+                key: liveTranscriptKey,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: SpeakUpDesign.secondary,
+                  fontSize: 13,
+                  height: 1.3,
+                ),
               ),
             ),
-          ],
         ],
       ),
     );

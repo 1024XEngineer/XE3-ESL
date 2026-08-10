@@ -501,6 +501,7 @@ class PracticeRecordingComposer extends StatelessWidget {
     required this.phase,
     required this.keyPrefix,
     this.elapsed,
+    this.transcript = '',
     this.upwardCancelOnly = false,
     super.key,
   });
@@ -509,6 +510,7 @@ class PracticeRecordingComposer extends StatelessWidget {
   final VoiceCapturePhase phase;
   final String keyPrefix;
   final Duration? elapsed;
+  final String transcript;
   final bool upwardCancelOnly;
 
   @override
@@ -522,6 +524,8 @@ class PracticeRecordingComposer extends StatelessWidget {
       stopRecordingKey: Key('$keyPrefix-stop-recording'),
       stateLabelKey: Key('$keyPrefix-voice-state-label'),
       durationKey: Key('$keyPrefix-voice-target-duration'),
+      liveTranscript: transcript,
+      liveTranscriptKey: Key('$keyPrefix-live-transcript'),
       upwardCancelOnly: upwardCancelOnly,
     );
   }

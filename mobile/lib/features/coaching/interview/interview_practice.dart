@@ -855,8 +855,9 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             phase: capturePhase,
             keyPrefix: 'practice',
             elapsed: Duration(seconds: widget.recordingSeconds),
+            transcript: widget.controller.transcript ?? '',
           ),
-          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
+          PracticeRecordingState.transcribing => PracticeLoadingComposer(
             label: '正在识别英文回答…',
           ),
           PracticeRecordingState.awaitingConfirmation =>
