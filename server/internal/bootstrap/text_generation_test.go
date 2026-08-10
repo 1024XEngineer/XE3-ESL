@@ -75,6 +75,12 @@ func TestTextGenerationCompositionRegistersConfiguredQiniu(t *testing.T) {
 		{name: "resume", new: func() (any, error) {
 			return NewResumeFieldGenerator(configuration)
 		}},
+		{name: "Practice Voice question", new: func() (any, error) {
+			return NewPracticeQuestionGenerator(configuration)
+		}},
+		{name: "Practice Voice answer Tip", new: func() (any, error) {
+			return NewPracticeAnswerTipGenerator(configuration)
+		}},
 	}
 	for _, generator := range generators {
 		created, createErr := generator.new()
@@ -139,6 +145,20 @@ func TestExplicitModelPortsRejectUnregisteredProviderWithoutFallback(
 	if generator, err := NewResumeFieldGenerator(configuration); err == nil || generator != nil {
 		t.Fatalf(
 			"unregistered provider returned Resume port=%T error=%v",
+			generator,
+			err,
+		)
+	}
+	if generator, err := NewPracticeQuestionGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Practice question port=%T error=%v",
+			generator,
+			err,
+		)
+	}
+	if generator, err := NewPracticeAnswerTipGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Practice answer Tip port=%T error=%v",
 			generator,
 			err,
 		)

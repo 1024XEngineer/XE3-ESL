@@ -21,6 +21,8 @@ type IELTSAnswerPreparationGenerator = qianwen.IELTSAnswerPreparationGenerator
 type EvaluationScoringGenerator = qianwen.EvaluationScoringGenerator
 type EvaluationSpeechFeedbackGenerator = qianwen.EvaluationSpeechFeedbackGenerator
 type ResumeFieldGenerator = qianwen.ResumeFieldGenerator
+type PracticeVoiceQuestionGenerator = qianwen.PracticeVoiceQuestionGenerator
+type PracticeVoiceAnswerTipGenerator = qianwen.PracticeVoiceAnswerTipGenerator
 
 func NewAgentRunGenerator(
 	configuration TextConfig,
@@ -102,6 +104,26 @@ func NewResumeFieldGenerator(
 	apiKey string,
 ) (*ResumeFieldGenerator, error) {
 	return qianwen.NewResumeFieldGenerator(qiniuTextConfig(configuration), apiKey)
+}
+
+func NewPracticeVoiceQuestionGenerator(
+	configuration TextConfig,
+	apiKey string,
+) (*PracticeVoiceQuestionGenerator, error) {
+	return qianwen.NewPracticeVoiceQuestionGenerator(
+		qiniuTextConfig(configuration),
+		apiKey,
+	)
+}
+
+func NewPracticeVoiceAnswerTipGenerator(
+	configuration TextConfig,
+	apiKey string,
+) (*PracticeVoiceAnswerTipGenerator, error) {
+	return qianwen.NewPracticeVoiceAnswerTipGenerator(
+		qiniuTextConfig(configuration),
+		apiKey,
+	)
 }
 
 func qiniuTextConfig(configuration TextConfig) TextConfig {
