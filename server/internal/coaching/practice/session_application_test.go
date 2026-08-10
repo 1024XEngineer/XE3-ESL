@@ -84,6 +84,8 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	plan.SessionPolicy.MaxEffectiveTurns = len(blueprints)
 	plan.SessionPolicy.CoverageCheckpointTurn = len(blueprints)
 	plan.SessionPolicy.MaxFollowUpsPerQuestion = 0
+	plan.SessionPolicy.QuestionTranslationAllowed = true
+	plan.SessionPolicy.QuestionTipsAllowed = true
 	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	plan.IELTSAssignment = &IELTSAssignment{
 		BankID: "ielts-bank-1",
