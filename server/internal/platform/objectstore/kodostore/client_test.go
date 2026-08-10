@@ -105,6 +105,7 @@ func TestClientPutSignAndDelete(t *testing.T) {
 			t.Fatalf("uploaded body = %q, %v", body, err)
 		}
 		if *options.ObjectName != key ||
+			options.FileName != "asset_test.wav" ||
 			options.ContentType != "audio/wav" ||
 			options.Metadata["sha256"] != checksum {
 			t.Fatalf("upload options = %#v", options)

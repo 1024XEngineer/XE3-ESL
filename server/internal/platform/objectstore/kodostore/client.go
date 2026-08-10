@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -179,6 +180,7 @@ func (client *Client) Put(
 			UpToken:     uptoken.NewSigner(policy, client.credentials),
 			BucketName:  client.bucket,
 			ObjectName:  &objectName,
+			FileName:    path.Base(request.Key),
 			ContentType: request.ContentType,
 			Metadata: map[string]string{
 				"sha256": request.ChecksumSHA256,
