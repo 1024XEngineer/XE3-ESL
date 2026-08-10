@@ -30,6 +30,7 @@ final class ComposerController extends ChangeNotifier {
         client: voiceInputClient,
         recorder: voiceRecorder ?? FakeAgentVoiceStreamingRecorder(),
         idFactory: _newId,
+        submitTranscript: sendText,
       )..addListener(_relayVoiceState);
     }
     conversationController.addListener(_syncConversationState);
