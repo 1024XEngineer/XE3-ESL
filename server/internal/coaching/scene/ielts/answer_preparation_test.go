@@ -114,13 +114,40 @@ func TestAnswerGenerationLengthCapsLikelySpeakingTime(t *testing.T) {
 		!validGenerationLength(PracticeModePart3, short) {
 		t.Fatal("short answer should fit every part")
 	}
-	words := make([]string, 76)
-	for index := range words {
-		words[index] = "word"
+	for _, test := range []struct {
+		name  string
+		part  PracticeMode
+		words int
+	}{
+		{name: "Part 1", part: PracticeModePart1, words: 76},
+		{name: "Part 2", part: PracticeModePart2, words: 241},
+		{name: "Part 3", part: PracticeModePart3, words: 96},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			words := make([]string, test.words)
+			for index := range words {
+				words[index] = "word"
+			}
+			tooLong := strings.Join(words, " ")
+			if validGenerationLength(test.part, AnswerGenerationResult{Answer: tooLong, SpeechText: tooLong}) {
+				t.Fatalf("%s answer with %d words should be rejected", test.name, test.words)
+			}
+		})
 	}
-	tooLong := strings.Join(words, " ")
-	if validGenerationLength(PracticeModePart1, AnswerGenerationResult{Answer: tooLong, SpeechText: tooLong}) {
-		t.Fatal("Part 1 answer above 75 words should be rejected")
+}
+
+func TestAnswerTimingKeepsPartSpecificSpokenTargets(t *testing.T) {
+	part1 := answerTiming(PracticeModePart1)
+	if part1.seconds != "20-30" || part1.words != "35-55" {
+		t.Fatalf("Part 1 timing changed: %#v", part1)
+	}
+	part2 := answerTiming(PracticeModePart2)
+	if part2.seconds != "80-110" || part2.words != "160-220" || !strings.Contains(part2.structure, "every cue-card point") {
+		t.Fatalf("Part 2 timing = %#v", part2)
+	}
+	part3 := answerTiming(PracticeModePart3)
+	if part3.seconds != "25-40" || part3.words != "50-80" || !strings.Contains(part3.structure, "avoid an essay-style") {
+		t.Fatalf("Part 3 timing = %#v", part3)
 	}
 }
 

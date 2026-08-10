@@ -327,9 +327,9 @@ func validGenerationLength(part PracticeMode, result AnswerGenerationResult) boo
 	case PracticeModePart1:
 		maximumWords = 75
 	case PracticeModePart2:
-		maximumWords = 280
+		maximumWords = 240
 	case PracticeModePart3:
-		maximumWords = 130
+		maximumWords = 95
 	default:
 		return false
 	}
@@ -381,7 +381,7 @@ func validIdempotencyKey(value string) bool {
 }
 
 func GenerationSystemPrompt() string {
-	return `Return one JSON object with exactly answer, outline, useful_expressions, and speech_text. When personal_points is non-empty, personalize only from those learner-supplied facts and never invent biography, names, places, achievements, or opinions. When personal_points is empty, produce a clearly generic sample answer without specific biographical claims. Produce natural spoken English suitable for the requested IELTS band. answer and speech_text are strings; outline and useful_expressions are non-empty arrays of strings. Do not return markdown.`
+	return `Return one JSON object with exactly answer, outline, useful_expressions, and speech_text. When personal_points is non-empty, personalize only from those learner-supplied facts and never invent biography, names, places, achievements, or opinions. When personal_points is empty, produce a clearly generic sample answer without specific biographical claims. Produce natural conversational English suitable for the requested IELTS band, not a written essay. Use target_band to control linguistic complexity, not answer length. Follow the supplied structure, do not restate the question, and do not add headings or bullet points to answer or speech_text. answer and speech_text are strings; outline and useful_expressions are non-empty arrays of strings. Do not return markdown.`
 }
 
 func GenerationUserPrompt(request AnswerGenerationRequest) string {
@@ -407,9 +407,9 @@ func answerTiming(part PracticeMode) struct {
 	case PracticeModePart1:
 		return struct{ seconds, words, structure string }{"20-30", "35-55", "2-4 sentences: direct answer, reason, brief example"}
 	case PracticeModePart2:
-		return struct{ seconds, words, structure string }{"90-120", "180-240", "structured long turn covering the cue-card points with a clear opening and closing"}
+		return struct{ seconds, words, structure string }{"80-110", "160-220", "one coherent long turn: address every cue-card point naturally, connect details instead of answering mechanically, and use a short opening and natural ending"}
 	case PracticeModePart3:
-		return struct{ seconds, words, structure string }{"35-50", "75-110", "4-6 sentences: position, explanation, example or comparison, conclusion"}
+		return struct{ seconds, words, structure string }{"25-40", "50-80", "3-5 sentences answering this question only: direct position, one or two connected reasons, and a relevant example, comparison, consequence, or exception when useful; discuss the issue generally and avoid an essay-style introduction or conclusion"}
 	default:
 		return struct{ seconds, words, structure string }{}
 	}
