@@ -66,10 +66,13 @@ func TestConfirmationReplayDoesNotReevaluatePersistedAnswer(t *testing.T) {
 		EvidenceVersion:         candidate.EvidenceVersion,
 		AnswerText:              candidate.Transcript,
 	}
+	recordings := newVoiceTestRecordings()
+	baseStore.recordings = recordings
 	evaluator := &countingAnswerEvaluator{}
 	service := &VoiceRoundService{
 		store:           &replayAssessmentStore{voiceTestStore: baseStore},
 		answerEvaluator: evaluator,
+		recordings:      recordings,
 	}
 
 	turn, err := service.ConfirmText(

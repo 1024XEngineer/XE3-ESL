@@ -660,6 +660,7 @@ func (service *VoiceRoundService) Confirm(
 			actor,
 			candidate,
 			command,
+			true,
 		)
 		if replayErr != nil {
 			return practice.Turn{}, replayErr
@@ -740,6 +741,7 @@ func (service *VoiceRoundService) ConfirmText(
 			actor,
 			candidate,
 			command,
+			false,
 		)
 		if replayErr != nil {
 			return practice.Turn{}, replayErr
@@ -784,9 +786,10 @@ func (service *VoiceRoundService) replayConfirmation(
 	actor requestcontext.Actor,
 	candidate TranscriptionCandidate,
 	command ConfirmVoiceTurnCommand,
+	withRecording bool,
 ) (practice.Turn, bool, error) {
 	command.ReplayOnly = true
-	if service.recordings != nil {
+	if withRecording && service.recordings != nil {
 		result, err := service.store.(VoiceRecordingConfirmationStore).
 			ReserveRecordingConfirmation(
 				ctx,
