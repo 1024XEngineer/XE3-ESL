@@ -70,6 +70,7 @@ components:
         - resource_processing
         - idempotency_key_conflict
         - provider_unavailable
+        - practice_activation_failed
         - quota_exhausted
         - voice_capacity_exhausted
         - scene_not_found
@@ -174,6 +175,7 @@ components:
         evaluation_retryable_failure: 503
         rate_limited: 429
         provider_unavailable: 503
+        practice_activation_failed: 503
         quota_exhausted: 503
         voice_capacity_exhausted: 503
         job_target_analysis_failed: 503

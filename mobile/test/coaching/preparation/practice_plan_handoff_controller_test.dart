@@ -14,6 +14,8 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_models.
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 import '../../support/scene_fixtures.dart';
@@ -250,19 +252,52 @@ void main() {
       expect(harness.practice.practiceSessionId, isNull);
     },
   );
+
+  test(
+    'cleans the committed workspace after the server discards activation',
+    () async {
+      final harness = await _createHarness(
+        practiceClient: _DiscardedActivationPracticeClient(),
+      );
+      addTearDown(harness.dispose);
+      final plan = _plan(sourceThreadId: harness.conversation.threadId!);
+      final controller = PracticePlanHandoffController(
+        conversationController: harness.conversation,
+        practiceController: harness.practice,
+        workspaceController: harness.workspace,
+        readPlan: (_) async => plan,
+        confirmPlan:
+            ({required plan, required input, required idempotencyKey}) async =>
+                _bootstrap(plan),
+        idFactory: _fixedId,
+      );
+      addTearDown(controller.dispose);
+
+      expect(await controller.confirm(_handoff(plan)), isFalse);
+
+      expect(harness.workspace.currentLease, isNull);
+      expect(harness.workspace.currentSessionId, isNull);
+      expect(controller.errorMessage, contains('已清理'));
+    },
+  );
 }
 
-Future<_Harness> _createHarness({AgentClient? client}) async {
+Future<_Harness> _createHarness({
+  AgentClient? client,
+  PracticeClient? practiceClient,
+}) async {
   final conversation = ConversationController(
     client: client ?? FakeAgentClient(),
   );
   final composer = ComposerController(conversationController: conversation);
   final practice = PracticeController(
-    client: FakePracticeClient(
-      practiceExperience: PracticeExperience.interview,
-      sceneCategory: SceneCategory.interviewProfessional,
-      turnLimit: 3,
-    ),
+    client:
+        practiceClient ??
+        FakePracticeClient(
+          practiceExperience: PracticeExperience.interview,
+          sceneCategory: SceneCategory.interviewProfessional,
+          turnLimit: 3,
+        ),
   );
   await conversation.initialize();
   final workspace = PracticeWorkspaceController(
@@ -277,6 +312,24 @@ Future<_Harness> _createHarness({AgentClient? client}) async {
     practice: practice,
     workspace: workspace,
   );
+}
+
+final class _DiscardedActivationPracticeClient implements PracticeClient {
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.server,
+      statusCode: 503,
+      errorCode: 'practice_activation_failed',
+      retryable: true,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 PracticePlan _plan({required String sourceThreadId}) {

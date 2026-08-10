@@ -73,3 +73,27 @@ func TestProviderErrorUsesPracticeVoiceContract(t *testing.T) {
 		})
 	}
 }
+
+func TestActivationErrorReportsDiscardedEmptySession(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	handler := Handler{errors: httpresponse.NewRenderer(
+		func() string { return "test-correlation" },
+	)}
+	handler.write(context, mapError(practicevoice.NewActivationError(
+		practicevoice.NewProviderError(
+			practicevoice.ProviderOperationQuestionGeneration,
+			practicevoice.ProviderErrorUnavailable,
+			"provider-request",
+			nil,
+		),
+	)))
+
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(body, `"code":"practice_activation_failed"`) ||
+		!strings.Contains(body, `"retryable":true`) {
+		t.Fatalf("activation response = %d %s", recorder.Code, body)
+	}
+}

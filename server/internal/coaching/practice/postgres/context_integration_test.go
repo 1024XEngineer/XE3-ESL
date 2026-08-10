@@ -240,6 +240,84 @@ func TestContextRepositoryRejectsArchivedPlanAndConflictsByPlan(t *testing.T) {
 	}
 }
 
+func TestContextRepositoryRequiresInitialQuestionBeforeActivation(t *testing.T) {
+	repository, pool := newContextRepository(t)
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	plan := createContextPlan(
+		t,
+		pool,
+		preparationpostgres.NewPostgresPlanRepository(pool),
+		owner,
+		"plan-question-before-activation",
+	)
+	created, replayed, err := repository.CreateSession(
+		context.Background(),
+		owner.Actor,
+		contextSessionCommand(
+			owner,
+			plan,
+			"session-question-before-activation",
+			"snapshot-question-before-activation",
+			"session-question-before-activation-key",
+		),
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateSession = (%#v,%t,%v)", created, replayed, err)
+	}
+	intent := practice.IdempotencyIntent{
+		Method:             "POST",
+		CanonicalPath:      "/v1/practice-sessions/" + created.Session.ID + "/voice-activation",
+		Key:                "voice-activation-question-required",
+		PayloadFingerprint: sha256.Sum256(nil),
+	}
+	if _, err := repository.ActivateSession(
+		context.Background(),
+		owner.Actor,
+		created.Session.ID,
+		created.Session.PlanID,
+		intent,
+	); !errors.Is(err, practice.ErrConflict) {
+		t.Fatalf("activation without initial question error = %v", err)
+	}
+
+	var facilitatorID, learnerID string
+	for _, participant := range created.Snapshot.Participants {
+		switch participant.Role {
+		case "FACILITATOR":
+			facilitatorID = participant.ID
+		case "LEARNER":
+			learnerID = participant.ID
+		}
+	}
+	if facilitatorID == "" || learnerID == "" {
+		t.Fatalf("session participants = %#v", created.Snapshot.Participants)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO practice_questions (
+			owner_user_id, question_id, practice_session_id,
+			speaker_participant_id, addressee_participant_ids,
+			objective_id, question_type, content, sequence, created_at
+		)
+		VALUES ($1, 'question-initial', $2, $3, ARRAY[$4]::text[],
+		        'objective-initial', 'PRIMARY', 'Tell me about yourself.', 1,
+		        transaction_timestamp())
+	`, owner.Actor.UserID, created.Session.ID, facilitatorID, learnerID); err != nil {
+		t.Fatalf("insert initial question: %v", err)
+	}
+	activated, err := repository.ActivateSession(
+		context.Background(),
+		owner.Actor,
+		created.Session.ID,
+		created.Session.PlanID,
+		intent,
+	)
+	if err != nil || activated.Session.Status != practice.SessionInProgress ||
+		activated.Session.Version != created.Session.Version+1 {
+		t.Fatalf("ActivateSession = (%#v,%v)", activated, err)
+	}
+}
+
 func TestContextRepositoryCompletesUserControlledSessionIdempotently(
 	t *testing.T,
 ) {

@@ -51,6 +51,28 @@ type ProviderError struct {
 	cause     error
 }
 
+// ActivationError reports that initial question generation failed and the
+// zero-turn Session was safely moved to a terminal state. Callers may discard
+// their provisional workspace and start a fresh Session.
+type ActivationError struct {
+	cause error
+}
+
+func NewActivationError(cause error) *ActivationError {
+	return &ActivationError{cause: cause}
+}
+
+func (err *ActivationError) Error() string {
+	return "practice activation failed and was rolled back"
+}
+
+func (err *ActivationError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
 func NewProviderError(
 	operation ProviderOperation,
 	kind ProviderErrorKind,

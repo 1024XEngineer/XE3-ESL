@@ -137,7 +137,22 @@ final class PracticePlanHandoffController extends ChangeNotifier {
       return false;
     } on Object {
       if (_isCurrent(generation)) {
-        _errorMessage = workspaceController.errorMessage ?? '练习暂时无法开始，请重试当前确认。';
+        final discardedSessionId =
+            practiceController.discardedActivationSessionId;
+        final cleaned =
+            discardedSessionId != null &&
+            workspaceController.currentSessionId == discardedSessionId &&
+            await workspaceController.parkCurrentPractice();
+        if (!_isCurrent(generation)) {
+          return false;
+        }
+        if (cleaned) {
+          _attempt = null;
+          _errorMessage = 'AI 出题服务暂时不可用，未开始的练习已清理，请重试。';
+        } else {
+          _errorMessage =
+              workspaceController.errorMessage ?? '练习暂时无法开始，请重试当前确认。';
+        }
       }
       return false;
     } finally {

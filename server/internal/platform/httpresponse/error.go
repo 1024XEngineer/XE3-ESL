@@ -235,6 +235,7 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"evaluation_policy_violation":             http.StatusUnprocessableEntity,
 	"rate_limited":                            http.StatusTooManyRequests,
 	"provider_unavailable":                    http.StatusServiceUnavailable,
+	"practice_activation_failed":              http.StatusServiceUnavailable,
 	"quota_exhausted":                         http.StatusServiceUnavailable,
 	"voice_capacity_exhausted":                http.StatusServiceUnavailable,
 	"job_target_analysis_failed":              http.StatusServiceUnavailable,

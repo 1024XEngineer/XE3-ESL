@@ -100,6 +100,60 @@ void main() {
     expect(controller.practiceSessionId, _sessionId);
   });
 
+  test(
+    'marks a server-discarded failed activation for workspace cleanup',
+    () async {
+      final practice = _ActivationPracticeClient(
+        snapshot: _snapshot(turnLimit: 6),
+        activationError: const PracticeClientException(
+          kind: PracticeClientFailureKind.server,
+          statusCode: 503,
+          errorCode: 'practice_activation_failed',
+          retryable: true,
+        ),
+      );
+      final controller = PracticeController(client: practice);
+      addTearDown(controller.dispose);
+
+      await expectLater(
+        controller.activateCreatedPractice(
+          scene: _scene,
+          sessionId: _sessionId,
+          planId: _planId,
+          practiceMode: PracticeMode.fullSimulation,
+          turnLimit: 6,
+          clientOperationId: _voiceKey,
+        ),
+        throwsA(isA<PracticeClientException>()),
+      );
+
+      expect(controller.discardedActivationSessionId, _sessionId);
+      expect(controller.practiceSessionId, isNull);
+    },
+  );
+
+  test('marks a discarded legacy activation during restore', () async {
+    final practice = _ActivationPracticeClient(
+      snapshot: _snapshot(turnLimit: 6),
+      restoreError: const PracticeClientException(
+        kind: PracticeClientFailureKind.server,
+        statusCode: 503,
+        errorCode: 'practice_activation_failed',
+        retryable: true,
+      ),
+    );
+    final controller = PracticeController(client: practice);
+    addTearDown(controller.dispose);
+
+    await expectLater(
+      controller.restoreCreatedPractice(sessionId: _sessionId, scene: _scene),
+      throwsA(isA<PracticeClientException>()),
+    );
+
+    expect(controller.discardedActivationSessionId, _sessionId);
+    expect(controller.practiceSessionId, isNull);
+  });
+
   test('rejects activation of a different formal Session response', () async {
     final practice = _ActivationPracticeClient(
       snapshot: PracticeSessionSnapshot(
@@ -299,11 +353,15 @@ final class _ActivationPracticeClient
     required this.snapshot,
     this.failFirstStart = false,
     this.activationCompleter,
+    this.activationError,
+    this.restoreError,
   });
 
   final PracticeSessionSnapshot snapshot;
   final bool failFirstStart;
   final Completer<PracticeSessionSnapshot>? activationCompleter;
+  final Object? activationError;
+  final Object? restoreError;
   int activationCalls = 0;
   int clearCalls = 0;
   final activationKeys = <String>[];
@@ -318,7 +376,12 @@ final class _ActivationPracticeClient
   @override
   Future<PracticeSessionSnapshot> restorePractice({
     required String sessionId,
-  }) async => snapshot;
+  }) async {
+    if (restoreError case final error?) {
+      throw error;
+    }
+    return snapshot;
+  }
 
   @override
   Future<PracticeSessionSnapshot> activatePractice({
@@ -327,6 +390,9 @@ final class _ActivationPracticeClient
   }) {
     activationCalls++;
     activationKeys.add(clientOperationId);
+    if (activationError case final error?) {
+      throw error;
+    }
     if (failFirstStart && activationCalls == 1) {
       throw const PracticeClientException(
         kind: PracticeClientFailureKind.network,

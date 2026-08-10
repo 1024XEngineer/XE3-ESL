@@ -534,9 +534,20 @@ func ConfirmedTurnResponse(turn practice.Turn) gin.H {
 }
 
 func mapError(err error) error {
+	var activationFailure *practicevoice.ActivationError
 	var providerFailure *practicevoice.ProviderError
 	var translationFailure *sharedtranslation.ProviderError
 	switch {
+	case errors.As(err, &activationFailure):
+		retryable := false
+		if errors.As(err, &providerFailure) {
+			retryable = providerFailure.Retryable()
+		}
+		return apperror.New(
+			apperror.Unavailable, "practice_activation_failed",
+			"Practice could not start because the question provider failed; the empty session was discarded.",
+			apperror.WithRetryable(retryable), apperror.WithCause(err),
+		)
 	case errors.Is(err, practicevoice.ErrInvalidRequest),
 		errors.Is(err, practicevoice.ErrInvalidContext),
 		errors.Is(err, practicevoice.ErrVoiceRoundInvalid):

@@ -439,6 +439,13 @@ func (r *Repository) ActivateSession(
 			  AND plan_id = $3
 			  AND status = 'starting'
 			  AND version = $4
+			  AND EXISTS (
+			      SELECT 1
+			      FROM practice_questions AS question
+			      WHERE question.owner_user_id = practice_sessions.owner_user_id
+			        AND question.practice_session_id = practice_sessions.session_id
+			        AND question.sequence = 1
+			  )
 		`, actor.UserID, sessionID, planID, bootstrap.Session.Version)
 		if err != nil {
 			return practice.SessionBootstrap{},

@@ -3,6 +3,8 @@ package voice
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -37,19 +39,24 @@ type sessionRepository interface {
 		string,
 		practice.IdempotencyIntent,
 	) (practice.SessionBootstrap, error)
+	TransitionSession(
+		context.Context,
+		practice.Actor,
+		practice.TransitionSessionCommand,
+	) (practice.Session, bool, error)
 }
 
-func (adapter *sessionAdapter) Start(
+func (adapter *sessionAdapter) PrepareStart(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
 	idempotencyKey string,
-) (Session, error) {
+) (Session, bool, error) {
 	if adapter == nil || adapter.repository == nil ||
 		!actor.Valid() ||
 		strings.TrimSpace(sessionID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
-		return Session{}, ErrInvalidRequest
+		return Session{}, false, ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
 	intent := practice.IdempotencyIntent{
@@ -65,13 +72,14 @@ func (adapter *sessionAdapter) Start(
 		intent,
 	)
 	if err != nil {
-		return Session{}, mapPracticeError(err)
+		return Session{}, false, mapPracticeError(err)
 	}
 	if found {
 		if replayed.Session.ID != sessionID {
-			return Session{}, ErrIdempotencyConflict
+			return Session{}, false, ErrIdempotencyConflict
 		}
-		return mapPracticeSession(replayed, actor.UserID)
+		session, mapErr := mapPracticeSession(replayed, actor.UserID)
+		return session, true, mapErr
 	}
 	session, err := adapter.repository.GetSession(
 		ctx,
@@ -79,10 +87,10 @@ func (adapter *sessionAdapter) Start(
 		sessionID,
 	)
 	if err != nil {
-		return Session{}, mapPracticeError(err)
+		return Session{}, false, mapPracticeError(err)
 	}
 	if session.ID != sessionID || strings.TrimSpace(session.PlanID) == "" {
-		return Session{}, ErrInvalidContext
+		return Session{}, false, ErrInvalidContext
 	}
 	snapshot, err := adapter.repository.GetSessionSnapshot(
 		ctx,
@@ -90,7 +98,7 @@ func (adapter *sessionAdapter) Start(
 		sessionID,
 	)
 	if err != nil {
-		return Session{}, mapPracticeError(err)
+		return Session{}, false, mapPracticeError(err)
 	}
 	if _, err := mapPracticeSession(
 		practice.SessionBootstrap{
@@ -99,23 +107,97 @@ func (adapter *sessionAdapter) Start(
 		},
 		actor.UserID,
 	); err != nil {
-		return Session{}, err
+		return Session{}, false, err
+	}
+	mapped, err := mapPracticeSession(
+		practice.SessionBootstrap{Session: session, Snapshot: snapshot},
+		actor.UserID,
+	)
+	return mapped, false, err
+}
+
+func (adapter *sessionAdapter) CommitStart(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	planID string,
+	idempotencyKey string,
+) (Session, error) {
+	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
+		strings.TrimSpace(sessionID) == "" ||
+		strings.TrimSpace(planID) == "" ||
+		strings.TrimSpace(idempotencyKey) == "" {
+		return Session{}, ErrInvalidRequest
+	}
+	practiceActor := practiceActor(actor)
+	intent := practice.IdempotencyIntent{
+		Method: "POST",
+		CanonicalPath: "/v1/practice-sessions/" + sessionID +
+			"/voice-activation",
+		Key:                idempotencyKey,
+		PayloadFingerprint: sha256.Sum256(nil),
 	}
 	activated, err := adapter.repository.ActivateSession(
 		ctx,
 		practiceActor,
 		sessionID,
-		session.PlanID,
+		planID,
 		intent,
 	)
 	if err != nil {
 		return Session{}, mapPracticeError(err)
 	}
 	if activated.Session.ID != sessionID ||
-		activated.Session.PlanID != session.PlanID {
+		activated.Session.PlanID != planID {
 		return Session{}, ErrInvalidContext
 	}
 	return mapPracticeSession(activated, actor.UserID)
+}
+
+func (adapter *sessionAdapter) AbortStart(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	session Session,
+	idempotencyKey string,
+) error {
+	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
+		session.ID == "" || session.SessionVersion < 1 ||
+		(session.Status != "starting" && session.Status != "in_progress") ||
+		session.EffectiveTurns != 0 ||
+		strings.TrimSpace(idempotencyKey) == "" {
+		return ErrInvalidRequest
+	}
+	payload, err := json.Marshal(struct {
+		ExpectedSessionVersion int `json:"expected_session_version"`
+	}{ExpectedSessionVersion: session.SessionVersion})
+	if err != nil {
+		return err
+	}
+	keyFingerprint := sha256.Sum256([]byte(idempotencyKey))
+	intent := practice.IdempotencyIntent{
+		Method:             "POST",
+		CanonicalPath:      "/v1/practice-sessions/" + session.ID + "/end-early",
+		Key:                "voice-activation-abort-" + hex.EncodeToString(keyFingerprint[:]),
+		PayloadFingerprint: sha256.Sum256(payload),
+	}
+	ended, _, err := adapter.repository.TransitionSession(
+		ctx,
+		practiceActor(actor),
+		practice.TransitionSessionCommand{
+			SessionID:              session.ID,
+			ExpectedSessionVersion: session.SessionVersion,
+			Transition:             practice.SessionEndEarly,
+			Intent:                 intent,
+		},
+	)
+	if err != nil {
+		return mapPracticeError(err)
+	}
+	if ended.ID != session.ID || ended.Status != practice.SessionEndedEarly ||
+		ended.EffectiveTurns != 0 {
+		return ErrInvalidContext
+	}
+	return nil
 }
 
 func (adapter *sessionAdapter) GetByID(

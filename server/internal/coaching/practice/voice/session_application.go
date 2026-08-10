@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
@@ -45,12 +46,25 @@ type Session struct {
 }
 
 type SessionPort interface {
-	Start(
+	PrepareStart(
 		context.Context,
 		requestcontext.Actor,
 		string,
 		string,
+	) (Session, bool, error)
+	CommitStart(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		string,
 	) (Session, error)
+	AbortStart(
+		context.Context,
+		requestcontext.Actor,
+		Session,
+		string,
+	) error
 	GetByID(
 		context.Context,
 		requestcontext.Actor,
@@ -232,7 +246,7 @@ func (application *SessionApplication) Start(
 		strings.TrimSpace(idempotencyKey) == "" {
 		return SessionState{}, ErrInvalidRequest
 	}
-	session, err := application.sessions.Start(
+	session, replayed, err := application.sessions.PrepareStart(
 		ctx,
 		actor,
 		sessionID,
@@ -244,7 +258,46 @@ func (application *SessionApplication) Start(
 	if session.ID != sessionID {
 		return SessionState{}, ErrInvalidContext
 	}
-	return application.state(ctx, actor, session)
+	if replayed || session.Status == "in_progress" {
+		state, stateErr := application.state(ctx, actor, session)
+		return application.recoverFailedEmptyActivation(
+			ctx,
+			actor,
+			session,
+			idempotencyKey,
+			state,
+			stateErr,
+		)
+	}
+	if session.Status != "starting" || session.EffectiveTurns != 0 {
+		return SessionState{}, ErrConflict
+	}
+	state, err := application.stateBeforeActivation(ctx, actor, session)
+	if err != nil {
+		return application.recoverFailedEmptyActivation(
+			ctx,
+			actor,
+			session,
+			idempotencyKey,
+			SessionState{},
+			err,
+		)
+	}
+	activated, err := application.sessions.CommitStart(
+		ctx,
+		actor,
+		sessionID,
+		session.PlanID,
+		idempotencyKey,
+	)
+	if err != nil {
+		return SessionState{}, err
+	}
+	if activated.ID != sessionID || activated.Status != "in_progress" {
+		return SessionState{}, ErrInvalidContext
+	}
+	state.Session = activated
+	return state, nil
 }
 
 func (application *SessionApplication) Resume(
@@ -263,7 +316,49 @@ func (application *SessionApplication) Resume(
 	if session.ID != sessionID {
 		return SessionState{}, ErrInvalidContext
 	}
-	return application.state(ctx, actor, session)
+	state, stateErr := application.state(ctx, actor, session)
+	return application.recoverFailedEmptyActivation(
+		ctx,
+		actor,
+		session,
+		"voice-resume-"+session.ID,
+		state,
+		stateErr,
+	)
+}
+
+func (application *SessionApplication) recoverFailedEmptyActivation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	session Session,
+	idempotencyKey string,
+	state SessionState,
+	stateErr error,
+) (SessionState, error) {
+	if stateErr == nil {
+		return state, nil
+	}
+	var providerFailure *ProviderError
+	if session.EffectiveTurns != 0 ||
+		(session.Status != "starting" && session.Status != "in_progress") ||
+		!errors.As(stateErr, &providerFailure) {
+		return SessionState{}, stateErr
+	}
+	abortCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		5*time.Second,
+	)
+	abortErr := application.sessions.AbortStart(
+		abortCtx,
+		actor,
+		session,
+		idempotencyKey,
+	)
+	cancel()
+	if abortErr != nil {
+		return SessionState{}, stateErr
+	}
+	return SessionState{}, NewActivationError(stateErr)
 }
 
 func (application *SessionApplication) Transcribe(
@@ -358,6 +453,23 @@ func (application *SessionApplication) state(
 	actor requestcontext.Actor,
 	session Session,
 ) (SessionState, error) {
+	return application.buildState(ctx, actor, session, false)
+}
+
+func (application *SessionApplication) stateBeforeActivation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	session Session,
+) (SessionState, error) {
+	return application.buildState(ctx, actor, session, true)
+}
+
+func (application *SessionApplication) buildState(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	session Session,
+	allowStarting bool,
+) (SessionState, error) {
 	if session.ID == "" ||
 		session.PlanID == "" ||
 		session.SceneID == "" ||
@@ -367,7 +479,7 @@ func (application *SessionApplication) state(
 		session.SessionVersion < 1 ||
 		session.EffectiveTurns < 0 ||
 		!validVoiceProgress(session) ||
-		!validVoiceSessionLifecycle(session) ||
+		!validVoiceSessionLifecycle(session, allowStarting) ||
 		session.FacilitatorParticipantID == "" ||
 		session.LearnerParticipantID == "" ||
 		session.FacilitatorParticipantID == session.LearnerParticipantID {
@@ -547,10 +659,13 @@ func validVoiceScenePrompt(session Session) bool {
 		len(prompt.TurnBlueprints) > 0
 }
 
-func validVoiceSessionLifecycle(session Session) bool {
+func validVoiceSessionLifecycle(session Session, allowStarting bool) bool {
 	turnAvailable := session.CompletionMode == practice.CompletionModeUserControlled ||
 		session.EffectiveTurns < session.TurnLimit
 	switch session.Status {
+	case "starting":
+		return allowStarting && !session.Completed &&
+			session.EffectiveTurns == 0
 	case "in_progress":
 		return !session.Completed && turnAvailable
 	case "paused":

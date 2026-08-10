@@ -229,7 +229,7 @@ func TestSessionAdapterRejectsUnknownPolicyBeforeActivation(t *testing.T) {
 	)
 	repository := &turnPolicySessionRepository{bootstrap: bootstrap}
 
-	_, err := (&sessionAdapter{repository: repository}).Start(
+	_, _, err := (&sessionAdapter{repository: repository}).PrepareStart(
 		context.Background(),
 		persistenceRequestActor(),
 		bootstrap.Session.ID,
@@ -455,6 +455,14 @@ func (repository *turnPolicySessionRepository) ActivateSession(
 ) (practice.SessionBootstrap, error) {
 	repository.activateCalls++
 	return repository.bootstrap, nil
+}
+
+func (repository *turnPolicySessionRepository) TransitionSession(
+	context.Context,
+	practice.Actor,
+	practice.TransitionSessionCommand,
+) (practice.Session, bool, error) {
+	return practice.Session{}, false, nil
 }
 
 type turnPolicyQuestionRepository struct {

@@ -146,13 +146,223 @@ func TestSessionStartReturnsQuestionFromFrozenSession(t *testing.T) {
 
 type sessionPortStub struct{ session Session }
 
-func (p sessionPortStub) Start(
+func (p sessionPortStub) PrepareStart(
 	context.Context,
 	requestcontext.Actor,
 	string,
 	string,
+) (Session, bool, error) {
+	return p.session, false, nil
+}
+
+func TestSessionStartPersistsQuestionBeforeActivation(t *testing.T) {
+	starting := sessionFixture()
+	starting.Status = "starting"
+	starting.SessionVersion = 1
+	activated := starting
+	activated.Status = "in_progress"
+	activated.SessionVersion = 2
+	port := &activationSessionPortStub{
+		prepared:  starting,
+		activated: activated,
+	}
+	questions := &activationQuestionPortStub{sessionPort: port}
+	application := sessionApplicationFixture(t, port, questions)
+
+	state, err := application.Start(
+		context.Background(), roundActor(), starting.ID, "start-1",
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !questions.called || !port.committed || port.aborted ||
+		state.Session.Status != "in_progress" || state.Question == nil {
+		t.Fatalf(
+			"questions.called=%t committed=%t aborted=%t state=%#v",
+			questions.called, port.committed, port.aborted, state,
+		)
+	}
+}
+
+func TestSessionStartAbortsEmptySessionAfterProviderFailure(t *testing.T) {
+	starting := sessionFixture()
+	starting.Status = "starting"
+	port := &activationSessionPortStub{prepared: starting}
+	providerFailure := NewProviderError(
+		ProviderOperationQuestionGeneration,
+		ProviderErrorUnavailable,
+		"request-1",
+		errors.New("provider unavailable"),
+	)
+	application := sessionApplicationFixture(
+		t,
+		port,
+		&activationQuestionPortStub{err: providerFailure},
+	)
+
+	_, err := application.Start(
+		context.Background(), roundActor(), starting.ID, "start-1",
+	)
+	var activationFailure *ActivationError
+	if !errors.As(err, &activationFailure) ||
+		!errors.Is(err, providerFailure) || !port.aborted || port.committed {
+		t.Fatalf(
+			"error=%v aborted=%t committed=%t",
+			err, port.aborted, port.committed,
+		)
+	}
+}
+
+func TestSessionResumeDiscardsLegacyEmptyActivationAfterProviderFailure(
+	t *testing.T,
+) {
+	legacy := sessionFixture()
+	legacy.Status = "in_progress"
+	legacy.EffectiveTurns = 0
+	port := &activationSessionPortStub{prepared: legacy}
+	providerFailure := NewProviderError(
+		ProviderOperationQuestionGeneration,
+		ProviderErrorUnavailable,
+		"request-legacy",
+		errors.New("provider unavailable"),
+	)
+	application := sessionApplicationFixture(
+		t,
+		port,
+		&activationQuestionPortStub{err: providerFailure},
+	)
+
+	_, err := application.Resume(
+		context.Background(), roundActor(), legacy.ID,
+	)
+	var activationFailure *ActivationError
+	if !errors.As(err, &activationFailure) || !port.aborted {
+		t.Fatalf("Resume error=%v aborted=%t", err, port.aborted)
+	}
+}
+
+func sessionApplicationFixture(
+	t *testing.T,
+	sessions SessionPort,
+	questions QuestionPort,
+) *SessionApplication {
+	t.Helper()
+	candidate := roundCandidate()
+	orchestrator, err := NewRoundOrchestrator(
+		&roundVoice{candidate: candidate, turn: roundTurn(candidate)},
+		roundPractice{},
+	)
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+	application, err := NewSessionApplication(
+		sessions,
+		questions,
+		checkpointPortStub{},
+		orchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewSessionApplication: %v", err)
+	}
+	return application
+}
+
+type activationSessionPortStub struct {
+	prepared  Session
+	activated Session
+	committed bool
+	aborted   bool
+}
+
+func (stub *activationSessionPortStub) PrepareStart(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+) (Session, bool, error) {
+	return stub.prepared, false, nil
+}
+
+func (stub *activationSessionPortStub) CommitStart(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	string,
+) (Session, error) {
+	stub.committed = true
+	return stub.activated, nil
+}
+
+func (stub *activationSessionPortStub) AbortStart(
+	_ context.Context,
+	_ requestcontext.Actor,
+	session Session,
+	_ string,
+) error {
+	stub.aborted =
+		(session.Status == "starting" || session.Status == "in_progress") &&
+			session.EffectiveTurns == 0
+	return nil
+}
+
+func (stub *activationSessionPortStub) GetByID(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (Session, error) {
+	return stub.prepared, nil
+}
+
+type activationQuestionPortStub struct {
+	sessionPort *activationSessionPortStub
+	called      bool
+	err         error
+}
+
+func (stub *activationQuestionPortStub) EnsureQuestion(
+	_ context.Context,
+	_ requestcontext.Actor,
+	session Session,
+	sequence int,
+) (practice.Question, error) {
+	stub.called = true
+	if stub.sessionPort != nil && stub.sessionPort.committed {
+		return practice.Question{}, errors.New("question generated after activation")
+	}
+	if stub.err != nil {
+		return practice.Question{}, stub.err
+	}
+	return questionPortStub{}.EnsureQuestion(
+		context.Background(), roundActor(), session, sequence,
+	)
+}
+
+func (*activationQuestionPortStub) GetQuestion(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (practice.Question, error) {
+	return practice.Question{}, ErrNotFound
+}
+
+func (p sessionPortStub) CommitStart(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	string,
 ) (Session, error) {
 	return p.session, nil
+}
+
+func (sessionPortStub) AbortStart(
+	context.Context,
+	requestcontext.Actor,
+	Session,
+	string,
+) error {
+	return nil
 }
 
 func (p sessionPortStub) GetByID(

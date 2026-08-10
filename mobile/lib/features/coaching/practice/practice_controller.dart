@@ -59,6 +59,7 @@ final class PracticeController extends ChangeNotifier
   final PracticeClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   String? _practiceSessionId;
+  String? _discardedActivationSessionId;
   PracticeExperience? _practiceExperience;
   SceneCategory? _practiceSceneCategory;
   PracticeMode? _practiceMode;
@@ -109,6 +110,7 @@ final class PracticeController extends ChangeNotifier
   int _mediaGeneration = 0;
   Future<void>? _mediaOperation;
   String? get practiceSessionId => _practiceSessionId;
+  String? get discardedActivationSessionId => _discardedActivationSessionId;
   PracticeExperience? get practiceExperience => _practiceExperience;
   SceneCategory? get practiceSceneCategory => _practiceSceneCategory;
   PracticeMode? get practiceMode => _practiceMode;
@@ -359,6 +361,12 @@ final class PracticeController extends ChangeNotifier
       }
       _activeScene = scene;
       _applyPracticeSnapshot(snapshot);
+    } on PracticeClientException catch (error) {
+      if (_isOperationCurrent(fence) &&
+          error.errorCode == 'practice_activation_failed') {
+        _discardedActivationSessionId = sessionId;
+      }
+      rethrow;
     } finally {
       if (_isCurrent(epoch)) {
         _setBusy(false);
@@ -397,6 +405,12 @@ final class PracticeController extends ChangeNotifier
       }
       _activeScene = scene;
       _applyPracticeSnapshot(snapshot);
+    } on PracticeClientException catch (error) {
+      if (_isOperationCurrent(fence) &&
+          error.errorCode == 'practice_activation_failed') {
+        _discardedActivationSessionId = sessionId;
+      }
+      rethrow;
     } finally {
       if (_isCurrent(epoch)) {
         _setBusy(false);
@@ -1864,6 +1878,7 @@ final class PracticeController extends ChangeNotifier
     _practiceGeneration++;
     _pendingPracticeAudio = null;
     _practiceSessionId = null;
+    _discardedActivationSessionId = null;
     _practiceExperience = null;
     _practiceSceneCategory = null;
     _practiceMode = null;
@@ -1984,6 +1999,9 @@ final class PracticeController extends ChangeNotifier
       );
     }
     final previousSessionId = _practiceSessionId;
+    if (snapshot != null) {
+      _discardedActivationSessionId = null;
+    }
     _cancelRecordingLimit();
     _practiceGeneration++;
     _candidate = null;

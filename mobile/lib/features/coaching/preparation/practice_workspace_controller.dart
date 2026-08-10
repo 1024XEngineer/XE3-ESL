@@ -438,6 +438,12 @@ final class PracticeWorkspaceController extends ChangeNotifier {
           (current.goalId == null ||
               conversationController.activeGoalId == current.goalId) &&
           !practiceController.hasActivePractice;
+      final failedActivationWasFocused =
+          current.isCommitted &&
+          conversationController.threadId == current.practiceThreadId &&
+          practiceController.discardedActivationSessionId ==
+              current.sessionId &&
+          !practiceController.hasActivePractice;
       if (!await _prepareToLeavePractice()) {
         return false;
       }
@@ -449,7 +455,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         _setError('暂时无法返回原来的首页对话，请稍后重试。');
         return false;
       }
-      if (terminalPracticeWasFocused) {
+      if (terminalPracticeWasFocused || failedActivationWasFocused) {
         _current = null;
         notifyListeners();
         try {
@@ -872,6 +878,9 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         scene: record.scene!,
       );
     } on Object {
+      if (practiceController.discardedActivationSessionId == record.sessionId) {
+        return _PracticeResumeVerification.terminal;
+      }
       return _PracticeResumeVerification.unavailable;
     }
     if (conversationController.threadId != record.practiceThreadId ||
