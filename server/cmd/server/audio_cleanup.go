@@ -10,7 +10,6 @@ import (
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
 )
 
 type audioCleanupFactories struct {
@@ -28,11 +27,11 @@ var productionAudioCleanupFactories = audioCleanupFactories{
 		ctx context.Context,
 		storageConfig config.ObjectStorageConfig,
 	) (objectstore.Store, error) {
-		provider, err := ossstore.NewCredentialsProvider(storageConfig)
-		if err != nil {
-			return nil, err
-		}
-		return ossstore.New(ctx, storageConfig, provider)
+		return newProtectedObjectStore(
+			ctx,
+			storageConfig,
+			storageConfig.AudioPrefix,
+		)
 	},
 	newRepository: func(
 		pool *pgxpool.Pool,

@@ -10,7 +10,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/paddleocr"
 	resumeapp "github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
 	resumedocument "github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
@@ -51,10 +50,6 @@ func buildResumeComposition(
 	if err != nil {
 		return nil, err
 	}
-	provider, err := ossstore.NewCredentialsProvider(storageConfig)
-	if err != nil {
-		return nil, err
-	}
 	var resumePipeline resumeapp.Parser
 	if ocrConfig.Enabled {
 		ocrClient, clientErr := paddleocr.New(paddleocr.Config{
@@ -84,11 +79,10 @@ func buildResumeComposition(
 	if err != nil {
 		return nil, err
 	}
-	store, err := ossstore.NewForPrefix(
+	store, err := newProtectedObjectStore(
 		ctx,
 		storageConfig,
 		storageConfig.ResumePrefix,
-		provider,
 	)
 	if err != nil {
 		return nil, err

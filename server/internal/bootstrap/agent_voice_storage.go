@@ -29,7 +29,11 @@ func AgentVoiceObjectReadAllowedHosts(
 	if !storageConfig.Enabled {
 		return nil, nil
 	}
-	endpoint, err := url.Parse(strings.TrimSpace(storageConfig.Endpoint))
+	origin := storageConfig.Endpoint
+	if storageConfig.Provider == config.ObjectStorageProviderQiniuKodo {
+		origin = storageConfig.Domain
+	}
+	endpoint, err := url.Parse(strings.TrimSpace(origin))
 	if err != nil ||
 		endpoint.Scheme != "https" ||
 		endpoint.Host == "" ||
@@ -38,8 +42,13 @@ func AgentVoiceObjectReadAllowedHosts(
 		endpoint.RawQuery != "" ||
 		endpoint.Fragment != "" ||
 		net.ParseIP(endpoint.Hostname()) != nil ||
-		strings.HasSuffix(endpoint.Hostname(), ".") ||
-		!agentVoiceBucketPattern.MatchString(storageConfig.Bucket) {
+		strings.HasSuffix(endpoint.Hostname(), ".") {
+		return nil, errAgentVoiceObjectStorageOrigin
+	}
+	if storageConfig.Provider == config.ObjectStorageProviderQiniuKodo {
+		return []string{strings.ToLower(endpoint.Host)}, nil
+	}
+	if !agentVoiceBucketPattern.MatchString(storageConfig.Bucket) {
 		return nil, errAgentVoiceObjectStorageOrigin
 	}
 	endpointHost := strings.ToLower(endpoint.Host)
