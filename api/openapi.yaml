@@ -432,6 +432,8 @@ components:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportEnvelope
     IeltsSpeakingReport:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReport
+    IeltsSpeakingPracticeReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingPracticeReport
     Evaluation:
       $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
     SceneEvaluationResult:
