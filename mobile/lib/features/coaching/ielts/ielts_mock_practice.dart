@@ -3381,10 +3381,12 @@ class _Part2RecordingStatus extends StatelessWidget {
           style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
         ),
         const SizedBox(width: 10),
-        Text(
-          label,
-          key: const Key('ielts-part2-recording-label'),
-          style: SpeakUpDesign.body,
+        Flexible(
+          child: Text(
+            label,
+            key: const Key('ielts-part2-recording-label'),
+            style: SpeakUpDesign.body,
+          ),
         ),
       ],
     );

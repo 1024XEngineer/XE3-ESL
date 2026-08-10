@@ -364,6 +364,63 @@ void main() {
     },
   );
 
+  testWidgets('Part 2 recording status fits 320px with 2x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime.utc(2026, 8, 4, 9);
+    final startGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 6);
+    final recorder = _Recorder()..startGate = startGate;
+    final controller = PracticeController(client: practice, recorder: recorder);
+    final store = _MemoryProgressStore(
+      IeltsMockProgress(
+        sessionId: _sessionId,
+        phase: IeltsMockPhase.part2Speaking,
+        startedAt: now,
+        speakingDeadline: now.add(const Duration(seconds: 120)),
+      ),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part2,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(320, 1000),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: store,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+            now: () => now,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.starting);
+    expect(find.text('正在打开麦克风…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    startGate.complete();
+    await tester.pump();
+    await controller.cancelRecording();
+    await tester.pump();
+  });
+
   testWidgets(
     'Part 1 boundary enters prep, keeps notes, and submits the Part 2 long turn',
     (tester) async {
@@ -1843,10 +1900,12 @@ final class _IeltsPracticeClient
 final class _Recorder implements PracticeRecorder {
   bool recording = false;
   int startCalls = 0;
+  Completer<void>? startGate;
 
   @override
   Future<void> start() async {
     startCalls++;
+    await startGate?.future;
     recording = true;
   }
 
