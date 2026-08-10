@@ -305,7 +305,8 @@ void main() {
       expect(store.value?.phase, IeltsMockPhase.part2Speaking);
       expect(controller.recordingState, PracticeRecordingState.recording);
       expect(find.byKey(const Key('ielts-mock-cue-card')), findsNothing);
-      expect(find.textContaining('录音中·'), findsOneWidget);
+      expect(find.text('录音中'), findsOneWidget);
+      expect(find.text('我的小抄'), findsOneWidget);
       expect(find.byKey(const Key('ielts-mock-finish-speaking')), findsNothing);
     },
   );
@@ -428,7 +429,8 @@ void main() {
         find.byKey(const Key('ielts-part2-recording-status')),
         findsOneWidget,
       );
-      expect(find.textContaining('录音中·'), findsOneWidget);
+      expect(find.text('录音中'), findsOneWidget);
+      expect(find.text('我的小抄'), findsOneWidget);
       expect(
         find.text('online course, weekly practice, useful at work'),
         findsOneWidget,
