@@ -59,6 +59,9 @@ func TestSpeechConfigurationUsesIndependentTimeoutDefaults(t *testing.T) {
 	if asr.Timeout != defaultASRTimeout {
 		t.Fatalf("ASR timeout = %s, want %s", asr.Timeout, defaultASRTimeout)
 	}
+	if asr.Timeout != 150*time.Second {
+		t.Fatalf("ASR timeout = %s, want enough time for a 120s IELTS response and finalization", asr.Timeout)
+	}
 	if tts.Timeout != defaultTTSTimeout {
 		t.Fatalf("TTS timeout = %s, want %s", tts.Timeout, defaultTTSTimeout)
 	}

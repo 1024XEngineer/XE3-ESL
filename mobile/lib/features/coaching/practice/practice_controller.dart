@@ -992,7 +992,7 @@ final class PracticeController extends ChangeNotifier
           sessionId != null &&
           questionId != null) {
         final chunks = await streamingRecorder.startAudioStream();
-        _realtimeCandidate = _collectRealtimeCandidate(
+        final realtime = _collectRealtimeCandidate(
           fence,
           realtimePractice.transcribeRealtime(
             sessionId: sessionId,
@@ -1001,6 +1001,8 @@ final class PracticeController extends ChangeNotifier
             audioChunks: chunks,
           ),
         );
+        _realtimeCandidate = realtime;
+        unawaited(_observeRealtimeFailure(fence, realtime));
       } else {
         await recorder.start();
       }
@@ -1253,6 +1255,64 @@ final class PracticeController extends ChangeNotifier
     } catch (error) {
       return _RealtimePracticeCandidateResult(error: error);
     }
+  }
+
+  Future<void> _observeRealtimeFailure(
+    _PracticeOperationFence fence,
+    Future<_RealtimePracticeCandidateResult> realtime,
+  ) async {
+    final result = await realtime;
+    final error = result.error;
+    if (error == null ||
+        !_isOperationCurrent(fence) ||
+        !identical(_realtimeCandidate, realtime) ||
+        (_recordingState != PracticeRecordingState.starting &&
+            _recordingState != PracticeRecordingState.recording)) {
+      return;
+    }
+    final recovery = _recoverFromRealtimeFailure(
+      fence: fence,
+      realtime: realtime,
+      error: error,
+    );
+    _stopRecordingFuture = recovery;
+    await recovery.whenComplete(() {
+      if (identical(_stopRecordingFuture, recovery)) {
+        _stopRecordingFuture = null;
+      }
+    });
+  }
+
+  Future<void> _recoverFromRealtimeFailure({
+    required _PracticeOperationFence fence,
+    required Future<_RealtimePracticeCandidateResult> realtime,
+    required Object error,
+  }) async {
+    if (!_isOperationCurrent(fence) ||
+        !identical(_realtimeCandidate, realtime) ||
+        (_recordingState != PracticeRecordingState.starting &&
+            _recordingState != PracticeRecordingState.recording)) {
+      return;
+    }
+    _cancelRecordingLimit();
+    _realtimeCandidate = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.transcribing;
+    notifyListeners();
+    try {
+      await recorder.discardCurrent();
+    } on Object {
+      // The recorder is already unusable; state recovery must still complete.
+    }
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    _liveTranscript = '';
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = _realtimeTranscriptionFailureMessage(error);
+    notifyListeners();
   }
 
   Future<void> _transcribePendingPracticeAudio({

@@ -11,7 +11,7 @@ import (
 const (
 	SpeechProviderQianwen = "qianwen"
 
-	defaultASRTimeout    = 90 * time.Second
+	defaultASRTimeout    = 150 * time.Second
 	defaultTTSTimeout    = 60 * time.Second
 	maximumSpeechTimeout = 5 * time.Minute
 )
