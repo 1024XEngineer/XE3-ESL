@@ -22,6 +22,46 @@ func TestLoadSpeechRecognition(t *testing.T) {
 	}
 }
 
+func TestLoadSpeechRecognitionReadsQiniuConfiguration(t *testing.T) {
+	setQiniuASREnvironment(t)
+	t.Setenv("QINIU_ASR_TIMEOUT", "75s")
+
+	cfg, err := LoadSpeechRecognition()
+	if err != nil {
+		t.Fatalf("load Qiniu speech recognition: %v", err)
+	}
+	if cfg.Provider != SpeechProviderQiniu ||
+		cfg.BaseURL != "wss://api.qnaigc.com/v1/voice/asr" ||
+		cfg.Model != "asr" ||
+		cfg.Timeout != 75*time.Second ||
+		cfg.APIKey.Reveal() != "qiniu-test-secret" {
+		t.Fatalf("unexpected Qiniu speech recognition config: %#v", cfg)
+	}
+}
+
+func TestLoadSpeechRecognitionRejectsIncompleteQiniuConfiguration(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing base URL", key: "QINIU_ASR_BASE_URL", value: ""},
+		{name: "missing model", key: "QINIU_ASR_MODEL", value: ""},
+		{name: "invalid timeout", key: "QINIU_ASR_TIMEOUT", value: "soon"},
+		{name: "missing API key", key: "QINIU_AI_API_KEY", value: ""},
+		{name: "API key whitespace", key: "QINIU_AI_API_KEY", value: "secret value"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setQiniuASREnvironment(t)
+			t.Setenv(test.key, test.value)
+			if _, err := LoadSpeechRecognition(); err == nil {
+				t.Fatal("expected Qiniu ASR configuration error")
+			}
+		})
+	}
+}
+
 func TestLoadSpeechSynthesis(t *testing.T) {
 	setSpeechEnvironment(t)
 	t.Setenv("QIANWEN_TTS_TIMEOUT", "45s")
@@ -131,4 +171,13 @@ func setSpeechEnvironment(t *testing.T) {
 	t.Setenv("QIANWEN_TTS_TIMEOUT", "")
 	t.Setenv("QIANWEN_TTS_TEMP_DIRECTORY", "")
 	t.Setenv("DASHSCOPE_API_KEY", "test-secret-value")
+}
+
+func setQiniuASREnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("SPEECH_RECOGNITION_PROVIDER", SpeechProviderQiniu)
+	t.Setenv("QINIU_ASR_BASE_URL", "wss://api.qnaigc.com/v1/voice/asr")
+	t.Setenv("QINIU_ASR_MODEL", "asr")
+	t.Setenv("QINIU_ASR_TIMEOUT", "")
+	t.Setenv("QINIU_AI_API_KEY", "qiniu-test-secret")
 }

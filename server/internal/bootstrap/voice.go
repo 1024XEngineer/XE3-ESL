@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qiniu"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -57,19 +58,30 @@ type AgentImageConfiguration struct {
 func NewAgentSpeechRecognizer(
 	configuration config.SpeechRecognitionConfig,
 ) (agentvoice.StreamingSpeechRecognizer, error) {
-	if configuration.Provider != config.SpeechProviderQianwen {
+	switch configuration.Provider {
+	case config.SpeechProviderQianwen:
+		return qianwen.NewAgentVoiceRecognizer(
+			qianwen.ASRConfig{
+				BaseURL: configuration.BaseURL,
+				Model:   configuration.Model,
+				Timeout: configuration.Timeout,
+			},
+			configuration.APIKey.Reveal(),
+		)
+	case config.SpeechProviderQiniu:
+		return qiniu.NewAgentVoiceRecognizer(
+			qiniu.ASRConfig{
+				BaseURL: configuration.BaseURL,
+				Model:   configuration.Model,
+				Timeout: configuration.Timeout,
+			},
+			configuration.APIKey.Reveal(),
+		)
+	default:
 		return nil, errors.New(
 			"bootstrap: speech recognition provider is not registered",
 		)
 	}
-	return qianwen.NewAgentVoiceRecognizer(
-		qianwen.ASRConfig{
-			BaseURL: configuration.BaseURL,
-			Model:   configuration.Model,
-			Timeout: configuration.Timeout,
-		},
-		configuration.APIKey.Reveal(),
-	)
 }
 
 // NewAgentSpeechSynthesizer selects the Agent Voice TTS implementation.
@@ -98,19 +110,30 @@ func NewAgentSpeechSynthesizer(
 func NewPracticeSpeechRecognizer(
 	configuration config.SpeechRecognitionConfig,
 ) (practicevoice.SpeechRecognizer, error) {
-	if configuration.Provider != config.SpeechProviderQianwen {
+	switch configuration.Provider {
+	case config.SpeechProviderQianwen:
+		return qianwen.NewPracticeVoiceRecognizer(
+			qianwen.ASRConfig{
+				BaseURL: configuration.BaseURL,
+				Model:   configuration.Model,
+				Timeout: configuration.Timeout,
+			},
+			configuration.APIKey.Reveal(),
+		)
+	case config.SpeechProviderQiniu:
+		return qiniu.NewPracticeVoiceRecognizer(
+			qiniu.ASRConfig{
+				BaseURL: configuration.BaseURL,
+				Model:   configuration.Model,
+				Timeout: configuration.Timeout,
+			},
+			configuration.APIKey.Reveal(),
+		)
+	default:
 		return nil, errors.New(
 			"bootstrap: Practice speech recognition provider is not registered",
 		)
 	}
-	return qianwen.NewPracticeVoiceRecognizer(
-		qianwen.ASRConfig{
-			BaseURL: configuration.BaseURL,
-			Model:   configuration.Model,
-			Timeout: configuration.Timeout,
-		},
-		configuration.APIKey.Reveal(),
-	)
 }
 
 // NewPracticeSpeechSynthesizer selects the Practice Voice TTS adapter.

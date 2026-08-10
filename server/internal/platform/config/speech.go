@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 const (
 	SpeechProviderQianwen = "qianwen"
+	SpeechProviderQiniu   = "qiniu"
 
 	defaultASRTimeout    = 90 * time.Second
 	defaultTTSTimeout    = 60 * time.Second
@@ -36,23 +36,31 @@ type SpeechSynthesisConfig struct {
 }
 
 func LoadSpeechRecognition() (SpeechRecognitionConfig, error) {
-	provider, err := requiredQianwenProvider("SPEECH_RECOGNITION_PROVIDER")
+	provider, err := requiredSpeechProvider(
+		"SPEECH_RECOGNITION_PROVIDER",
+		SpeechProviderQianwen,
+		SpeechProviderQiniu,
+	)
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
-	baseURL, err := requiredEnvironment("QIANWEN_ASR_BASE_URL")
+	prefix := "QIANWEN_ASR"
+	if provider == SpeechProviderQiniu {
+		prefix = "QINIU_ASR"
+	}
+	baseURL, err := requiredEnvironment(prefix + "_BASE_URL")
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
-	model, err := requiredEnvironment("QIANWEN_ASR_MODEL")
+	model, err := requiredEnvironment(prefix + "_MODEL")
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
-	timeout, err := speechTimeoutOrDefault("QIANWEN_ASR_TIMEOUT", defaultASRTimeout)
+	timeout, err := speechTimeoutOrDefault(prefix+"_TIMEOUT", defaultASRTimeout)
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
-	apiKey, err := loadDashScopeAPIKey()
+	apiKey, err := loadSpeechAPIKey(provider)
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
@@ -107,14 +115,20 @@ func LoadSpeechSynthesis() (SpeechSynthesisConfig, error) {
 }
 
 func requiredQianwenProvider(name string) (string, error) {
+	return requiredSpeechProvider(name, SpeechProviderQianwen)
+}
+
+func requiredSpeechProvider(name string, allowed ...string) (string, error) {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	if provider == "" {
 		return "", fmt.Errorf("%s is required", name)
 	}
-	if provider != SpeechProviderQianwen {
-		return "", fmt.Errorf("%s is not supported", name)
+	for _, candidate := range allowed {
+		if provider == candidate {
+			return provider, nil
+		}
 	}
-	return provider, nil
+	return "", fmt.Errorf("%s is not supported", name)
 }
 
 func requiredEnvironment(name string) (string, error) {
@@ -126,14 +140,28 @@ func requiredEnvironment(name string) (string, error) {
 }
 
 func loadDashScopeAPIKey() (Secret, error) {
-	apiKey := strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+	return loadProviderAPIKey("DASHSCOPE_API_KEY")
+}
+
+func loadSpeechAPIKey(provider string) (Secret, error) {
+	if provider == SpeechProviderQiniu {
+		return loadProviderAPIKey("QINIU_AI_API_KEY")
+	}
+	return loadDashScopeAPIKey()
+}
+
+func loadProviderAPIKey(name string) (Secret, error) {
+	apiKey := strings.TrimSpace(os.Getenv(name))
 	if apiKey == "" {
-		return Secret{}, errors.New("DASHSCOPE_API_KEY is required")
+		return Secret{}, fmt.Errorf("%s is required", name)
 	}
 	if strings.IndexFunc(apiKey, func(r rune) bool {
 		return r < 0x21 || r == 0x7f
 	}) >= 0 {
-		return Secret{}, errors.New("DASHSCOPE_API_KEY contains whitespace or control characters")
+		return Secret{}, fmt.Errorf(
+			"%s contains whitespace or control characters",
+			name,
+		)
 	}
 	return Secret{value: apiKey}, nil
 }
