@@ -465,7 +465,10 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                   avatarRegionKey: const Key('scenario-avatar-region'),
                   avatar: PracticeAvatarStage(
                     title: scene.name,
-                    fallback: const _AvatarPlaceholder(),
+                    fallback: const PracticeAvatarFallback(
+                      semanticLabel: '情景对话静态角色画面',
+                      imageKey: Key('scenario-avatar-placeholder'),
+                    ),
                     surfaceBuilder:
                         _exitApproved || !widget.practiceController.canUseAvatar
                         ? null
@@ -506,24 +509,6 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                   ),
                 ),
         ),
-      ),
-    );
-  }
-}
-
-class _AvatarPlaceholder extends StatelessWidget {
-  const _AvatarPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: '情景对话静态角色画面',
-      image: true,
-      child: Image.asset(
-        'assets/images/scenes/static-avatar-van-gogh.jpg',
-        key: const Key('scenario-avatar-placeholder'),
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
       ),
     );
   }
