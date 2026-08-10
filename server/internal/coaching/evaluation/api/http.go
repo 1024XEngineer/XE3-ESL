@@ -48,6 +48,11 @@ type HTTPApplication interface {
 		requestcontext.Actor,
 		string,
 	) (IELTSSpeakingReportResource, error)
+	GetSessionReport(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (SessionReportResource, error)
 	Reevaluate(
 		context.Context,
 		requestcontext.Actor,
@@ -172,6 +177,22 @@ type IELTSSpeakingReportResource struct {
 	StableFailure        *EvaluationFailure
 }
 
+type SessionReportResource struct {
+	PracticeSessionID    string
+	PracticeMode         string
+	ReportScope          string
+	AvailableSections    []string
+	DetailSchema         string
+	EvaluationStatus     evaluation.Status
+	EvaluationID         string
+	EvaluationRevisionID string
+	Revision             int
+	ReportID             string
+	ScoreabilityStatus   evaluationreport.ReportScoreability
+	Summary              string
+	StableFailure        *EvaluationFailure
+}
+
 type HTTPHandler struct {
 	application HTTPApplication
 	errors      *httpresponse.Renderer
@@ -198,6 +219,10 @@ func (h *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET(
 		"/v1/practice-sessions/:practice_session_id/ielts-speaking-report",
 		h.getIELTSSpeakingReport,
+	)
+	routes.GET(
+		"/v1/practice-sessions/:practice_session_id/report",
+		h.getSessionReport,
 	)
 }
 
@@ -347,6 +372,34 @@ func (h *HTTPHandler) getIELTSSpeakingReport(c *gin.Context) {
 	}
 	if !resource.valid() ||
 		resource.PracticeSessionID != practiceSessionID {
+		h.errors.Write(c, errInvalidApplicationProjection)
+		return
+	}
+	c.JSON(http.StatusOK, resource.response())
+}
+
+func (h *HTTPHandler) getSessionReport(c *gin.Context) {
+	setInterviewReportResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	practiceSessionID := c.Param("practice_session_id")
+	if !stableIdentifierPattern.MatchString(practiceSessionID) {
+		h.errors.Write(c, evaluationNotFoundError())
+		return
+	}
+	resource, err := h.application.GetSessionReport(
+		c.Request.Context(),
+		actor,
+		practiceSessionID,
+	)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	if !resource.valid() || resource.PracticeSessionID != practiceSessionID {
 		h.errors.Write(c, errInvalidApplicationProjection)
 		return
 	}
@@ -603,6 +656,147 @@ type ieltsSpeakingReportResponse struct {
 	StatusURL            string                                `json:"status_url"`
 	Report               *evaluationreport.IELTSSpeakingReport `json:"report,omitempty"`
 	StableFailure        *EvaluationFailure                    `json:"stable_failure,omitempty"`
+}
+
+type sessionReportRefResponse struct {
+	ReportID string `json:"report_id"`
+	HREF     string `json:"href"`
+}
+
+type sessionReportResponse struct {
+	PracticeSessionID    string                              `json:"practice_session_id"`
+	PracticeMode         string                              `json:"practice_mode"`
+	ReportScope          string                              `json:"report_scope"`
+	AvailableSections    []string                            `json:"available_sections"`
+	DetailSchema         string                              `json:"detail_schema"`
+	EvaluationStatus     evaluation.Status                   `json:"evaluation_status"`
+	EvaluationID         string                              `json:"evaluation_id,omitempty"`
+	EvaluationRevisionID string                              `json:"evaluation_revision_id,omitempty"`
+	Revision             int                                 `json:"revision,omitempty"`
+	StatusURL            string                              `json:"status_url"`
+	ReportRef            *sessionReportRefResponse           `json:"report_ref,omitempty"`
+	ScoreabilityStatus   evaluationreport.ReportScoreability `json:"scoreability_status,omitempty"`
+	Summary              string                              `json:"summary,omitempty"`
+	StableFailure        *EvaluationFailure                  `json:"stable_failure,omitempty"`
+}
+
+func (resource SessionReportResource) response() sessionReportResponse {
+	response := sessionReportResponse{
+		PracticeSessionID:    resource.PracticeSessionID,
+		PracticeMode:         resource.PracticeMode,
+		ReportScope:          resource.ReportScope,
+		AvailableSections:    append([]string(nil), resource.AvailableSections...),
+		DetailSchema:         resource.DetailSchema,
+		EvaluationStatus:     resource.EvaluationStatus,
+		EvaluationID:         resource.EvaluationID,
+		EvaluationRevisionID: resource.EvaluationRevisionID,
+		Revision:             resource.Revision,
+		StatusURL: "/v1/practice-sessions/" +
+			resource.PracticeSessionID + "/report",
+		ScoreabilityStatus: resource.ScoreabilityStatus,
+		Summary:            resource.Summary,
+		StableFailure:      resource.StableFailure,
+	}
+	if resource.ReportID != "" {
+		response.ReportRef = &sessionReportRefResponse{
+			ReportID: resource.ReportID,
+			HREF:     "/v1/evaluation-reports/" + resource.ReportID,
+		}
+	}
+	return response
+}
+
+func (resource SessionReportResource) valid() bool {
+	if !stableIdentifierPattern.MatchString(resource.PracticeSessionID) ||
+		!validSessionReportShape(
+			resource.PracticeMode,
+			resource.ReportScope,
+			resource.AvailableSections,
+			resource.DetailSchema,
+		) {
+		return false
+	}
+	hasEvaluation := resource.EvaluationID != "" ||
+		resource.EvaluationRevisionID != "" || resource.Revision != 0
+	if hasEvaluation && (!validEvaluationID(resource.EvaluationID) ||
+		!validEvaluationID(resource.EvaluationRevisionID) ||
+		resource.Revision < 1) {
+		return false
+	}
+	switch resource.EvaluationStatus {
+	case evaluation.StatusQueued:
+		return resource.ReportID == "" && resource.ScoreabilityStatus == "" &&
+			resource.Summary == "" && resource.StableFailure == nil
+	case evaluation.StatusRunning:
+		return hasEvaluation && resource.ReportID == "" &&
+			resource.ScoreabilityStatus == "" && resource.Summary == "" &&
+			resource.StableFailure == nil
+	case evaluation.StatusReady:
+		return hasEvaluation && validEvaluationID(resource.ReportID) &&
+			(resource.ScoreabilityStatus == evaluationreport.ReportScoreabilityProvisional ||
+				resource.ScoreabilityStatus == evaluationreport.ReportScoreabilityInsufficient) &&
+			strings.TrimSpace(resource.Summary) != "" &&
+			resource.StableFailure == nil
+	case evaluation.StatusFailed:
+		return resource.ReportID == "" && resource.ScoreabilityStatus == "" &&
+			resource.Summary == "" &&
+			validSessionReportFailure(resource.StableFailure)
+	default:
+		return false
+	}
+}
+
+func validSessionReportShape(
+	mode string,
+	scope string,
+	sections []string,
+	detailSchema string,
+) bool {
+	expectedScope := ""
+	expectedDetail := "general-scene-evaluation/v1"
+	var expectedSections []string
+	switch mode {
+	case "PART_1":
+		expectedScope, expectedSections = "PART_1", []string{"PART_1"}
+	case "PART_2":
+		expectedScope, expectedSections = "PART_2_3", []string{"PART_2", "PART_3"}
+	case "PART_3":
+		expectedScope, expectedSections = "PART_3", []string{"PART_3"}
+	case "FULL_MOCK":
+		expectedScope = "FULL_MOCK"
+		expectedSections = []string{"PART_1", "PART_2", "PART_3"}
+		expectedDetail = evaluationreport.IELTSSpeakingReportSchemaVersion
+	default:
+		return false
+	}
+	if scope != expectedScope || detailSchema != expectedDetail ||
+		len(sections) != len(expectedSections) {
+		return false
+	}
+	for index := range sections {
+		if sections[index] != expectedSections[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validSessionReportFailure(failure *EvaluationFailure) bool {
+	if failure == nil {
+		return false
+	}
+	switch failure.ReasonCode {
+	case ReasonStrategyNotAvailable,
+		ReasonPolicyViolation,
+		ReasonEvidenceRefInvalid,
+		ReasonVersionConflict,
+		ReasonInternalNonRetryable:
+		return !failure.Retryable
+	case ReasonInternalRetryable:
+		return failure.Retryable
+	default:
+		return false
+	}
 }
 
 func (resource IELTSSpeakingReportResource) response() ieltsSpeakingReportResponse {

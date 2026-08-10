@@ -81,6 +81,7 @@ func NewEvaluationComposition(
 		repository,
 		repository,
 		repository,
+		repository,
 		runtime.InterviewConfiguration(),
 		runtime.IELTSSpeakingConfiguration(),
 	)

@@ -385,6 +385,63 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedIELTSSpeakingReport(
 	}
 }
 
+func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	reader := &sessionReportReaderStub{
+		result: evaluationreport.SessionReportReadState{
+			PracticeMode:      "PART_2",
+			AvailableSections: []string{"PART_2", "PART_3"},
+			Status:            evaluation.StatusQueued,
+		},
+	}
+	application := &Application{sessionReports: reader}
+	resource, err := application.GetSessionReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.ownerUserID != actor.UserID ||
+		reader.practiceSessionID != "session_ielts_001" ||
+		resource.PracticeMode != "PART_2" ||
+		resource.ReportScope != "PART_2_3" ||
+		resource.DetailSchema != scoring.GeneralSceneSchemaVersion ||
+		resource.EvaluationStatus != evaluation.StatusQueued ||
+		len(resource.AvailableSections) != 2 {
+		t.Fatalf("reader=%#v resource=%#v", reader, resource)
+	}
+}
+
+func TestEvaluationHTTPApplicationMapsSessionReportConflict(t *testing.T) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	application := &Application{
+		sessionReports: &sessionReportReaderStub{
+			err: evaluationreport.ErrSessionReportConfigurationConflict,
+		},
+	}
+	_, err := application.GetSessionReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	appError, ok := apperror.From(err)
+	if !ok || appError.Code() != "evaluation_version_conflict" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -755,6 +812,23 @@ type ieltsSpeakingReportReaderStub struct {
 	err               error
 	ownerUserID       string
 	practiceSessionID string
+}
+
+type sessionReportReaderStub struct {
+	result            evaluationreport.SessionReportReadState
+	err               error
+	ownerUserID       string
+	practiceSessionID string
+}
+
+func (stub *sessionReportReaderStub) GetCurrentSessionReportState(
+	_ context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+) (evaluationreport.SessionReportReadState, error) {
+	stub.ownerUserID = ownerUserID
+	stub.practiceSessionID = practiceSessionID
+	return stub.result, stub.err
 }
 
 func (stub *ieltsSpeakingReportReaderStub) GetCurrentIELTSSpeakingReportState(

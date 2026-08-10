@@ -54,6 +54,11 @@ type applicationStub struct {
 		requestcontext.Actor,
 		string,
 	) (IELTSSpeakingReportResource, error)
+	getSessionReport func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (SessionReportResource, error)
 	reevaluate func(
 		context.Context,
 		requestcontext.Actor,
@@ -110,6 +115,17 @@ func (stub applicationStub) GetIELTSSpeakingReport(
 		actor,
 		practiceSessionID,
 	)
+}
+
+func (stub applicationStub) GetSessionReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (SessionReportResource, error) {
+	if stub.getSessionReport == nil {
+		return SessionReportResource{}, errors.New("unexpected GetSessionReport")
+	}
+	return stub.getSessionReport(ctx, actor, practiceSessionID)
 }
 
 func (stub applicationStub) Reevaluate(
@@ -669,6 +685,121 @@ func TestGetIELTSSpeakingReportPublishesPollableEnvelope(t *testing.T) {
 		"status_url": "/v1/practice-sessions/session_ielts_001/" +
 			"ielts-speaking-report",
 	})
+}
+
+func TestGetSessionReportPublishesCanonicalLifecycleEnvelope(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource SessionReportResource
+		want     map[string]any
+	}{
+		{
+			name: "queued before Evaluation exists",
+			resource: SessionReportResource{
+				PracticeSessionID: "session_ielts_001",
+				PracticeMode:      "PART_1", ReportScope: "PART_1",
+				AvailableSections: []string{"PART_1"},
+				DetailSchema:      "general-scene-evaluation/v1",
+				EvaluationStatus:  evaluation.StatusQueued,
+			},
+			want: map[string]any{
+				"practice_session_id": "session_ielts_001",
+				"practice_mode":       "PART_1", "report_scope": "PART_1",
+				"available_sections": []any{"PART_1"},
+				"detail_schema":      "general-scene-evaluation/v1",
+				"evaluation_status":  "QUEUED",
+				"status_url":         "/v1/practice-sessions/session_ielts_001/report",
+			},
+		},
+		{
+			name: "ready full mock",
+			resource: SessionReportResource{
+				PracticeSessionID: "session_ielts_001",
+				PracticeMode:      "FULL_MOCK", ReportScope: "FULL_MOCK",
+				AvailableSections:    []string{"PART_1", "PART_2", "PART_3"},
+				DetailSchema:         evaluationreport.IELTSSpeakingReportSchemaVersion,
+				EvaluationStatus:     evaluation.StatusReady,
+				EvaluationID:         testEvaluationID,
+				EvaluationRevisionID: testRevisionID,
+				Revision:             1, ReportID: testOtherID,
+				ScoreabilityStatus: evaluationreport.ReportScoreabilityProvisional,
+				Summary:            "报告已生成。",
+			},
+			want: map[string]any{
+				"practice_session_id": "session_ielts_001",
+				"practice_mode":       "FULL_MOCK", "report_scope": "FULL_MOCK",
+				"available_sections":     []any{"PART_1", "PART_2", "PART_3"},
+				"detail_schema":          "ielts-speaking-report/v1",
+				"evaluation_status":      "READY",
+				"evaluation_id":          testEvaluationID,
+				"evaluation_revision_id": testRevisionID,
+				"revision":               float64(1),
+				"status_url":             "/v1/practice-sessions/session_ielts_001/report",
+				"report_ref": map[string]any{
+					"report_id": testOtherID,
+					"href":      "/v1/evaluation-reports/" + testOtherID,
+				},
+				"scoreability_status": "PROVISIONAL",
+				"summary":             "报告已生成。",
+			},
+		},
+		{
+			name: "failed before Evaluation exists",
+			resource: SessionReportResource{
+				PracticeSessionID: "session_ielts_001",
+				PracticeMode:      "PART_3", ReportScope: "PART_3",
+				AvailableSections: []string{"PART_3"},
+				DetailSchema:      "general-scene-evaluation/v1",
+				EvaluationStatus:  evaluation.StatusFailed,
+				StableFailure: &EvaluationFailure{
+					ReasonCode: ReasonInternalRetryable, Retryable: true,
+				},
+			},
+			want: map[string]any{
+				"practice_session_id": "session_ielts_001",
+				"practice_mode":       "PART_3", "report_scope": "PART_3",
+				"available_sections": []any{"PART_3"},
+				"detail_schema":      "general-scene-evaluation/v1",
+				"evaluation_status":  "FAILED",
+				"status_url":         "/v1/practice-sessions/session_ielts_001/report",
+				"stable_failure": map[string]any{
+					"reason_code": "INTERNAL_RETRYABLE", "retryable": true,
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router := newTestRouter(t, applicationStub{
+				getSessionReport: func(
+					ctx context.Context,
+					actor requestcontext.Actor,
+					practiceSessionID string,
+				) (SessionReportResource, error) {
+					if actor != testActor || practiceSessionID != "session_ielts_001" {
+						t.Fatalf("actor=%#v session=%q", actor, practiceSessionID)
+					}
+					trusted, ok := requestcontext.ActorFromContext(ctx)
+					if !ok || trusted != testActor {
+						t.Fatal("trusted actor missing")
+					}
+					return test.resource, nil
+				},
+			}, &testActor)
+			response := performRequest(
+				router,
+				http.MethodGet,
+				"/v1/practice-sessions/session_ielts_001/report",
+				"",
+				"",
+			)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+			}
+			assertPrivateResponse(t, response)
+			assertJSONEquals(t, response.Body.String(), test.want)
+		})
+	}
 }
 
 func TestReadyProjectionMatchesEveryRequestedChannelExactly(t *testing.T) {

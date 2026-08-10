@@ -59,11 +59,20 @@ type ieltsSpeakingReportReader interface {
 	) (evaluationreport.IELTSSpeakingReadState, error)
 }
 
+type sessionReportReader interface {
+	GetCurrentSessionReportState(
+		context.Context,
+		string,
+		string,
+	) (evaluationreport.SessionReportReadState, error)
+}
+
 type Application struct {
 	evaluations        evaluationService
 	runtime            evaluationRuntimeReader
 	interviewReports   interviewReportReader
 	ieltsReports       ieltsSpeakingReportReader
+	sessionReports     sessionReportReader
 	configuration      scoring.InterviewShadowRuntimeConfiguration
 	ieltsConfiguration scoring.IELTSSpeakingShadowRuntimeConfiguration
 }
@@ -73,11 +82,12 @@ func NewApplication(
 	runtime evaluationRuntimeReader,
 	interviewReports interviewReportReader,
 	ieltsReports ieltsSpeakingReportReader,
+	sessionReports sessionReportReader,
 	configuration scoring.InterviewShadowRuntimeConfiguration,
 	ieltsConfiguration scoring.IELTSSpeakingShadowRuntimeConfiguration,
 ) (*Application, error) {
 	if evaluations == nil || runtime == nil || interviewReports == nil ||
-		ieltsReports == nil || !configuration.Valid() ||
+		ieltsReports == nil || sessionReports == nil || !configuration.Valid() ||
 		!ieltsConfiguration.Valid() {
 		return nil, evaluation.ErrInvalidRequest
 	}
@@ -86,9 +96,37 @@ func NewApplication(
 		runtime:            runtime,
 		interviewReports:   interviewReports,
 		ieltsReports:       ieltsReports,
+		sessionReports:     sessionReports,
 		configuration:      configuration,
 		ieltsConfiguration: ieltsConfiguration,
 	}, nil
+}
+
+func (application *Application) GetSessionReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (SessionReportResource, error) {
+	if application == nil || application.sessionReports == nil ||
+		ctx == nil || !actor.Valid() {
+		return SessionReportResource{}, evaluation.ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
+		return SessionReportResource{}, evaluation.ErrInvalidRequest
+	}
+	state, err := application.sessionReports.GetCurrentSessionReportState(
+		ctx,
+		actor.UserID,
+		practiceSessionID,
+	)
+	if err != nil {
+		if errors.Is(err, evaluationreport.ErrSessionReportConfigurationConflict) {
+			return SessionReportResource{}, interviewShadowVersionConflictError()
+		}
+		return SessionReportResource{}, err
+	}
+	return sessionReportResource(practiceSessionID, actor.UserID, state)
 }
 
 func (application *Application) Create(
@@ -278,6 +316,147 @@ func (application *Application) GetIELTSSpeakingReport(
 		return IELTSSpeakingReportResource{}, err
 	}
 	return ieltsSpeakingReportResource(practiceSessionID, state)
+}
+
+func sessionReportResource(
+	practiceSessionID string,
+	ownerUserID string,
+	state evaluationreport.SessionReportReadState,
+) (SessionReportResource, error) {
+	reportScope, detailSchema, strategyRef, pipelineVersion, ok :=
+		sessionReportAuthority(state.PracticeMode)
+	if !ok || practiceSessionID == "" ||
+		!validSessionReportShape(
+			state.PracticeMode,
+			reportScope,
+			state.AvailableSections,
+			detailSchema,
+		) {
+		return SessionReportResource{}, evaluation.ErrInvalidRequest
+	}
+	resource := SessionReportResource{
+		PracticeSessionID: practiceSessionID,
+		PracticeMode:      state.PracticeMode,
+		ReportScope:       reportScope,
+		AvailableSections: append([]string(nil), state.AvailableSections...),
+		DetailSchema:      detailSchema,
+		EvaluationStatus:  state.Status,
+	}
+	if state.Evaluation != nil {
+		value := *state.Evaluation
+		if !value.Valid() || value.OwnerUserID != ownerUserID ||
+			value.PracticeSessionID != practiceSessionID ||
+			value.Scope != evaluation.ScopeSession ||
+			value.SceneType != evaluation.SceneIELTSSpeaking ||
+			len(value.Revision.Channels) != 1 ||
+			value.Revision.Channels[0] != evaluation.ChannelScene ||
+			value.Revision.SceneStrategyRef != strategyRef ||
+			value.Revision.Core4DStrategyRef != "" ||
+			value.Revision.PipelineVersion != pipelineVersion ||
+			value.Revision.Status != state.Status || value.Revision.IsFinal {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+		resource.EvaluationID = value.ID
+		resource.EvaluationRevisionID = value.Revision.ID
+		resource.Revision = value.Revision.Number
+	}
+	switch state.Status {
+	case evaluation.StatusQueued:
+		if state.FormalReport != nil || state.Failure != nil {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusRunning:
+		if state.Evaluation == nil || state.FormalReport != nil ||
+			state.Failure != nil {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusReady:
+		if state.Evaluation == nil || state.FormalReport == nil ||
+			state.Failure != nil {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+		stored := *state.FormalReport
+		if !stored.Valid() || stored.OwnerUserID != ownerUserID ||
+			stored.PracticeSessionID != practiceSessionID ||
+			stored.EvaluationID != resource.EvaluationID ||
+			stored.EvaluationRevisionID != resource.EvaluationRevisionID ||
+			stored.Revision != resource.Revision ||
+			stored.Report.SceneType != evaluation.SceneIELTSSpeaking ||
+			stored.Report.PracticeMode != state.PracticeMode ||
+			stored.Report.DetailSchema != detailSchema {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+		resource.ReportID = stored.ReportID
+		resource.ScoreabilityStatus = stored.Report.ScoreabilityStatus
+		resource.Summary = stored.Report.Summary
+	case evaluation.StatusFailed:
+		if state.FormalReport != nil || state.Failure == nil {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
+		failure := sessionReportFailure(*state.Failure)
+		resource.StableFailure = &failure
+	default:
+		return SessionReportResource{}, evaluation.ErrInvalidRequest
+	}
+	if !resource.valid() {
+		return SessionReportResource{}, evaluation.ErrInvalidRequest
+	}
+	return resource, nil
+}
+
+func sessionReportAuthority(mode string) (
+	reportScope string,
+	detailSchema string,
+	strategyRef string,
+	pipelineVersion string,
+	ok bool,
+) {
+	switch mode {
+	case "PART_1":
+		reportScope = "PART_1"
+	case "PART_2":
+		reportScope = "PART_2_3"
+	case "PART_3":
+		reportScope = "PART_3"
+	case "FULL_MOCK":
+		return "FULL_MOCK",
+			evaluationreport.IELTSSpeakingReportSchemaVersion,
+			scoring.IELTSSpeakingShadowStrategyRef,
+			scoring.IELTSSpeakingShadowPipelineVersion,
+			true
+	default:
+		return "", "", "", "", false
+	}
+	return reportScope,
+		scoring.GeneralSceneSchemaVersion,
+		scoring.GeneralSceneStrategyRef,
+		scoring.GeneralScenePipelineVersion,
+		true
+}
+
+func sessionReportFailure(
+	failure evaluationreport.SessionReportFailure,
+) EvaluationFailure {
+	switch failure.Code {
+	case "strategy_not_available":
+		return EvaluationFailure{ReasonCode: ReasonStrategyNotAvailable}
+	case "invalid_completion":
+		return EvaluationFailure{ReasonCode: ReasonPolicyViolation}
+	case "source_not_found":
+		return EvaluationFailure{ReasonCode: ReasonEvidenceRefInvalid}
+	case "evaluation_unavailable":
+		return EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	}
+	if failure.Retryable {
+		return EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	}
+	return interviewShadowFailure(failure.Code)
 }
 
 func interviewShadowAccepted(
