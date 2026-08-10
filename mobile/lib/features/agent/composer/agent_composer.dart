@@ -122,10 +122,6 @@ class _AgentComposerState extends State<AgentComposer> {
 
   void _handleTextChanged() {
     if (!_suppressControllerNotifications) {
-      final voice = widget.voiceController;
-      if (voice?.state == AgentVoiceInputState.editing) {
-        voice?.updateTranscript(_controller.text);
-      }
       setState(() {});
     }
   }
@@ -133,26 +129,6 @@ class _AgentComposerState extends State<AgentComposer> {
   void _handleVoiceChanged() {
     if (!mounted) {
       return;
-    }
-    final voice = widget.voiceController;
-    if (voice?.state == AgentVoiceInputState.editing &&
-        _controller.text != voice?.editedTranscript) {
-      _suppressControllerNotifications = true;
-      _controller.value = TextEditingValue(
-        text: voice!.editedTranscript,
-        selection: TextSelection.collapsed(
-          offset: voice.editedTranscript.length,
-        ),
-      );
-      _suppressControllerNotifications = false;
-    }
-    if (voice?.state == AgentVoiceInputState.editing) {
-      _textMode = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _focusNode.requestFocus();
-        }
-      });
     }
     setState(() {});
   }
@@ -230,41 +206,6 @@ class _AgentComposerState extends State<AgentComposer> {
   void _showVoiceComposer() {
     _focusNode.unfocus();
     setState(() => _textMode = false);
-  }
-
-  Future<void> _submitConvertedText() async {
-    final voice = widget.voiceController;
-    final text = _controller.text.trim();
-    final imageUploadPending = widget.pendingImages.any(
-      (image) => image.state == AgentPendingImageState.uploading,
-    );
-    final imageUploadFailed = widget.pendingImages.any(
-      (image) => image.state == AgentPendingImageState.failed,
-    );
-    if (voice == null ||
-        !voice.canSubmitTranscript ||
-        text.isEmpty ||
-        !widget.enabled ||
-        widget.isBusy ||
-        imageUploadPending ||
-        imageUploadFailed ||
-        _textSubmissionInFlight ||
-        widget.onSubmitText == null) {
-      return;
-    }
-    setState(() => _textSubmissionInFlight = true);
-    try {
-      await voice.cancel();
-      final sent = await widget.onSubmitText!(text);
-      if (mounted && sent) {
-        _controller.clear();
-        setState(() => _textMode = false);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _textSubmissionInFlight = false);
-      }
-    }
   }
 
   Future<void> _submit() async {
@@ -355,7 +296,6 @@ class _AgentComposerState extends State<AgentComposer> {
     final voiceState = voice?.state ?? AgentVoiceInputState.idle;
     final starting = voiceState == AgentVoiceInputState.starting;
     final recording = voiceState == AgentVoiceInputState.recording;
-    final editingVoiceDraft = voiceState == AgentVoiceInputState.editing;
     final voiceProgress = voiceState == AgentVoiceInputState.completing;
     final voiceFailure = voiceState == AgentVoiceInputState.failed;
     final capturePhase = switch (voiceState) {
@@ -372,12 +312,7 @@ class _AgentComposerState extends State<AgentComposer> {
             widget.enabled &&
             !widget.isBusy);
     final showTextComposer =
-        editingVoiceDraft ||
-        (_textMode &&
-            !starting &&
-            !recording &&
-            !voiceProgress &&
-            !voiceFailure);
+        _textMode && !starting && !recording && !voiceProgress && !voiceFailure;
     final imageUploadPending = widget.pendingImages.any(
       (image) => image.state == AgentPendingImageState.uploading,
     );
@@ -438,28 +373,16 @@ class _AgentComposerState extends State<AgentComposer> {
                     controller: _controller,
                     focusNode: _focusNode,
                     keyboardVisible: widget.keyboardVisible,
-                    enabled: editingVoiceDraft || widget.enabled,
-                    confirmingConvertedText: editingVoiceDraft,
+                    enabled: widget.enabled,
                     submitting: _textSubmissionInFlight,
-                    canSubmitConvertedText:
-                        voice?.canSubmitTranscript == true &&
-                        widget.onSubmitText != null &&
-                        widget.enabled &&
-                        !widget.isBusy &&
-                        !imageUploadPending &&
-                        !imageUploadFailed,
                     canSubmitText:
                         widget.onSubmitText != null &&
                         widget.enabled &&
                         !widget.isBusy &&
                         !imageUploadPending &&
                         !imageUploadFailed,
-                    onReturnToVoice: editingVoiceDraft
-                        ? _cancelVoice
-                        : _showVoiceComposer,
-                    onSubmit: editingVoiceDraft
-                        ? _submitConvertedText
-                        : _submit,
+                    onReturnToVoice: _showVoiceComposer,
+                    onSubmit: _submit,
                   )
                 : AgentComposerVoiceDock(
                     capture: capture,
@@ -487,9 +410,7 @@ class _AgentTextDock extends StatelessWidget {
     required this.focusNode,
     required this.keyboardVisible,
     required this.enabled,
-    required this.confirmingConvertedText,
     required this.submitting,
-    required this.canSubmitConvertedText,
     required this.canSubmitText,
     required this.onReturnToVoice,
     required this.onSubmit,
@@ -499,9 +420,7 @@ class _AgentTextDock extends StatelessWidget {
   final FocusNode focusNode;
   final bool keyboardVisible;
   final bool enabled;
-  final bool confirmingConvertedText;
   final bool submitting;
-  final bool canSubmitConvertedText;
   final bool canSubmitText;
   final FutureOr<void> Function() onReturnToVoice;
   final FutureOr<void> Function() onSubmit;
@@ -512,30 +431,16 @@ class _AgentTextDock extends StatelessWidget {
       controller: controller,
       focusNode: focusNode,
       enabled: enabled,
-      canSubmit: confirmingConvertedText
-          ? canSubmitConvertedText
-          : canSubmitText,
+      canSubmit: canSubmitText,
       submitting: submitting,
       onReturn: onReturnToVoice,
       onSubmit: onSubmit,
-      returnKey: Key(
-        confirmingConvertedText
-            ? 'agent-voice-cancel'
-            : 'agent-show-voice-composer',
-      ),
+      returnKey: const Key('agent-show-voice-composer'),
       fieldKey: const Key('agent-composer-field'),
-      submitKey: Key(
-        confirmingConvertedText ? 'agent-voice-text-send' : 'agent-send-button',
-      ),
-      returnTooltip: confirmingConvertedText ? '取消转文字' : '切换到语音输入',
-      returnIcon: confirmingConvertedText
-          ? Icons.close_rounded
-          : Icons.mic_none_rounded,
-      hintText: enabled
-          ? confirmingConvertedText
-                ? '编辑识别文字后发送'
-                : '问问 SpeakUp'
-          : '暂时无法开始对话',
+      submitKey: const Key('agent-send-button'),
+      returnTooltip: '切换到语音输入',
+      returnIcon: Icons.mic_none_rounded,
+      hintText: enabled ? '问问 SpeakUp' : '暂时无法开始对话',
       maxLines: keyboardVisible ? 3 : 2,
       inputFormatters: <TextInputFormatter>[_agentContentFormatter],
     );

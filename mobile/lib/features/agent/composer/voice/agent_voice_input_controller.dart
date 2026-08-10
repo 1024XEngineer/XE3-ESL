@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
@@ -9,26 +8,21 @@ import 'agent_voice_recording.dart';
 
 typedef AgentVoiceInputIdFactory = String Function(String scope);
 typedef AgentVoiceInputClock = DateTime Function();
+typedef AgentVoiceInputSubmit = Future<bool> Function(String transcript);
 
-enum AgentVoiceInputState {
-  idle,
-  starting,
-  recording,
-  completing,
-  editing,
-  failed,
-}
+enum AgentVoiceInputState { idle, starting, recording, completing, failed }
 
-/// Owns ephemeral microphone input until it becomes an editable text draft.
+/// Owns ephemeral microphone input until its transcript is submitted as text.
 ///
-/// This controller never creates a voice candidate, MessageAudio, or Message.
-/// The edited transcript is submitted through the ordinary text composer.
+/// This controller never creates a voice candidate or MessageAudio. The final
+/// transcript is submitted through the ordinary text-message workflow.
 final class AgentVoiceInputController extends ChangeNotifier
     with WidgetsBindingObserver {
   AgentVoiceInputController({
     required this.client,
     required this.recorder,
     required this.idFactory,
+    required this.submitTranscript,
     this.clock = DateTime.now,
     this.recordingLimit = const Duration(seconds: 58),
     this.completionTimeout = const Duration(seconds: 75),
@@ -44,6 +38,7 @@ final class AgentVoiceInputController extends ChangeNotifier
   final AgentVoiceInputClient client;
   final AgentVoiceRecorder recorder;
   final AgentVoiceInputIdFactory idFactory;
+  final AgentVoiceInputSubmit submitTranscript;
   final AgentVoiceInputClock clock;
   final Duration recordingLimit;
   final Duration completionTimeout;
@@ -51,7 +46,6 @@ final class AgentVoiceInputController extends ChangeNotifier
   String? _threadId;
   AgentVoiceInputState _state = AgentVoiceInputState.idle;
   String _liveTranscript = '';
-  String _editedTranscript = '';
   String? _errorMessage;
   bool _canRetry = false;
   DateTime? _recordingStartedAt;
@@ -71,7 +65,6 @@ final class AgentVoiceInputController extends ChangeNotifier
   String? get threadId => _threadId;
   AgentVoiceInputState get state => _state;
   String get liveTranscript => _liveTranscript;
-  String get editedTranscript => _editedTranscript;
   String? get errorMessage => _errorMessage;
   Duration get recordingElapsed => _recordingElapsed;
   bool get canRetry => _canRetry;
@@ -87,10 +80,6 @@ final class AgentVoiceInputController extends ChangeNotifier
       _threadId != null &&
       _state == AgentVoiceInputState.idle;
   bool get canStopRecording => _state == AgentVoiceInputState.recording;
-  bool get canSubmitTranscript =>
-      _state == AgentVoiceInputState.editing &&
-      _editedTranscript.trim().isNotEmpty &&
-      utf8.encode(_editedTranscript.trim()).length <= 16384;
 
   Future<void> bindThread(String? threadId) async {
     if (threadId == _threadId) {
@@ -108,7 +97,6 @@ final class AgentVoiceInputController extends ChangeNotifier
     final fence = _newFence();
     _state = AgentVoiceInputState.starting;
     _liveTranscript = '';
-    _editedTranscript = '';
     _errorMessage = null;
     _canRetry = false;
     notifyListeners();
@@ -320,10 +308,18 @@ final class AgentVoiceInputController extends ChangeNotifier
     }
     final transcript = completedTranscript!;
     _liveTranscript = transcript;
-    _editedTranscript = transcript;
-    _state = AgentVoiceInputState.editing;
-    _errorMessage = null;
-    _canRetry = false;
+    try {
+      await submitTranscript(transcript);
+    } catch (error) {
+      if (_isCurrent(fence)) {
+        _showFailure(fence, error);
+      }
+      return;
+    }
+    if (!_isCurrent(fence)) {
+      return;
+    }
+    _resetPresentation();
     notifyListeners();
   }
 
@@ -341,7 +337,6 @@ final class AgentVoiceInputController extends ChangeNotifier
     _eventSubscription = null;
     _terminal = null;
     _liveTranscript = '';
-    _editedTranscript = '';
     _state = AgentVoiceInputState.completing;
     _errorMessage = null;
     _canRetry = false;
@@ -407,14 +402,6 @@ final class AgentVoiceInputController extends ChangeNotifier
       notifyListeners();
     }
     return cleanup;
-  }
-
-  void updateTranscript(String value) {
-    if (_state != AgentVoiceInputState.editing || value == _editedTranscript) {
-      return;
-    }
-    _editedTranscript = value;
-    notifyListeners();
   }
 
   Future<void> retry() async {
@@ -557,7 +544,6 @@ final class AgentVoiceInputController extends ChangeNotifier
     }
     _cancelRecordingTimers();
     _liveTranscript = '';
-    _editedTranscript = '';
     _state = AgentVoiceInputState.failed;
     _errorMessage = _failureMessage(error);
     _canRetry = _isRetryable(error);
@@ -567,7 +553,6 @@ final class AgentVoiceInputController extends ChangeNotifier
   void _resetPresentation() {
     _state = AgentVoiceInputState.idle;
     _liveTranscript = '';
-    _editedTranscript = '';
     _errorMessage = null;
     _canRetry = false;
     _recordingElapsed = Duration.zero;

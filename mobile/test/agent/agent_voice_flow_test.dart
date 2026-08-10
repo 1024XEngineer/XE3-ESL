@@ -15,7 +15,7 @@ import 'package:speakup/features/agent/conversation/conversation_controller.dart
 
 void main() {
   testWidgets(
-    'home voice input shows partial text then sends an edited ordinary Message',
+    'home voice input shows partial text then auto-sends an ordinary Message',
     (tester) async {
       final recorder = _TrackingStreamingRecorder();
       final conversationController = ConversationController(
@@ -56,41 +56,23 @@ void main() {
       expect(conversationController.messages, isEmpty);
 
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await composerController.voiceController!.stopRecording();
       await _pumpUntil(
         tester,
-        () =>
-            composerController.voiceController?.state ==
-            AgentVoiceInputState.editing,
+        () => conversationController.messages.any(
+          (message) => message.role == AgentMessageRole.user,
+        ),
       );
 
-      final field = find.byKey(const Key('agent-composer-field'));
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceInputState.editing,
-      );
-      expect(field, findsOneWidget);
-      expect(
-        tester.widget<TextField>(field).controller?.text,
-        'I explained the problem, the trade-off, and the result clearly.',
-      );
-      expect(conversationController.messages, isEmpty);
-
-      const edited = 'I explained the trade-off and measured the result.';
-      await tester.enterText(field, edited);
-      await tester.pump();
-      final send = find.byKey(const Key('agent-voice-text-send'));
-      expect(tester.widget<IconButton>(send).onPressed, isNotNull);
-      await tester.tap(send);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump();
+      expect(find.byKey(const Key('agent-composer-field')), findsNothing);
 
       final userMessages = conversationController.messages
           .where((message) => message.role == AgentMessageRole.user)
           .toList();
       expect(userMessages, hasLength(1));
-      expect(userMessages.single.text, edited);
+      expect(
+        userMessages.single.text,
+        'I explained the problem, the trade-off, and the result clearly.',
+      );
       expect(userMessages.single.modality, AgentMessageModality.text);
       expect(userMessages.single.audio, isNull);
       expect(recorder.stopAudioStreamAndDiscardCalls, 1);
@@ -118,10 +100,15 @@ void main() {
     'completed transcription discards PCM without creating a local WAV',
     () async {
       final recorder = _TrackingStreamingRecorder();
+      final submitted = <String>[];
       final controller = AgentVoiceInputController(
         client: FakeAgentVoiceInputClient(),
         recorder: recorder,
         idFactory: _sequentialIdFactory(),
+        submitTranscript: (transcript) async {
+          submitted.add(transcript);
+          return true;
+        },
       );
       addTearDown(controller.dispose);
       await controller.bindThread('thread-a');
@@ -132,8 +119,10 @@ void main() {
 
       await controller.stopRecording();
 
-      expect(controller.state, AgentVoiceInputState.editing);
-      expect(controller.canSubmitTranscript, isTrue);
+      expect(controller.state, AgentVoiceInputState.idle);
+      expect(submitted, <String>[
+        'I explained the problem, the trade-off, and the result clearly.',
+      ]);
       expect(recorder.stopAudioStreamAndDiscardCalls, 1);
       expect(recorder.stopAudioStreamCalls, 0);
       expect(recorder.discardedRecordings, 0);
@@ -150,6 +139,7 @@ void main() {
         client: FakeAgentVoiceInputClient(),
         recorder: recorder,
         idFactory: _sequentialIdFactory(),
+        submitTranscript: (_) async => true,
       );
       addTearDown(controller.dispose);
       await controller.bindThread('thread-a');
@@ -159,8 +149,6 @@ void main() {
       await controller.stopRecording();
 
       expect(controller.state, AgentVoiceInputState.failed);
-      expect(controller.editedTranscript, isEmpty);
-      expect(controller.canSubmitTranscript, isFalse);
       expect(controller.canRetry, isTrue);
       expect(recorder.hasPendingCleanup, isTrue);
 
@@ -174,66 +162,51 @@ void main() {
     },
   );
 
-  testWidgets(
-    'text send failure keeps the draft after local audio is deleted',
-    (tester) async {
-      final recorder = _TrackingStreamingRecorder();
-      final conversationController = ConversationController(
-        client: _FailingTextAgentClient(),
-      );
-      final composerController = ComposerController(
+  testWidgets('automatic text send failure does not retain local audio', (
+    tester,
+  ) async {
+    final recorder = _TrackingStreamingRecorder();
+    final conversationController = ConversationController(
+      client: _FailingTextAgentClient(),
+    );
+    final composerController = ComposerController(
+      conversationController: conversationController,
+      voiceInputClient: FakeAgentVoiceInputClient(),
+      voiceRecorder: recorder,
+      clientIdFactory: _sequentialIdFactory(),
+    );
+    addTearDown(() {
+      composerController.dispose();
+      conversationController.dispose();
+    });
+    await tester.pumpWidget(
+      SpeakUpApp.preview(
         conversationController: conversationController,
-        voiceInputClient: FakeAgentVoiceInputClient(),
-        voiceRecorder: recorder,
-        clientIdFactory: _sequentialIdFactory(),
-      );
-      addTearDown(() {
-        composerController.dispose();
-        conversationController.dispose();
-      });
-      await tester.pumpWidget(
-        SpeakUpApp.preview(
-          conversationController: conversationController,
-          composerController: composerController,
-        ),
-      );
-      await tester.pumpAndSettle();
+        composerController: composerController,
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await composerController.voiceController!.stopRecording();
-      await _pumpUntil(
-        tester,
-        () =>
-            composerController.voiceController?.state ==
-            AgentVoiceInputState.editing,
-      );
-      final field = find.byKey(const Key('agent-composer-field'));
-      const edited = 'Keep this voice-derived draft after failure.';
-      await tester.enterText(field, edited);
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('agent-voice-text-send')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await _pumpUntil(
+      tester,
+      () =>
+          composerController.voiceController?.state ==
+          AgentVoiceInputState.idle,
+    );
 
-      expect(conversationController.messages, isEmpty);
-      expect(recorder.stopAudioStreamAndDiscardCalls, 1);
-      expect(recorder.discardedRecordings, 0);
-      expect(recorder.hasCurrentRecording, isFalse);
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
-            .controller
-            ?.text,
-        edited,
-      );
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceInputState.idle,
-      );
-    },
-  );
+    expect(conversationController.messages, isEmpty);
+    expect(recorder.stopAudioStreamAndDiscardCalls, 1);
+    expect(recorder.discardedRecordings, 0);
+    expect(recorder.hasCurrentRecording, isFalse);
+    expect(find.byKey(const Key('agent-composer-field')), findsNothing);
+    expect(
+      composerController.voiceController?.state,
+      AgentVoiceInputState.idle,
+    );
+  });
 
   test(
     'Thread switch cleans capture and fences late transcription events',
@@ -244,6 +217,7 @@ void main() {
         client: client,
         recorder: recorder,
         idFactory: _sequentialIdFactory(),
+        submitTranscript: (_) async => true,
       );
       addTearDown(controller.dispose);
       await controller.bindThread('thread-a');
@@ -260,7 +234,6 @@ void main() {
       expect(controller.threadId, 'thread-b');
       expect(controller.state, AgentVoiceInputState.idle);
       expect(controller.liveTranscript, isEmpty);
-      expect(controller.editedTranscript, isEmpty);
       expect(recorder.discardCurrentCalls, greaterThan(0));
       expect(recorder.hasCurrentRecording, isFalse);
     },
@@ -275,6 +248,7 @@ void main() {
         client: client,
         recorder: recorder,
         idFactory: _sequentialIdFactory(),
+        submitTranscript: (_) async => true,
       );
       addTearDown(controller.dispose);
       await controller.bindThread('thread-a');
@@ -292,7 +266,6 @@ void main() {
 
       expect(controller.state, AgentVoiceInputState.failed);
       expect(controller.canRetry, isTrue);
-      expect(controller.editedTranscript, isEmpty);
       expect(recorder.hasCurrentRecording, isFalse);
       expect(recorder.discardCurrentCalls, greaterThan(0));
     },
@@ -305,6 +278,7 @@ void main() {
       client: client,
       recorder: recorder,
       idFactory: _sequentialIdFactory(),
+      submitTranscript: (_) async => true,
     );
     addTearDown(controller.dispose);
     await controller.bindThread('thread-a');
@@ -319,7 +293,6 @@ void main() {
     expect(controller.threadId, isNull);
     expect(controller.state, AgentVoiceInputState.idle);
     expect(controller.liveTranscript, isEmpty);
-    expect(controller.editedTranscript, isEmpty);
     expect(recorder.clearAccountStateCalls, greaterThan(0));
     expect(recorder.hasCurrentRecording, isFalse);
   });
@@ -331,6 +304,7 @@ void main() {
       client: _ControlledVoiceInputClient(),
       recorder: recorder,
       idFactory: _sequentialIdFactory(),
+      submitTranscript: (_) async => true,
     );
     addTearDown(controller.dispose);
     await controller.bindThread('thread-a');
@@ -363,6 +337,7 @@ void main() {
       client: client,
       recorder: recorder,
       idFactory: _sequentialIdFactory(),
+      submitTranscript: (_) async => true,
     );
     await controller.bindThread('thread-a');
     await controller.startRecording();
