@@ -713,6 +713,7 @@ func (resource SessionReportResource) valid() bool {
 			resource.ReportScope,
 			resource.AvailableSections,
 			resource.DetailSchema,
+			resource.EvaluationStatus,
 		) {
 		return false
 	}
@@ -751,9 +752,9 @@ func validSessionReportShape(
 	scope string,
 	sections []string,
 	detailSchema string,
+	status evaluation.Status,
 ) bool {
 	expectedScope := ""
-	expectedDetail := ieltsSpeakingPracticeReportSchemaVersion
 	var expectedSections []string
 	switch mode {
 	case "PART_1":
@@ -765,11 +766,10 @@ func validSessionReportShape(
 	case "FULL_MOCK":
 		expectedScope = "FULL_MOCK"
 		expectedSections = []string{"PART_1", "PART_2", "PART_3"}
-		expectedDetail = evaluationreport.IELTSSpeakingReportSchemaVersion
 	default:
 		return false
 	}
-	if scope != expectedScope || detailSchema != expectedDetail ||
+	if scope != expectedScope ||
 		len(sections) != len(expectedSections) {
 		return false
 	}
@@ -778,7 +778,12 @@ func validSessionReportShape(
 			return false
 		}
 	}
-	return true
+	if mode == "FULL_MOCK" {
+		return detailSchema == evaluationreport.IELTSSpeakingReportSchemaVersion
+	}
+	return detailSchema == ieltsSpeakingPracticeReportSchemaVersion ||
+		(status == evaluation.StatusReady &&
+			detailSchema == legacyIELTSSpeakingPracticeReportSchemaVersion)
 }
 
 func validSessionReportFailure(failure *EvaluationFailure) bool {

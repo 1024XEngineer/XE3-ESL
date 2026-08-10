@@ -70,6 +70,10 @@ type sessionReportReader interface {
 // Identifies the detail shape emitted by IELTS practice FormalReports.
 const ieltsSpeakingPracticeReportSchemaVersion = "ielts-speaking-practice-report/v1"
 
+// Identifies IELTS practice FormalReports emitted before the dedicated
+// practice-report projection is deployed.
+const legacyIELTSSpeakingPracticeReportSchemaVersion = scoring.GeneralSceneSchemaVersion
+
 type Application struct {
 	evaluations        evaluationService
 	runtime            evaluationRuntimeReader
@@ -334,6 +338,7 @@ func sessionReportResource(
 			reportScope,
 			state.AvailableSections,
 			detailSchema,
+			state.Status,
 		) {
 		return SessionReportResource{}, evaluation.ErrInvalidRequest
 	}
@@ -386,9 +391,16 @@ func sessionReportResource(
 			stored.Revision != resource.Revision ||
 			stored.Report.SceneType != evaluation.SceneIELTSSpeaking ||
 			stored.Report.PracticeMode != state.PracticeMode ||
-			stored.Report.DetailSchema != detailSchema {
+			!validSessionReportShape(
+				state.PracticeMode,
+				reportScope,
+				state.AvailableSections,
+				stored.Report.DetailSchema,
+				evaluation.StatusReady,
+			) {
 			return SessionReportResource{}, evaluation.ErrInvalidRequest
 		}
+		resource.DetailSchema = stored.Report.DetailSchema
 		resource.ReportID = stored.ReportID
 		resource.ScoreabilityStatus = stored.Report.ScoreabilityStatus
 		resource.Summary = stored.Report.Summary

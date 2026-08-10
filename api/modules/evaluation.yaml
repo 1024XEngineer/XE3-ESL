@@ -442,6 +442,7 @@ components:
           type: string
           enum:
             - ielts-speaking-practice-report/v1
+            - general-scene-evaluation/v1
             - ielts-speaking-report/v1
         evaluation_status:
           type: string
@@ -519,6 +520,39 @@ components:
                 - required: [scoreability_status]
                 - required: [summary]
                 - required: [stable_failure]
+        - if:
+            properties:
+              practice_mode:
+                const: FULL_MOCK
+            required: [practice_mode]
+          then:
+            properties:
+              detail_schema:
+                const: ielts-speaking-report/v1
+        - if:
+            properties:
+              practice_mode:
+                enum: [PART_1, PART_2, PART_3]
+              evaluation_status:
+                const: READY
+            required: [practice_mode, evaluation_status]
+          then:
+            properties:
+              detail_schema:
+                enum:
+                  - ielts-speaking-practice-report/v1
+                  - general-scene-evaluation/v1
+        - if:
+            properties:
+              practice_mode:
+                enum: [PART_1, PART_2, PART_3]
+              evaluation_status:
+                enum: [QUEUED, RUNNING, FAILED]
+            required: [practice_mode, evaluation_status]
+          then:
+            properties:
+              detail_schema:
+                const: ielts-speaking-practice-report/v1
     PracticeSessionReportRef:
       type: object
       additionalProperties: false

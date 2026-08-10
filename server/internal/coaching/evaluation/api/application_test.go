@@ -420,6 +420,105 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
 	}
 }
 
+func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
+	t *testing.T,
+) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		detailSchema string
+		wantError    error
+	}{
+		{
+			name:         "dedicated IELTS practice report",
+			detailSchema: ieltsSpeakingPracticeReportSchemaVersion,
+		},
+		{
+			name:         "legacy general scene report",
+			detailSchema: legacyIELTSSpeakingPracticeReportSchemaVersion,
+		},
+		{
+			name:         "unknown report",
+			detailSchema: "unknown-report/v1",
+			wantError:    evaluation.ErrInvalidRequest,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ownerUserID, state := readyPart1SessionReportState(
+				test.detailSchema,
+			)
+			resource, err := sessionReportResource(
+				"session_ielts_001",
+				ownerUserID,
+				state,
+			)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("error = %v, want %v", err, test.wantError)
+			}
+			if test.wantError != nil {
+				return
+			}
+			if resource.DetailSchema != test.detailSchema ||
+				resource.EvaluationStatus != evaluation.StatusReady ||
+				resource.ReportID != "30000000-0000-4000-8000-000000000001" {
+				t.Fatalf("resource = %#v", resource)
+			}
+		})
+	}
+}
+
+func readyPart1SessionReportState(
+	detailSchema string,
+) (string, evaluationreport.SessionReportReadState) {
+	value := evaluationTestIELTSValue(evaluation.StatusReady)
+	value.Revision.SceneStrategyRef = scoring.GeneralSceneStrategyRef
+	value.Revision.PipelineVersion = scoring.GeneralScenePipelineVersion
+	stored := evaluationreport.StoredFormalReport{
+		ReportID:             "30000000-0000-4000-8000-000000000001",
+		EvaluationID:         value.ID,
+		EvaluationRevisionID: value.Revision.ID,
+		OwnerUserID:          value.OwnerUserID,
+		PracticeSessionID:    value.PracticeSessionID,
+		Revision:             value.Revision.Number,
+		CreatedAt:            value.CreatedAt,
+		Report: evaluationreport.FormalReport{
+			SchemaVersion:      evaluationreport.FormalReportSchemaVersion,
+			SceneType:          evaluation.SceneIELTSSpeaking,
+			PracticeExperience: "IELTS_SPEAKING",
+			SceneCategory:      "IELTS_SPEAKING",
+			PracticeMode:       "PART_1",
+			ScoreabilityStatus: evaluationreport.ReportScoreabilityProvisional,
+			Summary:            "本次专项练习已生成报告。",
+			Dimensions: []evaluationreport.ReportDimension{
+				{
+					Key:          "fluency",
+					Scale:        evaluationreport.ReportScalePercentage100,
+					Coverage:     1,
+					Confidence:   1,
+					ReasonCodes:  []string{},
+					EvidenceRefs: []string{},
+					Strengths:    []evaluationreport.ReportFinding{},
+					Improvements: []evaluationreport.ReportFinding{},
+					Examples:     []evaluationreport.ReportFinding{},
+				},
+			},
+			PriorityActions: []evaluationreport.ReportPriorityAction{},
+			DetailSchema:    detailSchema,
+			Detail:          json.RawMessage(`{"schema_version":"` + detailSchema + `"}`),
+		},
+	}
+	return value.OwnerUserID, evaluationreport.SessionReportReadState{
+		PracticeMode:      "PART_1",
+		AvailableSections: []string{"PART_1"},
+		Status:            evaluation.StatusReady,
+		Evaluation:        &value,
+		FormalReport:      &stored,
+	}
+}
+
 func TestEvaluationHTTPApplicationMapsSessionReportConflict(t *testing.T) {
 	t.Parallel()
 	actor := requestcontext.Actor{
