@@ -117,3 +117,40 @@ func TestResolveSessionPolicyFreezesIELTSBlueprintCount(t *testing.T) {
 		t.Fatalf("IELTS policy = %#v", policy)
 	}
 }
+
+func TestResolveSessionPolicyAllowsReadAidsOnlyForIELTSSectionPractice(
+	t *testing.T,
+) {
+	t.Parallel()
+	prompt := ScenePrompt{TurnBlueprints: []string{"question"}}
+	tests := []struct {
+		name      string
+		reference string
+		mode      PracticeMode
+		wantAids  bool
+	}{
+		{"part 1", IELTSSpeakingPart1SessionPolicy, PracticeModePart1, true},
+		{"part 2", IELTSSpeakingPart2SessionPolicy, PracticeModePart2, true},
+		{"part 3", IELTSSpeakingPart3SessionPolicy, PracticeModePart3, true},
+		{"full mock", IELTSSpeakingFullMockSessionPolicy, PracticeModeFullMock, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy, err := ResolveSessionPolicy(
+				test.reference,
+				prompt,
+				PracticeOption{
+					Mode: test.mode, SuggestedDurationSeconds: 300,
+				},
+				0,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.QuestionTranslationAllowed != test.wantAids ||
+				policy.QuestionTipsAllowed != test.wantAids {
+				t.Fatalf("IELTS read aids policy = %#v", policy)
+			}
+		})
+	}
+}

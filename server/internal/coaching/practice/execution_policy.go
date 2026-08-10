@@ -210,8 +210,15 @@ func resolveSessionPolicyRegistration(
 		return standard, true
 	case IELTSSpeakingPart1SessionPolicy,
 		IELTSSpeakingPart2SessionPolicy,
-		IELTSSpeakingPart3SessionPolicy,
-		IELTSSpeakingFullMockSessionPolicy:
+		IELTSSpeakingPart3SessionPolicy:
+		return sessionPolicyRegistration{
+			completionMode:             CompletionModeTurnLimited,
+			turnsFromBlueprints:        true,
+			questionTranslationAllowed: true,
+			questionTipsAllowed:        true,
+			speechFeedbackAllowed:      true,
+		}, true
+	case IELTSSpeakingFullMockSessionPolicy:
 		return sessionPolicyRegistration{
 			completionMode:        CompletionModeTurnLimited,
 			turnsFromBlueprints:   true,
