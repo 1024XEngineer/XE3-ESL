@@ -165,6 +165,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (_mode != PracticeMode.fullMock && _mode != PracticeMode.part2) {
       return true;
     }
+    if (_part2ResponseAlreadyConfirmed) {
+      return true;
+    }
     final questionId = _part2QuestionId;
     if (questionId != null &&
         widget.controller.currentQuestion?.id != questionId) {
@@ -249,6 +252,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   int get _part1Total =>
       _assignment.part(IeltsSpeakingPart.part1)?.turnBlueprints.length ?? 0;
+
+  int get _part2Total =>
+      _assignment.part(IeltsSpeakingPart.part2)?.turnBlueprints.length ?? 0;
 
   int get _part3Total =>
       _assignment.part(IeltsSpeakingPart.part3)?.turnBlueprints.length ?? 0;
@@ -1594,23 +1600,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final shouldExit =
         fromCompletion ||
         _progress?.phase == IeltsMockPhase.complete ||
-        await showDialog<bool>(
+        await showModalBottomSheet<bool>(
               context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Exit mock test?'),
-                content: const Text(
-                  'Your completed answers are saved. You can continue from the latest safe step later.',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Stay'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Save & exit'),
-                  ),
-                ],
+              useSafeArea: true,
+              backgroundColor: Colors.transparent,
+              barrierColor: const Color(0x66000000),
+              builder: (sheetContext) => _MockExitSheet(
+                onContinue: () => Navigator.pop(sheetContext, false),
+                onSaveAndExit: () => Navigator.pop(sheetContext, true),
               ),
             ) ==
             true;
@@ -1712,10 +1709,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     final complete = progress.phase == IeltsMockPhase.complete;
     final showCompletionPage = complete && !_preserveCompletedConversation;
+    final completionSheet = _completionSheet(progress);
     final stagePhase = complete && _preserveCompletedConversation
         ? (_mode == PracticeMode.part1
               ? IeltsMockPhase.part1
               : IeltsMockPhase.part3)
+        : _mode == PracticeMode.fullMock &&
+              progress.phase == IeltsMockPhase.part1Complete
+        ? IeltsMockPhase.part1
         : progress.phase;
     return PopScope<Object?>(
       canPop: _exitApproved,
@@ -1757,7 +1758,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                             _buildRecorderDock(),
                         ],
                       ),
-                      if (_showCompletionSheet) ...[
+                      if (completionSheet != null) ...[
                         const Positioned.fill(
                           child: ModalBarrier(
                             dismissible: false,
@@ -1767,19 +1768,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                         ),
                         Align(
                           alignment: Alignment.bottomCenter,
-                          child: _SectionCompletionSheet(
-                            title: _completionTitle,
-                            message:
-                                '${widget.controller.completedTurns} 道回答已保存',
-                            primaryLabel: _mode == PracticeMode.fullMock
-                                ? '查看模考报告'
-                                : '查看本组复盘',
-                            secondaryLabel: _mode == PracticeMode.fullMock
-                                ? '返回训练'
-                                : '返回题单',
-                            onPrimary: _openCompletedReview,
-                            onSecondary: _leaveCompletedPractice,
-                          ),
+                          child: completionSheet,
                         ),
                       ],
                     ],
@@ -1791,6 +1780,26 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   Widget _buildAnimatedPhase(IeltsMockProgress progress) {
+    if (_mode == PracticeMode.fullMock &&
+        progress.phase == IeltsMockPhase.part1Complete) {
+      return _conversationPhase(
+        key: const Key('ielts-mock-part-1'),
+        partLabel: 'Part 1',
+        completed: _part1Total,
+        total: _part1Total,
+        sectionStart: _partStart(IeltsSpeakingPart.part1),
+        messages: _sectionMessages(
+          _partStart(IeltsSpeakingPart.part1),
+          _part1Total,
+          includeCurrentQuestion: false,
+        ),
+      );
+    }
+    if (_mode == PracticeMode.fullMock &&
+        progress.phase == IeltsMockPhase.part2Complete &&
+        _part2TurnConfirmed) {
+      return const SizedBox.expand(key: Key('ielts-mock-part-2-complete'));
+    }
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 220),
       child:
@@ -1799,6 +1808,43 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           ? _completedConversationPhase()
           : _buildPhase(progress),
     );
+  }
+
+  Widget? _completionSheet(IeltsMockProgress progress) {
+    if (_showCompletionSheet) {
+      return _SectionCompletionSheet(
+        title: _completionTitle,
+        message: '${widget.controller.completedTurns} 道回答已保存',
+        primaryLabel: _mode == PracticeMode.fullMock ? '查看模考报告' : '查看本组复盘',
+        secondaryLabel: _mode == PracticeMode.fullMock ? '返回训练' : '返回题单',
+        onPrimary: _openCompletedReview,
+        onSecondary: _leaveCompletedPractice,
+      );
+    }
+    if (_mode != PracticeMode.fullMock) {
+      return null;
+    }
+    if (progress.phase == IeltsMockPhase.part1Complete) {
+      return _SectionCompletionSheet(
+        title: 'Part 1 已完成',
+        message: '$_part1Total 道回答已保存',
+        primaryLabel: '进入 Part 2',
+        secondaryLabel: '保存并退出',
+        onPrimary: () => unawaited(_beginPart2Intro()),
+        onSecondary: () => unawaited(_requestExit(fromCompletion: true)),
+      );
+    }
+    if (progress.phase == IeltsMockPhase.part2Complete && _part2TurnConfirmed) {
+      return _SectionCompletionSheet(
+        title: 'Part 2 已完成',
+        message: '$_part2Total 道回答已保存',
+        primaryLabel: '继续 Part 3',
+        secondaryLabel: '保存并退出',
+        onPrimary: () => unawaited(_continueFromPart2()),
+        onSecondary: () => unawaited(_requestExit(fromCompletion: true)),
+      );
+    }
+    return null;
   }
 
   String get _completionTitle => switch (_mode) {
@@ -2080,7 +2126,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             messages: messages ?? _sectionMessages(sectionStart, completed),
             controller: widget.controller,
             scrollController: _conversationScrollController,
-            bottomPadding: _showCompletionSheet ? 292 : 28,
+            bottomPadding: _completionOverlayVisible ? 292 : 28,
             speechFeedbackController: widget.speechFeedbackController,
             playingQuestionId:
                 widget.avatarReplayLoading || widget.avatarReplayPlaying
@@ -2117,14 +2163,23 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     );
   }
 
-  List<PracticeMessage> _sectionMessages(int sectionStart, int completed) {
+  List<PracticeMessage> _sectionMessages(
+    int sectionStart,
+    int completed, {
+    bool includeCurrentQuestion = true,
+  }) {
     final relevantCount =
-        completed * 2 + (widget.controller.currentQuestion == null ? 0 : 1);
+        completed * 2 +
+        (includeCurrentQuestion && widget.controller.currentQuestion != null
+            ? 1
+            : 0);
+    final currentQuestionId = widget.controller.currentQuestion?.id;
     final all = widget.controller.practiceMessages
         .where(
           (message) =>
-              message.role == PracticeMessageRole.assistant ||
-              message.role == PracticeMessageRole.user,
+              (message.role == PracticeMessageRole.assistant ||
+                  message.role == PracticeMessageRole.user) &&
+              (includeCurrentQuestion || message.id != currentQuestionId),
         )
         .toList(growable: false);
     if (all.length <= relevantCount) {
@@ -2164,6 +2219,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   String? _currentCueCard() =>
       _assignment.part(IeltsSpeakingPart.part2)?.cueCard;
+
+  bool get _completionOverlayVisible {
+    final progress = _progress;
+    return _showCompletionSheet ||
+        (_mode == PracticeMode.fullMock &&
+            (progress?.phase == IeltsMockPhase.part1Complete ||
+                (progress?.phase == IeltsMockPhase.part2Complete &&
+                    _part2TurnConfirmed)));
+  }
 }
 
 class _SectionProgress extends StatelessWidget {
@@ -2791,6 +2855,65 @@ class _SectionCompletionSheet extends StatelessWidget {
                     minimumSize: const Size.fromHeight(44),
                   ),
                   child: Text(secondaryLabel),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MockExitSheet extends StatelessWidget {
+  const _MockExitSheet({required this.onContinue, required this.onSaveAndExit});
+
+  final VoidCallback onContinue;
+  final VoidCallback onSaveAndExit;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Material(
+          key: const Key('ielts-mock-exit-sheet'),
+          color: SpeakUpDesign.surface,
+          borderRadius: BorderRadius.circular(28),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '退出模拟考试？',
+                  style: SpeakUpDesign.pageTitle.copyWith(fontSize: 26),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  key: const Key('ielts-mock-continue-answering'),
+                  onPressed: onContinue,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: const Color(0xFFF4F4F6),
+                    foregroundColor: SpeakUpDesign.ink,
+                    elevation: 0,
+                  ),
+                  child: const Text('继续答题'),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  key: const Key('ielts-mock-save-and-exit'),
+                  onPressed: onSaveAndExit,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: SpeakUpDesign.ink,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('保存并退出'),
                 ),
               ],
             ),

@@ -3,6 +3,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
@@ -131,6 +134,70 @@ void main() {
     ]) {
       expect(await _showHub(tester, Key(hub)), findsOneWidget);
     }
+  });
+
+  testWidgets('full mock starts directly when no practice can be resumed', (
+    tester,
+  ) async {
+    final preparationController = PreparationController(
+      client: _FourFamilyClient(),
+    );
+    final ieltsController = IeltsPreparationController(
+      client: _UnavailableIeltsQuestionBankClient(),
+    );
+    final launchClient = _PageLaunchClient();
+    final launchController = PreparationLaunchController(
+      client: launchClient,
+      contextProvider: () => _pageContext,
+      threadIdProvider: () => _pageContext.threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _pageContext,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-direct-full-mock',
+    );
+    var navigations = 0;
+    addTearDown(preparationController.dispose);
+    addTearDown(ieltsController.dispose);
+    addTearDown(launchController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: preparationController,
+          ieltsController: ieltsController,
+          launchController: launchController,
+          onPracticeStarted: () async {
+            navigations++;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(launchController.hasResumablePractice, isFalse);
+    await _openFamily(tester, 'EXAM');
+    await tester.tap(find.byKey(const Key('ielts-mode-full')));
+    for (var attempt = 0; attempt < 20 && navigations == 0; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(find.text('开始新的模考？'), findsNothing);
+    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+    expect(
+      launchController.bootstrap?.session.practiceMode,
+      PracticeMode.fullMock,
+    );
+    expect(navigations, 1);
   });
 
   testWidgets('shows loading, failure retry, and empty states', (tester) async {
@@ -375,9 +442,8 @@ final class _MultiSceneClient implements SceneClient {
 
 final class _FourFamilyClient implements SceneClient {
   @override
-  Future<SceneDefinition> getScene(String sceneId) {
-    throw UnimplementedError();
-  }
+  Future<SceneDefinition> getScene(String sceneId) async =>
+      sceneId == _examScene.id ? _examScene : throw UnimplementedError();
 
   @override
   Future<List<SceneDefinition>> listScenes() async => [
@@ -390,6 +456,14 @@ final class _FourFamilyClient implements SceneClient {
   @override
   Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError();
+  }
+}
+
+final class _UnavailableIeltsQuestionBankClient
+    implements IeltsQuestionBankClient {
+  @override
+  Future<IeltsQuestionBank> getQuestionBank() {
+    throw StateError('Question-bank content is outside this launch test.');
   }
 }
 
@@ -474,6 +548,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     final scene = switch (input.sceneId) {
       _sceneId => _detail,
       'scn_general_speaking' => _otherDetail,
+      'scn_ielts_speaking_test' => _examScene,
       _ => throw StateError('Unknown Page test Scene.'),
     };
     selection = PreparationLaunchSelection(
@@ -581,8 +656,34 @@ final _examScene = testScene(
   id: 'scn_ielts_speaking_test',
   experience: PracticeExperience.ieltsSpeaking,
   category: SceneCategory.ieltsSpeaking,
-  name: 'IELTS Speaking Part 2',
+  name: 'IELTS Speaking',
   version: 1,
+  practiceOptions: [
+    testPracticeOption(
+      id: 'option-ielts-full-mock',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.fullMock,
+      displayName: 'Full mock',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-1',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part1,
+      displayName: 'Part 1',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-2',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part2,
+      displayName: 'Part 2',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-3',
+      sceneId: 'scn_ielts_speaking_test',
+      mode: PracticeMode.part3,
+      displayName: 'Part 3',
+    ),
+  ],
 );
 
 final _dailyScene = testScene(

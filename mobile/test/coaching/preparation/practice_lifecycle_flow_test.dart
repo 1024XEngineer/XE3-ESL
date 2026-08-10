@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
@@ -13,6 +14,9 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_client.
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
@@ -106,9 +110,13 @@ void main() {
       final preparationController = PreparationController(
         client: _LifecycleCatalogClient(),
       );
+      final ieltsController = IeltsPreparationController(
+        client: _LifecycleIeltsQuestionBankClient(),
+      );
       addTearDown(() {
         launchController.dispose();
         workspaceController.dispose();
+        ieltsController.dispose();
         preparationController.dispose();
         practiceController.dispose();
         conversationController.dispose();
@@ -281,8 +289,64 @@ void main() {
       expect(workspaceController.currentSceneId, _hotelScene.id);
       expect(conversationController.threads, hasLength(4));
       expect(launchClient.sessionIds, hasLength(2));
+
+      final hotelSessionId = practiceController.practiceSessionId!;
+      await _leavePractice(tester);
+      var preparationStarts = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            practiceController: practiceController,
+            preparationController: preparationController,
+            ieltsController: ieltsController,
+            launchController: launchController,
+            onPracticeStarted: () => preparationStarts++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _openIeltsFullMock(tester);
+      expect(find.text('开始新的模考？'), findsOneWidget);
+      expect(find.text('继续上次练习'), findsOneWidget);
+      expect(find.text('开始新模考'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('continue-existing-practice')));
+      await tester.pumpAndSettle();
+      expect(preparationStarts, 1);
+      expect(practiceController.practiceSessionId, hotelSessionId);
+      expect(practiceClient.endedSessionIds, [firstSessionId]);
+
+      expect(await launchController.parkCurrentPractice(), isTrue);
+      await tester.pumpAndSettle();
+      await _openIeltsFullMock(tester);
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('replace-existing-practice')),
+      );
+      for (var attempt = 0; attempt < 20 && preparationStarts < 2; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(preparationController.errorMessage, isNull);
+      expect(launchController.errorMessage, isNull);
+      expect(launchController.workspaceErrorMessage, isNull);
+      expect(launchClient.sessionIds, hasLength(3));
+      expect(practiceClient.endedSessionIds, [firstSessionId, hotelSessionId]);
+      expect(practiceController.practiceMode, PracticeMode.fullMock);
+      expect(workspaceController.currentSceneId, _ieltsSceneId);
+      expect(preparationStarts, 2);
     },
   );
+}
+
+Future<void> _openIeltsFullMock(WidgetTester tester) async {
+  await _showPracticeHub(tester, const Key('practice-hub-exam'));
+  await _tapVisible(
+    tester,
+    find.byKey(const Key('practice-hub-exam')).hitTestable(),
+  );
+  await _tapVisible(tester, find.byKey(const Key('ielts-mode-full')));
 }
 
 Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
@@ -368,13 +432,14 @@ final class _LifecycleCatalogClient implements SceneClient {
     return switch (sceneId) {
       _progressSceneId => _progressDetail,
       _hotelSceneId => _hotelDetail,
+      _ieltsSceneId => _ieltsDetail,
       _ => throw StateError('Unknown lifecycle scene: $sceneId'),
     };
   }
 
   @override
   Future<List<SceneDefinition>> listScenes() async {
-    return <SceneDefinition>[_progressScene, _hotelScene];
+    return <SceneDefinition>[_progressScene, _hotelScene, _ieltsScene];
   }
 
   @override
@@ -382,8 +447,17 @@ final class _LifecycleCatalogClient implements SceneClient {
     return switch (sceneId) {
       _progressSceneId => <RoleDefinition>[_progressRole],
       _hotelSceneId => <RoleDefinition>[_hotelRole],
+      _ieltsSceneId => _ieltsDetail.roles,
       _ => throw StateError('Unknown lifecycle scene: $sceneId'),
     };
+  }
+}
+
+final class _LifecycleIeltsQuestionBankClient
+    implements IeltsQuestionBankClient {
+  @override
+  Future<IeltsQuestionBank> getQuestionBank() async {
+    throw StateError('Question-bank content is outside this lifecycle test.');
   }
 }
 
@@ -445,6 +519,7 @@ final class _LifecycleLaunchClient implements PreparationLaunchClient {
     final scene = switch (input.sceneId) {
       _progressSceneId => _progressDetail,
       _hotelSceneId => _hotelDetail,
+      _ieltsSceneId => _ieltsDetail,
       _ => throw StateError('Unknown lifecycle Scene.'),
     };
     if (snapshot == null || scene.version != input.sceneVersion) {
@@ -572,6 +647,15 @@ final class _LifecyclePracticeClient
       throw StateError('No exact lifecycle session was prepared.');
     }
     _nextStart = null;
+    final ieltsAssignment =
+        seed.scene.experience == PracticeExperience.ieltsSpeaking
+        ? testIeltsAssignment(
+            mode: seed.practiceMode,
+            part1QuestionCount: 1,
+            part3QuestionCount: 1,
+          )
+        : null;
+    final turnLimit = ieltsAssignment?.turnBlueprints.length ?? 3;
     final snapshot = PracticeSessionSnapshot(
       sessionId: seed.sessionId,
       planId: seed.planId,
@@ -581,8 +665,9 @@ final class _LifecyclePracticeClient
       practiceMode: seed.practiceMode,
       capabilities: testPracticeCapabilities,
       completedTurns: 0,
-      turnLimit: 3,
+      turnLimit: turnLimit,
       sessionCompleted: false,
+      ieltsAssignment: ieltsAssignment,
       currentQuestion: PracticeQuestion(
         id: 'question-${seed.sessionId}-1',
         sessionId: seed.sessionId,
@@ -704,6 +789,7 @@ final class _StartSeed {
 
 const _progressSceneId = 'scn_workplace_progress_risk_update';
 const _hotelSceneId = 'scn_daily_hotel_checkin_issue';
+const _ieltsSceneId = 'scn_ielts_speaking';
 
 final _progressScene = testScene(
   id: _progressSceneId,
@@ -722,6 +808,51 @@ final _hotelScene = testScene(
   version: 1,
   prompt: _hotelPrompt,
 );
+
+final _ieltsScene = testScene(
+  id: _ieltsSceneId,
+  experience: PracticeExperience.ieltsSpeaking,
+  category: SceneCategory.ieltsSpeaking,
+  name: 'IELTS 口语',
+  version: 1,
+  prompt: const ScenePrompt(
+    publicSceneBrief: '完成一轮 IELTS 口语模考。',
+    practiceGoal: '按 Part 1、Part 2、Part 3 完成作答。',
+    userRole: '考生',
+    aiRole: '考官',
+    personaSummary: '严格遵循 IELTS 口语流程。',
+    focusAreas: <String>['fluency'],
+    turnBlueprints: <String>['完成口语模考。'],
+  ),
+  practiceOptions: <PracticeOption>[
+    testPracticeOption(
+      id: 'option-ielts-full-mock',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.fullMock,
+      displayName: '完整模考',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-1',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part1,
+      displayName: 'Part 1',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-2',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part2,
+      displayName: 'Part 2',
+    ),
+    testPracticeOption(
+      id: 'option-ielts-part-3',
+      sceneId: _ieltsSceneId,
+      mode: PracticeMode.part3,
+      displayName: 'Part 3',
+    ),
+  ],
+);
+
+final _ieltsDetail = _ieltsScene;
 
 final _progressRole = testRole(
   id: 'role-project-stakeholder',
