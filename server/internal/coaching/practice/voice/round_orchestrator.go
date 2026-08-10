@@ -268,7 +268,9 @@ func (orchestrator *RoundOrchestrator) finishTurn(
 		!validVoiceTurnCheckpoint(turn) {
 		return practice.Turn{}, ErrInvalidContext
 	}
-	if turn.EffectiveTurns == 0 {
+	if turn.EffectiveTurns == 0 &&
+		(turn.AnswerAssessment == nil || turn.CountsTowardTurnLimit ||
+			turn.AdvanceAuthorized) {
 		return practice.Turn{}, ErrInvalidContext
 	}
 	return turn, nil
@@ -326,5 +328,7 @@ func validVoiceTurnCheckpoint(turn practice.Turn) bool {
 		turn.EffectiveTurns < 0 {
 		return false
 	}
-	return turn.EffectiveTurns > 0
+	return turn.EffectiveTurns > 0 ||
+		(turn.AnswerAssessment != nil &&
+			!turn.CountsTowardTurnLimit && !turn.AdvanceAuthorized)
 }

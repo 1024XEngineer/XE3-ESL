@@ -28,6 +28,8 @@ type Session struct {
 	IELTSAssignment            *practice.IELTSAssignment
 	PreviousUserResponse       string
 	PreviousQuestion           string
+	PreviousAnswerAssessment   *practice.AnswerAssessment
+	PreviousAdvanceAuthorized  bool
 	SessionVersion             int
 	EffectiveTurns             int
 	TurnLimit                  int
@@ -446,6 +448,8 @@ func (application *SessionApplication) state(
 	}
 	if state.Turn != nil {
 		state.Session.PreviousUserResponse = state.Turn.AnswerText
+		state.Session.PreviousAnswerAssessment = state.Turn.AnswerAssessment
+		state.Session.PreviousAdvanceAuthorized = state.Turn.AdvanceAuthorized
 		if len(history) > 0 {
 			state.Session.PreviousQuestion = history[len(history)-1].Question.Content
 		}
@@ -496,12 +500,17 @@ func (application *SessionApplication) restoreTurnHistory(
 		if exchange.Turn.CountsTowardTurnLimit {
 			effectiveTurns++
 		}
+		legacyProgression := exchange.Turn.AnswerAssessment == nil
 		if exchange.Question.SessionID != session.ID ||
 			exchange.Turn.SessionID != session.ID ||
 			exchange.Question.ID != exchange.Turn.QuestionID ||
 			exchange.Turn.EffectiveTurns != effectiveTurns ||
-			(exchange.Question.Type == "PRIMARY") !=
-				exchange.Turn.CountsTowardTurnLimit ||
+			(legacyProgression &&
+				(exchange.Question.Type == "PRIMARY") !=
+					exchange.Turn.CountsTowardTurnLimit) ||
+			(!legacyProgression &&
+				exchange.Turn.AdvanceAuthorized !=
+					exchange.Turn.CountsTowardTurnLimit) ||
 			(exchange.Question.Type == "PRIMARY" &&
 				exchange.Question.ParentQuestionID != "") ||
 			(exchange.Question.Type == "FOLLOW_UP" &&

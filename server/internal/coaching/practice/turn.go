@@ -19,33 +19,51 @@ const (
 	TurnKindRetry     TurnKind = "RETRY"
 )
 
+// AnswerAssessment is the durable, bounded semantic evidence decision used by
+// Interview Practice. Candidate text is assessed as untrusted data; this
+// structure contains no executable model instructions.
+type AnswerAssessment struct {
+	Progress                 string   `json:"answer_progress"`
+	Engagement               string   `json:"engagement"`
+	QuestionKind             string   `json:"question_kind"`
+	RelevanceScore           float64  `json:"relevance_score"`
+	EvidenceSufficiencyScore float64  `json:"evidence_sufficiency_score"`
+	Confidence               float64  `json:"confidence"`
+	EvidenceGaps             []string `json:"evidence_gaps"`
+	InterestingThreads       []string `json:"interesting_threads"`
+	BriefRationale           string   `json:"brief_rationale"`
+}
+
 // Turn is the only confirmed Question/Answer progression unit in Practice.
 type Turn struct {
-	ID                      string    `json:"turn_id"`
-	SessionID               string    `json:"practice_session_id"`
-	QuestionID              string    `json:"question_id"`
-	SpeakerParticipantID    string    `json:"question_speaker_participant_id"`
-	AddresseeParticipantIDs []string  `json:"addressee_participant_ids"`
-	RespondentParticipantID string    `json:"respondent_participant_id"`
-	Sequence                int       `json:"sequence"`
-	InteractionMode         string    `json:"interaction_mode,omitempty"`
-	AnswerText              string    `json:"answer_text,omitempty"`
-	AudioAssetID            string    `json:"audio_asset_id,omitempty"`
-	CandidateID             string    `json:"-"`
-	TranscriptID            string    `json:"-"`
-	EvidenceVersion         int64     `json:"-"`
-	ConfirmedAt             time.Time `json:"-"`
-	Kind                    TurnKind  `json:"turn_kind"`
-	RetryRequestID          string    `json:"retry_request_id,omitempty"`
-	OriginalTurnID          string    `json:"original_turn_id,omitempty"`
-	CountsTowardTurnLimit   bool      `json:"counts_toward_turn_limit"`
-	EffectiveTurns          int       `json:"effective_turns"`
-	SessionCompleted        bool      `json:"session_completed"`
-	Status                  string    `json:"turn_status,omitempty"`
-	SpeechFeedbackStatusURL string    `json:"speech_feedback_status_url,omitempty"`
-	SubmittedAt             time.Time `json:"submitted_at,omitempty"`
-	CreatedAt               time.Time `json:"created_at"`
-	CompletedAt             time.Time `json:"completed_at,omitempty"`
+	ID                      string            `json:"turn_id"`
+	SessionID               string            `json:"practice_session_id"`
+	QuestionID              string            `json:"question_id"`
+	SpeakerParticipantID    string            `json:"question_speaker_participant_id"`
+	AddresseeParticipantIDs []string          `json:"addressee_participant_ids"`
+	RespondentParticipantID string            `json:"respondent_participant_id"`
+	Sequence                int               `json:"sequence"`
+	InteractionMode         string            `json:"interaction_mode,omitempty"`
+	AnswerText              string            `json:"answer_text,omitempty"`
+	AudioAssetID            string            `json:"audio_asset_id,omitempty"`
+	CandidateID             string            `json:"-"`
+	TranscriptID            string            `json:"-"`
+	EvidenceVersion         int64             `json:"-"`
+	ConfirmedAt             time.Time         `json:"-"`
+	Kind                    TurnKind          `json:"turn_kind"`
+	RetryRequestID          string            `json:"retry_request_id,omitempty"`
+	OriginalTurnID          string            `json:"original_turn_id,omitempty"`
+	CountsTowardTurnLimit   bool              `json:"counts_toward_turn_limit"`
+	AnswerAssessment        *AnswerAssessment `json:"-"`
+	AssessmentPolicyVersion string            `json:"-"`
+	AdvanceAuthorized       bool              `json:"-"`
+	EffectiveTurns          int               `json:"effective_turns"`
+	SessionCompleted        bool              `json:"session_completed"`
+	Status                  string            `json:"turn_status,omitempty"`
+	SpeechFeedbackStatusURL string            `json:"speech_feedback_status_url,omitempty"`
+	SubmittedAt             time.Time         `json:"submitted_at,omitempty"`
+	CreatedAt               time.Time         `json:"created_at"`
+	CompletedAt             time.Time         `json:"completed_at,omitempty"`
 }
 
 func (t Turn) ConfirmedAnswer() Answer {

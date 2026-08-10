@@ -176,16 +176,17 @@ func (r *Repository) advanceTurnInTransaction(
 		return practice.TurnResult{}, practice.ErrSessionCompleted
 	}
 
-	round := effectiveTurns
+	nextEffectiveTurns := effectiveTurns
 	if command.CountsTowardTurnLimit {
-		round++
+		nextEffectiveTurns++
 	}
+	round := nextEffectiveTurns
 	if round < 1 {
-		return practice.TurnResult{}, practice.ErrConflict
+		round = 1
 	}
 	completed := completionMode ==
 		practice.CompletionModeTurnLimited &&
-		command.CountsTowardTurnLimit && round == turnLimit
+		command.CountsTowardTurnLimit && nextEffectiveTurns == turnLimit
 	nextVersion := version + 1
 	completionToken := ""
 	if completed {
@@ -199,7 +200,7 @@ func (r *Repository) advanceTurnInTransaction(
 		SessionID:       command.SessionID,
 		TurnID:          command.TurnID,
 		Round:           round,
-		EffectiveTurns:  round,
+		EffectiveTurns:  nextEffectiveTurns,
 		SessionVersion:  nextVersion,
 		TurnLimit:       turnLimit,
 		Completed:       completed,
@@ -211,10 +212,10 @@ func (r *Repository) advanceTurnInTransaction(
 			round_number, effective_turns, session_version,
 			completed, completion_token
 		)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at
 	`, actor.UserID, command.SessionID, command.TurnID, fingerprint[:],
-		round, nextVersion, completed, completionToken).Scan(&result.CreatedAt)
+		round, nextEffectiveTurns, nextVersion, completed, completionToken).Scan(&result.CreatedAt)
 	if err != nil {
 		return practice.TurnResult{}, classifyWriteError(
 			"insert context voice Turn result",
@@ -249,7 +250,7 @@ func (r *Repository) advanceTurnInTransaction(
 		  AND version = $7
 		  AND effective_turns = $8
 		  AND status = $9
-	`, actor.UserID, command.SessionID, nextStatus, nextVersion, round,
+	`, actor.UserID, command.SessionID, nextStatus, nextVersion, nextEffectiveTurns,
 		completed, version, effectiveTurns, status)
 	if err != nil {
 		return practice.TurnResult{},

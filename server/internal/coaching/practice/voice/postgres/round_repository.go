@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -84,10 +85,11 @@ func (r *Repository) SaveQuestion(
 		`INSERT INTO practice_questions (
 			owner_user_id, question_id, practice_session_id,
 			speaker_participant_id, addressee_participant_ids,
-			objective_id, question_type,
+			objective_id, question_type, dialogue_act,
 			parent_question_id, content, sequence, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10, $11
+			$1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''),
+			NULLIF($9, ''), $10, $11, $12
 		) ON CONFLICT (owner_user_id, question_id) DO NOTHING`,
 		actor.UserID,
 		question.ID,
@@ -96,6 +98,7 @@ func (r *Repository) SaveQuestion(
 		question.AddresseeParticipantIDs,
 		question.ObjectiveID,
 		question.Type,
+		question.DialogueAct,
 		question.ParentQuestionID,
 		question.Content,
 		question.Sequence,
@@ -990,6 +993,9 @@ func (r *Repository) confirmTurnInTransaction(
 		turnID := newID("turn")
 		turnKind := practice.TurnKindEffective
 		countsTowardTurnLimit := question.Type == "PRIMARY"
+		if command.AdvanceAuthorized != nil {
+			countsTowardTurnLimit = *command.AdvanceAuthorized
+		}
 		retryRequestID := ""
 		originalTurnID := ""
 		if command.RetryTurnID != "" {
@@ -1002,6 +1008,14 @@ func (r *Repository) confirmTurnInTransaction(
 			countsTowardTurnLimit = false
 			retryRequestID = retryDraft.RetryRequestID
 			originalTurnID = retryDraft.OriginalTurnID
+		}
+		advanceAuthorized := countsTowardTurnLimit
+		var assessmentJSON []byte
+		if command.AnswerAssessment != nil {
+			assessmentJSON, err = json.Marshal(command.AnswerAssessment)
+			if err != nil {
+				return practice.Turn{}, practicevoice.ErrPersistenceInvalid
+			}
 		}
 		turn = practice.Turn{
 			ID:                      turnID,
@@ -1019,6 +1033,9 @@ func (r *Repository) confirmTurnInTransaction(
 			RetryRequestID:          retryRequestID,
 			OriginalTurnID:          originalTurnID,
 			CountsTowardTurnLimit:   countsTowardTurnLimit,
+			AnswerAssessment:        command.AnswerAssessment,
+			AssessmentPolicyVersion: command.AssessmentPolicyVersion,
+			AdvanceAuthorized:       advanceAuthorized,
 			ConfirmedAt:             now,
 			CreatedAt:               now,
 		}
@@ -1030,11 +1047,13 @@ func (r *Repository) confirmTurnInTransaction(
 				addressee_participant_ids, respondent_participant_id,
 				sequence, interaction_mode, answer_text, evidence_version,
 				confirmed_at, created_at, turn_kind, retry_request_id,
-				original_turn_id, counts_toward_effective_turn_limit
+				original_turn_id, counts_toward_effective_turn_limit,
+				answer_assessment, assessment_policy_version,
+				advance_authorized
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
 				$13, $13, $14, NULLIF($15, '')::uuid,
-				NULLIF($16, ''), $17
+				NULLIF($16, ''), $17, $18, NULLIF($19, ''), $20
 			)`,
 			actor.UserID,
 			turn.ID,
@@ -1053,6 +1072,14 @@ func (r *Repository) confirmTurnInTransaction(
 			turn.RetryRequestID,
 			turn.OriginalTurnID,
 			turn.CountsTowardTurnLimit,
+			assessmentJSON,
+			turn.AssessmentPolicyVersion,
+			func() any {
+				if command.AnswerAssessment == nil {
+					return nil
+				}
+				return turn.AdvanceAuthorized
+			}(),
 		)
 		if err != nil {
 			return practice.Turn{}, safeDatabaseError(err)
@@ -1111,7 +1138,14 @@ func validConfirmation(
 	actor practicevoice.Actor,
 	command practicevoice.ConfirmTurnCommand,
 ) bool {
-	return validInputActor(actor) &&
+	assessmentValid := command.AnswerAssessment == nil &&
+		command.AdvanceAuthorized == nil &&
+		strings.TrimSpace(command.AssessmentPolicyVersion) == ""
+	if command.AnswerAssessment != nil {
+		assessmentValid = command.AdvanceAuthorized != nil &&
+			strings.TrimSpace(command.AssessmentPolicyVersion) != ""
+	}
+	return assessmentValid && validInputActor(actor) &&
 		strings.TrimSpace(command.CandidateID) != "" &&
 		command.EvidenceVersion > 0 &&
 		strings.TrimSpace(command.ConfirmedText) != "" &&
@@ -1214,8 +1248,9 @@ type queryRow interface {
 const questionColumns = `SELECT question_id, practice_session_id,
                                 speaker_participant_id,
                                 addressee_participant_ids, objective_id,
-                                question_type,
-                                COALESCE(parent_question_id, ''),
+								question_type,
+								COALESCE(dialogue_act, ''),
+								COALESCE(parent_question_id, ''),
                                 content, sequence, created_at
                          FROM practice_questions`
 
@@ -1243,6 +1278,7 @@ func scanQuestion(row rowScanner) (practice.Question, error) {
 		&question.AddresseeParticipantIDs,
 		&question.ObjectiveID,
 		&question.Type,
+		&question.DialogueAct,
 		&question.ParentQuestionID,
 		&question.Content,
 		&question.Sequence,
@@ -1423,6 +1459,10 @@ const turnColumns = `SELECT turn_id, practice_session_id, question_id,
                             COALESCE(retry_request_id::text, ''),
                             COALESCE(original_turn_id, ''),
                             counts_toward_effective_turn_limit,
+							answer_assessment,
+							COALESCE(assessment_policy_version, ''),
+							COALESCE(advance_authorized,
+							    counts_toward_effective_turn_limit),
 							effective_turns, session_completed,
 							confirmed_at, created_at
                      FROM practice_turns`
@@ -1433,6 +1473,7 @@ type rowScanner interface {
 
 func scanTurn(row rowScanner) (practice.Turn, error) {
 	var turn practice.Turn
+	var assessmentJSON []byte
 	err := row.Scan(
 		&turn.ID,
 		&turn.SessionID,
@@ -1449,6 +1490,9 @@ func scanTurn(row rowScanner) (practice.Turn, error) {
 		&turn.RetryRequestID,
 		&turn.OriginalTurnID,
 		&turn.CountsTowardTurnLimit,
+		&assessmentJSON,
+		&turn.AssessmentPolicyVersion,
+		&turn.AdvanceAuthorized,
 		&turn.EffectiveTurns,
 		&turn.SessionCompleted,
 		&turn.ConfirmedAt,
@@ -1459,6 +1503,13 @@ func scanTurn(row rowScanner) (practice.Turn, error) {
 	}
 	if err != nil {
 		return practice.Turn{}, safeDatabaseError(err)
+	}
+	if len(assessmentJSON) > 0 {
+		var assessment practice.AnswerAssessment
+		if err := json.Unmarshal(assessmentJSON, &assessment); err != nil {
+			return practice.Turn{}, practicevoice.ErrPersistenceInvalid
+		}
+		turn.AnswerAssessment = &assessment
 	}
 	turn.ConfirmedAt = turn.ConfirmedAt.UTC()
 	turn.CreatedAt = turn.CreatedAt.UTC()
@@ -1760,9 +1811,14 @@ func validQuestion(question practice.Question) bool {
 	}
 	switch question.Type {
 	case "PRIMARY":
-		return question.ParentQuestionID == ""
+		return question.ParentQuestionID == "" &&
+			(question.DialogueAct == "" || question.DialogueAct == "TRANSITION")
 	case "FOLLOW_UP":
-		return strings.TrimSpace(question.ParentQuestionID) != ""
+		return strings.TrimSpace(question.ParentQuestionID) != "" &&
+			(question.DialogueAct == "" || question.DialogueAct == "PROBE" ||
+				question.DialogueAct == "REFRAME" ||
+				question.DialogueAct == "ACKNOWLEDGE_AND_PROBE" ||
+				question.DialogueAct == "REPEAT_OR_REPAIR")
 	default:
 		return false
 	}
@@ -1778,6 +1834,7 @@ func sameQuestion(
 		left.SpeakerParticipantID != right.SpeakerParticipantID ||
 		left.ObjectiveID != right.ObjectiveID ||
 		left.Type != right.Type ||
+		left.DialogueAct != right.DialogueAct ||
 		left.ParentQuestionID != right.ParentQuestionID ||
 		left.Content != right.Content ||
 		left.Sequence != right.Sequence ||

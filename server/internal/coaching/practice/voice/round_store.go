@@ -21,6 +21,75 @@ type roundStoreAdapter struct {
 	asrLease   time.Duration
 }
 
+type interviewSessionContextRepository interface {
+	GetSession(
+		context.Context,
+		practice.Actor,
+		string,
+	) (practice.Session, error)
+	GetSessionSnapshot(
+		context.Context,
+		practice.Actor,
+		string,
+	) (practice.SessionSnapshot, error)
+}
+
+func (store *roundStoreAdapter) GetInterviewAnswerContext(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidate TranscriptionCandidate,
+) (InterviewAnswerContext, error) {
+	repository, ok := store.repository.(interviewSessionContextRepository)
+	if !ok {
+		return InterviewAnswerContext{}, nil
+	}
+	practiceActor := practiceActor(actor)
+	session, err := repository.GetSession(ctx, practiceActor, candidate.SessionID)
+	if err != nil {
+		return InterviewAnswerContext{}, mapPersistenceError(err)
+	}
+	snapshot, err := repository.GetSessionSnapshot(ctx, practiceActor, candidate.SessionID)
+	if err != nil {
+		return InterviewAnswerContext{}, mapPersistenceError(err)
+	}
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return InterviewAnswerContext{}, ErrInvalidContext
+	}
+	policy, err := practice.ResolveTurnPolicy(option.TurnPolicyRef)
+	if err != nil {
+		return InterviewAnswerContext{}, ErrInvalidContext
+	}
+	if policy.Kind != practice.TurnPolicyInterview {
+		return InterviewAnswerContext{}, nil
+	}
+	question, err := store.GetVoiceQuestion(
+		ctx,
+		actor,
+		candidate.SessionID,
+		candidate.QuestionID,
+	)
+	if err != nil {
+		return InterviewAnswerContext{}, err
+	}
+	blueprints := snapshot.SceneSelection.Scene.Prompt.TurnBlueprints
+	if len(blueprints) == 0 {
+		return InterviewAnswerContext{}, ErrInvalidContext
+	}
+	blueprintIndex := session.EffectiveTurns
+	if blueprintIndex >= len(blueprints) {
+		blueprintIndex = len(blueprints) - 1
+	}
+	return InterviewAnswerContext{
+		Applicable:       true,
+		Question:         question,
+		Scene:            snapshot.SceneSelection.Scene.Prompt.PublicSceneBrief,
+		PracticeGoal:     snapshot.SceneSelection.Scene.Prompt.PracticeGoal,
+		FocusAreas:       slices.Clone(snapshot.SceneSelection.Scene.Prompt.FocusAreas),
+		CurrentBlueprint: blueprints[blueprintIndex],
+	}, nil
+}
+
 func (store *roundStoreAdapter) GetVoiceQuestion(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -256,11 +325,14 @@ func (store *roundStoreAdapter) ReserveConfirmation(
 		ctx,
 		persistenceActor(actor),
 		ConfirmTurnCommand{
-			CandidateID:     candidate.ID,
-			EvidenceVersion: candidate.EvidenceVersion,
-			ConfirmedText:   candidate.Text,
-			IdempotencyKey:  command.IdempotencyKey,
-			RetryTurnID:     command.RetryTurnID,
+			CandidateID:             candidate.ID,
+			EvidenceVersion:         candidate.EvidenceVersion,
+			ConfirmedText:           candidate.Text,
+			IdempotencyKey:          command.IdempotencyKey,
+			RetryTurnID:             command.RetryTurnID,
+			AdvanceAuthorized:       command.AdvanceAuthorized,
+			AnswerAssessment:        command.AnswerAssessment,
+			AssessmentPolicyVersion: command.AssessmentPolicyVersion,
 		},
 	)
 	if err != nil {
@@ -293,11 +365,14 @@ func (store *roundStoreAdapter) ReserveRecordingConfirmation(
 			ctx,
 			persistenceActor(actor),
 			ConfirmTurnCommand{
-				CandidateID:     candidate.ID,
-				EvidenceVersion: candidate.EvidenceVersion,
-				ConfirmedText:   candidate.Text,
-				IdempotencyKey:  command.IdempotencyKey,
-				RetryTurnID:     command.RetryTurnID,
+				CandidateID:             candidate.ID,
+				EvidenceVersion:         candidate.EvidenceVersion,
+				ConfirmedText:           candidate.Text,
+				IdempotencyKey:          command.IdempotencyKey,
+				RetryTurnID:             command.RetryTurnID,
+				AdvanceAuthorized:       command.AdvanceAuthorized,
+				AnswerAssessment:        command.AnswerAssessment,
+				AssessmentPolicyVersion: command.AssessmentPolicyVersion,
 			},
 			uploadRequestID,
 		)
@@ -369,6 +444,7 @@ func mapVoiceQuestion(
 		ID:                      question.ID,
 		SessionID:               question.SessionID,
 		Type:                    question.Type,
+		DialogueAct:             question.DialogueAct,
 		ParentQuestionID:        question.ParentQuestionID,
 		Content:                 question.Content,
 		SpeakerParticipantID:    question.SpeakerParticipantID,

@@ -147,7 +147,10 @@ type ConfirmTurnCommand struct {
 	IdempotencyKey  string
 	// RetryTurnID is the Practice Voice ANSWERING draft to confirm.
 	// Empty means the ordinary EFFECTIVE Turn path.
-	RetryTurnID string
+	RetryTurnID             string
+	AdvanceAuthorized       *bool
+	AnswerAssessment        *practice.AnswerAssessment
+	AssessmentPolicyVersion string
 }
 
 // RecordingConfirmationStore is the narrow Practice Voice transaction

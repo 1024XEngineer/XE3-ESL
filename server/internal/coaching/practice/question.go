@@ -12,6 +12,7 @@ type Question struct {
 	AddresseeParticipantIDs []string  `json:"addressee_participant_ids"`
 	ObjectiveID             string    `json:"objective_id"`
 	Type                    string    `json:"question_type"`
+	DialogueAct             string    `json:"-"`
 	ParentQuestionID        string    `json:"parent_question_id,omitempty"`
 	Content                 string    `json:"content"`
 	Sequence                int       `json:"sequence"`

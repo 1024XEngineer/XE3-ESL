@@ -77,7 +77,7 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 			Type: "PRIMARY",
 		}}
 		generator := &turnPolicyQuestionGenerator{
-			response: `{"question_type":"FOLLOW_UP","content":"What changed after launch?"}`,
+			response: `{"dialogue_act":"ACKNOWLEDGE_AND_PROBE","content":"What changed after launch?"}`,
 		}
 		session := sessionFixture()
 		session.TurnPolicyRef = practice.InterviewProjectDeepDiveTurnPolicy
@@ -86,6 +86,9 @@ func TestQuestionAdapterRoutesByTurnPolicyReference(t *testing.T) {
 		session.EffectiveTurns = 1
 		session.PreviousQuestion = "What did you deliver?"
 		session.PreviousUserResponse = "I led the launch."
+		session.PreviousAnswerAssessment = &practice.AnswerAssessment{
+			Progress: "EMERGING",
+		}
 		session.Prompt.TurnBlueprints = []string{"Open", "Explore impact"}
 
 		question, err := (&questionAdapter{

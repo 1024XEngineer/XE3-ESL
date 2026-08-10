@@ -81,6 +81,7 @@ func NewRuntimeApplications(
 		configuration.Recognizer,
 		configuration.Synthesizer,
 		configuration.Recordings,
+		configuration.QuestionGenerator,
 	)
 	if err != nil {
 		return nil, nil, err

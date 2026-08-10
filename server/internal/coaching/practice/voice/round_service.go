@@ -94,9 +94,12 @@ type FailTranscriptionCommand struct {
 }
 
 type ReserveConfirmationCommand struct {
-	CandidateID    string
-	IdempotencyKey string
-	RetryTurnID    string
+	CandidateID             string
+	IdempotencyKey          string
+	RetryTurnID             string
+	AdvanceAuthorized       *bool
+	AnswerAssessment        *practice.AnswerAssessment
+	AssessmentPolicyVersion string
 }
 
 // VoiceRoundStore is owned by Practice Voice. Implementations must scope every
@@ -183,12 +186,13 @@ type TemporaryAudioVault interface {
 }
 
 type VoiceRoundService struct {
-	store       VoiceRoundStore
-	vault       TemporaryAudioVault
-	recognizer  SpeechRecognizer
-	synthesizer SpeechSynthesizer
-	recordings  VoiceRecordingLifecycle
-	now         func() time.Time
+	store           VoiceRoundStore
+	vault           TemporaryAudioVault
+	recognizer      SpeechRecognizer
+	synthesizer     SpeechSynthesizer
+	recordings      VoiceRecordingLifecycle
+	answerEvaluator QuestionGenerator
+	now             func() time.Time
 }
 
 func NewVoiceRoundService(
@@ -212,9 +216,14 @@ func NewVoiceRoundServiceWithRecordings(
 	recognizer SpeechRecognizer,
 	synthesizer SpeechSynthesizer,
 	recordings VoiceRecordingLifecycle,
+	answerEvaluators ...QuestionGenerator,
 ) (*VoiceRoundService, error) {
 	if store == nil || vault == nil || recognizer == nil || synthesizer == nil {
 		return nil, errors.New("practice voice: round dependencies are required")
+	}
+	if len(answerEvaluators) > 1 ||
+		(len(answerEvaluators) == 1 && answerEvaluators[0] == nil) {
+		return nil, errors.New("practice voice: invalid answer evaluator")
 	}
 	if recordings != nil {
 		if _, ok := store.(VoiceRecordingConfirmationStore); !ok {
@@ -223,14 +232,18 @@ func NewVoiceRoundServiceWithRecordings(
 			)
 		}
 	}
-	return &VoiceRoundService{
+	service := &VoiceRoundService{
 		store:       store,
 		vault:       vault,
 		recognizer:  recognizer,
 		synthesizer: synthesizer,
 		recordings:  recordings,
 		now:         time.Now,
-	}, nil
+	}
+	if len(answerEvaluators) == 1 {
+		service.answerEvaluator = answerEvaluators[0]
+	}
+	return service, nil
 }
 
 type TranscribeVoiceCommand struct {
@@ -613,9 +626,12 @@ func (service *VoiceRoundService) failTranscription(
 }
 
 type ConfirmVoiceTurnCommand struct {
-	CandidateID    string
-	IdempotencyKey string
-	RetryTurnID    string
+	CandidateID             string
+	IdempotencyKey          string
+	RetryTurnID             string
+	AdvanceAuthorized       *bool
+	AnswerAssessment        *practice.AnswerAssessment
+	AssessmentPolicyVersion string
 }
 
 func (service *VoiceRoundService) Confirm(
@@ -635,6 +651,16 @@ func (service *VoiceRoundService) Confirm(
 	)
 	if err != nil {
 		return practice.Turn{}, err
+	}
+	if command.RetryTurnID == "" {
+		assessment, advanceAuthorized, assessmentVersion, assessmentErr :=
+			service.assessInterviewAnswer(ctx, actor, candidate)
+		if assessmentErr != nil {
+			return practice.Turn{}, assessmentErr
+		}
+		command.AnswerAssessment = assessment
+		command.AdvanceAuthorized = advanceAuthorized
+		command.AssessmentPolicyVersion = assessmentVersion
 	}
 	if service.recordings != nil {
 		result, err := service.store.(VoiceRecordingConfirmationStore).
@@ -660,9 +686,12 @@ func (service *VoiceRoundService) Confirm(
 		ctx,
 		actor,
 		ReserveConfirmationCommand{
-			CandidateID:    candidate.ID,
-			IdempotencyKey: command.IdempotencyKey,
-			RetryTurnID:    command.RetryTurnID,
+			CandidateID:             candidate.ID,
+			IdempotencyKey:          command.IdempotencyKey,
+			RetryTurnID:             command.RetryTurnID,
+			AdvanceAuthorized:       command.AdvanceAuthorized,
+			AnswerAssessment:        command.AnswerAssessment,
+			AssessmentPolicyVersion: command.AssessmentPolicyVersion,
 		},
 	)
 	if err != nil {
@@ -689,13 +718,26 @@ func (service *VoiceRoundService) ConfirmText(
 	if err != nil {
 		return practice.Turn{}, err
 	}
+	var assessment *practice.AnswerAssessment
+	var advanceAuthorized *bool
+	assessmentVersion := ""
+	if command.RetryTurnID == "" {
+		assessment, advanceAuthorized, assessmentVersion, err =
+			service.assessInterviewAnswer(ctx, actor, candidate)
+		if err != nil {
+			return practice.Turn{}, err
+		}
+	}
 	turn, err := service.store.ReserveConfirmation(
 		ctx,
 		actor,
 		ReserveConfirmationCommand{
-			CandidateID:    candidate.ID,
-			IdempotencyKey: command.IdempotencyKey,
-			RetryTurnID:    command.RetryTurnID,
+			CandidateID:             candidate.ID,
+			IdempotencyKey:          command.IdempotencyKey,
+			RetryTurnID:             command.RetryTurnID,
+			AdvanceAuthorized:       advanceAuthorized,
+			AnswerAssessment:        assessment,
+			AssessmentPolicyVersion: assessmentVersion,
 		},
 	)
 	if err != nil {
