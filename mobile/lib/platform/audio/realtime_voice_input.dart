@@ -36,15 +36,23 @@ final class RealtimeVoiceInputTransport {
     required String idempotencyKey,
     required void Function() ensureCurrent,
     int maximumChunkBytes = 7_400_000,
+    Set<String> terminalEventTypes = const <String>{
+      'candidate.ready',
+      'candidate.failed',
+    },
   }) async* {
     if (idempotencyKey.length < 8 ||
         idempotencyKey.length > 128 ||
-        maximumChunkBytes < 1) {
+        maximumChunkBytes < 1 ||
+        terminalEventTypes.isEmpty ||
+        terminalEventTypes.any((type) => type.isEmpty || type.length > 64)) {
       throw ArgumentError('Realtime voice input configuration is invalid.');
     }
     SessionAuthenticatedWebSocketConnection? connection;
     StreamIterator<Uint8List>? chunks;
     Future<void>? sender;
+    final senderControl = _RealtimeVoiceInputSenderControl();
+    var receivedTerminalEvent = false;
     try {
       connection = await connector.connect(uri: uri);
       ensureCurrent();
@@ -61,17 +69,19 @@ final class RealtimeVoiceInputTransport {
         chunks: chunks,
         ensureCurrent: ensureCurrent,
         maximumChunkBytes: maximumChunkBytes,
+        control: senderControl,
       );
-      var receivedTerminalEvent = false;
       await for (final message in connection.socket) {
         ensureCurrent();
         final envelope = _decodeEnvelope(message);
         yield envelope;
-        if (envelope.type == 'candidate.ready' ||
-            envelope.type == 'candidate.failed') {
+        if (terminalEventTypes.contains(envelope.type)) {
           receivedTerminalEvent = true;
           break;
         }
+      }
+      if (receivedTerminalEvent) {
+        senderControl.stop();
       }
       await chunks.cancel();
       await sender;
@@ -96,6 +106,13 @@ final class RealtimeVoiceInputTransport {
         RealtimeVoiceInputFailureKind.invalidResponse,
       );
     } finally {
+      if (connection != null) {
+        if (receivedTerminalEvent) {
+          senderControl.stop();
+        } else {
+          senderControl.cancel(connection);
+        }
+      }
       await chunks?.cancel();
       if (sender != null) {
         try {
@@ -115,9 +132,13 @@ Future<void> _sendAudio({
   required StreamIterator<Uint8List> chunks,
   required void Function() ensureCurrent,
   required int maximumChunkBytes,
+  required _RealtimeVoiceInputSenderControl control,
 }) async {
   try {
     while (await chunks.moveNext()) {
+      if (control.stopped) {
+        return;
+      }
       ensureCurrent();
       final chunk = chunks.current;
       if (chunk.isEmpty || chunk.lengthInBytes > maximumChunkBytes) {
@@ -125,18 +146,48 @@ Future<void> _sendAudio({
       }
       connection.socket.add(chunk);
     }
+    if (control.stopped) {
+      return;
+    }
     ensureCurrent();
+    if (control.stopped) {
+      return;
+    }
     connection.socket.add(jsonEncode(const <String, String>{'type': 'finish'}));
   } catch (error, stackTrace) {
     try {
-      connection.socket.add(
-        jsonEncode(const <String, String>{'type': 'cancel'}),
-      );
+      control.cancel(connection);
       await connection.socket.close();
     } catch (_) {
       // Preserve the capture or account-fence failure that ended the stream.
     }
     Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
+final class _RealtimeVoiceInputSenderControl {
+  bool _stopped = false;
+  bool _cancelSent = false;
+
+  bool get stopped => _stopped;
+
+  void stop() {
+    _stopped = true;
+  }
+
+  void cancel(SessionAuthenticatedWebSocketConnection connection) {
+    _stopped = true;
+    if (_cancelSent) {
+      return;
+    }
+    _cancelSent = true;
+    try {
+      connection.socket.add(
+        jsonEncode(const <String, String>{'type': 'cancel'}),
+      );
+    } catch (_) {
+      // Closing the socket below still cancels the server-side workflow.
+    }
   }
 }
 

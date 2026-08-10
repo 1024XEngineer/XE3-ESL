@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
@@ -162,6 +163,252 @@ void main() {
       'type': 'finish',
     });
   });
+
+  test(
+    'decodes ephemeral voice-to-text events from the frozen endpoint',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final received = <Object>[];
+      final handled = Completer<void>();
+      server.listen((request) async {
+        expect(
+          request.uri.path,
+          '/v1/agent-threads/$_threadId/voice-transcriptions/realtime',
+        );
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer sess_voice',
+        );
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (protocols) {
+            expect(protocols, contains('speakup.voice-input.v1'));
+            return 'speakup.voice-input.v1';
+          },
+        );
+        await for (final message in socket) {
+          received.add(message);
+          if (received.length == 1) {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.updated',
+                'data': <String, Object>{
+                  'transcript': 'Partial answer',
+                  'final': false,
+                },
+              }),
+            );
+          }
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'finish') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.completed',
+                'data': <String, Object>{
+                  'transcript': 'Completed answer',
+                  'final': true,
+                },
+              }),
+            );
+            await socket.close();
+            handled.complete();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+
+      final events = await client
+          .transcribeRealtime(
+            threadId: _threadId,
+            audioChunks: Stream<Uint8List>.value(
+              Uint8List.fromList(const <int>[1, 0, 2, 0]),
+            ),
+            idempotencyKey: 'voice_input_001',
+          )
+          .toList();
+      await handled.future;
+
+      expect(events, hasLength(3));
+      expect(events[0], isA<AgentVoiceInputStarted>());
+      expect(
+        (events[1] as AgentVoiceInputUpdated).transcript,
+        'Partial answer',
+      );
+      expect(
+        (events[2] as AgentVoiceInputCompleted).transcript,
+        'Completed answer',
+      );
+      expect(jsonDecode(received.first as String), <String, Object?>{
+        'type': 'start',
+        'idempotency_key': 'voice_input_001',
+        'sample_rate': 16000,
+      });
+      expect(received[1], <int>[1, 0, 2, 0]);
+      expect(jsonDecode(received.last as String), <String, Object?>{
+        'type': 'finish',
+      });
+    },
+  );
+
+  test(
+    'rejects a completed voice transcript unless final is exactly true',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final handled = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        await for (final message in socket) {
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'start') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+          }
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'finish') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.completed',
+                'data': <String, Object>{
+                  'transcript': 'Not terminal',
+                  'final': false,
+                },
+              }),
+            );
+            await socket.close();
+            handled.complete();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+
+      await expectLater(
+        client.transcribeRealtime(
+          threadId: _threadId,
+          audioChunks: Stream<Uint8List>.value(
+            Uint8List.fromList(const <int>[1, 0]),
+          ),
+          idempotencyKey: 'voice_input_002',
+        ),
+        emitsInOrder(<Object>[
+          isA<AgentVoiceInputStarted>(),
+          emitsError(
+            isA<AgentClientException>().having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.invalidResponse,
+            ),
+          ),
+        ]),
+      );
+      await handled.future;
+    },
+  );
+
+  test(
+    'cancelling ephemeral transcription sends cancel instead of finish',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final receivedTypes = <String>[];
+      final handled = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        await for (final message in socket) {
+          if (message is! String) {
+            continue;
+          }
+          final type = (jsonDecode(message) as Map<String, dynamic>)['type'];
+          if (type is! String) {
+            continue;
+          }
+          receivedTypes.add(type);
+          if (type == 'start') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+          } else if (type == 'cancel') {
+            if (!handled.isCompleted) {
+              handled.complete();
+            }
+            await socket.close();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+      final audio = StreamController<Uint8List>();
+      addTearDown(audio.close);
+      final started = Completer<void>();
+      final subscription = client
+          .transcribeRealtime(
+            threadId: _threadId,
+            audioChunks: audio.stream,
+            idempotencyKey: 'voice_input_003',
+          )
+          .listen((event) {
+            if (event is AgentVoiceInputStarted && !started.isCompleted) {
+              started.complete();
+            }
+          });
+
+      await started.future.timeout(const Duration(seconds: 2));
+      await subscription.cancel();
+      await handled.future.timeout(const Duration(seconds: 2));
+
+      expect(
+        receivedTypes,
+        containsAllInOrder(const <String>['start', 'cancel']),
+      );
+      expect(receivedTypes, isNot(contains('finish')));
+    },
+  );
 
   test('confirms one voice Message with exact strict JSON', () async {
     final transport = _ScriptedVoiceTransport([

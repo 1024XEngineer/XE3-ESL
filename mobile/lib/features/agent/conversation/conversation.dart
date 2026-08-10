@@ -10,8 +10,7 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/composer/agent_composer.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
 import 'package:speakup/features/agent/composer/pending_image_strip.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
@@ -107,7 +106,7 @@ class ConversationPage extends StatefulWidget {
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
   final VoidCallback? onLoadEarlierMessages;
-  final AgentVoiceController? voiceController;
+  final AgentVoiceInputController? voiceController;
   final AgentMessageAudioController? messageAudioController;
   final ConversationMessageTranslator? onTranslateMessage;
   final List<AgentPendingImage> pendingImages;
@@ -142,12 +141,7 @@ class ConversationPage extends StatefulWidget {
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
-    final voiceShowsReplyProgress = switch (voiceController?.state) {
-      AgentVoiceComposerState.confirming ||
-      AgentVoiceComposerState.awaitingAssistant => true,
-      _ => false,
-    };
-    final replyPending = isBusy || voiceShowsReplyProgress;
+    final replyPending = isBusy;
     const topContentInset = 65.0;
     const topOverlayExtent = 76.0;
     final bottomOverlayExtent = composerBottom + composerHeight + 16;
@@ -285,7 +279,7 @@ class ConversationPage extends StatefulWidget {
                                   : null,
                             ),
                           ],
-                          if (isBusy && !voiceShowsReplyProgress) ...[
+                          if (isBusy) ...[
                             const SizedBox(height: 14),
                             Center(
                               child: Semantics(
@@ -591,14 +585,7 @@ class _ConversationPageState extends State<ConversationPage> {
       if (!mounted) {
         return;
       }
-      final keepLatestVisible = _isNearLatest();
-      final voiceState = widget.voiceController?.state;
       setState(() {});
-      if (voiceState == AgentVoiceComposerState.awaitingAssistant ||
-          (keepLatestVisible &&
-              voiceState == AgentVoiceComposerState.confirming)) {
-        _scheduleScrollToLatest();
-      }
     });
   }
 

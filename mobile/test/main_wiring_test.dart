@@ -170,7 +170,6 @@ void main() {
       final practiceMediaClient = _TrackingPracticeMediaClient();
       final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
       final agentVoiceRecorder = _TrackingAgentVoiceRecorder();
-      final agentComposerAudioPlayer = _TrackingAgentAudioPlayer();
       final agentMessageAudioPlayer = _TrackingAgentAudioPlayer();
       final dependencies = production.createProductionAppDependencies(
         baseUri: Uri.parse('https://api.speak-up.test'),
@@ -182,7 +181,6 @@ void main() {
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
         agentVoiceRecorder: agentVoiceRecorder,
-        agentComposerAudioPlayer: agentComposerAudioPlayer,
         agentMessageAudioPlayer: agentMessageAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
@@ -224,10 +222,6 @@ void main() {
       expect(
         dependencies.composerController.voiceController?.recorder,
         same(agentVoiceRecorder),
-      );
-      expect(
-        dependencies.composerController.voiceController?.audioPlayer,
-        same(agentComposerAudioPlayer),
       );
       expect(
         dependencies.messageAudioController.audioPlayer,
@@ -306,7 +300,6 @@ void main() {
         isTrue,
       );
       expect(agentVoiceRecorder.clearCount, 0);
-      expect(agentComposerAudioPlayer.clearCount, 0);
       expect(agentMessageAudioPlayer.clearCount, 0);
 
       await dependencies.preparationController.loadIfNeeded();
@@ -378,8 +371,7 @@ void main() {
       expect(practiceRecorder.clearCount, 1);
       expect(practiceMediaClient.clearCount, 1);
       expect(practiceAudioPlayer.clearCount, 2);
-      expect(agentVoiceRecorder.clearCount, 2);
-      expect(agentComposerAudioPlayer.clearCount, 2);
+      expect(agentVoiceRecorder.clearCount, 1);
       expect(agentMessageAudioPlayer.clearCount, 2);
 
       reviewHistoryTransport.completeWithReview();
@@ -470,7 +462,6 @@ void main() {
       final practiceMediaClient = _TrackingPracticeMediaClient();
       final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
       final agentVoiceRecorder = _TrackingAgentVoiceRecorder();
-      final agentComposerAudioPlayer = _TrackingAgentAudioPlayer();
       final agentMessageAudioPlayer = _TrackingAgentAudioPlayer();
       final launchRecordStore = _FailingPracticeLaunchRecordStore();
       final dependencies = production.createProductionAppDependencies(
@@ -480,7 +471,6 @@ void main() {
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
         agentVoiceRecorder: agentVoiceRecorder,
-        agentComposerAudioPlayer: agentComposerAudioPlayer,
         agentMessageAudioPlayer: agentMessageAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
@@ -512,7 +502,6 @@ void main() {
       expect(dependencies.conversationController.threadId, isNull);
       expect(dependencies.conversationController.messages, isEmpty);
       expect(agentVoiceRecorder.clearCount, greaterThan(0));
-      expect(agentComposerAudioPlayer.clearCount, greaterThan(0));
       expect(agentMessageAudioPlayer.clearCount, greaterThan(0));
       expect(practiceRecorder.clearCount, greaterThan(0));
       expect(practiceMediaClient.clearCount, greaterThan(0));

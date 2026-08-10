@@ -27,6 +27,13 @@ abstract interface class AgentVoiceStreamingRecorder {
   Future<AgentVoiceLocalRecording> stopAudioStream();
 }
 
+/// Streams ephemeral voice input without materializing a local WAV file.
+abstract interface class AgentVoiceEphemeralStreamingRecorder {
+  Future<Stream<Uint8List>> startAudioStream();
+
+  Future<void> stopAudioStreamAndDiscard();
+}
+
 final class AgentVoiceRecordingException implements Exception {
   const AgentVoiceRecordingException(this.kind);
 
@@ -98,7 +105,10 @@ final class RecordNativeAgentVoiceRecorder implements NativeAgentVoiceRecorder {
 typedef AgentVoiceClock = DateTime Function();
 
 final class IosAgentVoiceRecorder
-    implements AgentVoiceRecorder, AgentVoiceStreamingRecorder {
+    implements
+        AgentVoiceRecorder,
+        AgentVoiceStreamingRecorder,
+        AgentVoiceEphemeralStreamingRecorder {
   IosAgentVoiceRecorder({
     NativeAgentVoiceRecorder? recorder,
     Future<Directory> Function()? temporaryDirectory,
@@ -116,6 +126,7 @@ final class IosAgentVoiceRecorder
   final Future<Directory> Function() _temporaryDirectory;
   final AgentVoiceClock _clock;
   final Random _random = Random.secure();
+  final Set<String> _pendingDeletionPaths = <String>{};
   String? _activePath;
   DateTime? _startedAt;
   Pcm16StreamCapture? _streamCapture;
@@ -127,6 +138,7 @@ final class IosAgentVoiceRecorder
         AgentVoiceRecordingFailureKind.alreadyRecording,
       );
     }
+    await _retryPendingDeletions();
     if (!await _recorder.hasPermission()) {
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.permissionDenied,
@@ -155,6 +167,7 @@ final class IosAgentVoiceRecorder
         AgentVoiceRecordingFailureKind.alreadyRecording,
       );
     }
+    await _retryPendingDeletions();
     if (!await _recorder.hasPermission()) {
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.permissionDenied,
@@ -290,12 +303,45 @@ final class IosAgentVoiceRecorder
   }
 
   @override
+  Future<void> stopAudioStreamAndDiscard() async {
+    final path = _activePath;
+    final startedAt = _startedAt;
+    final capture = _streamCapture;
+    if (path == null || startedAt == null || capture == null) {
+      throw const AgentVoiceRecordingException(
+        AgentVoiceRecordingFailureKind.notRecording,
+      );
+    }
+    _activePath = null;
+    _startedAt = null;
+    try {
+      await _recorder.stop();
+      await capture.finishAndDiscard();
+    } on Pcm16StreamCaptureException catch (error) {
+      await capture.cancel();
+      throw AgentVoiceRecordingException(_mapStreamFailure(error.kind));
+    } on AgentVoiceRecordingException {
+      await capture.cancel();
+      rethrow;
+    } catch (_) {
+      await capture.cancel();
+      throw const AgentVoiceRecordingException(
+        AgentVoiceRecordingFailureKind.unavailable,
+      );
+    } finally {
+      _clearStreamingState();
+      await _deletePath(path);
+    }
+  }
+
+  @override
   Future<void> discardCurrent() async {
     final path = _activePath;
     final capture = _streamCapture;
     _activePath = null;
     _startedAt = null;
     if (path == null) {
+      await _retryPendingDeletions();
       return;
     }
     await capture?.cancel();
@@ -334,6 +380,7 @@ final class IosAgentVoiceRecorder
   @override
   Future<void> clearAccountState() async {
     await discardCurrent();
+    await _retryPendingDeletions();
     final directory = await _managedDirectory(create: false);
     if (!await directory.exists()) {
       return;
@@ -379,15 +426,23 @@ final class IosAgentVoiceRecorder
   }
 
   Future<void> _deletePath(String path) async {
+    _pendingDeletionPaths.add(path);
     try {
       final file = File(path);
       if (await file.exists()) {
         await file.delete();
       }
+      _pendingDeletionPaths.remove(path);
     } on FileSystemException {
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.unavailable,
       );
+    }
+  }
+
+  Future<void> _retryPendingDeletions() async {
+    for (final path in _pendingDeletionPaths.toList(growable: false)) {
+      await _deletePath(path);
     }
   }
 }
@@ -455,6 +510,79 @@ final class FakeAgentVoiceRecorder implements AgentVoiceRecorder {
 
   @override
   Future<void> discard(AgentVoiceLocalRecording recording) async {}
+
+  @override
+  Future<void> clearAccountState() => discardCurrent();
+}
+
+final class FakeAgentVoiceStreamingRecorder
+    implements
+        AgentVoiceRecorder,
+        AgentVoiceStreamingRecorder,
+        AgentVoiceEphemeralStreamingRecorder {
+  FakeAgentVoiceStreamingRecorder({
+    AgentVoiceRecordingFailureKind? failure,
+    Duration recordingDuration = const Duration(seconds: 3),
+  }) : _recorder = FakeAgentVoiceRecorder(
+         failure: failure,
+         recordingDuration: recordingDuration,
+       );
+
+  final FakeAgentVoiceRecorder _recorder;
+  StreamController<Uint8List>? _audioChunks;
+
+  AgentVoiceRecordingFailureKind? get failure => _recorder.failure;
+
+  set failure(AgentVoiceRecordingFailureKind? value) {
+    _recorder.failure = value;
+  }
+
+  @override
+  Future<void> start() => _recorder.start();
+
+  @override
+  Future<Stream<Uint8List>> startAudioStream() async {
+    await _recorder.start();
+    final chunks = StreamController<Uint8List>();
+    _audioChunks = chunks;
+    scheduleMicrotask(() {
+      if (identical(_audioChunks, chunks) && !chunks.isClosed) {
+        chunks.add(Uint8List.fromList(const <int>[1, 0, 2, 0]));
+      }
+    });
+    return chunks.stream;
+  }
+
+  @override
+  Future<AgentVoiceLocalRecording> stop() => _recorder.stop();
+
+  @override
+  Future<AgentVoiceLocalRecording> stopAudioStream() async {
+    final chunks = _audioChunks;
+    _audioChunks = null;
+    await chunks?.close();
+    return _recorder.stop();
+  }
+
+  @override
+  Future<void> stopAudioStreamAndDiscard() async {
+    final chunks = _audioChunks;
+    _audioChunks = null;
+    await chunks?.close();
+    await _recorder.stop();
+  }
+
+  @override
+  Future<void> discardCurrent() async {
+    final chunks = _audioChunks;
+    _audioChunks = null;
+    await chunks?.close();
+    await _recorder.discardCurrent();
+  }
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) =>
+      _recorder.discard(recording);
 
   @override
   Future<void> clearAccountState() => discardCurrent();
