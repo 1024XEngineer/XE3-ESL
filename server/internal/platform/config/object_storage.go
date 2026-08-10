@@ -11,6 +11,9 @@ import (
 )
 
 const (
+	ObjectStorageProviderAliyunOSS = "aliyun_oss"
+	ObjectStorageProviderQiniuKodo = "qiniu_kodo"
+
 	defaultAudioStoragePrefix  = "audio/v1"
 	defaultImageStoragePrefix  = "image/v1"
 	defaultResumeStoragePrefix = "resume/v1"
@@ -27,6 +30,7 @@ const (
 
 var (
 	ErrObjectStorageEnabledInvalid = errors.New("OSS_ENABLED must be 0, 1, false, or true")
+	ErrObjectStorageProvider       = errors.New("OBJECT_STORAGE_PROVIDER must be aliyun_oss or qiniu_kodo")
 	ErrObjectStorageRegionRequired = errors.New("OSS_REGION is required when object storage is enabled")
 	ErrObjectStorageEndpoint       = errors.New("OSS_ENDPOINT must be an HTTPS origin without credentials, query, or fragment")
 	ErrObjectStorageBucketRequired = errors.New("OSS_BUCKET is required when object storage is enabled")
@@ -34,6 +38,9 @@ var (
 	ErrObjectStorageSignedURLTTL   = errors.New("OSS_SIGNED_URL_TTL must be positive and no greater than 2m")
 	ErrObjectStorageCredentials    = errors.New("OSS_CREDENTIALS_PROVIDER must be ecs_role or environment")
 	ErrObjectStorageRAMRoleName    = errors.New("OSS_RAM_ROLE_NAME must be a valid RAM role name and is only allowed with ecs_role")
+	ErrObjectStorageDomain         = errors.New("QINIU_KODO_DOMAIN must be an HTTPS origin without credentials, query, or fragment")
+	ErrObjectStorageQiniuBucket    = errors.New("QINIU_KODO_BUCKET is required when Qiniu Kodo is enabled")
+	ErrObjectStorageEncryption     = errors.New("QINIU_KODO_SERVER_SIDE_ENCRYPTION must be 1 or true when Qiniu Kodo is enabled")
 )
 
 var ramRoleNamePattern = regexp.MustCompile(`\A[A-Za-z0-9.@_-]{1,64}\z`)
@@ -42,16 +49,19 @@ var ramRoleNamePattern = regexp.MustCompile(`\A[A-Za-z0-9.@_-]{1,64}\z`)
 // Access credentials stay in the SDK credential provider so Config values can
 // be logged during local debugging without disclosing an AccessKey secret.
 type ObjectStorageConfig struct {
-	Enabled             bool
-	Region              string
-	Endpoint            string
-	Bucket              string
-	AudioPrefix         string
-	ImagePrefix         string
-	ResumePrefix        string
-	SignedURLTTL        time.Duration
-	CredentialsProvider ObjectStorageCredentialsProvider
-	RAMRoleName         string
+	Enabled              bool
+	Provider             string
+	Region               string
+	Endpoint             string
+	Bucket               string
+	Domain               string
+	ServerSideEncryption bool
+	AudioPrefix          string
+	ImagePrefix          string
+	ResumePrefix         string
+	SignedURLTTL         time.Duration
+	CredentialsProvider  ObjectStorageCredentialsProvider
+	RAMRoleName          string
 }
 
 // LoadObjectStorage reads and validates the server-only OSS configuration.
@@ -63,7 +73,11 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	}
 
 	config := ObjectStorageConfig{
-		Enabled:      enabled,
+		Enabled: enabled,
+		Provider: strings.ToLower(strings.TrimSpace(valueOrDefault(
+			"OBJECT_STORAGE_PROVIDER",
+			ObjectStorageProviderAliyunOSS,
+		))),
 		Region:       strings.TrimSpace(os.Getenv("OSS_REGION")),
 		Endpoint:     strings.TrimSpace(os.Getenv("OSS_ENDPOINT")),
 		Bucket:       strings.TrimSpace(os.Getenv("OSS_BUCKET")),
@@ -115,6 +129,31 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	if !config.Enabled {
 		return config, nil
 	}
+	if config.Provider == ObjectStorageProviderQiniuKodo {
+		config.Region = ""
+		config.Endpoint = ""
+		config.Bucket = strings.TrimSpace(os.Getenv("QINIU_KODO_BUCKET"))
+		config.Domain = strings.TrimSpace(os.Getenv("QINIU_KODO_DOMAIN"))
+		// Kodo's bucket-info API does not expose the console-level encryption
+		// switch. Require an explicit operator attestation so startup fails
+		// closed until bucket-level AES-256 encryption has been enabled.
+		config.ServerSideEncryption = enabledValue(
+			os.Getenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION"),
+		)
+		if config.Bucket == "" {
+			return ObjectStorageConfig{}, ErrObjectStorageQiniuBucket
+		}
+		if err := validateQiniuDomain(config.Domain); err != nil {
+			return ObjectStorageConfig{}, err
+		}
+		if !config.ServerSideEncryption {
+			return ObjectStorageConfig{}, ErrObjectStorageEncryption
+		}
+		return config, nil
+	}
+	if config.Provider != ObjectStorageProviderAliyunOSS {
+		return ObjectStorageConfig{}, ErrObjectStorageProvider
+	}
 	switch config.CredentialsProvider {
 	case ObjectStorageCredentialsECSRole:
 		if config.RAMRoleName != "" &&
@@ -140,6 +179,29 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	}
 
 	return config, nil
+}
+
+func enabledValue(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateQiniuDomain(raw string) error {
+	domain, err := url.Parse(raw)
+	if err != nil ||
+		domain.Scheme != "https" ||
+		domain.Host == "" ||
+		(domain.Path != "" && domain.Path != "/") ||
+		domain.User != nil ||
+		domain.RawQuery != "" ||
+		domain.Fragment != "" {
+		return ErrObjectStorageDomain
+	}
+	return nil
 }
 
 func parseObjectStorageEnabled(raw string) (bool, error) {

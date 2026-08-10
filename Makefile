@@ -15,6 +15,7 @@ SHELL := /bin/bash
 	check-go-vet \
 	check-go-test \
 	check-oss-live \
+	check-kodo-live \
 	check-resume-ocr-live \
 	check-api \
 	check-api-dependencies \
@@ -31,6 +32,7 @@ help:
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
+		'  make check-kodo-live Run the real Kodo lifecycle test with exported QINIU_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-smoke    Run the deterministic Mock main flow' \
@@ -101,6 +103,42 @@ check-oss-live:
 .PHONY: check-oss-live-go
 check-oss-live-go:
 	cd server && go test -count=1 -run '^TestLiveObjectLifecycle$$' ./internal/platform/objectstore/ossstore
+
+check-kodo-live:
+	@set -euo pipefail; \
+	required=(OSS_ENABLED OBJECT_STORAGE_PROVIDER QINIU_KODO_BUCKET QINIU_KODO_DOMAIN QINIU_KODO_SERVER_SIDE_ENCRYPTION QINIU_ACCESS_KEY QINIU_SECRET_KEY KODO_LIVE_TEST); \
+	missing=(); \
+	for name in "$${required[@]}"; do \
+		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
+	done; \
+	if (( $${#missing[@]} > 0 )); then \
+		printf '%s\n' 'This target intentionally does not load or execute .env.'; \
+		printf 'Export the required Kodo variables before running this target. Missing:'; \
+		printf ' %s' "$${missing[@]}"; \
+		printf '\n'; \
+		exit 1; \
+	fi; \
+	if [[ "$${OSS_ENABLED}" != "1" && "$${OSS_ENABLED}" != "true" ]]; then \
+		printf '%s\n' 'Set and export OSS_ENABLED=1 for the real Kodo lifecycle test.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${OBJECT_STORAGE_PROVIDER}" != "qiniu_kodo" ]]; then \
+		printf '%s\n' 'Set and export OBJECT_STORAGE_PROVIDER=qiniu_kodo.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "1" && "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "true" ]]; then \
+		printf '%s\n' 'Enable Kodo server-side encryption, then attest it with QINIU_KODO_SERVER_SIDE_ENCRYPTION=1.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${KODO_LIVE_TEST}" != "1" ]]; then \
+		printf '%s\n' 'Set and export KODO_LIVE_TEST=1 to opt in to the real Kodo lifecycle test.'; \
+		exit 1; \
+	fi; \
+	$(MAKE) --no-print-directory check-kodo-live-go
+
+.PHONY: check-kodo-live-go
+check-kodo-live-go:
+	cd server && go test -count=1 -run '^TestLiveKodoObjectLifecycle$$' ./internal/platform/objectstore/kodostore
 
 check-resume-ocr-live:
 	@set -euo pipefail; \
