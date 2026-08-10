@@ -75,6 +75,70 @@ class IeltsSpeakingReportPanel extends StatefulWidget {
       _IeltsSpeakingReportPanelState();
 }
 
+class IeltsSpeakingReadyReportView extends StatefulWidget {
+  const IeltsSpeakingReadyReportView({
+    required this.report,
+    this.onRepracticeQuestion,
+    super.key,
+  });
+
+  final IeltsSpeakingReport report;
+  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion;
+
+  @override
+  State<IeltsSpeakingReadyReportView> createState() =>
+      _IeltsSpeakingReadyReportViewState();
+}
+
+class _IeltsSpeakingReadyReportViewState
+    extends State<IeltsSpeakingReadyReportView> {
+  var _selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    const parts = <IeltsSpeakingPartId>[
+      IeltsSpeakingPartId.part1,
+      IeltsSpeakingPartId.part2,
+      IeltsSpeakingPartId.part3,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            key: const Key('ielts-speaking-report-scope-tabs'),
+            children: [
+              for (var index = 0; index < 4; index++) ...[
+                if (index > 0) const SizedBox(width: 8),
+                ChoiceChip(
+                  key: Key('ielts-speaking-report-scope-$index'),
+                  label: Text(index == 0 ? '总览' : _partLabel(parts[index - 1])),
+                  selected: _selectedIndex == index,
+                  onSelected: (_) => setState(() => _selectedIndex = index),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: SpeakUpDesign.space16),
+        if (_selectedIndex == 0)
+          _ReadyReport(
+            report: widget.report,
+            onRepracticeQuestion: widget.onRepracticeQuestion,
+          )
+        else
+          _IeltsPartReport(
+            report: widget.report,
+            partId: parts[_selectedIndex - 1],
+            onRepracticeQuestion: widget.onRepracticeQuestion,
+          ),
+      ],
+    );
+  }
+}
+
 class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
   @override
   void initState() {
@@ -119,7 +183,7 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
     return switch (envelope.evaluationStatus) {
       IeltsSpeakingReportEvaluationStatus.queued ||
       IeltsSpeakingReportEvaluationStatus.running => const _GeneratingReport(),
-      IeltsSpeakingReportEvaluationStatus.ready => _ReadyReport(
+      IeltsSpeakingReportEvaluationStatus.ready => IeltsSpeakingReadyReportView(
         report: envelope.report!,
         onRepracticeQuestion: widget.onRepracticeQuestion,
       ),
@@ -979,6 +1043,102 @@ class _CriterionFeedback extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _IeltsPartReport extends StatelessWidget {
+  const _IeltsPartReport({
+    required this.report,
+    required this.partId,
+    this.onRepracticeQuestion,
+  });
+
+  final IeltsSpeakingReport report;
+  final IeltsSpeakingPartId partId;
+  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion;
+
+  @override
+  Widget build(BuildContext context) {
+    final part = report.partReviews.firstWhere((item) => item.id == partId);
+    final questions = report.questions
+        .where((question) => question.partId == partId)
+        .toList(growable: false);
+    final findings = <({String label, String id})>[
+      for (final id in part.strengthFindingIds) (label: '做得好', id: id),
+      for (final id in part.improvementFindingIds) (label: '可改进', id: id),
+      for (final id in part.upgradeExampleFindingIds) (label: '提升表达', id: id),
+    ];
+    return Column(
+      key: Key('ielts-speaking-report-${partId.name}'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(SpeakUpDesign.space20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '${_partLabel(partId)} 复盘',
+                      style: SpeakUpDesign.sectionTitle,
+                    ),
+                    const Spacer(),
+                    Text('${questions.length} 题', style: SpeakUpDesign.meta),
+                  ],
+                ),
+                if (findings.isEmpty) ...[
+                  const SizedBox(height: SpeakUpDesign.space12),
+                  Text('本部分暂无可用的分段反馈。', style: SpeakUpDesign.meta),
+                ],
+                for (final item in findings) ...[
+                  const SizedBox(height: SpeakUpDesign.space16),
+                  Text(item.label, style: SpeakUpDesign.label),
+                  const SizedBox(height: SpeakUpDesign.space4),
+                  Text(
+                    report.finding(item.id)!.message,
+                    style: SpeakUpDesign.body,
+                  ),
+                  if (report.finding(item.id)!.suggestion
+                      case final suggestion?) ...[
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text('建议：$suggestion', style: SpeakUpDesign.meta),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: SpeakUpDesign.space12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(SpeakUpDesign.space20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('本段题目', style: SpeakUpDesign.cardTitle),
+                const SizedBox(height: SpeakUpDesign.space12),
+                for (var index = 0; index < questions.length; index++) ...[
+                  if (index > 0) ...[
+                    const SizedBox(height: SpeakUpDesign.space12),
+                    const Divider(height: 1),
+                    const SizedBox(height: SpeakUpDesign.space12),
+                  ],
+                  _RepracticeQuestion(
+                    question: questions[index],
+                    onPressed: onRepracticeQuestion == null
+                        ? null
+                        : () => onRepracticeQuestion!(questions[index]),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

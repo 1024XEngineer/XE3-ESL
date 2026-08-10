@@ -36,6 +36,7 @@ import 'package:speakup/features/coaching/review/interview_report_controller.dar
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/resume/resume_controller.dart';
@@ -57,6 +58,7 @@ class SpeakUpApp extends StatelessWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
+    this.practiceReportStatusController,
     this.speechFeedbackController,
     this.resumeController,
     super.key,
@@ -78,6 +80,7 @@ class SpeakUpApp extends StatelessWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
+    this.practiceReportStatusController,
     this.speechFeedbackController,
     this.resumeController,
     super.key,
@@ -99,6 +102,7 @@ class SpeakUpApp extends StatelessWidget {
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final PracticeReportStatusController? practiceReportStatusController;
   final SpeechFeedbackController? speechFeedbackController;
   final ResumeController? resumeController;
   final bool _allowFakePreview;
@@ -126,6 +130,7 @@ class SpeakUpApp extends StatelessWidget {
               avatarControllerFactory: avatarControllerFactory,
               interviewReportController: interviewReportController,
               ieltsSpeakingReportController: ieltsSpeakingReportController,
+              practiceReportStatusController: practiceReportStatusController,
               speechFeedbackController: speechFeedbackController,
               resumeController: resumeController,
               allowFakePreview: _allowFakePreview,
@@ -149,6 +154,7 @@ class SpeakUpApp extends StatelessWidget {
                 avatarControllerFactory: avatarControllerFactory,
                 interviewReportController: interviewReportController,
                 ieltsSpeakingReportController: ieltsSpeakingReportController,
+                practiceReportStatusController: practiceReportStatusController,
                 speechFeedbackController: speechFeedbackController,
                 resumeController: resumeController,
                 allowFakePreview: _allowFakePreview,
@@ -176,6 +182,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
+    this.practiceReportStatusController,
     this.speechFeedbackController,
     this.resumeController,
     required this.allowFakePreview,
@@ -197,6 +204,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final PracticeReportStatusController? practiceReportStatusController;
   final SpeechFeedbackController? speechFeedbackController;
   final ResumeController? resumeController;
   final bool allowFakePreview;
@@ -529,6 +537,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       controller: _practiceController,
       onExitRequested: launchController?.parkCurrentPractice,
       ieltsController: widget.ieltsPreparationController,
+      reportStatusController: widget.practiceReportStatusController,
       completedReportBuilder: widget.ieltsSpeakingReportController == null
           ? null
           : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(

@@ -43,7 +43,13 @@ ReviewSummary presentEvaluationReport(EvaluationReport report) {
 String evaluationReportTitle(EvaluationReport report) {
   final base = switch (report.sceneType) {
     EvaluationReportSceneType.interview => '面试复盘',
-    EvaluationReportSceneType.ieltsSpeaking => 'IELTS 口语复盘',
+    EvaluationReportSceneType.ieltsSpeaking => switch (report.practiceMode) {
+      'PART_1' => 'Part 1 专项复盘',
+      'PART_2' => 'Part 2 + Part 3 联合复盘',
+      'PART_3' => 'Part 3 专项复盘',
+      'FULL_MOCK' => 'IELTS 口语模考报告',
+      _ => 'IELTS 口语复盘',
+    },
     EvaluationReportSceneType.overseasDailyLife => '日常英语复盘',
     EvaluationReportSceneType.overseasWorkplace => '职场英语复盘',
   };
