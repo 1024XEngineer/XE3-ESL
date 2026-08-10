@@ -50,6 +50,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		len(requests),
 	)
 	pending := false
+	var readyDurationMS int64
 	for _, request := range requests {
 		reference, found, err :=
 			source.feedback.FindSpeechFeedbackByConversationTurn(
@@ -112,8 +113,12 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 			Provider:             assessment.Provider,
 			ProviderRun:          acousticProviderRun(assessment.ProviderSession),
 		})
+		readyDurationMS += request.RecordingDurationMS
 	}
-	if pending {
+	if pending && !scoring.HasSufficientIELTSSpeakingAcousticCoverage(
+		readyDurationMS,
+		len(result),
+	) {
 		return nil, scoring.ErrIELTSSpeakingAcousticsPending
 	}
 	return result, nil

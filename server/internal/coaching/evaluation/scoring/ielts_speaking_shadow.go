@@ -430,10 +430,10 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 		prepared.acousticRefs[response.EvidenceRefID] = struct{}{}
 		prepared.acousticMS += response.RecordingDurationMS
 	}
-	legacyCoverageWithoutDuration := prepared.acousticMS == 0 &&
-		len(prepared.acousticRefs) >= ieltsMinimumEnglishTurns
-	if (prepared.acousticMS < ieltsMinimumAcousticMS &&
-		!legacyCoverageWithoutDuration) || len(prepared.acousticRefs) == 0 {
+	if !HasSufficientIELTSSpeakingAcousticCoverage(
+		prepared.acousticMS,
+		len(prepared.acousticRefs),
+	) {
 		for _, question := range prepared.input.Questions {
 			response := question.Response
 			response.PronunciationScore = nil
@@ -454,6 +454,21 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 		IELTSReasonPracticeEstimateUncalibrated,
 	}
 	return prepared, nil
+}
+
+// HasSufficientIELTSSpeakingAcousticCoverage reports whether completed
+// acoustic evidence is enough to enable the acoustic IELTS criteria.
+func HasSufficientIELTSSpeakingAcousticCoverage(
+	recordingDurationMS int64,
+	evidenceCount int,
+) bool {
+	if evidenceCount == 0 {
+		return false
+	}
+	legacyCoverageWithoutDuration := recordingDurationMS == 0 &&
+		evidenceCount >= ieltsMinimumEnglishTurns
+	return recordingDurationMS >= ieltsMinimumAcousticMS ||
+		legacyCoverageWithoutDuration
 }
 
 func validIELTSSpeakingTurnAcoustics(
