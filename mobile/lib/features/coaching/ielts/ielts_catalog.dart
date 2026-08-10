@@ -259,22 +259,40 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           mode: item.mode,
           title: item.title,
           subtitle: item.subtitle,
-          questions: item.questions,
+          questions: item.mode == PracticeMode.part2
+              ? const <String>[]
+              : item.questions,
           cueCard: item.cueCard,
-          answerPreparationClient: item.mode == PracticeMode.part1
-              ? widget.controller.answerPreparationClient
+          answerPreparationClient: widget.controller.answerPreparationClient,
+          cueCardQuestionReference: item.mode == PracticeMode.part2
+              ? IeltsAnswerQuestionReference(
+                  bankId: bank.bankId,
+                  part: 'PART_2',
+                  sourceId: item.id,
+                  questionPosition: 1,
+                )
               : null,
-          questionReferences: item.mode == PracticeMode.part1
-              ? [
-                  for (var index = 0; index < item.questions.length; index++)
-                    IeltsAnswerQuestionReference(
-                      bankId: bank.bankId,
-                      part: 'PART_1',
-                      sourceId: item.id,
-                      questionPosition: index + 1,
-                    ),
-                ]
-              : const [],
+          questionReferences: switch (item.mode) {
+            PracticeMode.part1 => [
+              for (var index = 0; index < item.questions.length; index++)
+                IeltsAnswerQuestionReference(
+                  bankId: bank.bankId,
+                  part: 'PART_1',
+                  sourceId: item.id,
+                  questionPosition: index + 1,
+                ),
+            ],
+            PracticeMode.part3 => [
+              for (var index = 0; index < item.questions.length; index++)
+                IeltsAnswerQuestionReference(
+                  bankId: bank.bankId,
+                  part: 'PART_3',
+                  sourceId: item.id,
+                  questionPosition: index + 1,
+                ),
+            ],
+            _ => const [],
+          },
           onStart: scene == null
               ? null
               : () {
