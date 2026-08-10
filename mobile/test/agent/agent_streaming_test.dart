@@ -15,9 +15,22 @@ void main() {
     'publishes input immediately and coalesces canonical stream deltas',
     () async {
       final client = _StreamingAgentClient();
+      final speechEvents = <String>[];
       final controller = ConversationController(
         client: client,
         clientIdFactory: (_) => 'stream-client-message',
+        onAssistantStreamStarted: (messageId) async {
+          speechEvents.add('start:$messageId');
+        },
+        onAssistantStreamDelta: (messageId, delta) {
+          speechEvents.add('delta:$messageId:$delta');
+        },
+        onAssistantStreamCompleted: (messageId, message) {
+          speechEvents.add('complete:$messageId:${message.id}:${message.text}');
+        },
+        onAssistantStreamFailed: (messageId) {
+          speechEvents.add('fail:$messageId');
+        },
       );
       addTearDown(controller.dispose);
       await controller.initialize();
@@ -61,8 +74,91 @@ void main() {
         'assistant-1',
       ]);
       expect(controller.messages.last.isStreaming, isFalse);
+      expect(speechEvents, <String>[
+        'start:stream-run-1',
+        'delta:stream-run-1:你',
+        'delta:stream-run-1:好，**小花**。',
+        'complete:stream-run-1:assistant-1:你好，**小花**。',
+      ]);
     },
   );
+
+  test('stops assistant speech when the text stream fails', () async {
+    final client = _StreamingAgentClient();
+    final speechEvents = <String>[];
+    final controller = ConversationController(
+      client: client,
+      clientIdFactory: (_) => 'stream-failure-message',
+      onAssistantStreamStarted: (messageId) async {
+        speechEvents.add('start:$messageId');
+      },
+      onAssistantStreamDelta: (messageId, delta) {
+        speechEvents.add('delta:$messageId:$delta');
+      },
+      onAssistantStreamFailed: (messageId) {
+        speechEvents.add('fail:$messageId');
+      },
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    expect(await controller.sendText('Please help me.'), isTrue);
+    client.events
+      ..add(const AgentAssistantStarted(runId: 'run-failed'))
+      ..add(const AgentAssistantDelta(runId: 'run-failed', delta: 'I can help'))
+      ..add(
+        const AgentRunFailed(
+          runId: 'run-failed',
+          kind: 'provider_unavailable',
+          retryable: true,
+        ),
+      );
+    await client.events.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(speechEvents, <String>[
+      'start:stream-run-failed',
+      'delta:stream-run-failed:I can help',
+      'fail:stream-run-failed',
+    ]);
+    expect(controller.messages.last.hasFailed, isTrue);
+  });
+
+  test('speech presentation failure does not fail the text stream', () async {
+    final client = _StreamingAgentClient();
+    final controller = ConversationController(
+      client: client,
+      clientIdFactory: (_) => 'stream-speech-failure-message',
+      onAssistantStreamStarted: (_) async {
+        throw StateError('Audio output unavailable.');
+      },
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    expect(await controller.sendText('Please continue.'), isTrue);
+    client.events
+      ..add(const AgentAssistantStarted(runId: 'run-text-success'))
+      ..add(
+        const AgentAssistantDelta(
+          runId: 'run-text-success',
+          delta: 'The text still succeeds.',
+        ),
+      )
+      ..add(
+        const AgentRunCompleted(
+          runId: 'run-text-success',
+          assistantMessageId: 'assistant-text-success',
+        ),
+      );
+    await client.events.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.errorMessage, isNull);
+    expect(controller.messages.last.id, 'assistant-text-success');
+    expect(controller.messages.last.text, 'The text still succeeds.');
+    expect(controller.messages.last.hasFailed, isFalse);
+  });
 
   test(
     'loads the trusted handoff immediately after stream completion',

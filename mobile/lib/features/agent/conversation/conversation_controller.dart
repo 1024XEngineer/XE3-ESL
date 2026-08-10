@@ -7,6 +7,14 @@ import 'package:speakup/features/agent/conversation/agent_message_image_client.d
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 
 typedef ConversationClientIdFactory = String Function(String scope);
+typedef ConversationAssistantStreamStarted =
+    Future<void> Function(String transientMessageId);
+typedef ConversationAssistantStreamDelta =
+    void Function(String transientMessageId, String delta);
+typedef ConversationAssistantStreamCompleted =
+    void Function(String transientMessageId, AgentMessage message);
+typedef ConversationAssistantStreamFailed =
+    void Function(String transientMessageId);
 
 /// Owns the focused Agent Thread, committed Messages, and text Run lifecycle.
 ///
@@ -15,11 +23,19 @@ final class ConversationController extends ChangeNotifier {
   ConversationController({
     required this.client,
     this.messageImageClient,
+    this.onAssistantStreamStarted,
+    this.onAssistantStreamDelta,
+    this.onAssistantStreamCompleted,
+    this.onAssistantStreamFailed,
     ConversationClientIdFactory? clientIdFactory,
   }) : _clientIdFactory = clientIdFactory ?? _createSecureClientId;
 
   final AgentClient client;
   final AgentMessageImageClient? messageImageClient;
+  final ConversationAssistantStreamStarted? onAssistantStreamStarted;
+  final ConversationAssistantStreamDelta? onAssistantStreamDelta;
+  final ConversationAssistantStreamCompleted? onAssistantStreamCompleted;
+  final ConversationAssistantStreamFailed? onAssistantStreamFailed;
   final ConversationClientIdFactory _clientIdFactory;
 
   String? _threadId;
@@ -887,8 +903,10 @@ final class ConversationController extends ChangeNotifier {
               assistantID = canonicalTransientID;
               assistantText = '';
             }
+            await _startAssistantStream(assistantID);
           case AgentAssistantDelta(:final delta):
             pending.write(delta);
+            _appendAssistantStream(assistantID, delta);
             frameTimer ??= Timer(const Duration(milliseconds: 16), flushDelta);
           case AgentRunCompleted(:final assistantMessageId):
             completedAssistantMessageID = assistantMessageId;
@@ -898,15 +916,14 @@ final class ConversationController extends ChangeNotifier {
                 .where((message) => message.id == assistantID)
                 .firstOrNull;
             if (current != null) {
-              replaceMessage(
-                assistantID,
-                current.copyWith(
-                  id: assistantMessageId,
-                  text: assistantText,
-                  isStreaming: false,
-                  hasFailed: false,
-                ),
+              final completed = current.copyWith(
+                id: assistantMessageId,
+                text: assistantText,
+                isStreaming: false,
+                hasFailed: false,
               );
+              replaceMessage(assistantID, completed);
+              _completeAssistantStream(assistantID, completed);
             }
           case AgentRunFailed(:final kind, :final retryable):
             throw AgentClientException(
@@ -935,6 +952,7 @@ final class ConversationController extends ChangeNotifier {
       );
     } catch (error) {
       if (_isOperationCurrent(fence)) {
+        _failAssistantStream(assistantID);
         frameTimer?.cancel();
         flushDelta();
         final current = _messages
@@ -960,6 +978,45 @@ final class ConversationController extends ChangeNotifier {
       if (_isOperationCurrent(fence)) {
         _setBusy(false);
       }
+    }
+  }
+
+  Future<void> _startAssistantStream(String transientMessageId) async {
+    final callback = onAssistantStreamStarted;
+    if (callback == null) {
+      return;
+    }
+    try {
+      await callback(transientMessageId);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _appendAssistantStream(String transientMessageId, String delta) {
+    try {
+      onAssistantStreamDelta?.call(transientMessageId, delta);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _completeAssistantStream(
+    String transientMessageId,
+    AgentMessage message,
+  ) {
+    try {
+      onAssistantStreamCompleted?.call(transientMessageId, message);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _failAssistantStream(String transientMessageId) {
+    try {
+      onAssistantStreamFailed?.call(transientMessageId);
+    } catch (_) {
+      // Speech presentation cannot change the authoritative text Run result.
     }
   }
 

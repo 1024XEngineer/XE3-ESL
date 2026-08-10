@@ -156,7 +156,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         ? audioController?.errorMessage
         : null;
     final actions = <Widget>[];
-    if (audioController != null) {
+    if (audioController != null && message.role == AgentMessageRole.assistant) {
       actions.addAll([
         TextButton.icon(
           key: Key('agent-assistant-tts-${message.id}'),
