@@ -3,6 +3,7 @@ package scoring
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ func TestCompletionIntakeCreatesOneEvaluationAndAcknowledgesHandoff(
 	if sweep != (CompletionIntakeSweepResult{Claimed: 1, Delivered: 1}) ||
 		completions.completed != 1 || completions.failed != 0 ||
 		evaluations.calls != 1 ||
+		evaluations.request.InputRevision != 1 ||
 		evaluations.request.SceneType != evaluation.SceneInterview ||
 		evaluations.request.SceneStrategyRef != InterviewShadowStrategyRef {
 		t.Fatalf(
@@ -45,6 +47,42 @@ func TestCompletionIntakeCreatesOneEvaluationAndAcknowledgesHandoff(
 			completions.completed,
 			completions.failed,
 			evaluations.request,
+		)
+	}
+}
+
+func TestCompletionIntakeRejectsEvidenceFromAnotherSessionVersion(
+	t *testing.T,
+) {
+	claim := completionHandoffFixture(IELTSSpeakingFullMockEvaluationPolicyRef)
+	completions := &completionHandoffRepositoryStub{claim: claim}
+	snapshot := completionEvidenceFixture(claim)
+	snapshot.Payload = []byte(`{"practice_context":{"session_version":3}}`)
+	evaluations := &completedEvaluationCreatorStub{}
+	intake, err := NewCompletionIntake(
+		completions,
+		&completedEvidenceFreezerStub{snapshot: snapshot},
+		evaluations,
+		NewEvaluationPolicyRegistry(),
+		completionIntakeConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := intake.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sweep != (CompletionIntakeSweepResult{Claimed: 1, Failed: 1}) ||
+		completions.completed != 0 || completions.failed != 1 ||
+		completions.failure.Code != "invalid_completion" ||
+		completions.failure.Retryable || evaluations.calls != 0 {
+		t.Fatalf(
+			"sweep=%#v completed=%d failure=%#v evaluations=%d",
+			sweep,
+			completions.completed,
+			completions.failure,
+			evaluations.calls,
 		)
 	}
 }
@@ -201,12 +239,15 @@ func completionEvidenceFixture(
 		ID:                 "evaluation-snapshot-1",
 		OwnerUserID:        claim.OwnerUserID,
 		PracticeSessionID:  claim.Completion.SessionID,
-		InputRevision:      claim.Completion.SessionVersion,
+		InputRevision:      1,
 		Scope:              evaluation.ScopeSession,
 		SceneType:          policy.SceneType,
 		SourceManifestHash: [32]byte{1},
-		Payload:            []byte(`{"schema":"fixture"}`),
-		CreatedAt:          claim.Completion.CreatedAt,
+		Payload: []byte(
+			`{"practice_context":{"session_version":` +
+				fmt.Sprint(claim.Completion.SessionVersion) + `}}`,
+		),
+		CreatedAt: claim.Completion.CreatedAt,
 	}
 }
 

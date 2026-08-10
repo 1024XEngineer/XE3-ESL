@@ -203,6 +203,25 @@ void main() {
     },
   );
 
+  test('persistent missing report stops with an explicit retry', () async {
+    final client = _AlwaysMissingClient();
+    final controller = IeltsSpeakingReportController(
+      client: client,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 2,
+      automaticRecoveryInterval: Duration.zero,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load('session_ielts_report_001');
+
+    expect(client.calls, 2);
+    expect(controller.isLoading, isFalse);
+    expect(controller.canRetry, isTrue);
+    expect(controller.envelope, isNull);
+    expect(controller.errorMessage, '这次 IELTS 模考报告尚未生成。');
+  });
+
   test('leaving the report fences a late response and clears memory', () async {
     final client = _ControlledClient();
     final controller = IeltsSpeakingReportController(client: client);
@@ -349,6 +368,24 @@ final class _TransientFailureClient implements IeltsSpeakingReportClient {
       throw failure;
     }
     return ready;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _AlwaysMissingClient implements IeltsSpeakingReportClient {
+  int calls = 0;
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(
+    String practiceSessionId,
+  ) async {
+    calls++;
+    throw const IeltsSpeakingReportException(
+      kind: IeltsSpeakingReportFailureKind.notFound,
+      statusCode: 404,
+    );
   }
 
   @override

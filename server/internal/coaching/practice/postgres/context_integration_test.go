@@ -405,6 +405,48 @@ func TestContextRepositoryCompletesUserControlledSessionIdempotently(
 			completionToken,
 		)
 	}
+	claim, acquired, err := repository.ClaimCompletionHandoff(
+		context.Background(),
+		time.Minute,
+		3,
+	)
+	if err != nil || !acquired || claim.Completion.SessionID != completed.ID {
+		t.Fatalf("claim completion handoff = (%#v,%t,%v)", claim, acquired, err)
+	}
+	if err := repository.FailCompletionHandoff(
+		context.Background(),
+		claim,
+		practice.CompletionHandoffFailure{
+			Code:      "invalid_completion",
+			Retryable: false,
+		},
+		time.Second,
+		3,
+	); err != nil {
+		t.Fatalf("fail completion handoff: %v", err)
+	}
+	var failureCode string
+	var failureRetryable bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT delivery_status, failure_code, failure_retryable
+		FROM practice_completed
+		WHERE owner_user_id = $1 AND session_id = $2
+	`, owner.Actor.UserID, completed.ID).Scan(
+		&deliveryStatus,
+		&failureCode,
+		&failureRetryable,
+	); err != nil {
+		t.Fatalf("read failed completion handoff: %v", err)
+	}
+	if deliveryStatus != "FAILED" || failureCode != "invalid_completion" ||
+		failureRetryable {
+		t.Fatalf(
+			"failed completion handoff = (%q,%q,%t)",
+			deliveryStatus,
+			failureCode,
+			failureRetryable,
+		)
+	}
 }
 
 func TestContextRepositoryPersistsCanonicalParticipantRoles(t *testing.T) {

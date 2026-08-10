@@ -154,22 +154,34 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
-  testWidgets('technical failure stays in automatic recovery without retry', (
+  testWidgets('terminal technical failure offers an explicit retry', (
     tester,
   ) async {
-    final controller = await _controllerFor('failed');
+    final controller = IeltsSpeakingReportController(
+      client: _Client(
+        decodeIeltsSpeakingReport(
+          ieltsSpeakingReportContractFixture()['failed'],
+        ),
+      ),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+      maximumAutomaticRegenerations: 0,
+    );
     addTearDown(controller.dispose);
+    await controller.load('session_ielts_report_001');
 
     await tester.pumpWidget(_app(controller));
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-speaking-report-generating')),
+      find.byKey(const Key('ielts-speaking-report-failed')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('ielts-speaking-report-retry')), findsNothing);
-    expect(find.byKey(const Key('ielts-speaking-report-failed')), findsNothing);
-    expect(find.textContaining('失败'), findsNothing);
+    expect(
+      find.byKey(const Key('ielts-speaking-report-retry')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('暂时无法生成'), findsOneWidget);
 
     controller.cancel('session_ielts_report_001');
   });

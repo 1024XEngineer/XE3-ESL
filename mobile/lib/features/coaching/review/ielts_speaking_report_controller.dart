@@ -10,6 +10,7 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
     this.pollInterval = const Duration(seconds: 2),
     this.maximumPollAttempts = 30,
     this.maximumAutomaticRegenerations = 1,
+    this.maximumAutomaticRecoveryCycles = 5,
     this.automaticRecoveryInterval = const Duration(seconds: 10),
   }) {
     if (pollInterval < Duration.zero) {
@@ -25,6 +26,13 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
         'maximumAutomaticRegenerations',
       );
     }
+    if (maximumAutomaticRecoveryCycles < 0 ||
+        maximumAutomaticRecoveryCycles > 10) {
+      throw ArgumentError.value(
+        maximumAutomaticRecoveryCycles,
+        'maximumAutomaticRecoveryCycles',
+      );
+    }
     if (automaticRecoveryInterval < Duration.zero) {
       throw ArgumentError.value(
         automaticRecoveryInterval,
@@ -37,6 +45,7 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
   final Duration pollInterval;
   final int maximumPollAttempts;
   final int maximumAutomaticRegenerations;
+  final int maximumAutomaticRecoveryCycles;
   final Duration automaticRecoveryInterval;
 
   String? _practiceSessionId;
@@ -133,6 +142,7 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
             // revision forever.
             _loading = false;
             _canRetry = true;
+            _errorMessage = 'IELTS 练习报告生成失败，请重新生成。';
             notifyListeners();
             return;
           }
@@ -171,25 +181,49 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
           return;
         }
         _failureKind = error.kind;
-        _scheduleAutomaticRecovery(generation, practiceSessionId);
+        if (error.kind == IeltsSpeakingReportFailureKind.notFound) {
+          _finishWithRetry(_messageFor(error));
+          return;
+        }
+        _scheduleAutomaticRecovery(
+          generation,
+          practiceSessionId,
+          terminalMessage: _messageFor(error),
+        );
         return;
       } on Object {
         if (!_isCurrent(generation, practiceSessionId)) {
           return;
         }
         _failureKind = IeltsSpeakingReportFailureKind.network;
-        _scheduleAutomaticRecovery(generation, practiceSessionId);
+        _scheduleAutomaticRecovery(
+          generation,
+          practiceSessionId,
+          terminalMessage: 'IELTS 练习报告暂时无法加载，请稍后重试。',
+        );
         return;
       }
     }
     if (_isCurrent(generation, practiceSessionId)) {
-      _failureKind = IeltsSpeakingReportFailureKind.network;
-      _scheduleAutomaticRecovery(generation, practiceSessionId);
+      _failureKind = IeltsSpeakingReportFailureKind.server;
+      _scheduleAutomaticRecovery(
+        generation,
+        practiceSessionId,
+        terminalMessage: 'IELTS 练习报告生成时间超过预期，请稍后重试。',
+      );
     }
   }
 
-  void _scheduleAutomaticRecovery(int generation, String practiceSessionId) {
+  void _scheduleAutomaticRecovery(
+    int generation,
+    String practiceSessionId, {
+    required String terminalMessage,
+  }) {
     if (!_isCurrent(generation, practiceSessionId)) {
+      return;
+    }
+    if (_automaticRecoveryCycle >= maximumAutomaticRecoveryCycles) {
+      _finishWithRetry(terminalMessage);
       return;
     }
     _loading = true;
@@ -206,6 +240,16 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
       }
       unawaited(_load(practiceSessionId, automatic: true));
     });
+    notifyListeners();
+  }
+
+  void _finishWithRetry(String message) {
+    _automaticRecoveryTimer?.cancel();
+    _automaticRecoveryTimer = null;
+    _envelope = null;
+    _loading = false;
+    _canRetry = true;
+    _errorMessage = message;
     notifyListeners();
   }
 

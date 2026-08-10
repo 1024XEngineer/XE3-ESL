@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -154,7 +155,8 @@ func (intake *CompletionIntake) process(
 	if err != nil {
 		return err
 	}
-	if snapshot.InputRevision != claim.Completion.SessionVersion {
+	sourceSessionVersion, err := completedEvidenceSessionVersion(snapshot)
+	if err != nil || sourceSessionVersion != claim.Completion.SessionVersion {
 		return evaluation.ErrInvalidRequest
 	}
 	_, _, err = intake.evaluations.CreateCompleted(
@@ -172,6 +174,21 @@ func (intake *CompletionIntake) process(
 		},
 	)
 	return err
+}
+
+func completedEvidenceSessionVersion(
+	snapshot evidence.EvidenceSnapshot,
+) (int, error) {
+	var payload struct {
+		PracticeContext struct {
+			SessionVersion int `json:"session_version"`
+		} `json:"practice_context"`
+	}
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil ||
+		payload.PracticeContext.SessionVersion < 1 {
+		return 0, evaluation.ErrInvalidRequest
+	}
+	return payload.PracticeContext.SessionVersion, nil
 }
 
 func completionIntakeFailure(err error) practice.CompletionHandoffFailure {
