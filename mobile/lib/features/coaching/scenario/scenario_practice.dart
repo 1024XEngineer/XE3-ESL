@@ -953,11 +953,10 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
             phase: capturePhase,
             seconds: widget.recordingSeconds,
             capture: capture,
-          ),
-          PracticeRecordingState.transcribing => PracticeTranscribingComposer(
-            label: '正在识别你的回答…',
             transcript: widget.controller.transcript ?? '',
-            keyPrefix: 'scenario',
+          ),
+          PracticeRecordingState.transcribing => PracticeLoadingComposer(
+            label: '正在识别你的回答…',
           ),
           PracticeRecordingState.awaitingConfirmation =>
             PracticeTranscriptComposer(
@@ -1018,11 +1017,13 @@ class _RecordingComposer extends StatelessWidget {
     required this.phase,
     required this.seconds,
     required this.capture,
+    required this.transcript,
   });
 
   final VoiceCapturePhase phase;
   final int seconds;
   final VoiceCaptureView capture;
+  final String transcript;
 
   @override
   Widget build(BuildContext context) {
@@ -1031,6 +1032,7 @@ class _RecordingComposer extends StatelessWidget {
       phase: phase,
       keyPrefix: 'scenario',
       elapsed: Duration(seconds: seconds),
+      transcript: transcript,
       upwardCancelOnly: true,
     );
   }

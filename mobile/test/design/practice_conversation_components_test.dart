@@ -1,44 +1,59 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 
 void main() {
-  testWidgets('shared transcribing composer shows the live transcript', (
+  testWidgets('shared recording composer shows the live transcript', (
     tester,
   ) async {
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: Scaffold(
-          body: PracticeTranscribingComposer(
-            label: '正在识别英文回答…',
-            transcript: 'I led the migration safely.',
-            keyPrefix: 'practice',
+          body: VoiceCaptureControl(
+            phase: VoiceCapturePhase.recording,
+            onStart: () {},
+            onSendVoice: () {},
+            onConvertToText: () {},
+            onCancel: () {},
+            builder: (_, capture) => PracticeRecordingComposer(
+              capture: capture,
+              phase: VoiceCapturePhase.recording,
+              keyPrefix: 'practice',
+              transcript: 'I led the migration safely.',
+            ),
           ),
         ),
       ),
     );
 
-    expect(find.text('正在识别英文回答…'), findsOneWidget);
     expect(find.byKey(const Key('practice-live-transcript')), findsOneWidget);
     expect(find.text('I led the migration safely.'), findsOneWidget);
   });
 
-  testWidgets('shared transcribing composer hides an empty snapshot', (
+  testWidgets('shared recording composer hides an empty snapshot', (
     tester,
   ) async {
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: Scaffold(
-          body: PracticeTranscribingComposer(
-            label: 'Transcribing your answer…',
-            transcript: '   ',
-            keyPrefix: 'ielts-mock',
+          body: VoiceCaptureControl(
+            phase: VoiceCapturePhase.recording,
+            onStart: () {},
+            onSendVoice: () {},
+            onConvertToText: () {},
+            onCancel: () {},
+            builder: (_, capture) => PracticeRecordingComposer(
+              capture: capture,
+              phase: VoiceCapturePhase.recording,
+              keyPrefix: 'practice',
+              transcript: '   ',
+            ),
           ),
         ),
       ),
     );
 
-    expect(find.text('Transcribing your answer…'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-mock-live-transcript')), findsNothing);
+    expect(find.byKey(const Key('practice-live-transcript')), findsNothing);
   });
 }

@@ -501,6 +501,7 @@ class PracticeRecordingComposer extends StatelessWidget {
     required this.phase,
     required this.keyPrefix,
     this.elapsed,
+    this.transcript = '',
     this.upwardCancelOnly = false,
     super.key,
   });
@@ -509,6 +510,7 @@ class PracticeRecordingComposer extends StatelessWidget {
   final VoiceCapturePhase phase;
   final String keyPrefix;
   final Duration? elapsed;
+  final String transcript;
   final bool upwardCancelOnly;
 
   @override
@@ -522,6 +524,8 @@ class PracticeRecordingComposer extends StatelessWidget {
       stopRecordingKey: Key('$keyPrefix-stop-recording'),
       stateLabelKey: Key('$keyPrefix-voice-state-label'),
       durationKey: Key('$keyPrefix-voice-target-duration'),
+      liveTranscript: transcript,
+      liveTranscriptKey: Key('$keyPrefix-live-transcript'),
       upwardCancelOnly: upwardCancelOnly,
     );
   }
@@ -559,42 +563,6 @@ class PracticeLoadingComposer extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class PracticeTranscribingComposer extends StatelessWidget {
-  const PracticeTranscribingComposer({
-    required this.label,
-    required this.transcript,
-    required this.keyPrefix,
-    super.key,
-  });
-
-  final String label;
-  final String transcript;
-  final String keyPrefix;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibleTranscript = transcript.trim();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PracticeLoadingComposer(label: label),
-        if (visibleTranscript.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(
-            visibleTranscript,
-            key: Key('$keyPrefix-live-transcript'),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.body,
-          ),
-        ],
-      ],
     );
   }
 }
