@@ -38,6 +38,34 @@ void main() {
     },
   );
 
+  test('ephemeral streaming stop clears PCM without creating a WAV', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'agent-voice-ephemeral-recorder-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final native = _StreamingNativeRecorder();
+    final recorder = IosAgentVoiceRecorder(
+      recorder: native,
+      temporaryDirectory: () async => directory,
+    );
+
+    final stream = await recorder.startAudioStream();
+    final forwarded = stream.expand((chunk) => chunk).toList();
+    final pcm = Uint8List.fromList(<int>[0, 0, 1, 0]);
+    native.add(pcm);
+    await recorder.stopAudioStreamAndDiscard();
+
+    expect(await forwarded, <int>[0, 0, 1, 0]);
+    expect(pcm, <int>[0, 0, 0, 0]);
+    expect(
+      await directory
+          .list(recursive: true, followLinks: false)
+          .where((entity) => entity is File)
+          .toList(),
+      isEmpty,
+    );
+  });
+
   test('streaming stop failure cancels the native capture', () async {
     final directory = await Directory.systemTemp.createTemp(
       'agent-voice-stream-recorder-failure-',
@@ -52,6 +80,8 @@ void main() {
 
     final stream = await recorder.startAudioStream();
     final subscription = stream.listen((_) {}, onError: (_) {});
+    final pcm = Uint8List.fromList(<int>[1, 0, 2, 0]);
+    native.add(pcm);
 
     await expectLater(
       recorder.stopAudioStream(),
@@ -65,6 +95,7 @@ void main() {
     );
 
     expect(native.cancelCount, 1);
+    expect(pcm, <int>[0, 0, 0, 0]);
     await subscription.cancel();
   });
 }

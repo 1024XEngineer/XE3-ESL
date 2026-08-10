@@ -15,6 +15,7 @@ import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 
 final class AgentVoiceWireRequest {
@@ -75,6 +76,7 @@ final class WireAgentVoiceClient
         AgentVoiceClient,
         AgentVoiceStreamingClient,
         AgentVoiceRealtimeInputClient,
+        AgentVoiceInputClient,
         AgentMessageAudioClient,
         AgentAssistantSpeechClient {
   factory WireAgentVoiceClient({
@@ -329,6 +331,108 @@ final class WireAgentVoiceClient
         retryable: error.kind == RealtimeVoiceInputFailureKind.network,
       );
     } on AgentClientOperationCancelled {
+      rethrow;
+    } catch (_) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    }
+  }
+
+  @override
+  Stream<AgentVoiceInputEvent> transcribeRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  }) async* {
+    _requireUuid(threadId);
+    _requireClientIdentity(idempotencyKey, minimumLength: 8);
+    final generation = _accountGeneration;
+    final uri = realtimeVoiceWebSocketBaseUri(_baseUri).resolve(
+      '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-transcriptions/realtime',
+    );
+    var phase = 0;
+    try {
+      final transport = RealtimeVoiceInputTransport(
+        connector: _realtimeConnector,
+      );
+      await for (final envelope in transport.stream(
+        uri: uri,
+        audioChunks: audioChunks,
+        idempotencyKey: idempotencyKey,
+        ensureCurrent: () => _requireGeneration(generation),
+        maximumChunkBytes: _maximumAudioBytes,
+        terminalEventTypes: const <String>{
+          'transcription.completed',
+          'transcription.failed',
+        },
+      )) {
+        final data = envelope.data;
+        switch (envelope.type) {
+          case 'transcription.started' when phase == 0:
+            _strictObject(
+              data,
+              allowed: const <String>{},
+              required: const <String>{},
+            );
+            phase = 1;
+            yield const AgentVoiceInputStarted();
+          case 'transcription.updated' when phase == 1:
+            final update = _strictObject(
+              data,
+              allowed: const <String>{'transcript', 'final'},
+              required: const <String>{'transcript', 'final'},
+            );
+            final transcript = _strictContent(update['transcript']);
+            if (_strictBool(update['final'])) {
+              throw const _InvalidVoiceResponse();
+            }
+            yield AgentVoiceInputUpdated(transcript);
+          case 'transcription.completed' when phase == 1:
+            final completed = _strictObject(
+              data,
+              allowed: const <String>{'transcript', 'final'},
+              required: const <String>{'transcript', 'final'},
+            );
+            final transcript = _strictContent(completed['transcript']);
+            if (!_strictBool(completed['final'])) {
+              throw const _InvalidVoiceResponse();
+            }
+            phase = 2;
+            yield AgentVoiceInputCompleted(transcript);
+          case 'transcription.failed' when phase == 1:
+            final failure = _strictObject(
+              data,
+              allowed: const <String>{'kind', 'retryable'},
+              required: const <String>{'kind', 'retryable'},
+            );
+            phase = 2;
+            yield AgentVoiceInputFailed(
+              kind: _strictString(failure['kind'], min: 1, max: 64),
+              retryable: _strictBool(failure['retryable']),
+            );
+          default:
+            throw const _InvalidVoiceResponse();
+        }
+      }
+      if (phase != 2) {
+        throw const _InvalidVoiceResponse();
+      }
+    } on _InvalidVoiceResponse {
+      throw _invalidResponse();
+    } on RealtimeVoiceInputException catch (error) {
+      throw AgentClientException(
+        kind: error.kind == RealtimeVoiceInputFailureKind.authenticationRequired
+            ? AgentClientFailureKind.authenticationRequired
+            : error.kind == RealtimeVoiceInputFailureKind.invalidResponse
+            ? AgentClientFailureKind.invalidResponse
+            : AgentClientFailureKind.network,
+        retryable: error.kind == RealtimeVoiceInputFailureKind.network,
+      );
+    } on AgentClientOperationCancelled {
+      rethrow;
+    } on AgentClientException {
       rethrow;
     } catch (_) {
       throw const AgentClientException(

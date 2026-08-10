@@ -24,6 +24,9 @@ class VoiceComposerDock extends StatelessWidget {
     this.directTapToSend = false,
     this.liveTranscript,
     this.liveTranscriptKey,
+    this.tapRecordingLabel,
+    this.holdRecordingLabel,
+    this.capturingSemanticsLabel,
     super.key,
   });
 
@@ -44,6 +47,9 @@ class VoiceComposerDock extends StatelessWidget {
   final bool directTapToSend;
   final String? liveTranscript;
   final Key? liveTranscriptKey;
+  final String? tapRecordingLabel;
+  final String? holdRecordingLabel;
+  final String? capturingSemanticsLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -55,9 +61,11 @@ class VoiceComposerDock extends StatelessWidget {
       (_, VoiceCaptureReleaseIntent.cancel, _) => '松开取消',
       (_, VoiceCaptureReleaseIntent.convertToText, _) => '松开转文字',
       (VoiceCapturePhase.recording, _, true) =>
-        upwardCancelOnly ? '点击发送 · 上滑取消' : '点击发送 · 左取消 · 右转文字',
+        tapRecordingLabel ??
+            (upwardCancelOnly ? '点击发送 · 上滑取消' : '点击发送 · 左取消 · 右转文字'),
       (VoiceCapturePhase.recording, _, false) =>
-        upwardCancelOnly ? '上滑取消 · 松开发送' : '松开发送 · 左取消 · 右转文字',
+        holdRecordingLabel ??
+            (upwardCancelOnly ? '上滑取消 · 松开发送' : '松开发送 · 左取消 · 右转文字'),
       _ => enabled ? '点击或长按说话' : '暂时无法录音',
     };
     final stateColor = capture.cancelArmed
@@ -141,7 +149,9 @@ class VoiceComposerDock extends StatelessWidget {
           )
         : capture.wrapTarget(
             key: recordKey,
-            semanticsLabel: capturing ? '发送语音' : '开始录音',
+            semanticsLabel: capturing
+                ? capturingSemanticsLabel ?? '发送语音'
+                : '开始录音',
             child: targetContent,
           );
     return Row(

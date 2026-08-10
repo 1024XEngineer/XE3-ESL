@@ -9,8 +9,7 @@ import 'package:speakup/design/voice_composer_dock.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
 import 'package:speakup/features/agent/composer/pending_image_strip.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_composer.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
 
 typedef AgentComposerAction = FutureOr<void> Function();
 
@@ -43,7 +42,7 @@ class AgentComposer extends StatefulWidget {
   final String? acceptedUserMessageId;
   final String? acceptedUserMessageText;
   final AgentComposerAction? onStartVoice;
-  final AgentVoiceController? voiceController;
+  final AgentVoiceInputController? voiceController;
   final bool voiceEnabled;
   final Future<bool> Function(String)? onSubmitText;
   final bool enabled;
@@ -124,7 +123,7 @@ class _AgentComposerState extends State<AgentComposer> {
   void _handleTextChanged() {
     if (!_suppressControllerNotifications) {
       final voice = widget.voiceController;
-      if (voice?.state == AgentVoiceComposerState.awaitingConfirmation) {
+      if (voice?.state == AgentVoiceInputState.editing) {
         voice?.updateTranscript(_controller.text);
       }
       setState(() {});
@@ -136,7 +135,7 @@ class _AgentComposerState extends State<AgentComposer> {
       return;
     }
     final voice = widget.voiceController;
-    if (voice?.state == AgentVoiceComposerState.awaitingConfirmation &&
+    if (voice?.state == AgentVoiceInputState.editing &&
         _controller.text != voice?.editedTranscript) {
       _suppressControllerNotifications = true;
       _controller.value = TextEditingValue(
@@ -147,7 +146,7 @@ class _AgentComposerState extends State<AgentComposer> {
       );
       _suppressControllerNotifications = false;
     }
-    if (voice?.state == AgentVoiceComposerState.awaitingConfirmation) {
+    if (voice?.state == AgentVoiceInputState.editing) {
       _textMode = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -179,15 +178,7 @@ class _AgentComposerState extends State<AgentComposer> {
     if (voice == null) {
       return;
     }
-    await voice.stopRecordingAndUpload();
-    if (!mounted || !voice.canConfirm) {
-      return;
-    }
-    await voice.confirm();
-    if (!mounted || voice.editedTranscript.isNotEmpty) {
-      return;
-    }
-    _replaceComposerText(_draftBeforeVoice);
+    await voice.stopRecording();
   }
 
   Future<void> _convertVoiceToText() async {
@@ -195,14 +186,12 @@ class _AgentComposerState extends State<AgentComposer> {
     if (voice == null) {
       return;
     }
-    await voice.stopRecordingAndUpload();
+    await voice.stopRecording();
   }
 
   Future<void> _cancelVoice() async {
     final voice = widget.voiceController;
-    if (voice == null ||
-        voice.state == AgentVoiceComposerState.confirming ||
-        voice.state == AgentVoiceComposerState.awaitingAssistant) {
+    if (voice == null) {
       return;
     }
     await voice.cancel();
@@ -246,9 +235,19 @@ class _AgentComposerState extends State<AgentComposer> {
   Future<void> _submitConvertedText() async {
     final voice = widget.voiceController;
     final text = _controller.text.trim();
+    final imageUploadPending = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.uploading,
+    );
+    final imageUploadFailed = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.failed,
+    );
     if (voice == null ||
-        !voice.canConfirm ||
+        !voice.canSubmitTranscript ||
         text.isEmpty ||
+        !widget.enabled ||
+        widget.isBusy ||
+        imageUploadPending ||
+        imageUploadFailed ||
         _textSubmissionInFlight ||
         widget.onSubmitText == null) {
       return;
@@ -353,24 +352,16 @@ class _AgentComposerState extends State<AgentComposer> {
   @override
   Widget build(BuildContext context) {
     final voice = widget.voiceController;
-    final voiceState = voice?.state ?? AgentVoiceComposerState.idle;
-    final starting = voiceState == AgentVoiceComposerState.starting;
-    final recording = voiceState == AgentVoiceComposerState.recording;
-    final confirmingText =
-        voiceState == AgentVoiceComposerState.awaitingConfirmation;
-    final voiceProgress =
-        voiceState == AgentVoiceComposerState.uploading ||
-        voiceState == AgentVoiceComposerState.transcribing ||
-        voiceState == AgentVoiceComposerState.confirming ||
-        voiceState == AgentVoiceComposerState.awaitingAssistant;
-    final voiceSubmissionInFlight =
-        voiceState == AgentVoiceComposerState.confirming ||
-        voiceState == AgentVoiceComposerState.awaitingAssistant;
-    final voiceFailure = voiceState == AgentVoiceComposerState.failed;
+    final voiceState = voice?.state ?? AgentVoiceInputState.idle;
+    final starting = voiceState == AgentVoiceInputState.starting;
+    final recording = voiceState == AgentVoiceInputState.recording;
+    final editingVoiceDraft = voiceState == AgentVoiceInputState.editing;
+    final voiceProgress = voiceState == AgentVoiceInputState.completing;
+    final voiceFailure = voiceState == AgentVoiceInputState.failed;
     final capturePhase = switch (voiceState) {
-      AgentVoiceComposerState.idle => VoiceCapturePhase.idle,
-      AgentVoiceComposerState.starting => VoiceCapturePhase.starting,
-      AgentVoiceComposerState.recording => VoiceCapturePhase.recording,
+      AgentVoiceInputState.idle => VoiceCapturePhase.idle,
+      AgentVoiceInputState.starting => VoiceCapturePhase.starting,
+      AgentVoiceInputState.recording => VoiceCapturePhase.recording,
       _ => VoiceCapturePhase.busy,
     };
     final voiceCaptureEnabled =
@@ -381,7 +372,7 @@ class _AgentComposerState extends State<AgentComposer> {
             widget.enabled &&
             !widget.isBusy);
     final showTextComposer =
-        confirmingText ||
+        editingVoiceDraft ||
         (_textMode &&
             !starting &&
             !recording &&
@@ -434,11 +425,10 @@ class _AgentComposerState extends State<AgentComposer> {
                     state: voiceState,
                     message: voiceFailure
                         ? voice?.errorMessage ?? '语音识别失败'
-                        : voiceState == AgentVoiceComposerState.transcribing &&
-                              voice?.liveTranscript.trim().isNotEmpty == true
+                        : voice?.liveTranscript.trim().isNotEmpty == true
                         ? voice!.liveTranscript
                         : agentComposerVoiceStateLabel(voiceState),
-                    canCancel: !voiceSubmissionInFlight,
+                    canCancel: true,
                     canRetry: voiceFailure && voice?.canRetry == true,
                     onCancel: _cancelVoice,
                     onRetry: voice?.retry,
@@ -448,20 +438,28 @@ class _AgentComposerState extends State<AgentComposer> {
                     controller: _controller,
                     focusNode: _focusNode,
                     keyboardVisible: widget.keyboardVisible,
-                    enabled: confirmingText || widget.enabled,
-                    confirmingConvertedText: confirmingText,
+                    enabled: editingVoiceDraft || widget.enabled,
+                    confirmingConvertedText: editingVoiceDraft,
                     submitting: _textSubmissionInFlight,
-                    canSubmitConvertedText: voice?.canConfirm == true,
+                    canSubmitConvertedText:
+                        voice?.canSubmitTranscript == true &&
+                        widget.onSubmitText != null &&
+                        widget.enabled &&
+                        !widget.isBusy &&
+                        !imageUploadPending &&
+                        !imageUploadFailed,
                     canSubmitText:
                         widget.onSubmitText != null &&
                         widget.enabled &&
                         !widget.isBusy &&
                         !imageUploadPending &&
                         !imageUploadFailed,
-                    onReturnToVoice: confirmingText
+                    onReturnToVoice: editingVoiceDraft
                         ? _cancelVoice
                         : _showVoiceComposer,
-                    onSubmit: confirmingText ? _submitConvertedText : _submit,
+                    onSubmit: editingVoiceDraft
+                        ? _submitConvertedText
+                        : _submit,
                   )
                 : AgentComposerVoiceDock(
                     capture: capture,
@@ -474,6 +472,7 @@ class _AgentComposerState extends State<AgentComposer> {
                         widget.onTakePhoto != null,
                     onAddImages: _showImageSource,
                     onShowText: _showTextComposer,
+                    liveTranscript: voice?.liveTranscript,
                   ),
           ),
         ),
@@ -526,7 +525,7 @@ class _AgentTextDock extends StatelessWidget {
       ),
       fieldKey: const Key('agent-composer-field'),
       submitKey: Key(
-        confirmingConvertedText ? 'agent-voice-confirm' : 'agent-send-button',
+        confirmingConvertedText ? 'agent-voice-text-send' : 'agent-send-button',
       ),
       returnTooltip: confirmingConvertedText ? '取消转文字' : '切换到语音输入',
       returnIcon: confirmingConvertedText

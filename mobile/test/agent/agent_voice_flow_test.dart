@@ -3,206 +3,391 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
-import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
-import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
-import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
-import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/agent/conversation/conversation.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 
 void main() {
-  test(
-    'Thread focus stays authoritative when voice cleanup needs a retry',
-    () async {
-      final player = _FailNextStopAgentAudioPlayer();
-      final recorder = _TrackingAgentVoiceRecorder();
+  testWidgets(
+    'home voice input shows partial text then sends an edited ordinary Message',
+    (tester) async {
+      final recorder = _TrackingStreamingRecorder();
       final conversationController = ConversationController(
         client: FakeAgentClient(),
       );
       final composerController = ComposerController(
         conversationController: conversationController,
-        voiceClient: FakeAgentVoiceClient(),
+        voiceInputClient: FakeAgentVoiceInputClient(),
         voiceRecorder: recorder,
-        draftAudioPlayer: player,
+        clientIdFactory: _sequentialIdFactory(),
       );
       addTearDown(() {
         composerController.dispose();
         conversationController.dispose();
       });
-      await conversationController.initialize();
-      await Future<void>.delayed(Duration.zero);
-      final oldThreadId = conversationController.threadId;
-      final voiceController = composerController.voiceController!;
 
-      player.failNextStop = true;
-      expect(await conversationController.createIndependentThread(), isTrue);
-      await Future<void>.delayed(Duration.zero);
+      await tester.pumpWidget(
+        SpeakUpApp.preview(
+          conversationController: conversationController,
+          composerController: composerController,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-      expect(conversationController.threadId, isNot(oldThreadId));
-      expect(voiceController.threadId, conversationController.threadId);
-      expect(voiceController.state, AgentVoiceComposerState.failed);
-      expect(voiceController.errorMessage, contains('语音播放未能停止'));
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await tester.pump();
+      await tester.pump();
 
-      await voiceController.retry();
+      expect(
+        composerController.voiceController?.state,
+        AgentVoiceInputState.recording,
+      );
+      expect(
+        find.byKey(const Key('agent-voice-live-transcript')),
+        findsOneWidget,
+      );
+      expect(find.text('点击转文字 · 上滑取消'), findsOneWidget);
+      expect(conversationController.messages, isEmpty);
 
-      expect(voiceController.state, AgentVoiceComposerState.recording);
-      expect(recorder.startCalls, 1);
-      await voiceController.cancel();
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await composerController.voiceController!.stopRecording();
+      await _pumpUntil(
+        tester,
+        () =>
+            composerController.voiceController?.state ==
+            AgentVoiceInputState.editing,
+      );
+
+      final field = find.byKey(const Key('agent-composer-field'));
+      expect(
+        composerController.voiceController?.state,
+        AgentVoiceInputState.editing,
+      );
+      expect(field, findsOneWidget);
+      expect(
+        tester.widget<TextField>(field).controller?.text,
+        'I explained the problem, the trade-off, and the result clearly.',
+      );
+      expect(conversationController.messages, isEmpty);
+
+      const edited = 'I explained the trade-off and measured the result.';
+      await tester.enterText(field, edited);
+      await tester.pump();
+      final send = find.byKey(const Key('agent-voice-text-send'));
+      expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+      await tester.tap(send);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      final userMessages = conversationController.messages
+          .where((message) => message.role == AgentMessageRole.user)
+          .toList();
+      expect(userMessages, hasLength(1));
+      expect(userMessages.single.text, edited);
+      expect(userMessages.single.modality, AgentMessageModality.text);
+      expect(userMessages.single.audio, isNull);
+      expect(recorder.stopAudioStreamAndDiscardCalls, 1);
+      expect(recorder.discardedRecordings, 0);
+      expect(
+        conversationController.messages.where(
+          (message) => message.modality == AgentMessageModality.voice,
+        ),
+        isEmpty,
+      );
+      expect(
+        conversationController.messages.where(
+          (message) => message.role == AgentMessageRole.assistant,
+        ),
+        hasLength(1),
+      );
+      expect(
+        composerController.voiceController?.state,
+        AgentVoiceInputState.idle,
+      );
     },
   );
 
-  testWidgets('records, directly sends, and plays one Agent voice Message', (
-    tester,
-  ) async {
-    final client = FakeAgentClient();
-    final voiceClient = FakeAgentVoiceClient();
-    final assistantSpeech = _FlowAssistantSpeechClient();
-    final messagePlayer = FakeAgentAudioPlayer();
-    final conversationController = ConversationController(client: client);
-    final messageAudioController = AgentMessageAudioController(
-      conversationController: conversationController,
-      client: voiceClient,
-      audioPlayer: messagePlayer,
-      assistantSpeechClient: assistantSpeech,
-    );
-    final composerController = ComposerController(
-      conversationController: conversationController,
-      voiceClient: voiceClient,
-      onAssistantStreamStarted: (transientMessageId) => messageAudioController
-          .startLiveAssistantSpeech(transientMessageId: transientMessageId),
-      onAssistantStreamDelta: (transientMessageId, delta) =>
-          messageAudioController.appendLiveAssistantSpeech(
-            transientMessageId: transientMessageId,
-            delta: delta,
-          ),
-      onAssistantStreamCompleted: (transientMessageId, message) =>
-          messageAudioController.completeLiveAssistantSpeech(
-            transientMessageId: transientMessageId,
-            message: message,
-          ),
-      onAssistantStreamFailed: (transientMessageId) => messageAudioController
-          .failLiveAssistantSpeech(transientMessageId: transientMessageId),
-      clientIdFactory: _sequentialIdFactory(),
-    );
-    addTearDown(() {
-      composerController.dispose();
-      messageAudioController.dispose();
-      conversationController.dispose();
-    });
+  test(
+    'completed transcription discards PCM without creating a local WAV',
+    () async {
+      final recorder = _TrackingStreamingRecorder();
+      final controller = AgentVoiceInputController(
+        client: FakeAgentVoiceInputClient(),
+        recorder: recorder,
+        idFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
 
-    await tester.pumpWidget(
-      SpeakUpApp.preview(
+      await controller.startRecording();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.liveTranscript, isNotEmpty);
+
+      await controller.stopRecording();
+
+      expect(controller.state, AgentVoiceInputState.editing);
+      expect(controller.canSubmitTranscript, isTrue);
+      expect(recorder.stopAudioStreamAndDiscardCalls, 1);
+      expect(recorder.stopAudioStreamCalls, 0);
+      expect(recorder.discardedRecordings, 0);
+      expect(recorder.hasCurrentRecording, isFalse);
+    },
+  );
+
+  test(
+    'local cleanup failure stays failed and retries retained cleanup',
+    () async {
+      final recorder = _TrackingStreamingRecorder()
+        ..failEphemeralCleanup = true;
+      final controller = AgentVoiceInputController(
+        client: FakeAgentVoiceInputClient(),
+        recorder: recorder,
+        idFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      await Future<void>.delayed(Duration.zero);
+
+      await controller.stopRecording();
+
+      expect(controller.state, AgentVoiceInputState.failed);
+      expect(controller.editedTranscript, isEmpty);
+      expect(controller.canSubmitTranscript, isFalse);
+      expect(controller.canRetry, isTrue);
+      expect(recorder.hasPendingCleanup, isTrue);
+
+      recorder
+        ..failEphemeralCleanup = false
+        ..allowPendingCleanup = true;
+      await controller.retry();
+
+      expect(recorder.hasPendingCleanup, isFalse);
+      expect(controller.state, AgentVoiceInputState.recording);
+    },
+  );
+
+  testWidgets(
+    'text send failure keeps the draft after local audio is deleted',
+    (tester) async {
+      final recorder = _TrackingStreamingRecorder();
+      final conversationController = ConversationController(
+        client: _FailingTextAgentClient(),
+      );
+      final composerController = ComposerController(
         conversationController: conversationController,
-        composerController: composerController,
-        messageAudioController: messageAudioController,
-      ),
-    );
-    await tester.pumpAndSettle();
+        voiceInputClient: FakeAgentVoiceInputClient(),
+        voiceRecorder: recorder,
+        clientIdFactory: _sequentialIdFactory(),
+      );
+      addTearDown(() {
+        composerController.dispose();
+        conversationController.dispose();
+      });
+      await tester.pumpWidget(
+        SpeakUpApp.preview(
+          conversationController: conversationController,
+          composerController: composerController,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-    await tester.pump();
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.recording,
-    );
-    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
-    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-    expect(find.byKey(const Key('agent-voice-stop')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await composerController.voiceController!.stopRecording();
+      await _pumpUntil(
+        tester,
+        () =>
+            composerController.voiceController?.state ==
+            AgentVoiceInputState.editing,
+      );
+      final field = find.byKey(const Key('agent-composer-field'));
+      const edited = 'Keep this voice-derived draft after failure.';
+      await tester.enterText(field, edited);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-voice-text-send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.tap(find.byKey(const Key('agent-voice-stop')));
-    await _pumpVoiceOperation(tester);
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.idle,
-    );
-    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
-    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-    expect(find.text('试听'), findsNothing);
-    expect(find.text('重录'), findsNothing);
-    expect(find.text('上传并转写'), findsNothing);
+      expect(conversationController.messages, isEmpty);
+      expect(recorder.stopAudioStreamAndDiscardCalls, 1);
+      expect(recorder.discardedRecordings, 0);
+      expect(recorder.hasCurrentRecording, isFalse);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .controller
+            ?.text,
+        edited,
+      );
+      expect(
+        composerController.voiceController?.state,
+        AgentVoiceInputState.idle,
+      );
+    },
+  );
 
-    final voiceMessages = conversationController.messages
-        .where((message) => message.modality == AgentMessageModality.voice)
-        .toList();
-    expect(voiceMessages, hasLength(1));
-    expect(
-      voiceMessages.single.text,
-      'I explained the problem, the trade-off, and the result clearly.',
-    );
-    expect(voiceMessages.single.audio?.isReadable, isTrue);
-    expect(
-      conversationController.messages.where(
-        (message) => message.role == AgentMessageRole.assistant,
-      ),
-      hasLength(1),
-    );
-    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
+  test(
+    'Thread switch cleans capture and fences late transcription events',
+    () async {
+      final client = _ControlledVoiceInputClient();
+      final recorder = _TrackingStreamingRecorder();
+      final controller = AgentVoiceInputController(
+        client: client,
+        recorder: recorder,
+        idFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      client.events.add(const AgentVoiceInputStarted());
+      client.events.add(const AgentVoiceInputUpdated('Thread A partial'));
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.liveTranscript, 'Thread A partial');
 
-    final assistant = conversationController.messages.singleWhere(
-      (message) => message.role == AgentMessageRole.assistant,
-    );
-    final assistantTts = find.byKey(Key('agent-assistant-tts-${assistant.id}'));
-    await tester.pumpAndSettle();
-    expect(assistantTts.hitTestable(), findsOneWidget);
-    expect(assistantSpeech.texts, <String>[
-      'That was clear. Add one measurable result to make the answer stronger.',
-    ]);
-    expect(messageAudioController.playingMessageId, assistant.id);
-    messagePlayer.complete();
-    await tester.pump();
-    expect(messageAudioController.playingMessageId, isNull);
-    await tester.tap(assistantTts);
-    await tester.pump();
-    expect(
-      find.byKey(Key('agent-assistant-text-${assistant.id}')),
-      findsOneWidget,
-    );
-    expect(messageAudioController.playingMessageId, assistant.id);
-    await tester.tap(find.byKey(Key('agent-assistant-speed-${assistant.id}')));
-    await tester.pump();
-    expect(messageAudioController.speechSpeed, 1.25);
+      await controller.bindThread('thread-b');
+      client.events.add(const AgentVoiceInputCompleted('Late Thread A text'));
+      await Future<void>.delayed(Duration.zero);
 
-    final voiceMessage = voiceMessages.single;
-    final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
-    final voiceDecoration =
-        tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
-    expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
-    expect(tester.getSize(voiceBubble).height, lessThan(220));
-    expect(
-      find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
-      findsOneWidget,
+      expect(controller.threadId, 'thread-b');
+      expect(controller.state, AgentVoiceInputState.idle);
+      expect(controller.liveTranscript, isEmpty);
+      expect(controller.editedTranscript, isEmpty);
+      expect(recorder.discardCurrentCalls, greaterThan(0));
+      expect(recorder.hasCurrentRecording, isFalse);
+    },
+  );
+
+  test(
+    'failed realtime transcription cleans audio without creating a draft',
+    () async {
+      final client = _ControlledVoiceInputClient();
+      final recorder = _TrackingStreamingRecorder();
+      final controller = AgentVoiceInputController(
+        client: client,
+        recorder: recorder,
+        idFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+
+      client.events.add(const AgentVoiceInputStarted());
+      client.events.add(
+        const AgentVoiceInputFailed(
+          kind: 'provider_unavailable',
+          retryable: true,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state, AgentVoiceInputState.failed);
+      expect(controller.canRetry, isTrue);
+      expect(controller.editedTranscript, isEmpty);
+      expect(recorder.hasCurrentRecording, isFalse);
+      expect(recorder.discardCurrentCalls, greaterThan(0));
+    },
+  );
+
+  test('account cleanup removes capture and fences late events', () async {
+    final client = _ControlledVoiceInputClient();
+    final recorder = _TrackingStreamingRecorder();
+    final controller = AgentVoiceInputController(
+      client: client,
+      recorder: recorder,
+      idFactory: _sequentialIdFactory(),
     );
-    expect(
-      find.byKey(Key('agent-user-voice-duration-${voiceMessage.id}')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(Key('agent-user-voice-delete-${voiceMessage.id}')),
-      findsNothing,
-    );
-    await composerController.voiceController?.cancel();
-    await tester.pump();
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+    await controller.startRecording();
+    client.events.add(const AgentVoiceInputUpdated('Private partial'));
+    await Future<void>.delayed(Duration.zero);
+
+    await controller.clearPrivateState();
+    client.events.add(const AgentVoiceInputCompleted('Late private text'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.threadId, isNull);
+    expect(controller.state, AgentVoiceInputState.idle);
+    expect(controller.liveTranscript, isEmpty);
+    expect(controller.editedTranscript, isEmpty);
+    expect(recorder.clearAccountStateCalls, greaterThan(0));
+    expect(recorder.hasCurrentRecording, isFalse);
   });
 
-  testWidgets('upward swipe cancels home recording', (tester) async {
-    final client = FakeAgentClient();
-    final voiceClient = FakeAgentVoiceClient();
-    final conversationController = ConversationController(client: client);
+  test('same-thread restart waits for cancellation cleanup', () async {
+    final gate = Completer<void>();
+    final recorder = _TrackingStreamingRecorder(discardGate: gate);
+    final controller = AgentVoiceInputController(
+      client: _ControlledVoiceInputClient(),
+      recorder: recorder,
+      idFactory: _sequentialIdFactory(),
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+    await controller.startRecording();
+
+    final cleanup = controller.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.state, AgentVoiceInputState.idle);
+    expect(controller.canStartRecording, isFalse);
+
+    var rebound = false;
+    final rebind = controller.bindThread('thread-a').then((_) {
+      rebound = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(rebound, isFalse);
+
+    gate.complete();
+    await cleanup;
+    await rebind;
+    expect(controller.canStartRecording, isTrue);
+    await controller.startRecording();
+    expect(controller.state, AgentVoiceInputState.recording);
+  });
+
+  test('dispose releases an active ephemeral capture', () async {
+    final client = _ControlledVoiceInputClient();
+    final recorder = _TrackingStreamingRecorder();
+    final controller = AgentVoiceInputController(
+      client: client,
+      recorder: recorder,
+      idFactory: _sequentialIdFactory(),
+    );
+    await controller.bindThread('thread-a');
+    await controller.startRecording();
+
+    controller.dispose();
+    for (var attempt = 0; attempt < 20 && client.disposeCalls == 0; attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(client.disposeCalls, 1);
+    expect(recorder.discardCurrentCalls, greaterThan(0));
+    expect(recorder.hasCurrentRecording, isFalse);
+  });
+
+  testWidgets('upward swipe cancels capture and restores the typed draft', (
+    tester,
+  ) async {
+    final recorder = _TrackingStreamingRecorder();
+    final conversationController = ConversationController(
+      client: FakeAgentClient(),
+    );
     final composerController = ComposerController(
       conversationController: conversationController,
-      voiceClient: voiceClient,
+      voiceInputClient: FakeAgentVoiceInputClient(),
+      voiceRecorder: recorder,
       clientIdFactory: _sequentialIdFactory(),
     );
     addTearDown(() {
@@ -217,13 +402,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('agent-composer-field')),
+      'Keep this draft',
+    );
+    await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
+    await tester.pump();
     final target = find.byKey(const Key('agent-mic-placeholder'));
     await tester.tap(target);
     await tester.pump();
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.recording,
-    );
 
     final gesture = await tester.startGesture(tester.getCenter(target));
     await gesture.moveBy(const Offset(0, -90));
@@ -231,449 +420,229 @@ void main() {
     expect(find.text('松开取消'), findsOneWidget);
     await gesture.up();
     await _pumpVoiceOperation(tester);
-
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.idle,
-    );
-    expect(find.byKey(const Key('agent-composer-field')), findsNothing);
-  });
-
-  testWidgets('recording elapsed time updates inside the original composer', (
-    tester,
-  ) async {
-    var now = DateTime.utc(2026, 7, 27, 9);
-    final voiceController = AgentVoiceController(
-      client: FakeAgentVoiceClient(),
-      recorder: FakeAgentVoiceRecorder(),
-      audioPlayer: FakeAgentAudioPlayer(),
-      onMessagesCommitted: (_) {},
-      idFactory: (scope) => '${scope}_1',
-      clock: () => now,
-    );
-    addTearDown(voiceController.dispose);
-    await voiceController.bindThread('thread-a');
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ConversationPage(
-          onStartVoice: voiceController.startRecording,
-          voiceController: voiceController,
-          onSubmitText: (_) async => true,
-        ),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-    await tester.pump();
-
-    expect(voiceController.state, AgentVoiceComposerState.recording);
-    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
-    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-    expect(
-      tester
-          .widget<Text>(find.byKey(const Key('agent-voice-recording-duration')))
-          .data,
-      '0:00',
-    );
-
-    now = now.add(const Duration(seconds: 1));
-    await tester.pump(const Duration(seconds: 1));
+    await composerController.voiceController!.cancel();
 
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('agent-voice-recording-duration')))
-          .data,
-      '0:01',
+          .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+          .controller
+          ?.text,
+      'Keep this draft',
     );
-    await voiceController.cancel();
-    await tester.pump();
+    expect(conversationController.messages, isEmpty);
+    expect(recorder.discardCurrentCalls, greaterThan(0));
+    expect(recorder.hasCurrentRecording, isFalse);
   });
-
-  testWidgets('leaving the Agent tab cancels hands-free recording', (
-    tester,
-  ) async {
-    final client = FakeAgentClient();
-    final voiceClient = FakeAgentVoiceClient();
-    final conversationController = ConversationController(client: client);
-    final composerController = ComposerController(
-      conversationController: conversationController,
-      voiceClient: voiceClient,
-      clientIdFactory: _sequentialIdFactory(),
-    );
-    addTearDown(() {
-      composerController.dispose();
-      conversationController.dispose();
-    });
-    await tester.pumpWidget(
-      SpeakUpApp.preview(
-        conversationController: conversationController,
-        composerController: composerController,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-    await tester.pump();
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.recording,
-    );
-
-    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('scenes-page')), findsOneWidget);
-    expect(
-      composerController.voiceController?.state,
-      AgentVoiceComposerState.idle,
-    );
-    await tester.pump(const Duration(seconds: 60));
-    expect(
-      conversationController.messages.where(
-        (message) => message.modality == AgentMessageModality.voice,
-      ),
-      isEmpty,
-    );
-  });
-
-  test(
-    'leaving Agent while playback is stopping fences microphone start',
-    () async {
-      final player = _GatedAgentAudioPlayer();
-      final recorder = _TrackingAgentVoiceRecorder();
-      final client = FakeAgentClient();
-      final voiceClient = FakeAgentVoiceClient();
-      final conversationController = ConversationController(client: client);
-      final composerController = ComposerController(
-        conversationController: conversationController,
-        voiceClient: voiceClient,
-        voiceRecorder: recorder,
-        draftAudioPlayer: player,
-        clientIdFactory: _sequentialIdFactory(),
-      );
-      addTearDown(() {
-        composerController.dispose();
-        conversationController.dispose();
-      });
-      await conversationController.initialize();
-
-      final stop = player.blockNextStop();
-      final start = composerController.startAgentVoiceRecording();
-      await stop.entered.future;
-
-      final leave = composerController.prepareToLeave();
-      stop.release.complete();
-
-      await start;
-      expect(await leave, isTrue);
-      expect(recorder.startCalls, 0);
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceComposerState.idle,
-      );
-    },
-  );
-
-  testWidgets('composer drafts cannot cross the Thread boundary', (
-    tester,
-  ) async {
-    final voiceController = AgentVoiceController(
-      client: FakeAgentVoiceClient(),
-      recorder: FakeAgentVoiceRecorder(),
-      audioPlayer: FakeAgentAudioPlayer(),
-      onMessagesCommitted: (_) {},
-      idFactory: (scope) => '${scope}_1',
-    );
-    addTearDown(voiceController.dispose);
-    var threadId = 'thread-a';
-    late StateSetter update;
-    await voiceController.bindThread(threadId);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: StatefulBuilder(
-          builder: (context, setState) {
-            update = setState;
-            return ConversationPage(
-              threadId: threadId,
-              onStartVoice: voiceController.startRecording,
-              voiceController: voiceController,
-              onSubmitText: (_) async => true,
-            );
-          },
-        ),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
-    await tester.pump();
-    await tester.enterText(
-      find.byKey(const Key('agent-composer-field')),
-      'Thread A private draft',
-    );
-    await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-    await tester.pump();
-    expect(voiceController.state, AgentVoiceComposerState.recording);
-
-    await voiceController.bindThread('thread-b');
-    await voiceController.startRecording();
-    update(() => threadId = 'thread-b');
-    await tester.pump();
-
-    expect(voiceController.state, AgentVoiceComposerState.recording);
-    await voiceController.cancel();
-    await tester.pump();
-
-    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
-    await tester.pump();
-    final field = find.byKey(const Key('agent-composer-field'));
-    expect(field, findsOneWidget);
-    expect(tester.widget<TextField>(field).controller?.text, isEmpty);
-    expect(find.text('Thread A private draft'), findsNothing);
-  });
-
-  testWidgets(
-    'microphone safely creates and focuses a Thread when none is focused',
-    (tester) async {
-      final client = FakeAgentClient();
-      final voiceClient = FakeAgentVoiceClient();
-      final conversationController = ConversationController(client: client);
-      final composerController = ComposerController(
-        conversationController: conversationController,
-        voiceClient: voiceClient,
-        clientIdFactory: _sequentialIdFactory(),
-      );
-      addTearDown(() {
-        composerController.dispose();
-        conversationController.dispose();
-      });
-      await conversationController.initialize();
-      final previousThreadId = conversationController.threadId;
-      await conversationController.clearFocusedThread();
-      expect(conversationController.threadId, isNull);
-
-      await tester.pumpWidget(
-        SpeakUpApp.preview(
-          conversationController: conversationController,
-          composerController: composerController,
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('no-focused-conversation-home')),
-        findsNothing,
-      );
-      expect(find.byKey(const Key('agent-show-text-composer')), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('agent-show-text-composer')));
-      await tester.pump();
-      await tester.enterText(
-        find.byKey(const Key('agent-composer-field')),
-        'Keep this typed draft',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await tester.pump();
-
-      expect(conversationController.threadId, isNotNull);
-      expect(conversationController.threadId, isNot(previousThreadId));
-      expect(
-        composerController.voiceController?.state,
-        AgentVoiceComposerState.recording,
-      );
-      await composerController.voiceController?.cancel();
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('agent-show-text-composer')));
-      await tester.pump();
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
-            .controller
-            ?.text,
-        'Keep this typed draft',
-      );
-    },
-  );
-
-  testWidgets(
-    'voice transcript stays in the original composer on narrow layouts',
-    (tester) async {
-      tester.view.physicalSize = const Size(320, 640);
-      tester.view.devicePixelRatio = 1;
-      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
-      tester.platformDispatcher.textScaleFactorTestValue = 2;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetViewInsets);
-      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-
-      final client = FakeAgentClient();
-      final voiceClient = FakeAgentVoiceClient();
-      final conversationController = ConversationController(client: client);
-      final composerController = ComposerController(
-        conversationController: conversationController,
-        voiceClient: voiceClient,
-        clientIdFactory: _sequentialIdFactory(),
-      );
-      addTearDown(() {
-        composerController.dispose();
-        conversationController.dispose();
-      });
-      await tester.pumpWidget(
-        SpeakUpApp.preview(
-          conversationController: conversationController,
-          composerController: composerController,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-      await tester.pump();
-
-      final surface = find.byKey(const Key('agent-composer-surface'));
-      final stateLabel = find.byKey(const Key('agent-voice-state-label'));
-      final duration = find.byKey(const Key('agent-voice-recording-duration'));
-      final stop = find.byKey(const Key('agent-voice-stop'));
-      expect(stateLabel, findsOneWidget);
-      expect(duration, findsOneWidget);
-      expect(stop.hitTestable(), findsOneWidget);
-      expect(tester.getRect(stateLabel).left, greaterThanOrEqualTo(0));
-      expect(
-        tester.getRect(duration).right,
-        lessThanOrEqualTo(tester.getRect(surface).right),
-      );
-      expect(
-        tester.getRect(stop).right,
-        lessThanOrEqualTo(tester.getRect(surface).right),
-      );
-      expect(tester.takeException(), isNull);
-
-      expect(find.text('点击发送 · 上滑取消'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await composerController.voiceController?.cancel();
-      await tester.pump();
-    },
-  );
 }
 
-final class _TrackingAgentVoiceRecorder implements AgentVoiceRecorder {
-  int startCalls = 0;
+final class _TrackingStreamingRecorder
+    implements
+        AgentVoiceRecorder,
+        AgentVoiceStreamingRecorder,
+        AgentVoiceEphemeralStreamingRecorder {
+  _TrackingStreamingRecorder({this.discardGate});
+
+  final Completer<void>? discardGate;
+  StreamController<Uint8List>? _chunks;
+  bool _recording = false;
+  int stopAudioStreamCalls = 0;
+  int stopAudioStreamAndDiscardCalls = 0;
+  int discardCurrentCalls = 0;
+  int discardedRecordings = 0;
+  int clearAccountStateCalls = 0;
+  bool failEphemeralCleanup = false;
+  bool allowPendingCleanup = false;
+  bool _pendingCleanup = false;
+
+  bool get hasCurrentRecording => _recording;
+  bool get hasPendingCleanup => _pendingCleanup;
 
   @override
   Future<void> start() async {
-    startCalls++;
-  }
-
-  @override
-  Future<AgentVoiceLocalRecording> stop() {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<void> discardCurrent() async {}
-
-  @override
-  Future<void> discard(AgentVoiceLocalRecording recording) async {}
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
-final class _GatedAgentAudioPlayer implements AgentAudioPlayer {
-  Completer<void>? _nextStopEntered;
-  Completer<void>? _nextStopGate;
-
-  ({Completer<void> entered, Completer<void> release}) blockNextStop() {
-    final entered = Completer<void>();
-    final release = Completer<void>();
-    _nextStopEntered = entered;
-    _nextStopGate = release;
-    return (entered: entered, release: release);
-  }
-
-  @override
-  Stream<Duration> get onPosition => const Stream<Duration>.empty();
-
-  @override
-  Stream<void> get onComplete => const Stream<void>.empty();
-
-  @override
-  Future<void> playFile(String path, {required double speed}) async {}
-
-  @override
-  Future<void> playWav(Uint8List bytes, {required double speed}) async {}
-
-  @override
-  Future<void> stop() async {
-    final entered = _nextStopEntered;
-    final gate = _nextStopGate;
-    _nextStopEntered = null;
-    _nextStopGate = null;
-    entered?.complete();
-    await gate?.future;
-  }
-
-  @override
-  Future<void> clearAccountState() async {}
-
-  @override
-  Future<void> dispose() async {}
-}
-
-final class _FailNextStopAgentAudioPlayer implements AgentAudioPlayer {
-  bool failNextStop = false;
-
-  @override
-  Stream<Duration> get onPosition => const Stream<Duration>.empty();
-
-  @override
-  Stream<void> get onComplete => const Stream<void>.empty();
-
-  @override
-  Future<void> playFile(String path, {required double speed}) async {}
-
-  @override
-  Future<void> playWav(Uint8List bytes, {required double speed}) async {}
-
-  @override
-  Future<void> stop() async {
-    if (failNextStop) {
-      failNextStop = false;
-      throw const AgentAudioPlaybackException();
+    if (_pendingCleanup) {
+      if (!allowPendingCleanup) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.unavailable,
+        );
+      }
+      _pendingCleanup = false;
     }
+    _recording = true;
   }
 
   @override
-  Future<void> clearAccountState() async {}
+  Future<Stream<Uint8List>> startAudioStream() async {
+    await start();
+    final chunks = StreamController<Uint8List>();
+    _chunks = chunks;
+    scheduleMicrotask(() {
+      if (identical(_chunks, chunks) && !chunks.isClosed) {
+        chunks.add(Uint8List.fromList(const <int>[1, 0, 2, 0]));
+      }
+    });
+    return chunks.stream;
+  }
 
   @override
-  Future<void> dispose() async {}
-}
-
-final class _FlowAssistantSpeechClient implements AgentAssistantSpeechClient {
-  final List<String> texts = <String>[];
+  Future<AgentVoiceLocalRecording> stop() async {
+    _recording = false;
+    return const AgentVoiceLocalRecording(
+      path: 'temporary-agent-input.wav',
+      contentType: 'audio/wav',
+      sizeBytes: 48,
+      duration: Duration(seconds: 1),
+    );
+  }
 
   @override
-  Stream<AgentAssistantSpeechAudioSegment> streamAssistantSpeech({
-    required String threadId,
-    required Stream<AgentAssistantSpeechTextSegment> segments,
-  }) async* {
-    await for (final segment in segments) {
-      texts.add(segment.text);
-      yield AgentAssistantSpeechAudioSegment(
-        sequence: segment.sequence,
-        chunkIndex: 1,
-        audio: Uint8List.fromList(<int>[1, 2, 3, 4]),
+  Future<AgentVoiceLocalRecording> stopAudioStream() async {
+    stopAudioStreamCalls++;
+    final chunks = _chunks;
+    _chunks = null;
+    await chunks?.close();
+    return stop();
+  }
+
+  @override
+  Future<void> stopAudioStreamAndDiscard() async {
+    stopAudioStreamAndDiscardCalls++;
+    final chunks = _chunks;
+    _chunks = null;
+    await chunks?.close();
+    _recording = false;
+    if (failEphemeralCleanup) {
+      _pendingCleanup = true;
+      throw const AgentVoiceRecordingException(
+        AgentVoiceRecordingFailureKind.unavailable,
       );
     }
+  }
+
+  @override
+  Future<void> discardCurrent() async {
+    discardCurrentCalls++;
+    if (_recording) {
+      await discardGate?.future;
+    }
+    final chunks = _chunks;
+    _chunks = null;
+    await chunks?.close();
+    _recording = false;
+    if (_pendingCleanup) {
+      if (!allowPendingCleanup) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.unavailable,
+        );
+      }
+      _pendingCleanup = false;
+    }
+  }
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) async {
+    discardedRecordings++;
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    clearAccountStateCalls++;
+    await discardCurrent();
+  }
+}
+
+final class _ControlledVoiceInputClient implements AgentVoiceInputClient {
+  final events = StreamController<AgentVoiceInputEvent>.broadcast();
+  StreamSubscription<Uint8List>? _audioSubscription;
+  int disposeCalls = 0;
+
+  @override
+  Stream<AgentVoiceInputEvent> transcribeRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  }) {
+    _audioSubscription = audioChunks.listen((_) {});
+    return events.stream;
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    await _audioSubscription?.cancel();
+    _audioSubscription = null;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCalls++;
+    await _audioSubscription?.cancel();
+    await events.close();
+  }
+}
+
+final class _FailingTextAgentClient implements AgentClient {
+  final _delegate = FakeAgentClient();
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<AgentThreadSummary> createThread() => _delegate.createThread();
+
+  @override
+  Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
+
+  @override
+  Future<void> deleteThread({required String threadId}) =>
+      _delegate.deleteThread(threadId: threadId);
+
+  @override
+  Future<AgentThreadSnapshot?> getFocusedThread() =>
+      _delegate.getFocusedThread();
+
+  @override
+  Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) =>
+      _delegate.listThreads(pageSize: pageSize, cursor: cursor);
+
+  @override
+  Future<AgentMessagePage> listMessages({
+    required String threadId,
+    int pageSize = 50,
+    String? cursor,
+  }) => _delegate.listMessages(
+    threadId: threadId,
+    pageSize: pageSize,
+    cursor: cursor,
+  );
+
+  @override
+  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
+      _delegate.setFocusedThread(threadId: threadId);
+
+  @override
+  Future<AgentExchange> sendText({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
+  }) {
+    throw const AgentClientException(
+      kind: AgentClientFailureKind.network,
+      retryable: true,
+    );
   }
 }
 
 Future<void> _pumpVoiceOperation(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  await tester.pump();
+}
+
+Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
+  for (var attempt = 0; attempt < 100 && !condition(); attempt++) {
+    await tester.pump(const Duration(milliseconds: 10));
+  }
+  await tester.pump();
 }
 
 String Function(String scope) _sequentialIdFactory() {

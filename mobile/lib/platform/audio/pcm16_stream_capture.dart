@@ -51,6 +51,28 @@ final class Pcm16StreamCapture {
   Future<Uint8List> finish({
     Duration timeout = const Duration(seconds: 2),
   }) async {
+    final pcm = await _takeValidatedPcm(timeout);
+    try {
+      return _pcm16MonoWav(pcm, sampleRate: sampleRate);
+    } finally {
+      pcm.fillRange(0, pcm.lengthInBytes, 0);
+    }
+  }
+
+  /// Finishes a streamed transcription without materializing local evidence.
+  Future<void> finishAndDiscard({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    Uint8List? pcm;
+    try {
+      pcm = await _takeValidatedPcm(timeout);
+    } finally {
+      _zero(pcm);
+      _discardBufferedPcm();
+    }
+  }
+
+  Future<Uint8List> _takeValidatedPcm(Duration timeout) async {
     try {
       await _done.future.timeout(timeout);
     } on TimeoutException {
@@ -68,11 +90,12 @@ final class Pcm16StreamCapture {
       );
     }
     if (pcm.lengthInBytes.isOdd || pcm.lengthInBytes > maximumPcmBytes) {
+      pcm.fillRange(0, pcm.lengthInBytes, 0);
       throw const Pcm16StreamCaptureException(
         Pcm16StreamCaptureFailureKind.invalidAudio,
       );
     }
-    return _pcm16MonoWav(pcm, sampleRate: sampleRate);
+    return pcm;
   }
 
   Future<void> cancel() async {
@@ -86,7 +109,7 @@ final class Pcm16StreamCapture {
       await _subscription?.cancel();
       _complete();
     }
-    _pcm.takeBytes();
+    _discardBufferedPcm();
   }
 
   void _handleChunk(Uint8List chunk) {
@@ -124,6 +147,7 @@ final class Pcm16StreamCapture {
     );
     await _subscription?.cancel();
     _complete();
+    _discardBufferedPcm();
   }
 
   void _fail(Pcm16StreamCaptureException failure) {
@@ -132,6 +156,7 @@ final class Pcm16StreamCapture {
     }
     _failure = failure;
     _output.addError(failure);
+    _discardBufferedPcm();
     final subscription = _subscription;
     if (subscription == null) {
       scheduleMicrotask(_complete);
@@ -148,6 +173,12 @@ final class Pcm16StreamCapture {
       _outputClosed = true;
       unawaited(_output.close());
     }
+  }
+
+  void _discardBufferedPcm() => _zero(_pcm.takeBytes());
+
+  static void _zero(Uint8List? bytes) {
+    bytes?.fillRange(0, bytes.lengthInBytes, 0);
   }
 }
 
