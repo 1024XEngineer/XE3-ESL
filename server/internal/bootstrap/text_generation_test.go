@@ -202,7 +202,7 @@ func setBootstrapQiniuTextGenerationEnvironment(t *testing.T, apiKey string) {
 	t.Helper()
 	t.Setenv("TEXT_GENERATION_PROVIDER", config.TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
-	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")

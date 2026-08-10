@@ -9,6 +9,21 @@ import (
 	"time"
 )
 
+func TestSpeechFeedbackWorkerConfigurationAcceptsQualifiedModelID(
+	t *testing.T,
+) {
+	t.Parallel()
+	configuration := validSpeechFeedbackWorkerConfiguration()
+	configuration.Model = "moonshotai/kimi-k2.6"
+	if !configuration.Valid() {
+		t.Fatal("qualified model ID was rejected")
+	}
+	configuration.Provider = "qiniu/provider"
+	if configuration.Valid() {
+		t.Fatal("provider identifier unexpectedly accepted a slash")
+	}
+}
+
 func TestSpeechFeedbackWorkerGeneratesFeedbackForShortEnglishText(
 	t *testing.T,
 ) {

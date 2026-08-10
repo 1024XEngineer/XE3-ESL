@@ -71,7 +71,7 @@ func (stub *answerGeneratorStub) GenerateAnswerPreparation(_ context.Context, re
 	if stub.err != nil {
 		return AnswerGenerationResult{}, stub.err
 	}
-	return AnswerGenerationResult{Answer: "I enjoy music because it helps me relax.", Outline: []string{"preference", "reason"}, UsefulExpressions: []string{"helps me relax"}, SpeechText: "I enjoy music because it helps me relax."}, nil
+	return AnswerGenerationResult{RequestID: "request-1", Provider: "qiniu", Model: "moonshotai/kimi-k2.6", Answer: "I enjoy music because it helps me relax.", Outline: []string{"preference", "reason"}, UsefulExpressions: []string{"helps me relax"}, SpeechText: "I enjoy music because it helps me relax."}, nil
 }
 
 type answerIDStub struct{}

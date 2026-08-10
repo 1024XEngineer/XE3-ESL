@@ -475,7 +475,7 @@ func normalizeGeneralSceneProviderResult(
 	if len(generated.Payload) == 0 ||
 		len(generated.Payload) > generalSceneMaximumPayload ||
 		!validProviderIdentifier(generated.Provider) ||
-		!validProviderIdentifier(generated.Model) ||
+		!validModelIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
 		return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
 	}
@@ -850,7 +850,7 @@ func validResolvedGeneralSceneEvidence(
 
 func validGeneralSceneLineage(lineage *GeneralSceneProviderLineage) bool {
 	return lineage != nil && validProviderIdentifier(lineage.Provider) &&
-		validProviderIdentifier(lineage.Model) &&
+		validModelIdentifier(lineage.Model) &&
 		validProviderIdentifier(lineage.RequestID) &&
 		lineage.PromptVersion == GeneralScenePromptVersion &&
 		lineage.ResponseSchema == GeneralSceneProviderSchemaVersion

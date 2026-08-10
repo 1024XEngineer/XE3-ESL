@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -529,6 +531,10 @@ func validSpeechFeedbackIdentifier(value string) bool {
 		}
 	}
 	return true
+}
+
+func validSpeechFeedbackModel(value string) bool {
+	return modelid.Valid(value)
 }
 
 func validSpeechFeedbackVersion(value string) bool {

@@ -1276,7 +1276,7 @@ func (service *Service) logInvalidModelResult(
 		"agent.loop.invalid_model_result",
 		"run_id", run.ID,
 		"thread_id", run.ThreadID,
-		"id_valid", ValidModelID(result.ID),
+		"id_valid", ValidOpaqueID(result.ID),
 		"provider", result.Provider,
 		"provider_matches", result.Provider == service.configuration.Provider,
 		"model", result.Model,
@@ -1332,7 +1332,7 @@ func classifyRunFailure(err error) (string, bool) {
 }
 
 func validFinalTextResult(result TextResult) bool {
-	return ValidModelID(result.ID) &&
+	return ValidOpaqueID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
@@ -1342,7 +1342,7 @@ func validFinalTextResult(result TextResult) bool {
 }
 
 func validLoopTextResult(result TextResult) bool {
-	if !ValidModelID(result.ID) ||
+	if !ValidOpaqueID(result.ID) ||
 		!ValidProviderID(result.Provider) ||
 		!ValidModelID(result.Model) ||
 		!validTokenUsage(result.Usage) {

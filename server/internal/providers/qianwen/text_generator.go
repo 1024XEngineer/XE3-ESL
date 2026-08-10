@@ -14,12 +14,14 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const (
 	providerName            = "qianwen"
 	qiniuProviderName       = "qiniu"
+	qiniuKimiK26Model       = "moonshotai/kimi-k2.6"
 	chatCompletionsPath     = "/chat/completions"
 	compatibleBasePath      = "/compatible-mode/v1"
 	qiniuCompatibleBasePath = "/v1"
@@ -401,9 +403,16 @@ func (generator *textClient) providerRequest(
 		Stream:    false,
 		MaxTokens: generator.maxOutputTokens,
 	}
-	if generator.provider == providerName {
+	switch generator.provider {
+	case providerName:
 		disabled := false
 		payload.EnableThinking = &disabled
+	case qiniuProviderName:
+		// Qiniu fronts heterogeneous upstream APIs. Kimi needs Qiniu's generic
+		// thinking control, while existing Gemini configurations must omit it.
+		if generator.model == qiniuKimiK26Model {
+			payload.Thinking = &chatThinking{Type: "disabled"}
+		}
 	}
 	if request.ResponseFormat == protocol.TextResponseFormatJSON {
 		payload.ResponseFormat = &chatResponseFormat{
@@ -457,11 +466,16 @@ type chatCompletionRequest struct {
 	Stream         bool                `json:"stream"`
 	StreamOptions  *chatStreamOptions  `json:"stream_options,omitempty"`
 	EnableThinking *bool               `json:"enable_thinking,omitempty"`
+	Thinking       *chatThinking       `json:"thinking,omitempty"`
 	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
 	MaxTokens int `json:"max_tokens"`
+}
+
+type chatThinking struct {
+	Type string `json:"type"`
 }
 
 type chatStreamOptions struct {
@@ -1164,26 +1178,10 @@ func normalizeModel(raw string, settings textProviderSettings) (string, error) {
 }
 
 func normalizeReturnedModel(raw string) (string, error) {
-	model := strings.TrimSpace(raw)
-	if len(model) == 0 || len(model) > maxProviderIdentifier {
-		return "", errors.New("provider model is required and must not exceed 128 characters")
+	if !modelid.Valid(raw) {
+		return "", errors.New("provider model is invalid")
 	}
-	for index, value := range model {
-		if !((value >= 'a' && value <= 'z') ||
-			(value >= 'A' && value <= 'Z') ||
-			(value >= '0' && value <= '9') ||
-			value == '-' || value == '_' || value == '.' || value == '/' ||
-			value == ':') {
-			return "", errors.New("provider model contains unsupported characters")
-		}
-		if value == '/' && (index == 0 || index == len(model)-1) {
-			return "", errors.New("provider model contains an invalid separator")
-		}
-	}
-	if strings.Contains(model, "//") || strings.Contains(model, "..") {
-		return "", errors.New("provider model contains an invalid sequence")
-	}
-	return model, nil
+	return raw, nil
 }
 
 func normalizeTextAPIKey(raw string, settings textProviderSettings) (string, error) {

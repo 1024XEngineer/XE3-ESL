@@ -1016,7 +1016,7 @@ func scanToolCall(row rowScanner) (agentrun.ToolCall, error) {
 }
 
 func validToolCallRecordIdentity(record agentrun.ToolCall) bool {
-	return agentrun.ValidModelID(record.ID) &&
+	return agentrun.ValidOpaqueID(record.ID) &&
 		agentrun.ValidUUID(record.RunID) &&
 		agentrun.ValidUUID(record.OwnerID) &&
 		agentrun.ValidUUID(record.ThreadID)

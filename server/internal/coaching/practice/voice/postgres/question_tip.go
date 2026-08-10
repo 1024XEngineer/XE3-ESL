@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const questionTipColumns = `SELECT tip_id, practice_session_id, question_id,
@@ -133,7 +134,10 @@ func (r *Repository) CompleteQuestionTip(
 ) (practicevoice.QuestionTip, error) {
 	if !validInputActor(actor) || strings.TrimSpace(command.TipID) == "" ||
 		command.FencingToken <= 0 || command.DeletionGeneration < 0 ||
-		strings.TrimSpace(command.Content) == "" {
+		strings.TrimSpace(command.Content) == "" ||
+		strings.TrimSpace(command.Provider) == "" ||
+		!modelid.Valid(command.Model) ||
+		strings.TrimSpace(command.ProviderRequestID) == "" {
 		return practicevoice.QuestionTip{}, practicevoice.ErrPersistenceInvalid
 	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})

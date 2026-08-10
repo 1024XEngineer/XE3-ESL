@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 )
@@ -21,7 +22,6 @@ const (
 	promptVersion             = "resume-fields/v2"
 	maximumResponseBytes      = 512 * 1024
 	maximumProviderIdentifier = 32
-	maximumModelIdentifier    = 64
 	minimumDocumentCharacters = 20
 )
 
@@ -98,7 +98,7 @@ func NewLLMExtractor(
 	if generator == nil || !validIdentifier(
 		configuration.Provider,
 		maximumProviderIdentifier,
-	) || !validIdentifier(configuration.Model, maximumModelIdentifier) ||
+	) || !modelid.Valid(configuration.Model) ||
 		configuration.MaxDocumentCharacters < minimumDocumentCharacters {
 		return nil, errors.New("resume field extractor configuration is invalid")
 	}

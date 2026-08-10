@@ -62,7 +62,7 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 func TestLoadTextGenerationReadsQiniuConfiguration(t *testing.T) {
 	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
-	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "45s")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "768")
@@ -75,7 +75,7 @@ func TestLoadTextGenerationReadsQiniuConfiguration(t *testing.T) {
 	}
 	if cfg.Provider != TextProviderQiniu ||
 		cfg.BaseURL != "https://api.qnaigc.com/v1" ||
-		cfg.Model != "gemini-2.5-flash" ||
+		cfg.Model != "moonshotai/kimi-k2.6" ||
 		cfg.SpeechFeedbackModel != "gemini-2.5-flash" ||
 		cfg.Timeout != 45*time.Second ||
 		cfg.MaxOutputTokens != 768 ||
@@ -93,7 +93,11 @@ func TestLoadTextGenerationRejectsUnsafeQiniuConfiguration(t *testing.T) {
 	}{
 		{name: "missing base URL", key: "QINIU_AI_BASE_URL", value: ""},
 		{name: "missing model", key: "QINIU_AI_MODEL", value: ""},
+		{name: "model with leading whitespace", key: "QINIU_AI_MODEL", value: " moonshotai/kimi-k2.6"},
+		{name: "model with repeated separator", key: "QINIU_AI_MODEL", value: "moonshotai//kimi-k2.6"},
+		{name: "model with traversal", key: "QINIU_AI_MODEL", value: "moonshotai/../kimi-k2.6"},
 		{name: "missing feedback model", key: "QINIU_AI_SPEECH_FEEDBACK_MODEL", value: ""},
+		{name: "invalid feedback model", key: "QINIU_AI_SPEECH_FEEDBACK_MODEL", value: "gemini//2.5-flash"},
 		{name: "missing API key", key: "QINIU_AI_API_KEY", value: ""},
 		{name: "API key whitespace", key: "QINIU_AI_API_KEY", value: "secret value"},
 		{name: "invalid timeout", key: "QINIU_AI_TIMEOUT", value: "soon"},
@@ -199,7 +203,7 @@ func setRequiredQiniuTextGenerationEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
-	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")

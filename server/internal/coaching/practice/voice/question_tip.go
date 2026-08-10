@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -128,7 +129,11 @@ func (service *QuestionTipService) generateQuestionTip(
 		questionTipRequest(session, question, history),
 	)
 	content := strings.TrimSpace(result.Content)
-	if err != nil || content == "" || utf8.RuneCountInString(content) > questionTipMaxRunes {
+	if err != nil || content == "" ||
+		utf8.RuneCountInString(content) > questionTipMaxRunes ||
+		!validVoiceIdentifier(result.Provider) ||
+		!modelid.Valid(result.Model) ||
+		!validVoiceIdentifier(result.RequestID) {
 		failureCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
 			2*time.Second,

@@ -9,7 +9,7 @@ import (
 
 func TestTextConstructorsUseQiniuCompatibilityBoundary(t *testing.T) {
 	configuration := TextConfig{
-		BaseURL: "https://api.qnaigc.com/v1", Model: "gemini-2.5-flash",
+		BaseURL: "https://api.qnaigc.com/v1", Model: "moonshotai/kimi-k2.6",
 		Timeout: time.Second, MaxOutputTokens: 8192,
 	}
 	constructors := []struct {
@@ -38,7 +38,7 @@ func TestTextConstructorsUseQiniuCompatibilityBoundary(t *testing.T) {
 func TestTextConstructorRejectsUnsafeEndpointWithoutLeakingAPIKey(t *testing.T) {
 	const apiKey = "must-never-appear"
 	generator, err := NewAgentRunGenerator(TextConfig{
-		BaseURL: "https://example.com/v1", Model: "gemini-2.5-flash",
+		BaseURL: "https://example.com/v1", Model: "moonshotai/kimi-k2.6",
 		Timeout: time.Second, MaxOutputTokens: 512,
 	}, apiKey)
 	if err == nil || generator != nil {

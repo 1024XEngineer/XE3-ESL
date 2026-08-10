@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -56,6 +57,10 @@ func validRuntimeLineage(value string) bool {
 		value != "" &&
 		len(value) <= 128 &&
 		!strings.ContainsRune(value, '\x00')
+}
+
+func validModelIdentifier(value string) bool {
+	return modelid.Valid(value)
 }
 
 func nonZeroDigest(digest [sha256.Size]byte) bool {

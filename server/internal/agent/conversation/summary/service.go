@@ -55,7 +55,7 @@ func (configuration Configuration) Valid() bool {
 	return ValidVersion(configuration.PolicyVersion) &&
 		ValidVersion(configuration.PromptVersion) &&
 		providerPattern.MatchString(configuration.Provider) &&
-		modelPattern.MatchString(configuration.Model)
+		validModelID(configuration.Model)
 }
 
 type GenerateCheckpointCommand struct {

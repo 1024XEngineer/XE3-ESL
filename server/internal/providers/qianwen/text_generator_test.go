@@ -94,6 +94,9 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 			rawThinking,
 		)
 	}
+	if _, exists := rawPayload["thinking"]; exists {
+		t.Fatal("Qianwen request included the Qiniu thinking field")
+	}
 	for index, message := range received.Messages {
 		if message.Role != string(request.Messages[index].Role) ||
 			message.Content != request.Messages[index].Content {

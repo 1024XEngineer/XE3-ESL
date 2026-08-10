@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -25,12 +26,12 @@ var versionPattern = regexp.MustCompile(
 
 var providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
-var modelPattern = regexp.MustCompile(
-	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
-)
-
 func ValidVersion(value string) bool {
 	return versionPattern.MatchString(value)
+}
+
+func validModelID(value string) bool {
+	return modelid.Valid(value)
 }
 
 type Content struct {
@@ -166,6 +167,6 @@ func validCheckpointFields(
 		ValidVersion(policyVersion) &&
 		ValidVersion(promptVersion) &&
 		providerPattern.MatchString(provider) &&
-		modelPattern.MatchString(model) &&
+		validModelID(model) &&
 		sourceChecksum != [sha256.Size]byte{}
 }

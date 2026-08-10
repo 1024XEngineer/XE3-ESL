@@ -176,6 +176,34 @@ func TestIELTSSpeakingPromptV5MigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestProviderQualifiedModelIDsMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000086_provider_qualified_model_ids.up.sql")
+	for _, required := range []string{
+		"agent_runs_provider_check",
+		"agent_runs_result_text_check",
+		"agent_context_manifests_provider_check",
+		"agent_memory_extraction_jobs_provider_check",
+		"agent_thread_summary_checkpoints_model_check",
+		"agent_thread_summary_jobs_versions_check",
+		"agent_thread_title_jobs_generation_check",
+		"^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*$",
+	} {
+		if !strings.Contains(up, strings.ToUpper(required)) {
+			t.Errorf("qualified model ID migration is missing %q", required)
+		}
+	}
+
+	down := readMigration(t, "000086_provider_qualified_model_ids.down.sql")
+	if !strings.Contains(
+		down,
+		strings.ToUpper("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"),
+	) {
+		t.Error("qualified model ID rollback must restore the legacy model rule")
+	}
+}
+
 func TestIELTSDedicatedAssignmentLimitsMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 
