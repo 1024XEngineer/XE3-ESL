@@ -4,7 +4,11 @@ import "testing"
 
 func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	t.Parallel()
-	configuration, err := NewConfiguration("qianwen", "qwen-plus", 2048)
+	configuration, err := NewConfiguration(
+		"qiniu",
+		"moonshotai/kimi-k2.6",
+		2048,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +50,17 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	}
 	if firstGeneral != secondGeneral || !firstGeneral.Valid() {
 		t.Fatalf("general runtime configuration is unstable: %#v %#v", firstGeneral, secondGeneral)
+	}
+}
+
+func TestRuntimeConfigurationRejectsPathLikeModelID(t *testing.T) {
+	t.Parallel()
+	if _, err := NewConfiguration(
+		"qiniu",
+		"moonshotai//kimi-k2.6",
+		2048,
+	); err == nil {
+		t.Fatal("path-like model ID was accepted")
 	}
 }
 

@@ -18,7 +18,7 @@ func TestTextSpeechFeedbackProviderProjectsMixedInputBeforeGeneration(
 				`"explanation":"Use a natural introduction.",` +
 				`"suggested_text":"Hello, my name is Nai Long."}]}`,
 			Provider: "qianwen",
-			Model:    "qwen-flash",
+			Model:    "moonshotai/kimi-k2.6",
 		},
 	}
 	provider, err := NewSpeechFeedbackTextProvider(generator)
@@ -102,7 +102,7 @@ func TestNormalizeSpeechFeedbackProviderResultBuildsAgentAnchor(
 		SpeechFeedbackProviderResult{
 			Payload:   encoded,
 			Provider:  "qianwen",
-			Model:     "qwen-plus",
+			Model:     "moonshotai/kimi-k2.6",
 			RequestID: "request-1",
 		},
 	)

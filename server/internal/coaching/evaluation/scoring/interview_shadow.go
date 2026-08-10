@@ -602,7 +602,7 @@ func normalizeInterviewShadowProviderResult(
 	if len(generated.Payload) == 0 ||
 		len(generated.Payload) > interviewShadowMaximumPayload ||
 		!validProviderIdentifier(generated.Provider) ||
-		!validProviderIdentifier(generated.Model) ||
+		!validModelIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
 		return InterviewShadowResult{}, ErrInvalidInterviewShadow
 	}
@@ -1317,7 +1317,7 @@ func validInterviewProviderLineage(
 	lineage InterviewShadowProviderLineage,
 ) bool {
 	return validProviderIdentifier(lineage.Provider) &&
-		validProviderIdentifier(lineage.Model) &&
+		validModelIdentifier(lineage.Model) &&
 		validProviderIdentifier(lineage.RequestID) &&
 		lineage.PromptVersion == InterviewShadowPromptVersion &&
 		lineage.ResponseSchema == InterviewShadowProviderSchemaVersion

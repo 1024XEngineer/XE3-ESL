@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -83,16 +85,17 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	if baseURL == "" {
 		return TextGenerationConfig{}, fmt.Errorf("%s is required", baseURLName)
 	}
-	model := strings.TrimSpace(os.Getenv(modelName))
-	if model == "" {
-		return TextGenerationConfig{}, fmt.Errorf("%s is required", modelName)
-	}
-	speechFeedbackModel := strings.TrimSpace(
-		os.Getenv(speechFeedbackModelName),
-	)
-	if speechFeedbackModel == "" {
+	model := os.Getenv(modelName)
+	if !modelid.Valid(model) {
 		return TextGenerationConfig{}, fmt.Errorf(
-			"%s is required",
+			"%s must be a valid model ID",
+			modelName,
+		)
+	}
+	speechFeedbackModel := os.Getenv(speechFeedbackModelName)
+	if !modelid.Valid(speechFeedbackModel) {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s must be a valid model ID",
 			speechFeedbackModelName,
 		)
 	}

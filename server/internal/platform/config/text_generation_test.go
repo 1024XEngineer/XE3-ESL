@@ -93,7 +93,11 @@ func TestLoadTextGenerationRejectsUnsafeQiniuConfiguration(t *testing.T) {
 	}{
 		{name: "missing base URL", key: "QINIU_AI_BASE_URL", value: ""},
 		{name: "missing model", key: "QINIU_AI_MODEL", value: ""},
+		{name: "model with leading whitespace", key: "QINIU_AI_MODEL", value: " moonshotai/kimi-k2.6"},
+		{name: "model with repeated separator", key: "QINIU_AI_MODEL", value: "moonshotai//kimi-k2.6"},
+		{name: "model with traversal", key: "QINIU_AI_MODEL", value: "moonshotai/../kimi-k2.6"},
 		{name: "missing feedback model", key: "QINIU_AI_SPEECH_FEEDBACK_MODEL", value: ""},
+		{name: "invalid feedback model", key: "QINIU_AI_SPEECH_FEEDBACK_MODEL", value: "gemini//2.5-flash"},
 		{name: "missing API key", key: "QINIU_AI_API_KEY", value: ""},
 		{name: "API key whitespace", key: "QINIU_AI_API_KEY", value: "secret value"},
 		{name: "invalid timeout", key: "QINIU_AI_TIMEOUT", value: "soon"},

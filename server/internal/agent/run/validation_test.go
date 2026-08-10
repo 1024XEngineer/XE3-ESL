@@ -1,27 +1,15 @@
 package run
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestValidModelIDSupportsQualifiedProviderModels(t *testing.T) {
-	tests := map[string]bool{
-		"qwen3.5-flash":          true,
-		"moonshotai/kimi-k2.6":   true,
-		"vendor/family/model-v1": true,
-		"/leading-separator":     false,
-		"trailing-separator/":    false,
-		"repeated//separator":    false,
-		"unsafe/../model":        false,
-		"contains whitespace":    false,
-		strings.Repeat("a", 129): false,
+func TestModelAndOpaqueIdentifiersHaveDistinctRules(t *testing.T) {
+	if !ValidModelID("moonshotai/kimi-k2.6") {
+		t.Fatal("provider-qualified model ID should be valid")
 	}
-	for model, want := range tests {
-		t.Run(model, func(t *testing.T) {
-			if got := ValidModelID(model); got != want {
-				t.Fatalf("ValidModelID(%q) = %v, want %v", model, got, want)
-			}
-		})
+	if ValidOpaqueID("provider/completion") {
+		t.Fatal("opaque provider result ID must not accept model path syntax")
+	}
+	if !ValidOpaqueID("completion-1") {
+		t.Fatal("ordinary opaque provider result ID should be valid")
 	}
 }

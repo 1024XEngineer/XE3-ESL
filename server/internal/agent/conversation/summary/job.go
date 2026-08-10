@@ -108,7 +108,7 @@ func (claim JobClaim) Valid() bool {
 		ValidVersion(claim.SummaryPolicyVersion) &&
 		ValidVersion(claim.PromptVersion) &&
 		providerPattern.MatchString(claim.Provider) &&
-		modelPattern.MatchString(claim.Model)
+		validModelID(claim.Model)
 }
 
 type JobRepository interface {

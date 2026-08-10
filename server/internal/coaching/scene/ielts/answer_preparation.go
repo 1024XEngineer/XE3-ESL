@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -318,7 +319,13 @@ func validTargetBand(band float64) bool {
 }
 
 func validGenerationResult(result AnswerGenerationResult) bool {
-	return validGeneratedText(result.Answer, 6000) && validGeneratedText(result.SpeechText, 6000) && validGeneratedList(result.Outline, 12, 500) && validGeneratedList(result.UsefulExpressions, 16, 300)
+	return validStableID(result.RequestID) &&
+		validStableID(result.Provider) &&
+		modelid.Valid(result.Model) &&
+		validGeneratedText(result.Answer, 6000) &&
+		validGeneratedText(result.SpeechText, 6000) &&
+		validGeneratedList(result.Outline, 12, 500) &&
+		validGeneratedList(result.UsefulExpressions, 16, 300)
 }
 
 func validGenerationLength(part PracticeMode, result AnswerGenerationResult) bool {

@@ -39,7 +39,7 @@ func (configuration InterviewShadowRuntimeConfiguration) Valid() bool {
 		nonZeroDigest(configuration.FullConfigHash) &&
 		configuration.PromptVersion == InterviewShadowPromptVersion &&
 		validRuntimeLineage(configuration.Provider) &&
-		validRuntimeLineage(configuration.Model)
+		validModelIdentifier(configuration.Model)
 }
 
 type InterviewShadowClaim struct {
@@ -76,7 +76,7 @@ func (claim InterviewShadowClaim) Valid() bool {
 		nonZeroDigest(claim.FullConfigHash) &&
 		claim.PromptVersion == InterviewShadowPromptVersion &&
 		validRuntimeLineage(claim.Provider) &&
-		validRuntimeLineage(claim.Model) &&
+		validModelIdentifier(claim.Model) &&
 		claim.Snapshot.Valid() &&
 		claim.Snapshot.OwnerUserID == claim.OwnerUserID &&
 		claim.Snapshot.Scope == evaluation.ScopeSession &&

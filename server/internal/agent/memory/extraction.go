@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const maxExtractionCandidates = 5
@@ -45,7 +47,7 @@ type ExtractionConfig struct {
 
 func (configuration ExtractionConfig) Valid() bool {
 	return providerIdentifierPattern.MatchString(configuration.Provider) &&
-		modelIdentifierPattern.MatchString(configuration.Model) &&
+		validModelIdentifier(configuration.Model) &&
 		validPolicyVersion(configuration.PolicyVersion) &&
 		validPolicyVersion(configuration.PromptVersion) &&
 		configuration.LeaseDuration >= time.Second &&
@@ -62,6 +64,10 @@ var (
 		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
 	)
 )
+
+func validModelIdentifier(value string) bool {
+	return modelid.Valid(value)
+}
 
 type ExtractionJob struct {
 	RunID              string
@@ -107,7 +113,7 @@ func (claim ExtractionClaim) Valid() bool {
 		validPolicyVersion(claim.PolicyVersion) &&
 		validPolicyVersion(claim.PromptVersion) &&
 		providerIdentifierPattern.MatchString(claim.Provider) &&
-		modelIdentifierPattern.MatchString(claim.Model)
+		validModelIdentifier(claim.Model)
 }
 
 type CompletedRunSource struct {

@@ -202,6 +202,8 @@ func TestQiniuTextConfigRejectsNonOfficialEndpoints(t *testing.T) {
 		{Provider: qiniuProviderName, BaseURL: "http://api.qnaigc.com/v1", Model: "moonshotai/kimi-k2.6"},
 		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1/chat/completions", Model: "moonshotai/kimi-k2.6"},
 		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1", Model: "../unsafe"},
+		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1", Model: " moonshotai/kimi-k2.6"},
+		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1", Model: "moonshotai//kimi-k2.6"},
 	}
 	for _, configuration := range invalid {
 		configuration.Timeout = time.Second

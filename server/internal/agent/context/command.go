@@ -3,6 +3,8 @@ package context
 import (
 	"regexp"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const maxBudget = 1_000_000
@@ -16,6 +18,10 @@ var providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 var modelPattern = regexp.MustCompile(
 	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
 )
+
+func validModelID(value string) bool {
+	return modelid.Valid(value)
+}
 
 type AssembleCommand struct {
 	RunID              string
@@ -37,7 +43,7 @@ func (command AssembleCommand) Valid() bool {
 		!command.RunCreatedAt.IsZero() &&
 		command.RunCreatedAt.Location() == time.UTC &&
 		providerPattern.MatchString(command.Provider) &&
-		modelPattern.MatchString(command.Model) &&
+		validModelID(command.Model) &&
 		command.MaxOutputTokens > 0 &&
 		command.MaxOutputTokens <= maxBudget &&
 		command.MaxInputCharacters >= 5000 &&

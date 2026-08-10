@@ -50,7 +50,7 @@ func NewConfiguration(
 
 func (configuration Configuration) valid() bool {
 	return validRuntimeLineage(configuration.provider) &&
-		validRuntimeLineage(configuration.model) &&
+		validModelIdentifier(configuration.model) &&
 		configuration.maxOutputTokens >= 1 &&
 		configuration.maxOutputTokens <= 1_000_000 &&
 		configuration.generationTimeout > 0 &&

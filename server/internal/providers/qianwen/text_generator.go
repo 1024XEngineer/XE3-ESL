@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -1177,26 +1178,10 @@ func normalizeModel(raw string, settings textProviderSettings) (string, error) {
 }
 
 func normalizeReturnedModel(raw string) (string, error) {
-	model := strings.TrimSpace(raw)
-	if len(model) == 0 || len(model) > maxProviderIdentifier {
-		return "", errors.New("provider model is required and must not exceed 128 characters")
+	if !modelid.Valid(raw) {
+		return "", errors.New("provider model is invalid")
 	}
-	for index, value := range model {
-		if !((value >= 'a' && value <= 'z') ||
-			(value >= 'A' && value <= 'Z') ||
-			(value >= '0' && value <= '9') ||
-			value == '-' || value == '_' || value == '.' || value == '/' ||
-			value == ':') {
-			return "", errors.New("provider model contains unsupported characters")
-		}
-		if value == '/' && (index == 0 || index == len(model)-1) {
-			return "", errors.New("provider model contains an invalid separator")
-		}
-	}
-	if strings.Contains(model, "//") || strings.Contains(model, "..") {
-		return "", errors.New("provider model contains an invalid sequence")
-	}
-	return model, nil
+	return raw, nil
 }
 
 func normalizeTextAPIKey(raw string, settings textProviderSettings) (string, error) {

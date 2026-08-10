@@ -93,7 +93,7 @@ func (manifest Manifest) Valid() bool {
 		uuidPattern.MatchString(manifest.ThreadID) &&
 		uuidPattern.MatchString(manifest.InputMessageID) &&
 		providerPattern.MatchString(manifest.RequestedProvider) &&
-		modelPattern.MatchString(manifest.RequestedModel) &&
+		validModelID(manifest.RequestedModel) &&
 		manifest.MaxOutputTokens > 0 &&
 		manifest.MaxOutputTokens <= maxBudget &&
 		manifest.MaxInputCharacters >= 5000 &&

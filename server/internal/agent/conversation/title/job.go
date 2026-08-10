@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -24,11 +25,12 @@ var (
 		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`,
 	)
 	providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	modelPattern    = regexp.MustCompile(
-		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
-	)
-	failurePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	failurePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
+
+func validModelID(value string) bool {
+	return modelid.Valid(value)
+}
 
 func ValidTitle(value string) bool {
 	if !utf8.ValidString(value) ||
@@ -93,7 +95,7 @@ type Configuration struct {
 func (configuration Configuration) Valid() bool {
 	return versionPattern.MatchString(configuration.PromptVersion) &&
 		providerPattern.MatchString(configuration.Provider) &&
-		modelPattern.MatchString(configuration.Model)
+		validModelID(configuration.Model)
 }
 
 type WorkerConfiguration struct {
@@ -164,7 +166,7 @@ func (claim JobClaim) Valid() bool {
 		!claim.LeaseExpiresAt.IsZero() &&
 		versionPattern.MatchString(claim.PromptVersion) &&
 		providerPattern.MatchString(claim.Provider) &&
-		modelPattern.MatchString(claim.Model)
+		validModelID(claim.Model)
 }
 
 type JobRepository interface {

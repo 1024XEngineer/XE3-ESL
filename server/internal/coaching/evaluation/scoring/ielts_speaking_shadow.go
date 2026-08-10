@@ -917,7 +917,7 @@ func normalizeIELTSSpeakingProviderResult(
 	if len(generated.Payload) == 0 ||
 		len(generated.Payload) > ieltsMaximumProviderPayload ||
 		!validProviderIdentifier(generated.Provider) ||
-		!validProviderIdentifier(generated.Model) ||
+		!validModelIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
 		return IELTSSpeakingShadowResult{}, fmt.Errorf(
 			"provider envelope: %w",
@@ -2011,7 +2011,7 @@ func validIELTSProviderLineage(
 	lineage IELTSSpeakingShadowProviderLineage,
 ) bool {
 	return validProviderIdentifier(lineage.Provider) &&
-		validProviderIdentifier(lineage.Model) &&
+		validModelIdentifier(lineage.Model) &&
 		validProviderIdentifier(lineage.RequestID) &&
 		lineage.PromptVersion == IELTSSpeakingShadowPromptVersion &&
 		lineage.ResponseSchema ==

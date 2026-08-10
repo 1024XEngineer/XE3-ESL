@@ -93,7 +93,7 @@ func (configuration durableSceneJobConfiguration) valid(
 		nonZeroDigest(configuration.FullConfigHash) &&
 		configuration.PromptVersion == spec.promptVersion &&
 		validRuntimeLineage(configuration.Provider) &&
-		validRuntimeLineage(configuration.Model)
+		validModelIdentifier(configuration.Model)
 }
 
 type durableSceneJobClaim struct {
@@ -133,7 +133,7 @@ func (claim durableSceneJobClaim) valid(
 		nonZeroDigest(claim.FullConfigHash) &&
 		claim.PromptVersion == spec.promptVersion &&
 		validRuntimeLineage(claim.Provider) &&
-		validRuntimeLineage(claim.Model) &&
+		validModelIdentifier(claim.Model) &&
 		claim.Snapshot.Valid() &&
 		claim.Snapshot.OwnerUserID == claim.OwnerUserID &&
 		claim.Snapshot.Scope == evaluation.ScopeSession &&

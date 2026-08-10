@@ -47,7 +47,7 @@ type ToolCall struct {
 }
 
 func (call ToolCall) ValidIdentity() bool {
-	return ValidModelID(call.ID) &&
+	return ValidOpaqueID(call.ID) &&
 		ValidUUID(call.RunID) &&
 		ValidUUID(call.OwnerID) &&
 		ValidUUID(call.ThreadID)

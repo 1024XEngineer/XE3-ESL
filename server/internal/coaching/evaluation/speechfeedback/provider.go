@@ -97,7 +97,7 @@ func (provider *TextSpeechFeedbackProvider) GenerateSpeechFeedback(
 		return SpeechFeedbackProviderResult{}, err
 	}
 	if !validSpeechFeedbackIdentifier(result.Provider) ||
-		!validSpeechFeedbackIdentifier(result.Model) ||
+		!validSpeechFeedbackModel(result.Model) ||
 		!validSpeechFeedbackIdentifier(result.RequestID) ||
 		len(result.Content) == 0 ||
 		len(result.Content) > maxSpeechFeedbackProviderPayload {
@@ -171,7 +171,7 @@ func normalizeSpeechFeedbackProviderResult(
 		len(result.Payload) == 0 ||
 		len(result.Payload) > maxSpeechFeedbackProviderPayload ||
 		!validSpeechFeedbackIdentifier(result.Provider) ||
-		!validSpeechFeedbackIdentifier(result.Model) ||
+		!validSpeechFeedbackModel(result.Model) ||
 		!validSpeechFeedbackIdentifier(result.RequestID) {
 		return nil, ErrInvalidSpeechFeedback
 	}

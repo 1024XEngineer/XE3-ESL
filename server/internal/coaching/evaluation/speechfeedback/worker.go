@@ -34,7 +34,7 @@ func (configuration SpeechFeedbackWorkerConfiguration) Valid() bool {
 			SpeechFeedbackPipelineVersion &&
 		configuration.PromptVersion == SpeechFeedbackPromptVersion &&
 		validSpeechFeedbackIdentifier(configuration.Provider) &&
-		validSpeechFeedbackIdentifier(configuration.Model)
+		validSpeechFeedbackModel(configuration.Model)
 }
 
 type SpeechFeedbackClaim struct {
