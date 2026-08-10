@@ -1501,6 +1501,18 @@ func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 	); err != nil {
 		t.Fatalf("apply Conversation retry integration schema: %v", err)
 	}
+	assessmentMigration, err := migrations.Files.ReadFile(
+		"000086_interview_answer_assessments.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read Interview assessment migration: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		string(assessmentMigration),
+	); err != nil {
+		t.Fatalf("apply Interview assessment migration: %v", err)
+	}
 	tipMigration, err := migrations.Files.ReadFile(
 		"000070_practice_question_tips.up.sql",
 	)

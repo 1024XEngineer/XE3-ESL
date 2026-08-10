@@ -267,7 +267,7 @@ func assertNoAgentVoicePersistence(
 	}
 }
 
-func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
+func TestVoiceInterviewSemanticFollowUpControlsEffectiveTurn(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
 	text := &followUpVoiceTextGenerator{}
 	catalog, err := scene.NewPostgresCatalog(
@@ -331,7 +331,7 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		"follow-up-primary-answer",
 	)
 	followUp := state["current_question"].(map[string]any)
-	if state["effective_turns"] != float64(1) ||
+	if state["effective_turns"] != float64(0) ||
 		followUp["question_type"] != "FOLLOW_UP" ||
 		followUp["parent_question_id"] != primary["question_id"] {
 		t.Fatalf("first follow-up state = %#v", state)
@@ -348,7 +348,7 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	nextPrimary := state["current_question"].(map[string]any)
 	currentTurn := state["current_turn"].(map[string]any)
 	if state["effective_turns"] != float64(1) ||
-		currentTurn["counts_toward_effective_turn_limit"] != false ||
+		currentTurn["counts_toward_effective_turn_limit"] != true ||
 		nextPrimary["question_type"] != "PRIMARY" {
 		t.Fatalf("confirmed follow-up state = %#v", state)
 	}
@@ -374,7 +374,7 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	).Scan(&storedType, &storedCounts, &storedEffectiveTurns); err != nil {
 		t.Fatalf("read stored follow-up Turn: %v", err)
 	}
-	if storedType != "FOLLOW_UP" || storedCounts || storedEffectiveTurns != 1 {
+	if storedType != "FOLLOW_UP" || !storedCounts || storedEffectiveTurns != 1 {
 		t.Fatalf(
 			"stored follow-up = (%q, %v, %d)",
 			storedType,
@@ -2016,19 +2016,42 @@ type voiceTextGenerator struct {
 }
 
 type followUpVoiceTextGenerator struct {
-	questionCalls atomic.Int64
+	questionCalls   atomic.Int64
+	assessmentCalls atomic.Int64
 }
 
 func (generator *followUpVoiceTextGenerator) Generate(
 	_ context.Context,
-	_ agentrun.TextRequest,
+	request agentrun.TextRequest,
 ) (agentrun.TextResult, error) {
+	if strings.Contains(
+		request.Messages[0].Content,
+		"evidence assessor for a structured English interview",
+	) {
+		call := generator.assessmentCalls.Add(1)
+		progress := "EMERGING"
+		evidenceSufficiency := 0.4
+		if call > 1 {
+			progress = "SUFFICIENT"
+			evidenceSufficiency = 0.9
+		}
+		return agentrun.TextResult{
+			ID:       fmt.Sprintf("answer-assessment-%d", call),
+			Provider: "fake",
+			Model:    "fake-text-v1",
+			Content: fmt.Sprintf(
+				`{"answer_progress":%q,"engagement":"ENGAGED","question_kind":"BEHAVIORAL","relevance_score":0.9,"evidence_sufficiency_score":%.1f,"confidence":0.9,"evidence_gaps":[],"interesting_threads":["rollout trade-off"],"brief_rationale":"The response provides bounded evidence for the current question."}`,
+				progress,
+				evidenceSufficiency,
+			),
+		}, nil
+	}
 	call := generator.questionCalls.Add(1)
 	content := "Tell me about a project you led."
 	if call == 2 {
-		content = `{"question_type":"FOLLOW_UP","content":"What trade-off did you make in that project?"}`
+		content = `{"dialogue_act":"ACKNOWLEDGE_AND_PROBE","content":"What trade-off did you make in that project?"}`
 	} else if call > 2 {
-		content = `{"question_type":"PRIMARY","content":"Tell me about another difficult decision."}`
+		content = `{"dialogue_act":"TRANSITION","content":"Tell me about another difficult decision."}`
 	}
 	return agentrun.TextResult{
 		ID:       fmt.Sprintf("follow-up-question-completion-%d", call),
