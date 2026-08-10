@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
@@ -17,6 +18,8 @@ import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/practice_stage.dart';
+import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
@@ -65,6 +68,12 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     this.completedReportBuilder,
     this.speechFeedbackController,
     this.examinerSpeaker,
+    this.avatarSurfaceBuilder,
+    this.avatarStatusLabel,
+    this.onBeforeUserTurn,
+    this.onReplayQuestionWithAvatar,
+    this.avatarReplayLoading = false,
+    this.avatarReplayPlaying = false,
     this.now = DateTime.now,
     super.key,
   });
@@ -76,6 +85,12 @@ class IeltsSpeakingMockPage extends StatefulWidget {
   final IeltsCompletedReportBuilder? completedReportBuilder;
   final SpeechFeedbackController? speechFeedbackController;
   final PracticePromptSpeaker? examinerSpeaker;
+  final WidgetBuilder? avatarSurfaceBuilder;
+  final String? avatarStatusLabel;
+  final Future<void> Function()? onBeforeUserTurn;
+  final Future<void> Function()? onReplayQuestionWithAvatar;
+  final bool avatarReplayLoading;
+  final bool avatarReplayPlaying;
   final DateTime Function() now;
 
   @override
@@ -86,6 +101,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   late final IeltsMockProgressStore _progressStore;
   late final PracticePromptSpeaker _examinerSpeaker;
   late final bool _ownsExaminerSpeaker;
+  final ScrollController _conversationScrollController = ScrollController();
   final TextEditingController _notesController = TextEditingController();
   final TextEditingController _convertedAnswerController =
       TextEditingController();
@@ -93,6 +109,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   IeltsMockProgress? _progress;
   Timer? _ticker;
+  Timer? _recordingTicker;
+  int _recordingSeconds = 0;
   Timer? _part2TranscriptionRetryTimer;
   Timer? _bufferedPart3RecordingLimitTimer;
   Future<void>? _bufferedPart3StartFuture;
@@ -120,7 +138,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       PracticeRecordingState.idle;
   RecordedPracticeAudio? _bufferedPart3Audio;
   bool _flushingBufferedPart3Audio = false;
-  final Set<String> _revealedQuestionIds = <String>{};
+  final Map<String, String> _questionTranslations = <String, String>{};
+  PracticePromptSpeaker? _ownedTipSpeaker;
+  String? _visibleTipQuestionId;
   String? _autoNarratedQuestionId;
   String? _autoNarratedQuestionText;
   String? _playingQuestionId;
@@ -129,6 +149,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   final Set<PracticeMode> _recordedCompletions = <PracticeMode>{};
   final Map<String, String> _feedbackSources = <String, String>{};
   bool _feedbackRebuildScheduled = false;
+  int _observedMessageCount = 0;
+  int _observedCompletedTurns = 0;
+  bool _preserveCompletedConversation = false;
+  bool _showCompletionSheet = false;
 
   IeltsPracticeSelection? get _selection {
     final sessionId = widget.controller.practiceSessionId;
@@ -270,7 +294,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       await _startShortRecording();
       return;
     }
+    await _stopQuestionTipSpeech();
     await _stopQuestionNarration();
+    final beforeUserTurn = widget.onBeforeUserTurn;
+    if (beforeUserTurn != null) {
+      await beforeUserTurn();
+    }
+    if (!mounted || _progress?.phase != IeltsMockPhase.part3) {
+      return;
+    }
     try {
       await widget.controller.recorder.start();
       if (!mounted || _progress?.phase != IeltsMockPhase.part3) {
@@ -285,12 +317,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       setState(() {
         _bufferedPart3RecordingState = PracticeRecordingState.recording;
       });
+      _syncRecordingTimer();
     } on Object {
       if (mounted) {
         setState(() {
           _bufferedPart3RecordingState = PracticeRecordingState.idle;
           _answerLanguageError = '暂时无法开始录音，请重新尝试。';
         });
+        _syncRecordingTimer();
       }
     }
   }
@@ -309,6 +343,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     setState(() {
       _bufferedPart3RecordingState = PracticeRecordingState.transcribing;
     });
+    _syncRecordingTimer();
     try {
       final audio = await widget.controller.recorder.stop();
       if (!mounted) {
@@ -323,6 +358,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           _bufferedPart3RecordingState = PracticeRecordingState.idle;
           _answerLanguageError = '录音保存失败，请重新录音。';
         });
+        _syncRecordingTimer();
       }
     }
   }
@@ -338,6 +374,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final audio = _bufferedPart3Audio;
     _bufferedPart3Audio = null;
     _bufferedPart3RecordingState = PracticeRecordingState.idle;
+    _syncRecordingTimer();
     try {
       if (state == PracticeRecordingState.starting ||
           state == PracticeRecordingState.recording) {
@@ -368,6 +405,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (accepted) {
       _bufferedPart3Audio = null;
       _bufferedPart3RecordingState = PracticeRecordingState.idle;
+      _syncRecordingTimer();
     }
     _flushingBufferedPart3Audio = false;
     if (mounted) {
@@ -382,11 +420,17 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _ownsExaminerSpeaker = widget.examinerSpeaker == null;
     _examinerSpeaker = widget.examinerSpeaker ?? SystemPracticePromptSpeaker();
     _now = widget.now().toUtc();
+    _observedMessageCount = widget.controller.practiceMessages.length;
+    _observedCompletedTurns = widget.controller.completedTurns;
     widget.controller.addListener(_handleControllerState);
     widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     _notesController.addListener(_saveNotes);
     _syncSpeechFeedbackSources();
+    _syncRecordingTimer();
     unawaited(_restoreProgress());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpToLatestMessage();
+    });
   }
 
   @override
@@ -396,14 +440,20 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (controllerChanged) {
       oldWidget.controller.removeListener(_handleControllerState);
       widget.controller.addListener(_handleControllerState);
+      _observedMessageCount = widget.controller.practiceMessages.length;
+      _observedCompletedTurns = widget.controller.completedTurns;
+      _preserveCompletedConversation = false;
+      _showCompletionSheet = false;
       _questionNarrationGeneration++;
       _autoNarratedQuestionId = null;
       _autoNarratedQuestionText = null;
       _playingQuestionId = null;
       _questionNarrationErrorId = null;
-      _revealedQuestionIds.clear();
+      _questionTranslations.clear();
+      _visibleTipQuestionId = null;
       unawaited(_stopExaminerSpeakerSafely());
       unawaited(_restoreProgress());
+      _syncRecordingTimer();
     }
     if (oldWidget.speechFeedbackController != widget.speechFeedbackController) {
       oldWidget.speechFeedbackController?.removeListener(
@@ -427,15 +477,20 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     unawaited(widget.controller.cancelRecording());
     _notesController.removeListener(_saveNotes);
     _notesController.dispose();
+    _conversationScrollController.dispose();
     _convertedAnswerController.dispose();
     _convertedAnswerFocusNode.dispose();
     _ticker?.cancel();
+    _recordingTicker?.cancel();
     _part2TranscriptionRetryTimer?.cancel();
     _bufferedPart3RecordingLimitTimer?.cancel();
     unawaited(_discardBufferedPart3Recording());
     unawaited(_stopExaminerSpeakerSafely());
     if (_ownsExaminerSpeaker) {
       unawaited(_examinerSpeaker.dispose());
+    }
+    if (_ownedTipSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
     }
     super.dispose();
   }
@@ -654,9 +709,31 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _removeSpeechFeedbackSources(widget.speechFeedbackController);
       _progress = null;
       _loading = false;
+      _observedMessageCount = 0;
+      _observedCompletedTurns = 0;
+      _preserveCompletedConversation = false;
+      _showCompletionSheet = false;
       setState(() {});
       return;
     }
+    final messageCount = widget.controller.practiceMessages.length;
+    final shouldFollowConversation = messageCount != _observedMessageCount;
+    _observedMessageCount = messageCount;
+    final completedTurns = widget.controller.completedTurns;
+    final turnLimit = widget.controller.turnLimit;
+    final justCompletedSession =
+        turnLimit > 0 &&
+        _observedCompletedTurns < turnLimit &&
+        completedTurns >= turnLimit;
+    _observedCompletedTurns = completedTurns;
+    if (justCompletedSession) {
+      _preserveCompletedConversation = true;
+      _showCompletionSheet = true;
+    }
+    if (_visibleTipQuestionId != widget.controller.currentQuestion?.id) {
+      _visibleTipQuestionId = null;
+    }
+    _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     _confirmPendingTranscript();
     if ((_progress?.phase == IeltsMockPhase.part2Speaking ||
@@ -682,8 +759,35 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _recordCompletedParts();
     setState(() {});
+    if (shouldFollowConversation) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToLatestMessage();
+      });
+    }
     _scheduleQuestionNarration();
     _flushBufferedPart3Audio();
+  }
+
+  void _jumpToLatestMessage() {
+    if (!mounted || !_conversationScrollController.hasClients) {
+      return;
+    }
+    _conversationScrollController.jumpTo(
+      _conversationScrollController.position.maxScrollExtent,
+    );
+  }
+
+  void _scrollToLatestMessage() {
+    if (!mounted || !_conversationScrollController.hasClients) {
+      return;
+    }
+    unawaited(
+      _conversationScrollController.animateTo(
+        _conversationScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      ),
+    );
   }
 
   void _syncSpeechFeedbackSources() {
@@ -764,6 +868,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _autoNarratedQuestionId = questionId;
     _autoNarratedQuestionText = questionText;
+    if (preview == null &&
+        widget.controller.currentQuestion?.speechPath != null &&
+        widget.onReplayQuestionWithAvatar != null) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _progress?.phase != phase) {
         return;
@@ -774,6 +883,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _playQuestionNarration(String questionId, String text) async {
     final currentQuestion = widget.controller.currentQuestion;
+    final replayWithAvatar = widget.onReplayQuestionWithAvatar;
+    if (currentQuestion?.id == questionId &&
+        currentQuestion?.speechPath != null &&
+        replayWithAvatar != null) {
+      await replayWithAvatar();
+      return;
+    }
     if (_progress?.phase == IeltsMockPhase.part1 &&
         currentQuestion?.id == questionId &&
         widget.controller.canUsePracticeAudio) {
@@ -827,12 +943,81 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
   }
 
-  void _toggleQuestionTranscript(String questionId) {
-    setState(() {
-      if (!_revealedQuestionIds.add(questionId)) {
-        _revealedQuestionIds.remove(questionId);
+  Future<String> _translateQuestion(PracticeMessage message) async {
+    final cached = _questionTranslations[message.id];
+    if (cached != null) {
+      return cached;
+    }
+    final client = widget.controller.client;
+    if (client is! PracticeQuestionTranslationClient) {
+      throw StateError('Question translation is unavailable.');
+    }
+    final translationClient = client as PracticeQuestionTranslationClient;
+    final translation = await translationClient.translateQuestion(
+      questionId: message.id,
+    );
+    if (translation.questionId != message.id) {
+      throw StateError('Question translation does not match the message.');
+    }
+    _questionTranslations[message.id] = translation.content;
+    return translation.content;
+  }
+
+  Future<void> _showQuestionTip() async {
+    final tip = await widget.controller.requestQuestionTip();
+    if (!mounted ||
+        tip == null ||
+        widget.controller.currentQuestion?.id != tip.questionId) {
+      return;
+    }
+    setState(() => _visibleTipQuestionId = tip.questionId);
+  }
+
+  Future<void> _speakQuestionTip() async {
+    final tip = widget.controller.questionTip;
+    if (tip == null || _visibleTipQuestionId != tip.questionId) {
+      return;
+    }
+    final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
+    await speaker.speak(tip.content);
+  }
+
+  void _hideQuestionTip() {
+    if (_visibleTipQuestionId == null) {
+      return;
+    }
+    setState(() => _visibleTipQuestionId = null);
+    unawaited(_stopQuestionTipSpeech());
+  }
+
+  Future<void> _stopQuestionTipSpeech() async {
+    try {
+      await _ownedTipSpeaker?.stop();
+    } on Object {
+      // Recording must remain usable if platform TTS cannot stop cleanly.
+    }
+  }
+
+  void _syncRecordingTimer() {
+    final recording =
+        widget.controller.recordingState == PracticeRecordingState.recording ||
+        _bufferedPart3RecordingState == PracticeRecordingState.recording;
+    if (recording) {
+      if (_recordingTicker != null) {
+        return;
       }
-    });
+      _recordingSeconds = 0;
+      _recordingTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _recordingSeconds = timer.tick);
+      });
+      return;
+    }
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
+    _recordingSeconds = 0;
   }
 
   void _recordCompletedParts() {
@@ -1134,6 +1319,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         return;
       }
     }
+    final beforeUserTurn = widget.onBeforeUserTurn;
+    if (beforeUserTurn != null) {
+      await beforeUserTurn();
+      if (!mounted) {
+        return;
+      }
+    }
     _startingPart2Recording = true;
     _part2DeadlineHandled = false;
     _part2RetryNeeded = false;
@@ -1251,13 +1443,19 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     await _beginPart3();
   }
 
-  Future<void> _startShortRecording() {
+  Future<void> _startShortRecording() async {
     _conversionRequested = false;
+    await _stopQuestionTipSpeech();
     if (_answerLanguageError != null) {
       setState(() => _answerLanguageError = null);
     }
-    unawaited(_stopQuestionNarration());
-    return widget.controller.startRecording();
+    await _stopQuestionNarration();
+    final beforeUserTurn = widget.onBeforeUserTurn;
+    await beforeUserTurn?.call();
+    if (!mounted) {
+      return;
+    }
+    await widget.controller.startRecording();
   }
 
   Future<void> _sendShortVoice() async {
@@ -1319,6 +1517,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       });
       return;
     }
+    final beforeUserTurn = widget.onBeforeUserTurn;
+    if (beforeUserTurn != null) {
+      await beforeUserTurn();
+      if (!mounted) {
+        return;
+      }
+    }
     setState(() => _convertedAnswerSubmitting = true);
     final submitted = await widget.controller.submitPracticeText(text);
     if (!mounted) {
@@ -1342,6 +1547,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _openTextAnswer() {
+    unawaited(widget.onBeforeUserTurn?.call());
     setState(() {
       _answerLanguageError = null;
       _convertedAnswerMode = true;
@@ -1504,6 +1710,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
+    final complete = progress.phase == IeltsMockPhase.complete;
+    final showCompletionPage = complete && !_preserveCompletedConversation;
+    final stagePhase = complete && _preserveCompletedConversation
+        ? (_mode == PracticeMode.part1
+              ? IeltsMockPhase.part1
+              : IeltsMockPhase.part3)
+        : progress.phase;
     return PopScope<Object?>(
       canPop: _exitApproved,
       onPopInvokedWithResult: (didPop, _) {
@@ -1514,51 +1727,178 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       child: Scaffold(
         key: const Key('ielts-mock-page'),
         backgroundColor: SpeakUpDesign.surface,
-        appBar: _buildAppBar(progress.phase),
+        appBar: showCompletionPage ? _buildAppBar(progress.phase) : null,
         body: SafeArea(
-          top: false,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            child: _buildPhase(progress),
-          ),
+          top: !showCompletionPage,
+          child: showCompletionPage
+              ? _buildAnimatedPhase(progress)
+              : PracticeStageLayout(
+                  avatarRegionKey: const Key('ielts-avatar-region'),
+                  avatar: PracticeAvatarStage(
+                    title: _stageTitle(stagePhase),
+                    fallback: const PracticeAvatarFallback(
+                      semanticLabel: 'IELTS 考官静态画面',
+                      imageKey: Key('ielts-avatar-placeholder'),
+                    ),
+                    surfaceBuilder: widget.avatarSurfaceBuilder,
+                    statusLabel: widget.avatarSurfaceBuilder == null
+                        ? null
+                        : widget.avatarStatusLabel,
+                    exitInFlight: _exitInFlight,
+                    exitButtonKey: const Key('ielts-mock-exit'),
+                    onExit: _requestExit,
+                  ),
+                  content: Stack(
+                    children: [
+                      Column(
+                        children: [
+                          Expanded(child: _buildAnimatedPhase(progress)),
+                          if (_usesShortAnswerRecorder(progress.phase))
+                            _buildRecorderDock(),
+                        ],
+                      ),
+                      if (_showCompletionSheet) ...[
+                        const Positioned.fill(
+                          child: ModalBarrier(
+                            dismissible: false,
+                            color: Color(0x14000000),
+                            semanticsLabel: '练习完成',
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _SectionCompletionSheet(
+                            title: _completionTitle,
+                            message:
+                                '${widget.controller.completedTurns} 道回答已保存',
+                            primaryLabel: _mode == PracticeMode.fullMock
+                                ? '查看模考报告'
+                                : '查看本组复盘',
+                            secondaryLabel: _mode == PracticeMode.fullMock
+                                ? '返回训练'
+                                : '返回题单',
+                            onPrimary: _openCompletedReview,
+                            onSecondary: _leaveCompletedPractice,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
         ),
-        bottomNavigationBar:
-            progress.phase == IeltsMockPhase.part1 ||
-                progress.phase == IeltsMockPhase.part3
-            ? _RecorderDock(
-                controller: widget.controller,
-                stateOverride: _usesBufferedPart3Recorder
-                    ? _bufferedPart3RecordingState
-                    : null,
-                enabledOverride: _usesBufferedPart3Recorder
-                    ? _bufferedPart3RecordingState ==
-                          PracticeRecordingState.idle
-                    : null,
-                allowTextAnswer: !_usesBufferedPart3Recorder,
-                validationMessage: _answerLanguageError,
-                convertedAnswerController: _convertedAnswerController,
-                convertedAnswerFocusNode: _convertedAnswerFocusNode,
-                convertedAnswerMode: _convertedAnswerMode,
-                convertedAnswerSubmitting: _convertedAnswerSubmitting,
-                onStart: _usesBufferedPart3Recorder
-                    ? _startBufferedPart3Recording
-                    : _startShortRecording,
-                onSendVoice: _usesBufferedPart3Recorder
-                    ? _stopBufferedPart3Recording
-                    : _sendShortVoice,
-                onConvertToText: _usesBufferedPart3Recorder
-                    ? _stopBufferedPart3Recording
-                    : _convertShortVoice,
-                onCancelRecording: _usesBufferedPart3Recorder
-                    ? _discardBufferedPart3Recording
-                    : _cancelShortVoice,
-                onSubmitConvertedAnswer: _submitConvertedAnswer,
-                onCancelConvertedAnswer: _cancelConvertedAnswer,
-                onOpenTextAnswer: _openTextAnswer,
-              )
-            : null,
       ),
     );
+  }
+
+  Widget _buildAnimatedPhase(IeltsMockProgress progress) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      child:
+          progress.phase == IeltsMockPhase.complete &&
+              _preserveCompletedConversation
+          ? _completedConversationPhase()
+          : _buildPhase(progress),
+    );
+  }
+
+  String get _completionTitle => switch (_mode) {
+    PracticeMode.part1 => 'Part 1 已完成',
+    PracticeMode.part2 => 'Part 2 + Part 3 已完成',
+    PracticeMode.part3 => 'Part 3 已完成',
+    PracticeMode.fullMock => '口语模考已完成',
+    PracticeMode.fullSimulation ||
+    PracticeMode.focus => throw StateError('Non-IELTS mode in IELTS practice.'),
+  };
+
+  Widget _completedConversationPhase() {
+    if (_mode == PracticeMode.part1) {
+      return _conversationPhase(
+        key: const Key('ielts-mock-part-1'),
+        partLabel: 'Part 1',
+        completed: _part1Total,
+        total: _part1Total,
+        sectionStart: _partStart(IeltsSpeakingPart.part1),
+      );
+    }
+    return _conversationPhase(
+      key: const Key('ielts-mock-part-3'),
+      partLabel: 'Part 3 · Discussion',
+      completed: _part3Total,
+      total: _part3Total,
+      sectionStart: _part3Start,
+    );
+  }
+
+  void _openCompletedReview() {
+    if (_mode == PracticeMode.fullMock) {
+      setState(() {
+        _showCompletionSheet = false;
+        _preserveCompletedConversation = false;
+      });
+      return;
+    }
+    setState(() => _showCompletionSheet = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToLatestMessage();
+    });
+  }
+
+  void _leaveCompletedPractice() {
+    if (_mode == PracticeMode.fullMock) {
+      unawaited(_requestExit(fromCompletion: true));
+      return;
+    }
+    unawaited(_finishSection(IeltsPracticeCompletionAction.list));
+  }
+
+  bool _usesShortAnswerRecorder(IeltsMockPhase phase) =>
+      phase == IeltsMockPhase.part1 || phase == IeltsMockPhase.part3;
+
+  Widget _buildRecorderDock() {
+    return _RecorderDock(
+      controller: widget.controller,
+      recordingSeconds: _recordingSeconds,
+      stateOverride: _usesBufferedPart3Recorder
+          ? _bufferedPart3RecordingState
+          : null,
+      enabledOverride: _usesBufferedPart3Recorder
+          ? _bufferedPart3RecordingState == PracticeRecordingState.idle
+          : null,
+      allowTextAnswer: !_usesBufferedPart3Recorder,
+      validationMessage: _answerLanguageError,
+      convertedAnswerController: _convertedAnswerController,
+      convertedAnswerFocusNode: _convertedAnswerFocusNode,
+      convertedAnswerMode: _convertedAnswerMode,
+      convertedAnswerSubmitting: _convertedAnswerSubmitting,
+      onStart: _usesBufferedPart3Recorder
+          ? _startBufferedPart3Recording
+          : _startShortRecording,
+      onSendVoice: _usesBufferedPart3Recorder
+          ? _stopBufferedPart3Recording
+          : _sendShortVoice,
+      onConvertToText: _usesBufferedPart3Recorder
+          ? _stopBufferedPart3Recording
+          : _convertShortVoice,
+      onCancelRecording: _usesBufferedPart3Recorder
+          ? _discardBufferedPart3Recording
+          : _cancelShortVoice,
+      onSubmitConvertedAnswer: _submitConvertedAnswer,
+      onCancelConvertedAnswer: _cancelConvertedAnswer,
+      onOpenTextAnswer: _openTextAnswer,
+    );
+  }
+
+  String _stageTitle(IeltsMockPhase phase) {
+    return switch (phase) {
+      IeltsMockPhase.part1 => 'IELTS · Part 1',
+      IeltsMockPhase.part2Intro ||
+      IeltsMockPhase.part2CueCard ||
+      IeltsMockPhase.part2Preparation ||
+      IeltsMockPhase.part2Speaking ||
+      IeltsMockPhase.part2Complete => 'IELTS · Part 2',
+      IeltsMockPhase.part3Intro || IeltsMockPhase.part3 => 'IELTS · Part 3',
+      _ => 'IELTS Speaking',
+    };
   }
 
   PreferredSizeWidget? _buildAppBar(IeltsMockPhase phase) {
@@ -1739,15 +2079,28 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           child: _ExamConversation(
             messages: messages ?? _sectionMessages(sectionStart, completed),
             controller: widget.controller,
+            scrollController: _conversationScrollController,
+            bottomPadding: _showCompletionSheet ? 292 : 28,
             speechFeedbackController: widget.speechFeedbackController,
-            revealedQuestionIds: _revealedQuestionIds,
-            playingQuestionId: _playingQuestionId,
+            playingQuestionId:
+                widget.avatarReplayLoading || widget.avatarReplayPlaying
+                ? widget.controller.questionId
+                : _playingQuestionId,
             narrationErrorQuestionId: _questionNarrationErrorId,
             mediaPlayingQuestionId: widget.controller.isQuestionAudioPlaying
                 ? widget.controller.questionId
                 : null,
             onPlayQuestion: _playQuestionNarration,
-            onToggleTranscript: _toggleQuestionTranscript,
+            onTranslateQuestion:
+                widget.controller.canTranslateQuestion &&
+                    widget.controller.client
+                        is PracticeQuestionTranslationClient
+                ? _translateQuestion
+                : null,
+            visibleTipQuestionId: _visibleTipQuestionId,
+            onShowTip: _showQuestionTip,
+            onHideTip: _hideQuestionTip,
+            onSpeakTip: _speakQuestionTip,
           ),
         ),
         if (widget.controller.errorMessage case final error?)
@@ -1765,7 +2118,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   List<PracticeMessage> _sectionMessages(int sectionStart, int completed) {
-    final relevantCount = completed * 2 + 1;
+    final relevantCount =
+        completed * 2 + (widget.controller.currentQuestion == null ? 0 : 1);
     final all = widget.controller.practiceMessages
         .where(
           (message) =>
@@ -1853,30 +2207,41 @@ class _ExamConversation extends StatelessWidget {
   const _ExamConversation({
     required this.messages,
     required this.controller,
-    required this.revealedQuestionIds,
+    required this.scrollController,
+    required this.bottomPadding,
     required this.playingQuestionId,
     required this.narrationErrorQuestionId,
     required this.mediaPlayingQuestionId,
     required this.onPlayQuestion,
-    required this.onToggleTranscript,
+    required this.onTranslateQuestion,
+    required this.visibleTipQuestionId,
+    required this.onShowTip,
+    required this.onHideTip,
+    required this.onSpeakTip,
     this.speechFeedbackController,
   });
 
   final List<PracticeMessage> messages;
   final PracticeController controller;
-  final Set<String> revealedQuestionIds;
+  final ScrollController scrollController;
+  final double bottomPadding;
   final String? playingQuestionId;
   final String? narrationErrorQuestionId;
   final String? mediaPlayingQuestionId;
   final Future<void> Function(String questionId, String text) onPlayQuestion;
-  final ValueChanged<String> onToggleTranscript;
+  final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
+  final String? visibleTipQuestionId;
+  final VoidCallback onShowTip;
+  final VoidCallback onHideTip;
+  final Future<void> Function() onSpeakTip;
   final SpeechFeedbackController? speechFeedbackController;
 
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
       key: const Key('ielts-mock-conversation'),
-      padding: const EdgeInsets.fromLTRB(20, 26, 20, 28),
+      controller: scrollController,
+      padding: EdgeInsets.fromLTRB(20, 26, 20, bottomPadding),
       itemCount: messages.length,
       itemBuilder: (context, index) {
         final message = messages[index];
@@ -1894,29 +2259,68 @@ class _ExamConversation extends StatelessWidget {
                 SpeechFeedbackScoreabilityStatus.insufficient
             ? null
             : candidateProjection;
+        final currentQuestion = message.id == controller.questionId;
+        final playing =
+            playingQuestionId == message.id ||
+            mediaPlayingQuestionId == message.id;
+        final tipsAvailable =
+            currentQuestion &&
+            (controller.practiceCapabilities?.questionTipsAllowed ?? false);
+        final tip = controller.questionTip;
+        final showTip =
+            assistant &&
+            tip != null &&
+            tip.questionId == message.id &&
+            tip.questionId == visibleTipQuestionId;
+        final tipError = currentQuestion
+            ? controller.questionTipErrorMessage
+            : null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: assistant
-                  ? _ExaminerQuestionBubble(
-                      message: message,
-                      playing:
-                          playingQuestionId == message.id ||
-                          mediaPlayingQuestionId == message.id,
-                      transcriptVisible: revealedQuestionIds.contains(
-                        message.id,
-                      ),
-                      playbackFailed: narrationErrorQuestionId == message.id,
-                      onPlay: () => onPlayQuestion(message.id, message.text),
-                      onToggleTranscript: () => onToggleTranscript(message.id),
-                    )
-                  : PracticeMessageBubble(
-                      message: message,
-                      feedbackProjection: projection,
-                    ),
+              child: PracticeMessageBubble(
+                message: message,
+                feedbackProjection: projection,
+                onTranslate: assistant ? onTranslateQuestion : null,
+                actions: assistant
+                    ? _IeltsQuestionActions(
+                        messageId: message.id,
+                        playing: playing,
+                        playbackFailed: narrationErrorQuestionId == message.id,
+                        tipsAvailable: tipsAvailable,
+                        tipLoading:
+                            currentQuestion && controller.isQuestionTipLoading,
+                        tipEnabled:
+                            currentQuestion && controller.canRequestQuestionTip,
+                        onPlay: () => onPlayQuestion(message.id, message.text),
+                        onShowTip: onShowTip,
+                      )
+                    : null,
+              ),
             ),
+            if (showTip)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: QuestionTipCard(
+                  content: tip.content,
+                  onClose: onHideTip,
+                  onSpeak: onSpeakTip,
+                ),
+              ),
+            if (assistant && tipError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Text(
+                  tipError,
+                  key: const Key('ielts-question-tip-error'),
+                  style: const TextStyle(
+                    color: SpeakUpDesign.error,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -1924,105 +2328,81 @@ class _ExamConversation extends StatelessWidget {
   }
 }
 
-class _ExaminerQuestionBubble extends StatelessWidget {
-  const _ExaminerQuestionBubble({
-    required this.message,
+class _IeltsQuestionActions extends StatelessWidget {
+  const _IeltsQuestionActions({
+    required this.messageId,
     required this.playing,
-    required this.transcriptVisible,
     required this.playbackFailed,
+    required this.tipsAvailable,
+    required this.tipLoading,
+    required this.tipEnabled,
     required this.onPlay,
-    required this.onToggleTranscript,
+    required this.onShowTip,
   });
 
-  final PracticeMessage message;
+  final String messageId;
   final bool playing;
-  final bool transcriptVisible;
   final bool playbackFailed;
+  final bool tipsAvailable;
+  final bool tipLoading;
+  final bool tipEnabled;
   final VoidCallback onPlay;
-  final VoidCallback onToggleTranscript;
+  final VoidCallback onShowTip;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 340),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Material(
-              key: ValueKey('ielts-question-voice-${message.id}'),
-              color: SpeakUpDesign.surfaceMuted,
-              borderRadius: BorderRadius.circular(22),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(22),
-                onTap: onPlay,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        playing
-                            ? Icons.stop_circle_outlined
-                            : Icons.play_circle_outline_rounded,
-                        color: SpeakUpDesign.primary,
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        Icons.graphic_eq_rounded,
-                        color: SpeakUpDesign.primary,
-                        size: 34,
-                      ),
-                      const SizedBox(width: 10),
-                      Flexible(
-                        child: Text(
-                          playing ? 'Examiner is speaking…' : 'Examiner voice',
-                          style: SpeakUpDesign.body.copyWith(
-                            color: SpeakUpDesign.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextButton.icon(
+          key: ValueKey('ielts-question-voice-$messageId'),
+          onPressed: onPlay,
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.primary,
+            backgroundColor: SpeakUpDesign.surfaceMuted,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
-            TextButton.icon(
-              key: ValueKey('ielts-question-transcript-toggle-${message.id}'),
-              onPressed: onToggleTranscript,
-              icon: Icon(
-                transcriptVisible
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined,
-                size: 18,
-              ),
-              label: Text(transcriptVisible ? 'Hide English' : 'Show English'),
-            ),
-            if (playbackFailed)
-              const Padding(
-                padding: EdgeInsets.only(left: 12, bottom: 8),
-                child: Text(
-                  'Playback failed. Tap the voice bubble to retry.',
-                  style: TextStyle(color: SpeakUpDesign.error, fontSize: 12),
-                ),
-              ),
-            if (transcriptVisible)
-              Container(
-                key: ValueKey('ielts-question-transcript-${message.id}'),
-                margin: const EdgeInsets.only(bottom: 4),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: SpeakUpDesign.surface,
-                  border: Border.all(color: SpeakUpDesign.border),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(message.text, style: SpeakUpDesign.body),
-              ),
-          ],
+          ),
+          icon: Icon(
+            playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+            size: 17,
+          ),
+          label: Text(
+            playing
+                ? '停止朗读'
+                : playbackFailed
+                ? '重试朗读'
+                : '朗读',
+          ),
         ),
-      ),
+        if (tipsAvailable)
+          TextButton.icon(
+            key: ValueKey('ielts-question-tip-$messageId'),
+            onPressed: tipEnabled ? onShowTip : null,
+            style: TextButton.styleFrom(
+              foregroundColor: SpeakUpDesign.primary,
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            icon: tipLoading
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.lightbulb_outline_rounded, size: 17),
+            label: Text(tipLoading ? '生成中' : 'Tips'),
+          ),
+      ],
     );
   }
 }
@@ -2035,6 +2415,7 @@ String _ieltsFeedbackSourceKey(
 class _RecorderDock extends StatelessWidget {
   const _RecorderDock({
     required this.controller,
+    required this.recordingSeconds,
     required this.stateOverride,
     required this.enabledOverride,
     required this.allowTextAnswer,
@@ -2053,6 +2434,7 @@ class _RecorderDock extends StatelessWidget {
   });
 
   final PracticeController controller;
+  final int recordingSeconds;
   final PracticeRecordingState? stateOverride;
   final bool? enabledOverride;
   final bool allowTextAnswer;
@@ -2110,6 +2492,7 @@ class _RecorderDock extends StatelessWidget {
                 phase: phase,
                 capture: capture,
                 transcript: controller.transcript ?? '',
+                recordingSeconds: recordingSeconds,
                 allowTextAnswer: allowTextAnswer,
                 onShowText: onOpenTextAnswer,
               );
@@ -2143,6 +2526,7 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
     required this.phase,
     required this.capture,
     required this.transcript,
+    required this.recordingSeconds,
     required this.allowTextAnswer,
     required this.onShowText,
   });
@@ -2150,6 +2534,7 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
   final VoiceCapturePhase phase;
   final VoiceCaptureView capture;
   final String transcript;
+  final int recordingSeconds;
   final bool allowTextAnswer;
   final VoidCallback onShowText;
 
@@ -2158,7 +2543,7 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
     return VoiceComposerDock(
       capture: capture,
       phase: phase,
-      elapsed: Duration.zero,
+      elapsed: Duration(seconds: recordingSeconds),
       enabled: true,
       recordKey: const Key('ielts-mock-record'),
       stopRecordingKey: const Key('ielts-mock-stop-recording'),
@@ -2300,6 +2685,115 @@ class _CompletionStep extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionCompletionSheet extends StatelessWidget {
+  const _SectionCompletionSheet({
+    required this.title,
+    required this.message,
+    required this.primaryLabel,
+    required this.secondaryLabel,
+    required this.onPrimary,
+    required this.onSecondary,
+  });
+
+  final String title;
+  final String message;
+  final String primaryLabel;
+  final String secondaryLabel;
+  final VoidCallback onPrimary;
+  final VoidCallback onSecondary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Material(
+          key: const Key('ielts-section-completion-sheet'),
+          color: SpeakUpDesign.surface,
+          elevation: 12,
+          shadowColor: const Color(0x26000000),
+          borderRadius: BorderRadius.circular(28),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: SpeakUpDesign.border,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: SpeakUpDesign.ink, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      size: 34,
+                      color: SpeakUpDesign.ink,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: SpeakUpDesign.pageTitle.copyWith(fontSize: 24),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: SpeakUpDesign.body.copyWith(
+                    color: SpeakUpDesign.secondary,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  key: const Key('ielts-section-review-action'),
+                  onPressed: onPrimary,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: SpeakUpDesign.ink,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(primaryLabel),
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  key: const Key('ielts-section-list-action'),
+                  onPressed: onSecondary,
+                  style: TextButton.styleFrom(
+                    foregroundColor: SpeakUpDesign.ink,
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                  child: Text(secondaryLabel),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -173,3 +173,29 @@ class PracticeAvatarStage extends StatelessWidget {
     );
   }
 }
+
+/// Shared static fallback shown when a live avatar surface is unavailable.
+class PracticeAvatarFallback extends StatelessWidget {
+  const PracticeAvatarFallback({
+    required this.semanticLabel,
+    this.imageKey,
+    super.key,
+  });
+
+  final String semanticLabel;
+  final Key? imageKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: semanticLabel,
+      image: true,
+      child: Image.asset(
+        'assets/images/scenes/static-avatar-van-gogh.jpg',
+        key: imageKey,
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
+      ),
+    );
+  }
+}

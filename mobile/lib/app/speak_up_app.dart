@@ -469,18 +469,17 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     final launchController = widget.preparationLaunchController;
     if (_practiceController.practiceExperience ==
         PracticeExperience.ieltsSpeaking) {
-      return IeltsSpeakingMockPage(
-        controller: _practiceController,
-        onExitRequested: launchController?.parkCurrentPractice,
-        ieltsController: widget.ieltsPreparationController,
-        completedReportBuilder: widget.ieltsSpeakingReportController == null
-            ? null
-            : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
-                practiceSessionId: practiceSessionId,
-                controller: widget.ieltsSpeakingReportController!,
-              ),
-        speechFeedbackController: widget.speechFeedbackController,
-      );
+      final factory = widget.avatarControllerFactory;
+      if (factory != null && _practiceController.canUseAvatar) {
+        return PracticeAvatarSession(
+          practiceController: _practiceController,
+          avatarControllerFactory: factory,
+          surfaceKey: const Key('ielts-avatar-surface'),
+          builder: (_, avatar) =>
+              _buildIeltsPracticePage(launchController, avatar: avatar),
+        );
+      }
+      return _buildIeltsPracticePage(launchController);
     }
     final experience = _practiceController.practiceExperience;
     if (experience == PracticeExperience.interview ||
@@ -516,6 +515,30 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
       onContinueWithAgent: launchController?.completeAndContinueWithAgent,
+    );
+  }
+
+  Widget _buildIeltsPracticePage(
+    PreparationLaunchController? launchController, {
+    PracticeAvatarSessionView? avatar,
+  }) {
+    return IeltsSpeakingMockPage(
+      controller: _practiceController,
+      onExitRequested: launchController?.parkCurrentPractice,
+      ieltsController: widget.ieltsPreparationController,
+      completedReportBuilder: widget.ieltsSpeakingReportController == null
+          ? null
+          : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
+              practiceSessionId: practiceSessionId,
+              controller: widget.ieltsSpeakingReportController!,
+            ),
+      speechFeedbackController: widget.speechFeedbackController,
+      avatarSurfaceBuilder: avatar?.surfaceBuilder,
+      avatarStatusLabel: avatar?.statusLabel,
+      onBeforeUserTurn: avatar?.interruptForUserTurn,
+      onReplayQuestionWithAvatar: avatar?.onReplayQuestion,
+      avatarReplayLoading: avatar?.replayLoading ?? false,
+      avatarReplayPlaying: avatar?.replayPlaying ?? false,
     );
   }
 }
