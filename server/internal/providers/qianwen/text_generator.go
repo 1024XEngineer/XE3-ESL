@@ -19,8 +19,10 @@ import (
 
 const (
 	providerName            = "qianwen"
+	qiniuProviderName       = "qiniu"
 	chatCompletionsPath     = "/chat/completions"
 	compatibleBasePath      = "/compatible-mode/v1"
+	qiniuCompatibleBasePath = "/v1"
 	maxResponseBytes        = 2 << 20
 	maxErrorResponseBytes   = 64 << 10
 	maxTimeout              = 5 * time.Minute
@@ -34,6 +36,10 @@ const (
 )
 
 type TextConfig struct {
+	// Provider is empty for the native Qianwen adapter. The Qiniu wrapper sets
+	// it explicitly so both providers can share the audited OpenAI-compatible
+	// wire implementation without changing the business ports.
+	Provider        string
 	BaseURL         string
 	Model           string
 	Timeout         time.Duration
@@ -41,6 +47,8 @@ type TextConfig struct {
 }
 
 type textClient struct {
+	provider        string
+	providerLabel   string
 	endpoint        string
 	model           string
 	timeout         time.Duration
@@ -54,7 +62,8 @@ func (generator *textClient) String() string {
 		return "QianwenGenerator(<nil>)"
 	}
 	return fmt.Sprintf(
-		"QianwenGenerator(model=%q, timeout=%s, max_output_tokens=%d, api_key=[REDACTED])",
+		"%sGenerator(model=%q, timeout=%s, max_output_tokens=%d, api_key=[REDACTED])",
+		generator.providerLabel,
 		generator.model,
 		generator.timeout,
 		generator.maxOutputTokens,
@@ -80,15 +89,19 @@ func newTextClient(config TextConfig, apiKey string) (*textClient, error) {
 }
 
 func newWithClient(config TextConfig, apiKey string, client httpDoer) (*textClient, error) {
-	baseURL, err := normalizeBaseURL(config.BaseURL)
+	settings, err := textProviderSettingsFor(config.Provider)
 	if err != nil {
 		return nil, err
 	}
-	model, err := normalizeModel(config.Model)
+	baseURL, err := normalizeTextBaseURL(config.BaseURL, settings)
 	if err != nil {
 		return nil, err
 	}
-	apiKey, err = normalizeAPIKey(apiKey)
+	model, err := normalizeModel(config.Model, settings)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err = normalizeTextAPIKey(apiKey, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +119,8 @@ func newWithClient(config TextConfig, apiKey string, client httpDoer) (*textClie
 	}
 
 	return &textClient{
+		provider:        settings.name,
+		providerLabel:   settings.label,
 		endpoint:        baseURL + chatCompletionsPath,
 		model:           model,
 		timeout:         config.Timeout,
@@ -148,63 +163,11 @@ func (generator *textClient) Generate(
 		)
 	}
 
-	payload := chatCompletionRequest{
-		Model:          generator.model,
-		Messages:       make([]chatMessage, 0, len(request.Messages)),
-		Tools:          make([]chatTool, 0, len(request.Tools)),
-		Stream:         false,
-		EnableThinking: false,
-		MaxTokens:      generator.maxOutputTokens,
-	}
-	if request.ResponseFormat == protocol.TextResponseFormatJSON {
-		payload.ResponseFormat = &chatResponseFormat{
-			Type: string(protocol.TextResponseFormatJSON),
-		}
-	}
-	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
+	payload, err := generator.providerRequest(request, internalToProvider)
 	if err != nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
-			protocol.ErrorInvalidRequest,
-			0,
-			"",
-			"",
-			err,
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
-	}
-	payload.ToolChoice = toolChoice
-	for _, message := range request.Messages {
-		providerMessage := chatMessage{
-			Role:       string(message.Role),
-			ToolCallID: message.ToolCallID,
-			ToolCalls:  make([]chatToolCall, 0, len(message.ToolCalls)),
-		}
-		if len(message.ContentParts) != 0 {
-			providerMessage.Content = providerContentParts(message.ContentParts)
-		} else if message.Content != "" {
-			providerMessage.Content = message.Content
-		}
-		for index, call := range message.ToolCalls {
-			providerMessage.ToolCalls = append(providerMessage.ToolCalls, chatToolCall{
-				ID:    call.ID,
-				Type:  "function",
-				Index: index,
-				Function: chatFunctionCall{
-					Name:      internalToProvider[call.Name],
-					Arguments: string(call.Arguments),
-				},
-			})
-		}
-		payload.Messages = append(payload.Messages, providerMessage)
-	}
-	for _, definition := range request.Tools {
-		payload.Tools = append(payload.Tools, chatTool{
-			Type: "function",
-			Function: chatToolFunction{
-				Name:        internalToProvider[definition.Name],
-				Description: definition.Description,
-				Parameters:  definition.InputSchema,
-			},
-		})
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -289,7 +252,7 @@ func (generator *textClient) Generate(
 			errors.New("decode Qianwen response"),
 		)
 	}
-	result, err := completion.result(providerToInternal)
+	result, err := completion.result(generator.provider, providerToInternal)
 	if err != nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
 			protocol.ErrorInvalidResponse,
@@ -398,6 +361,7 @@ func (generator *textClient) GenerateStream(
 	result, err := decodeCompletionStream(
 		callContext,
 		response.Body,
+		generator.provider,
 		providerToInternal,
 		observer,
 	)
@@ -431,12 +395,15 @@ func (generator *textClient) providerRequest(
 	internalToProvider map[string]string,
 ) (chatCompletionRequest, error) {
 	payload := chatCompletionRequest{
-		Model:          generator.model,
-		Messages:       make([]chatMessage, 0, len(request.Messages)),
-		Tools:          make([]chatTool, 0, len(request.Tools)),
-		Stream:         false,
-		EnableThinking: false,
-		MaxTokens:      generator.maxOutputTokens,
+		Model:     generator.model,
+		Messages:  make([]chatMessage, 0, len(request.Messages)),
+		Tools:     make([]chatTool, 0, len(request.Tools)),
+		Stream:    false,
+		MaxTokens: generator.maxOutputTokens,
+	}
+	if generator.provider == providerName {
+		disabled := false
+		payload.EnableThinking = &disabled
 	}
 	if request.ResponseFormat == protocol.TextResponseFormatJSON {
 		payload.ResponseFormat = &chatResponseFormat{
@@ -450,9 +417,14 @@ func (generator *textClient) providerRequest(
 	payload.ToolChoice = toolChoice
 	for _, message := range request.Messages {
 		providerMessage := chatMessage{
-			Role: string(message.Role), Content: message.Content,
+			Role:       string(message.Role),
 			ToolCallID: message.ToolCallID,
 			ToolCalls:  make([]chatToolCall, 0, len(message.ToolCalls)),
+		}
+		if len(message.ContentParts) != 0 {
+			providerMessage.Content = providerContentParts(message.ContentParts)
+		} else if message.Content != "" {
+			providerMessage.Content = message.Content
 		}
 		for index, call := range message.ToolCalls {
 			providerMessage.ToolCalls = append(providerMessage.ToolCalls, chatToolCall{
@@ -484,7 +456,7 @@ type chatCompletionRequest struct {
 	ToolChoice     any                 `json:"tool_choice,omitempty"`
 	Stream         bool                `json:"stream"`
 	StreamOptions  *chatStreamOptions  `json:"stream_options,omitempty"`
-	EnableThinking bool                `json:"enable_thinking"`
+	EnableThinking *bool               `json:"enable_thinking,omitempty"`
 	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
@@ -618,6 +590,7 @@ type streamToolCall struct {
 func decodeCompletionStream(
 	ctx context.Context,
 	body io.Reader,
+	provider string,
 	providerToInternal map[string]string,
 	observer protocol.TextDeltaObserver,
 ) (protocol.TextResult, error) {
@@ -661,7 +634,7 @@ func decodeCompletionStream(
 			return protocol.TextResult{}, errors.New("decode Qianwen stream event")
 		}
 		chunkID := sanitizeIdentifier(chunk.ID)
-		chunkModel, _ := normalizeModel(chunk.Model)
+		chunkModel, _ := normalizeReturnedModel(chunk.Model)
 		if completionID == "" {
 			completionID = chunkID
 			model = chunkModel
@@ -671,8 +644,9 @@ func decodeCompletionStream(
 		if completionID == "" || model == "" {
 			return protocol.TextResult{}, errors.New("Qianwen stream has invalid completion identity")
 		}
-		if chunk.Usage != nil {
-			if sawUsage || len(chunk.Choices) != 0 ||
+		usageInChunk := chunk.Usage != nil
+		if usageInChunk {
+			if sawUsage || len(chunk.Choices) > 1 ||
 				chunk.Usage.PromptTokens == nil ||
 				chunk.Usage.CompletionTokens == nil ||
 				chunk.Usage.TotalTokens == nil {
@@ -692,7 +666,9 @@ func decodeCompletionStream(
 				return protocol.TextResult{}, errors.New("Qianwen stream has invalid token usage")
 			}
 			sawUsage = true
-			continue
+			if len(chunk.Choices) == 0 {
+				continue
+			}
 		}
 		// Official OpenAI-compatible examples consume chunks by state: choice
 		// chunks carry deltas, while the final empty-choice chunk carries usage.
@@ -700,10 +676,13 @@ func decodeCompletionStream(
 		if len(chunk.Choices) == 0 {
 			continue
 		}
-		if sawUsage || len(chunk.Choices) != 1 {
+		if (sawUsage && !usageInChunk) || len(chunk.Choices) != 1 {
 			return protocol.TextResult{}, errors.New("Qianwen stream must contain exactly one choice")
 		}
 		choice := chunk.Choices[0]
+		if usageInChunk && choice.FinishReason == nil {
+			return protocol.TextResult{}, errors.New("Qianwen stream has invalid final usage")
+		}
 		if choice.Delta.Role != "" &&
 			choice.Delta.Role != string(protocol.TextRoleAssistant) {
 			return protocol.TextResult{}, errors.New("Qianwen stream has an invalid delta role")
@@ -780,7 +759,7 @@ func decodeCompletionStream(
 		return protocol.TextResult{}, errors.New("Qianwen stream ended before completion")
 	}
 	result := protocol.TextResult{
-		ID: completionID, Provider: providerName, Model: model,
+		ID: completionID, Provider: provider, Model: model,
 		Content: content.String(), FinishReason: finishReason,
 		Usage: protocol.TokenUsage{
 			InputTokens: usage.prompt, OutputTokens: usage.completion,
@@ -826,13 +805,14 @@ func normalizedVisibleDelta(started bool, value string) (string, string) {
 }
 
 func (response chatCompletionResponse) result(
+	provider string,
 	providerToInternal map[string]string,
 ) (protocol.TextResult, error) {
 	id := sanitizeIdentifier(response.ID)
 	if id == "" {
 		return protocol.TextResult{}, errors.New("Qianwen response has no valid completion ID")
 	}
-	model, err := normalizeModel(response.Model)
+	model, err := normalizeReturnedModel(response.Model)
 	if err != nil {
 		return protocol.TextResult{}, errors.New("Qianwen response has no valid model")
 	}
@@ -906,7 +886,7 @@ func (response chatCompletionResponse) result(
 
 	return protocol.TextResult{
 		ID:           id,
-		Provider:     providerName,
+		Provider:     provider,
 		Model:        model,
 		Content:      content,
 		ToolCalls:    toolCalls,
@@ -1030,6 +1010,10 @@ func decodeStatusError(response *http.Response) error {
 
 func classifyStatus(statusCode int, providerCode string) protocol.ErrorKind {
 	normalizedCode := strings.ToLower(providerCode)
+	if statusCode == http.StatusPaymentRequired ||
+		strings.Contains(normalizedCode, "quota_exceeded") {
+		return protocol.ErrorQuotaExhausted
+	}
 	if strings.Contains(normalizedCode, "allocationquota.freetieronly") {
 		return protocol.ErrorQuotaExhausted
 	}
@@ -1093,32 +1077,66 @@ func readBounded(reader io.Reader, limit int64) ([]byte, error) {
 	return body, nil
 }
 
-func normalizeBaseURL(raw string) (string, error) {
+type textProviderSettings struct {
+	name     string
+	label    string
+	basePath string
+}
+
+func textProviderSettingsFor(provider string) (textProviderSettings, error) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", providerName:
+		return textProviderSettings{
+			name: providerName, label: "Qianwen", basePath: compatibleBasePath,
+		}, nil
+	case qiniuProviderName:
+		return textProviderSettings{
+			name: qiniuProviderName, label: "Qiniu", basePath: qiniuCompatibleBasePath,
+		}, nil
+	default:
+		return textProviderSettings{}, errors.New("text provider is not supported")
+	}
+}
+
+func normalizeTextBaseURL(raw string, settings textProviderSettings) (string, error) {
 	raw = strings.TrimSpace(raw)
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", errors.New("Qianwen base URL is invalid")
+		return "", fmt.Errorf("%s base URL is invalid", settings.label)
 	}
 	if parsed.Scheme != "https" ||
 		parsed.User != nil ||
 		parsed.RawQuery != "" ||
 		parsed.Fragment != "" ||
 		parsed.Port() != "" {
-		return "", errors.New("Qianwen base URL must be a credential-free HTTPS URL")
+		return "", fmt.Errorf(
+			"%s base URL must be a credential-free HTTPS URL",
+			settings.label,
+		)
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if !isOfficialHost(host) {
-		return "", errors.New("Qianwen base URL must use an official Alibaba Cloud endpoint")
+	if !isOfficialTextHost(host, settings) {
+		return "", fmt.Errorf(
+			"%s base URL must use an official provider endpoint",
+			settings.label,
+		)
 	}
-	if strings.TrimRight(parsed.EscapedPath(), "/") != compatibleBasePath {
-		return "", fmt.Errorf("Qianwen base URL path must be %s", compatibleBasePath)
+	if strings.TrimRight(parsed.EscapedPath(), "/") != settings.basePath {
+		return "", fmt.Errorf(
+			"%s base URL path must be %s",
+			settings.label,
+			settings.basePath,
+		)
 	}
-	parsed.Path = compatibleBasePath
+	parsed.Path = settings.basePath
 	parsed.RawPath = ""
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-func isOfficialHost(host string) bool {
+func isOfficialTextHost(host string, settings textProviderSettings) bool {
+	if settings.name == qiniuProviderName {
+		return host == "api.qnaigc.com"
+	}
 	switch host {
 	case "dashscope.aliyuncs.com",
 		"dashscope-intl.aliyuncs.com",
@@ -1130,36 +1148,75 @@ func isOfficialHost(host string) bool {
 	}
 }
 
-func normalizeModel(raw string) (string, error) {
-	model := strings.TrimSpace(raw)
-	if len(model) == 0 || len(model) > maxProviderIdentifier {
-		return "", errors.New("Qianwen model is required and must not exceed 128 characters")
+func normalizeModel(raw string, settings textProviderSettings) (string, error) {
+	model, err := normalizeReturnedModel(raw)
+	if err != nil {
+		return "", fmt.Errorf(
+			"%s model is required and contains only supported characters",
+			settings.label,
+		)
 	}
-	if !strings.HasPrefix(strings.ToLower(model), "qwen") {
+	if settings.name == providerName &&
+		!strings.HasPrefix(strings.ToLower(model), "qwen") {
 		return "", errors.New("Qianwen adapter only accepts Qwen model IDs")
-	}
-	for _, value := range model {
-		if !((value >= 'a' && value <= 'z') ||
-			(value >= 'A' && value <= 'Z') ||
-			(value >= '0' && value <= '9') ||
-			value == '-' || value == '_' || value == '.') {
-			return "", errors.New("Qianwen model contains unsupported characters")
-		}
 	}
 	return model, nil
 }
 
-func normalizeAPIKey(raw string) (string, error) {
+func normalizeReturnedModel(raw string) (string, error) {
+	model := strings.TrimSpace(raw)
+	if len(model) == 0 || len(model) > maxProviderIdentifier {
+		return "", errors.New("provider model is required and must not exceed 128 characters")
+	}
+	for index, value := range model {
+		if !((value >= 'a' && value <= 'z') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= '0' && value <= '9') ||
+			value == '-' || value == '_' || value == '.' || value == '/' ||
+			value == ':') {
+			return "", errors.New("provider model contains unsupported characters")
+		}
+		if value == '/' && (index == 0 || index == len(model)-1) {
+			return "", errors.New("provider model contains an invalid separator")
+		}
+	}
+	if strings.Contains(model, "//") || strings.Contains(model, "..") {
+		return "", errors.New("provider model contains an invalid sequence")
+	}
+	return model, nil
+}
+
+func normalizeTextAPIKey(raw string, settings textProviderSettings) (string, error) {
 	apiKey := strings.TrimSpace(raw)
 	if apiKey == "" {
-		return "", errors.New("Qianwen API key is required")
+		return "", fmt.Errorf("%s API key is required", settings.label)
 	}
 	for _, value := range apiKey {
 		if unicode.IsSpace(value) || unicode.IsControl(value) {
-			return "", errors.New("Qianwen API key contains whitespace or control characters")
+			return "", fmt.Errorf(
+				"%s API key contains whitespace or control characters",
+				settings.label,
+			)
 		}
 	}
 	return apiKey, nil
+}
+
+// These Qianwen-only helpers remain shared by the existing embedding and
+// speech adapters. Text generation uses the provider-aware variants above.
+func normalizeBaseURL(raw string) (string, error) {
+	settings, _ := textProviderSettingsFor(providerName)
+	return normalizeTextBaseURL(raw, settings)
+}
+
+func normalizeAPIKey(raw string) (string, error) {
+	settings, _ := textProviderSettingsFor(providerName)
+	return normalizeTextAPIKey(raw, settings)
+}
+
+func isOfficialHost(host string) bool {
+	settings, _ := textProviderSettingsFor(providerName)
+	return isOfficialTextHost(host, settings)
 }
 
 func rawIdentifier(raw json.RawMessage) string {

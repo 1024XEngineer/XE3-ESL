@@ -59,6 +59,57 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadTextGenerationReadsQiniuConfiguration(t *testing.T) {
+	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
+	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
+	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_TIMEOUT", "45s")
+	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "768")
+	t.Setenv("QINIU_AI_API_KEY", "qiniu-test-secret")
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "24000")
+
+	cfg, err := LoadTextGeneration()
+	if err != nil {
+		t.Fatalf("load Qiniu text generation config: %v", err)
+	}
+	if cfg.Provider != TextProviderQiniu ||
+		cfg.BaseURL != "https://api.qnaigc.com/v1" ||
+		cfg.Model != "gemini-2.5-flash" ||
+		cfg.SpeechFeedbackModel != "gemini-2.5-flash" ||
+		cfg.Timeout != 45*time.Second ||
+		cfg.MaxOutputTokens != 768 ||
+		cfg.MaxContextChars != 24000 ||
+		cfg.APIKey.Reveal() != "qiniu-test-secret" {
+		t.Fatalf("unexpected Qiniu text generation config: %#v", cfg)
+	}
+}
+
+func TestLoadTextGenerationRejectsUnsafeQiniuConfiguration(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing base URL", key: "QINIU_AI_BASE_URL", value: ""},
+		{name: "missing model", key: "QINIU_AI_MODEL", value: ""},
+		{name: "missing feedback model", key: "QINIU_AI_SPEECH_FEEDBACK_MODEL", value: ""},
+		{name: "missing API key", key: "QINIU_AI_API_KEY", value: ""},
+		{name: "API key whitespace", key: "QINIU_AI_API_KEY", value: "secret value"},
+		{name: "invalid timeout", key: "QINIU_AI_TIMEOUT", value: "soon"},
+		{name: "invalid output budget", key: "QINIU_AI_MAX_OUTPUT_TOKENS", value: "many"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setRequiredQiniuTextGenerationEnvironment(t)
+			t.Setenv(test.key, test.value)
+			if _, err := LoadTextGeneration(); err == nil {
+				t.Fatal("expected Qiniu configuration error")
+			}
+		})
+	}
+}
+
 func TestLoadTextGenerationRejectsUnsafeOrIncompleteConfiguration(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -142,4 +193,16 @@ func setRequiredTextGenerationEnvironment(t *testing.T) {
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
 	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 	t.Setenv("DASHSCOPE_API_KEY", "test-secret-value")
+}
+
+func setRequiredQiniuTextGenerationEnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
+	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
+	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_TIMEOUT", "")
+	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")
+	t.Setenv("QINIU_AI_API_KEY", "qiniu-test-secret")
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 }

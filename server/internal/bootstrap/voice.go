@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qiniu"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -139,40 +140,36 @@ func NewPracticeSpeechSynthesizer(
 func NewPracticeQuestionGenerator(
 	configuration config.TextGenerationConfig,
 ) (practicevoice.QuestionGenerator, error) {
-	if configuration.Provider != config.TextProviderQianwen {
-		return nil, errors.New(
-			"bootstrap: Practice question provider is not registered",
-		)
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewPracticeVoiceQuestionGenerator(providerConfig, apiKey)
 	}
-	return qianwen.NewPracticeVoiceQuestionGenerator(
-		qianwen.TextConfig{
-			BaseURL:         configuration.BaseURL,
-			Model:           configuration.Model,
-			Timeout:         configuration.Timeout,
-			MaxOutputTokens: configuration.MaxOutputTokens,
-		},
-		configuration.APIKey.Reveal(),
-	)
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewPracticeVoiceQuestionGenerator(providerConfig, apiKey)
 }
 
 // NewPracticeAnswerTipGenerator selects the Practice Voice Tip adapter.
 func NewPracticeAnswerTipGenerator(
 	configuration config.TextGenerationConfig,
 ) (practicevoice.AnswerTipGenerator, error) {
-	if configuration.Provider != config.TextProviderQianwen {
-		return nil, errors.New(
-			"bootstrap: Practice answer Tip provider is not registered",
-		)
+	if configuration.Provider == config.TextProviderQiniu {
+		providerConfig, apiKey, err := qiniuTextProvider(configuration)
+		if err != nil {
+			return nil, err
+		}
+		return qiniu.NewPracticeVoiceAnswerTipGenerator(providerConfig, apiKey)
 	}
-	return qianwen.NewPracticeVoiceAnswerTipGenerator(
-		qianwen.TextConfig{
-			BaseURL:         configuration.BaseURL,
-			Model:           configuration.Model,
-			Timeout:         configuration.Timeout,
-			MaxOutputTokens: configuration.MaxOutputTokens,
-		},
-		configuration.APIKey.Reveal(),
-	)
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewPracticeVoiceAnswerTipGenerator(providerConfig, apiKey)
 }
 
 // buildProductionVoiceApplication constructs infrastructure and delegates all
