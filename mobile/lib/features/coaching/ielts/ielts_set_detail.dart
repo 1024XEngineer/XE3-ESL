@@ -18,6 +18,7 @@ class IeltsSetDetailPage extends StatefulWidget {
     this.cueCard,
     this.promptSpeaker,
     this.answerPreparationClient,
+    this.cueCardQuestionReference,
     this.questionReferences = const <IeltsAnswerQuestionReference>[],
     super.key,
   });
@@ -30,6 +31,7 @@ class IeltsSetDetailPage extends StatefulWidget {
   final VoidCallback? onStart;
   final PracticePromptSpeaker? promptSpeaker;
   final IeltsAnswerPreparationClient? answerPreparationClient;
+  final IeltsAnswerQuestionReference? cueCardQuestionReference;
   final List<IeltsAnswerQuestionReference> questionReferences;
 
   @override
@@ -42,6 +44,7 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   int? _speakingQuestionIndex;
   int? _speakingAnswerIndex;
   int? _expandedQuestionIndex;
+  bool _cueCardAnswerExpanded = false;
   final Map<int, IeltsAnswerPreparation> _preparations = {};
   final Set<int> _generatingQuestionIndexes = {};
   final Map<int, String> _answerErrors = {};
@@ -66,20 +69,35 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     super.initState();
     _ownsPromptSpeaker = widget.promptSpeaker == null;
     _promptSpeaker = widget.promptSpeaker ?? SystemPracticePromptSpeaker();
-    if (widget.mode == PracticeMode.part1 && _canPrepareAnswers) {
+    if (_canPrepareQuestionAnswers) {
       _expandedQuestionIndex = 0;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          unawaited(_ensureExample(0));
+          unawaited(_ensureExample(0, widget.questionReferences[0]));
+        }
+      });
+    } else if (_canPrepareCueCardAnswer) {
+      _cueCardAnswerExpanded = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_ensureExample(0, widget.cueCardQuestionReference!));
         }
       });
     }
   }
 
-  bool get _canPrepareAnswers =>
-      widget.mode == PracticeMode.part1 &&
+  bool get _canPrepareQuestionAnswers =>
+      (widget.mode == PracticeMode.part1 ||
+          widget.mode == PracticeMode.part3) &&
       widget.answerPreparationClient != null &&
+      widget.questions.isNotEmpty &&
       widget.questionReferences.length == widget.questions.length;
+
+  bool get _canPrepareCueCardAnswer =>
+      widget.mode == PracticeMode.part2 &&
+      widget.cueCard != null &&
+      widget.answerPreparationClient != null &&
+      widget.cueCardQuestionReference != null;
 
   int _startAnswerRequest(int index) {
     final request = (_answerRequests[index] ?? 0) + 1;
@@ -181,7 +199,10 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     }
   }
 
-  Future<void> _prepareAnswer(int index) async {
+  Future<void> _prepareAnswer(
+    int index,
+    IeltsAnswerQuestionReference question,
+  ) async {
     final points = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
@@ -201,7 +222,7 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
       var draft =
           existing ??
           await widget.answerPreparationClient!.create(
-            question: widget.questionReferences[index],
+            question: question,
             personalPoints: points,
             targetBand: 7,
           );
@@ -238,7 +259,10 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     }
   }
 
-  Future<void> _ensureExample(int index) async {
+  Future<void> _ensureExample(
+    int index,
+    IeltsAnswerQuestionReference question,
+  ) async {
     if (_preparations.containsKey(index) ||
         _generatingQuestionIndexes.contains(index)) {
       return;
@@ -246,7 +270,7 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     final request = _startAnswerRequest(index);
     try {
       final draft = await widget.answerPreparationClient!.create(
-        question: widget.questionReferences[index],
+        question: question,
         personalPoints: const [],
         targetBand: 7,
       );
@@ -339,6 +363,60 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                     ],
                     if (widget.cueCard case final value?) ...[
                       _CueCardContent(cueCard: value),
+                      if (_canPrepareCueCardAnswer) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            key: const Key('ielts-cue-card-answer-toggle'),
+                            onPressed: () {
+                              setState(() {
+                                _cueCardAnswerExpanded =
+                                    !_cueCardAnswerExpanded;
+                              });
+                              if (_cueCardAnswerExpanded) {
+                                unawaited(
+                                  _ensureExample(
+                                    0,
+                                    widget.cueCardQuestionReference!,
+                                  ),
+                                );
+                              }
+                            },
+                            icon: Icon(
+                              _cueCardAnswerExpanded
+                                  ? Icons.keyboard_arrow_up_rounded
+                                  : Icons.keyboard_arrow_down_rounded,
+                            ),
+                            label: Text(
+                              _cueCardAnswerExpanded ? '收起答案' : '示例与自定义答案',
+                            ),
+                          ),
+                        ),
+                        if (_cueCardAnswerExpanded)
+                          _QuestionAnswerPanel(
+                            index: 0,
+                            tipText: _answerTip,
+                            preparation: _preparations[0],
+                            generating: _generatingQuestionIndexes.contains(0),
+                            errorMessage: _answerErrors[0],
+                            speaking: _speakingAnswerIndex == 0,
+                            onPrepare: () => _prepareAnswer(
+                              0,
+                              widget.cueCardQuestionReference!,
+                            ),
+                            onRetry: () => _ensureExample(
+                              0,
+                              widget.cueCardQuestionReference!,
+                            ),
+                            onSpeak: _preparations[0]?.speechText == null
+                                ? null
+                                : () => _toggleAnswerSpeech(
+                                    0,
+                                    _preparations[0]!.speechText!,
+                                  ),
+                          ),
+                      ],
                       if (widget.questions.isNotEmpty)
                         const SizedBox(height: 30),
                     ],
@@ -361,7 +439,7 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                           speaking: _speakingQuestionIndex == index,
                           onSpeak: () => _toggleQuestionSpeech(index),
                           expanded: _expandedQuestionIndex == index,
-                          onToggle: _canPrepareAnswers
+                          onToggle: _canPrepareQuestionAnswers
                               ? () {
                                   final opening =
                                       _expandedQuestionIndex != index;
@@ -372,23 +450,35 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                                     _answerErrors.remove(index);
                                   });
                                   if (opening) {
-                                    unawaited(_ensureExample(index));
+                                    unawaited(
+                                      _ensureExample(
+                                        index,
+                                        widget.questionReferences[index],
+                                      ),
+                                    );
                                   }
                                 }
                               : null,
                         ),
-                        if (_canPrepareAnswers &&
+                        if (_canPrepareQuestionAnswers &&
                             _expandedQuestionIndex == index)
                           _QuestionAnswerPanel(
                             index: index,
+                            tipText: _answerTip,
                             preparation: _preparations[index],
                             generating: _generatingQuestionIndexes.contains(
                               index,
                             ),
                             errorMessage: _answerErrors[index],
                             speaking: _speakingAnswerIndex == index,
-                            onPrepare: () => _prepareAnswer(index),
-                            onRetry: () => _ensureExample(index),
+                            onPrepare: () => _prepareAnswer(
+                              index,
+                              widget.questionReferences[index],
+                            ),
+                            onRetry: () => _ensureExample(
+                              index,
+                              widget.questionReferences[index],
+                            ),
                             onSpeak: _preparations[index]?.speechText == null
                                 ? null
                                 : () => _toggleAnswerSpeech(
@@ -450,6 +540,13 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
       ),
     );
   }
+
+  String get _answerTip => switch (widget.mode) {
+    PracticeMode.part1 => 'Tip：先直接回答，再补一个原因或小例子。',
+    PracticeMode.part2 => 'Tip：围绕 Cue Card 要点组织开头、主体和结尾。',
+    PracticeMode.part3 => 'Tip：先表明观点，再解释并补充例子或比较。',
+    _ => throw StateError('IELTS answer preparation requires a section mode.'),
+  };
 }
 
 bool _samePersonalPoints(List<String> left, List<String> right) {
@@ -656,6 +753,7 @@ class _QuestionRow extends StatelessWidget {
 class _QuestionAnswerPanel extends StatelessWidget {
   const _QuestionAnswerPanel({
     required this.index,
+    required this.tipText,
     required this.preparation,
     required this.generating,
     required this.errorMessage,
@@ -666,6 +764,7 @@ class _QuestionAnswerPanel extends StatelessWidget {
   });
 
   final int index;
+  final String tipText;
   final IeltsAnswerPreparation? preparation;
   final bool generating;
   final String? errorMessage;
@@ -688,7 +787,7 @@ class _QuestionAnswerPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Tip：先直接回答，再补一个原因或小例子。', style: PreparationDesign.label),
+          Text(tipText, style: PreparationDesign.label),
           const SizedBox(height: 12),
           if (generating)
             const Padding(

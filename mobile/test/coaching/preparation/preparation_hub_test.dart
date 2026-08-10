@@ -271,11 +271,13 @@ void main() {
     );
   });
 
-  testWidgets('shows the real Cue Card and linked Part 3 questions', (
+  testWidgets('shows only the Part 2 Cue Card and its answer preparation', (
     tester,
   ) async {
+    final answers = _AnswerPreparationClient();
     final ieltsController = IeltsPreparationController(
       client: _HubQuestionBankClient(),
+      answerPreparationClient: answers,
     );
     addTearDown(ieltsController.dispose);
     await ieltsController.loadIfNeeded();
@@ -303,14 +305,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ielts-set-detail-cue-card')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-answer-panel-1')), findsOneWidget);
+    expect(find.text('Tip：围绕 Cue Card 要点组织开头、主体和结尾。'), findsOneWidget);
+    expect(answers.createdQuestions.single.part, 'PART_2');
+    expect(answers.createdQuestions.single.sourceId, 'p23-001');
+    expect(answers.createdQuestions.single.questionPosition, 1);
     expect(find.text('Describe a skill you would like to learn'), findsWidgets);
     expect(find.text('What'), findsOneWidget);
     expect(find.text('Benefit'), findsOneWidget);
-    expect(find.text('同组 Part 3 · 5 题'), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-set-detail-question-5')),
-      findsOneWidget,
-    );
+    expect(find.text('同组 Part 3 · 5 题'), findsNothing);
+    expect(find.byKey(const Key('ielts-set-detail-question-1')), findsNothing);
 
     await tester.tap(find.byKey(const Key('ielts-set-detail-back')));
     await tester.pumpAndSettle();
@@ -437,7 +441,8 @@ void main() {
     expect(client.generateCalls, 0);
   });
 
-  testWidgets('keeps answer preparation limited to Part 1', (tester) async {
+  testWidgets('shows answer preparation for Part 3 questions', (tester) async {
+    final client = _AnswerPreparationClient();
     await tester.pumpWidget(
       MaterialApp(
         home: IeltsSetDetailPage(
@@ -453,15 +458,19 @@ void main() {
               questionPosition: 1,
             ),
           ],
-          answerPreparationClient: _AnswerPreparationClient(),
+          answerPreparationClient: client,
           onStart: () {},
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('ielts-set-detail-expand-1')), findsNothing);
-    expect(find.byKey(const Key('ielts-answer-panel-1')), findsNothing);
+    expect(find.byKey(const Key('ielts-set-detail-expand-1')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-answer-panel-1')), findsOneWidget);
+    expect(find.text('Tip：先表明观点，再解释并补充例子或比较。'), findsOneWidget);
+    expect(client.createdQuestions.single.part, 'PART_3');
+    expect(client.createdQuestions.single.sourceId, 'watches');
+    expect(client.createdQuestions.single.questionPosition, 1);
   });
 
   testWidgets('tracks answer loading independently for each question', (
@@ -838,6 +847,7 @@ final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
   List<String> _personalPoints = const [];
   int createCalls = 0;
   int generateCalls = 0;
+  final List<IeltsAnswerQuestionReference> createdQuestions = [];
 
   @override
   Future<IeltsAnswerPreparation> create({
@@ -846,6 +856,7 @@ final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
     required double targetBand,
   }) async {
     createCalls++;
+    createdQuestions.add(question);
     if (existingAnswer case final answer?) {
       return IeltsAnswerPreparation(
         id: 'ielts_answer_00000000000000000000000000000000',
