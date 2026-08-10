@@ -101,7 +101,7 @@ check-qiniu-llm-live:
 
 .PHONY: check-qiniu-llm-live-go
 check-qiniu-llm-live-go:
-	cd server && go test -count=1 -run '^TestLiveQiniuTextGeneration$$' ./internal/providers/qiniu
+	cd server && go test -count=1 -run '^TestLiveQiniu' ./internal/providers/qiniu
 
 check-oss-live:
 	@set -euo pipefail; \

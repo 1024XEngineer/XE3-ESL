@@ -20,6 +20,7 @@ import (
 const (
 	providerName            = "qianwen"
 	qiniuProviderName       = "qiniu"
+	qiniuKimiK26Model       = "moonshotai/kimi-k2.6"
 	chatCompletionsPath     = "/chat/completions"
 	compatibleBasePath      = "/compatible-mode/v1"
 	qiniuCompatibleBasePath = "/v1"
@@ -401,9 +402,16 @@ func (generator *textClient) providerRequest(
 		Stream:    false,
 		MaxTokens: generator.maxOutputTokens,
 	}
-	if generator.provider == providerName {
+	switch generator.provider {
+	case providerName:
 		disabled := false
 		payload.EnableThinking = &disabled
+	case qiniuProviderName:
+		// Qiniu fronts heterogeneous upstream APIs. Kimi needs Qiniu's generic
+		// thinking control, while existing Gemini configurations must omit it.
+		if generator.model == qiniuKimiK26Model {
+			payload.Thinking = &chatThinking{Type: "disabled"}
+		}
 	}
 	if request.ResponseFormat == protocol.TextResponseFormatJSON {
 		payload.ResponseFormat = &chatResponseFormat{
@@ -457,11 +465,16 @@ type chatCompletionRequest struct {
 	Stream         bool                `json:"stream"`
 	StreamOptions  *chatStreamOptions  `json:"stream_options,omitempty"`
 	EnableThinking *bool               `json:"enable_thinking,omitempty"`
+	Thinking       *chatThinking       `json:"thinking,omitempty"`
 	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
 	MaxTokens int `json:"max_tokens"`
+}
+
+type chatThinking struct {
+	Type string `json:"type"`
 }
 
 type chatStreamOptions struct {

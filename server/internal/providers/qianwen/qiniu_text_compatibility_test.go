@@ -29,7 +29,7 @@ func TestQiniuGenerateUsesOfficialMultimodalJSONContract(t *testing.T) {
 		}
 		return jsonResponse(http.StatusOK, `{
 			"id":"chatcmpl-qiniu-1",
-			"model":"gemini-2.5-flash",
+			"model":"moonshotai/kimi-k2.6",
 			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"summary\":\"safe\"}"}}],
 			"usage":{"prompt_tokens":12,"completion_tokens":6,"total_tokens":18}
 		}`), nil
@@ -48,12 +48,15 @@ func TestQiniuGenerateUsesOfficialMultimodalJSONContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Qiniu Generate() error = %v", err)
 	}
-	if result.Provider != qiniuProviderName || result.Model != "gemini-2.5-flash" ||
+	if result.Provider != qiniuProviderName || result.Model != "moonshotai/kimi-k2.6" ||
 		result.Content != `{"summary":"safe"}` || result.Usage.TotalTokens != 18 {
 		t.Fatalf("Qiniu result = %#v", result)
 	}
 	if _, exists := payload["enable_thinking"]; exists {
-		t.Fatal("Qiniu request included the DashScope-only enable_thinking field")
+		t.Fatal("Qiniu request included the Qianwen-only enable_thinking field")
+	}
+	if string(payload["thinking"]) != `{"type":"disabled"}` {
+		t.Fatalf("Qiniu thinking = %s", payload["thinking"])
 	}
 	if string(payload["response_format"]) != `{"type":"json_object"}` {
 		t.Fatalf("Qiniu response_format = %s", payload["response_format"])
@@ -87,7 +90,7 @@ func TestQiniuGenerateMapsToolCallsAndLineage(t *testing.T) {
 		}
 		return jsonResponse(http.StatusOK, `{
 			"id":"chatcmpl-qiniu-tool",
-			"model":"gemini-2.5-flash",
+			"model":"moonshotai/kimi-k2.6",
 			"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{
 				"id":"call_qiniu_1","type":"function","function":{"name":"review_search_v1","arguments":"{\"query\":\"IELTS\"}"}
 			}]}}],
@@ -105,6 +108,35 @@ func TestQiniuGenerateMapsToolCallsAndLineage(t *testing.T) {
 	}
 }
 
+func TestQiniuGeminiRequestOmitsKimiThinkingControl(t *testing.T) {
+	var payload map[string]json.RawMessage
+	generator := mustQiniuGeneratorForModel(
+		t,
+		"gemini-2.5-flash",
+		doerFunc(func(request *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			return jsonResponse(http.StatusOK, `{
+				"id":"chatcmpl-qiniu-gemini",
+				"model":"gemini-2.5-flash",
+				"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Hello"}}],
+				"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}
+			}`), nil
+		}),
+		"qiniu-test-key",
+	)
+	if _, err := generator.Generate(context.Background(), validRequest()); err != nil {
+		t.Fatalf("Qiniu Gemini Generate() error = %v", err)
+	}
+	if _, exists := payload["enable_thinking"]; exists {
+		t.Fatal("Qiniu Gemini request included the Qianwen thinking field")
+	}
+	if _, exists := payload["thinking"]; exists {
+		t.Fatal("Qiniu Gemini request included the Kimi thinking field")
+	}
+}
+
 func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 	var payload map[string]json.RawMessage
 	generator := mustQiniuGenerator(t, doerFunc(func(request *http.Request) (*http.Response, error) {
@@ -112,8 +144,8 @@ func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 			t.Fatal(err)
 		}
 		return streamResponse(
-			`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[{"delta":{"role":"assistant","content":"Hello"}}]}` + "\n\n" +
-				`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[{"delta":{"content":" there"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}` + "\n\n" +
+			`data: {"id":"chatcmpl-qiniu-stream","model":"moonshotai/kimi-k2.6","choices":[{"delta":{"role":"assistant","content":"Hello"}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-qiniu-stream","model":"moonshotai/kimi-k2.6","choices":[{"delta":{"content":" there"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}` + "\n\n" +
 				"data: [DONE]\n\n",
 		), nil
 	}), "qiniu-test-key")
@@ -134,7 +166,10 @@ func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 		t.Fatalf("Qiniu stream result = %#v, deltas=%#v", result, deltas)
 	}
 	if _, exists := payload["enable_thinking"]; exists {
-		t.Fatal("Qiniu stream included the DashScope-only enable_thinking field")
+		t.Fatal("Qiniu stream included the Qianwen-only enable_thinking field")
+	}
+	if string(payload["thinking"]) != `{"type":"disabled"}` {
+		t.Fatalf("Qiniu stream thinking = %s", payload["thinking"])
 	}
 	if string(payload["stream_options"]) != `{"include_usage":true}` {
 		t.Fatalf("Qiniu stream_options = %s", payload["stream_options"])
@@ -163,9 +198,9 @@ func TestQiniuErrorsAreBoundedAndClassified(t *testing.T) {
 
 func TestQiniuTextConfigRejectsNonOfficialEndpoints(t *testing.T) {
 	invalid := []TextConfig{
-		{Provider: qiniuProviderName, BaseURL: "https://example.com/v1", Model: "gemini-2.5-flash"},
-		{Provider: qiniuProviderName, BaseURL: "http://api.qnaigc.com/v1", Model: "gemini-2.5-flash"},
-		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1/chat/completions", Model: "gemini-2.5-flash"},
+		{Provider: qiniuProviderName, BaseURL: "https://example.com/v1", Model: "moonshotai/kimi-k2.6"},
+		{Provider: qiniuProviderName, BaseURL: "http://api.qnaigc.com/v1", Model: "moonshotai/kimi-k2.6"},
+		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1/chat/completions", Model: "moonshotai/kimi-k2.6"},
 		{Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1", Model: "../unsafe"},
 	}
 	for _, configuration := range invalid {
@@ -182,10 +217,19 @@ func TestQiniuTextConfigRejectsNonOfficialEndpoints(t *testing.T) {
 }
 
 func mustQiniuGenerator(t *testing.T, client httpDoer, apiKey string) *textClient {
+	return mustQiniuGeneratorForModel(t, qiniuKimiK26Model, client, apiKey)
+}
+
+func mustQiniuGeneratorForModel(
+	t *testing.T,
+	model string,
+	client httpDoer,
+	apiKey string,
+) *textClient {
 	t.Helper()
 	generator, err := newWithClient(TextConfig{
 		Provider: qiniuProviderName, BaseURL: "https://api.qnaigc.com/v1",
-		Model: "gemini-2.5-flash", Timeout: time.Second, MaxOutputTokens: 512,
+		Model: model, Timeout: time.Second, MaxOutputTokens: 512,
 	}, apiKey, client)
 	if err != nil {
 		t.Fatalf("new Qiniu generator: %v", err)

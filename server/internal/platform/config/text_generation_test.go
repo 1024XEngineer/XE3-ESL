@@ -62,7 +62,7 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 func TestLoadTextGenerationReadsQiniuConfiguration(t *testing.T) {
 	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
-	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "45s")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "768")
@@ -75,7 +75,7 @@ func TestLoadTextGenerationReadsQiniuConfiguration(t *testing.T) {
 	}
 	if cfg.Provider != TextProviderQiniu ||
 		cfg.BaseURL != "https://api.qnaigc.com/v1" ||
-		cfg.Model != "gemini-2.5-flash" ||
+		cfg.Model != "moonshotai/kimi-k2.6" ||
 		cfg.SpeechFeedbackModel != "gemini-2.5-flash" ||
 		cfg.Timeout != 45*time.Second ||
 		cfg.MaxOutputTokens != 768 ||
@@ -199,7 +199,7 @@ func setRequiredQiniuTextGenerationEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("TEXT_GENERATION_PROVIDER", TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
-	t.Setenv("QINIU_AI_MODEL", "gemini-2.5-flash")
+	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")
