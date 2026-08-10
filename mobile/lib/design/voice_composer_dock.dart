@@ -72,6 +72,7 @@ class VoiceComposerDock extends StatelessWidget {
       key: capturing ? stopRecordingKey : null,
       constraints: const BoxConstraints(minHeight: 48),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Row(

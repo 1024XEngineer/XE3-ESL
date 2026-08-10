@@ -271,12 +271,15 @@ final class IosAgentVoiceRecorder
         duration: elapsed,
       );
     } on Pcm16StreamCaptureException catch (error) {
+      await capture.cancel();
       await _deletePath(path);
       throw AgentVoiceRecordingException(_mapStreamFailure(error.kind));
     } on AgentVoiceRecordingException {
+      await capture.cancel();
       await _deletePath(path);
       rethrow;
     } catch (_) {
+      await capture.cancel();
       await _deletePath(path);
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.unavailable,

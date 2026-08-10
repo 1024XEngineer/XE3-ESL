@@ -391,6 +391,13 @@ final class WirePracticeClient
             : PracticeClientFailureKind.network,
         retryable: error.kind == RealtimeVoiceInputFailureKind.network,
       );
+    } on PracticeClientOperationCancelled {
+      rethrow;
+    } catch (_) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
+        retryable: true,
+      );
     }
   }
 

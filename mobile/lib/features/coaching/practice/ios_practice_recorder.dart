@@ -204,8 +204,6 @@ final class IosPracticeRecorder
         PracticeRecordingFailureKind.notRecording,
       );
     }
-    _activePath = null;
-    _streamCapture = null;
     try {
       await _recorder.stop();
       final wav = await capture.finish();
@@ -216,13 +214,18 @@ final class IosPracticeRecorder
         sizeBytes: wav.lengthInBytes,
       );
     } on Pcm16StreamCaptureException catch (error) {
+      await capture.cancel();
       await _deletePath(path);
       throw PracticeRecordingException(_mapStreamFailure(error.kind));
     } catch (_) {
+      await capture.cancel();
       await _deletePath(path);
       throw const PracticeRecordingException(
         PracticeRecordingFailureKind.unavailable,
       );
+    } finally {
+      _activePath = null;
+      _streamCapture = null;
     }
   }
 

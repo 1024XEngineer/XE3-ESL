@@ -62,24 +62,29 @@ final class RealtimeVoiceInputTransport {
         ensureCurrent: ensureCurrent,
         maximumChunkBytes: maximumChunkBytes,
       );
+      var receivedTerminalEvent = false;
       await for (final message in connection.socket) {
         ensureCurrent();
         final envelope = _decodeEnvelope(message);
         yield envelope;
         if (envelope.type == 'candidate.ready' ||
             envelope.type == 'candidate.failed') {
-          return;
+          receivedTerminalEvent = true;
+          break;
         }
       }
       await chunks.cancel();
       await sender;
-      await connection.handleDisconnect(
-        closeCode: connection.socket.closeCode,
-        closeReason: connection.socket.closeReason,
-      );
-      throw const RealtimeVoiceInputException(
-        RealtimeVoiceInputFailureKind.network,
-      );
+      if (!receivedTerminalEvent) {
+        await connection.handleDisconnect(
+          closeCode: connection.socket.closeCode,
+          closeReason: connection.socket.closeReason,
+        );
+        throw const RealtimeVoiceInputException(
+          RealtimeVoiceInputFailureKind.network,
+        );
+      }
+      return;
     } on AuthenticatedWebSocketException catch (error) {
       throw RealtimeVoiceInputException(
         error.invalidatesAuthentication

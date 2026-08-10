@@ -124,6 +124,32 @@ void main() {
     await recorder.discard(audio);
     expect(await File(audio.path).exists(), isFalse);
   });
+
+  test('streaming stop failure cancels the native capture', () async {
+    final native = _StreamingNativeRecorder()
+      ..stopError = StateError('stop failed');
+    final recorder = IosPracticeRecorder(
+      recorder: native,
+      temporaryDirectory: () async => root,
+    );
+
+    final stream = await recorder.startAudioStream();
+    final subscription = stream.listen((_) {}, onError: (_) {});
+
+    await expectLater(
+      recorder.stopAudioStream(),
+      throwsA(
+        isA<PracticeRecordingException>().having(
+          (error) => error.kind,
+          'kind',
+          PracticeRecordingFailureKind.unavailable,
+        ),
+      ),
+    );
+
+    expect(native.cancelCount, 1);
+    await subscription.cancel();
+  });
 }
 
 final class _NativeRecorder implements NativePracticeRecorder {
@@ -151,7 +177,13 @@ final class _NativeRecorder implements NativePracticeRecorder {
 
 final class _StreamingNativeRecorder
     implements NativePracticeRecorder, NativeStreamingPracticeRecorder {
-  final StreamController<Uint8List> _chunks = StreamController<Uint8List>();
+  _StreamingNativeRecorder() {
+    _chunks = StreamController<Uint8List>(onCancel: () => cancelCount++);
+  }
+
+  late final StreamController<Uint8List> _chunks;
+  Object? stopError;
+  int cancelCount = 0;
 
   void add(Uint8List chunk) => _chunks.add(chunk);
 
@@ -166,6 +198,9 @@ final class _StreamingNativeRecorder
 
   @override
   Future<String?> stop() async {
+    if (stopError case final error?) {
+      throw error;
+    }
     await _chunks.close();
     return null;
   }

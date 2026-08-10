@@ -328,6 +328,13 @@ final class WireAgentVoiceClient
             : AgentClientFailureKind.network,
         retryable: error.kind == RealtimeVoiceInputFailureKind.network,
       );
+    } on AgentClientOperationCancelled {
+      rethrow;
+    } catch (_) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
     }
   }
 
