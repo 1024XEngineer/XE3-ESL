@@ -441,7 +441,7 @@ components:
         detail_schema:
           type: string
           enum:
-            - general-scene-evaluation/v1
+            - ielts-speaking-practice-report/v1
             - ielts-speaking-report/v1
         evaluation_status:
           type: string

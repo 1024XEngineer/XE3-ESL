@@ -753,7 +753,7 @@ func validSessionReportShape(
 	detailSchema string,
 ) bool {
 	expectedScope := ""
-	expectedDetail := "general-scene-evaluation/v1"
+	expectedDetail := ieltsSpeakingPracticeReportSchemaVersion
 	var expectedSections []string
 	switch mode {
 	case "PART_1":

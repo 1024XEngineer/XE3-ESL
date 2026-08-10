@@ -67,6 +67,9 @@ type sessionReportReader interface {
 	) (evaluationreport.SessionReportReadState, error)
 }
 
+// Identifies the detail shape emitted by IELTS practice FormalReports.
+const ieltsSpeakingPracticeReportSchemaVersion = "ielts-speaking-practice-report/v1"
+
 type Application struct {
 	evaluations        evaluationService
 	runtime            evaluationRuntimeReader
@@ -428,7 +431,7 @@ func sessionReportAuthority(mode string) (
 		return "", "", "", "", false
 	}
 	return reportScope,
-		scoring.GeneralSceneSchemaVersion,
+		ieltsSpeakingPracticeReportSchemaVersion,
 		scoring.GeneralSceneStrategyRef,
 		scoring.GeneralScenePipelineVersion,
 		true

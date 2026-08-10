@@ -1670,7 +1670,7 @@ const sessionReportCases = [
     practice_mode: 'PART_2',
     report_scope: 'PART_2_3',
     available_sections: ['PART_2', 'PART_3'],
-    detail_schema: 'general-scene-evaluation/v1',
+    detail_schema: 'ielts-speaking-practice-report/v1',
     evaluation_status: 'QUEUED',
     status_url: '/v1/practice-sessions/session_part_2/report',
   },
@@ -1697,7 +1697,7 @@ const sessionReportCases = [
     practice_mode: 'PART_3',
     report_scope: 'PART_3',
     available_sections: ['PART_3'],
-    detail_schema: 'general-scene-evaluation/v1',
+    detail_schema: 'ielts-speaking-practice-report/v1',
     evaluation_status: 'FAILED',
     status_url: '/v1/practice-sessions/session_part_3/report',
     stable_failure: {
@@ -1708,9 +1708,13 @@ const sessionReportCases = [
 ];
 
 const expectedSessionReportShape = {
-  PART_1: ['PART_1', ['PART_1'], 'general-scene-evaluation/v1'],
-  PART_2: ['PART_2_3', ['PART_2', 'PART_3'], 'general-scene-evaluation/v1'],
-  PART_3: ['PART_3', ['PART_3'], 'general-scene-evaluation/v1'],
+  PART_1: ['PART_1', ['PART_1'], 'ielts-speaking-practice-report/v1'],
+  PART_2: [
+    'PART_2_3',
+    ['PART_2', 'PART_3'],
+    'ielts-speaking-practice-report/v1',
+  ],
+  PART_3: ['PART_3', ['PART_3'], 'ielts-speaking-practice-report/v1'],
   FULL_MOCK: [
     'FULL_MOCK',
     ['PART_1', 'PART_2', 'PART_3'],

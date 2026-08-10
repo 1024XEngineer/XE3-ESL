@@ -413,7 +413,7 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
 		reader.practiceSessionID != "session_ielts_001" ||
 		resource.PracticeMode != "PART_2" ||
 		resource.ReportScope != "PART_2_3" ||
-		resource.DetailSchema != scoring.GeneralSceneSchemaVersion ||
+		resource.DetailSchema != ieltsSpeakingPracticeReportSchemaVersion ||
 		resource.EvaluationStatus != evaluation.StatusQueued ||
 		len(resource.AvailableSections) != 2 {
 		t.Fatalf("reader=%#v resource=%#v", reader, resource)
@@ -607,6 +607,27 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 		t.Fatalf(
 			"IELTS failed report resource = %#v, %v",
 			ieltsResource,
+			err,
+		)
+	}
+	sessionResource, err := sessionReportResource(
+		"session_ielts_001",
+		ieltsFailed.OwnerUserID,
+		evaluationreport.SessionReportReadState{
+			PracticeMode:      "PART_1",
+			AvailableSections: []string{"PART_1"},
+			Status:            evaluation.StatusFailed,
+			Failure: &evaluationreport.SessionReportFailure{
+				Code: "provider_timeout",
+			},
+		},
+	)
+	if err != nil || sessionResource.StableFailure == nil ||
+		sessionResource.StableFailure.ReasonCode != ReasonInternalRetryable ||
+		!sessionResource.StableFailure.Retryable {
+		t.Fatalf(
+			"IELTS Session failed report resource = %#v, %v",
+			sessionResource,
 			err,
 		)
 	}
