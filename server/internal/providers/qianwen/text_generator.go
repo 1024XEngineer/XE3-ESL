@@ -644,8 +644,9 @@ func decodeCompletionStream(
 		if completionID == "" || model == "" {
 			return protocol.TextResult{}, errors.New("Qianwen stream has invalid completion identity")
 		}
-		if chunk.Usage != nil {
-			if sawUsage || len(chunk.Choices) != 0 ||
+		usageInChunk := chunk.Usage != nil
+		if usageInChunk {
+			if sawUsage || len(chunk.Choices) > 1 ||
 				chunk.Usage.PromptTokens == nil ||
 				chunk.Usage.CompletionTokens == nil ||
 				chunk.Usage.TotalTokens == nil {
@@ -665,7 +666,9 @@ func decodeCompletionStream(
 				return protocol.TextResult{}, errors.New("Qianwen stream has invalid token usage")
 			}
 			sawUsage = true
-			continue
+			if len(chunk.Choices) == 0 {
+				continue
+			}
 		}
 		// Official OpenAI-compatible examples consume chunks by state: choice
 		// chunks carry deltas, while the final empty-choice chunk carries usage.
@@ -673,10 +676,13 @@ func decodeCompletionStream(
 		if len(chunk.Choices) == 0 {
 			continue
 		}
-		if sawUsage || len(chunk.Choices) != 1 {
+		if (sawUsage && !usageInChunk) || len(chunk.Choices) != 1 {
 			return protocol.TextResult{}, errors.New("Qianwen stream must contain exactly one choice")
 		}
 		choice := chunk.Choices[0]
+		if usageInChunk && choice.FinishReason == nil {
+			return protocol.TextResult{}, errors.New("Qianwen stream has invalid final usage")
+		}
 		if choice.Delta.Role != "" &&
 			choice.Delta.Role != string(protocol.TextRoleAssistant) {
 			return protocol.TextResult{}, errors.New("Qianwen stream has an invalid delta role")

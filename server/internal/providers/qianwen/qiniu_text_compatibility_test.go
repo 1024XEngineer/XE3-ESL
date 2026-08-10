@@ -113,8 +113,7 @@ func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 		}
 		return streamResponse(
 			`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[{"delta":{"role":"assistant","content":"Hello"}}]}` + "\n\n" +
-				`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[{"delta":{"content":" there"},"finish_reason":"stop"}]}` + "\n\n" +
-				`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}` + "\n\n" +
+				`data: {"id":"chatcmpl-qiniu-stream","model":"gemini-2.5-flash","choices":[{"delta":{"content":" there"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}` + "\n\n" +
 				"data: [DONE]\n\n",
 		), nil
 	}), "qiniu-test-key")
