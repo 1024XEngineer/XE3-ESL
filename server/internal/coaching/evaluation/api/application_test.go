@@ -385,6 +385,162 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedIELTSSpeakingReport(
 	}
 }
 
+func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	reader := &sessionReportReaderStub{
+		result: evaluationreport.SessionReportReadState{
+			PracticeMode:      "PART_2",
+			AvailableSections: []string{"PART_2", "PART_3"},
+			Status:            evaluation.StatusQueued,
+		},
+	}
+	application := &Application{sessionReports: reader}
+	resource, err := application.GetSessionReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.ownerUserID != actor.UserID ||
+		reader.practiceSessionID != "session_ielts_001" ||
+		resource.PracticeMode != "PART_2" ||
+		resource.ReportScope != "PART_2_3" ||
+		resource.DetailSchema != ieltsSpeakingPracticeReportSchemaVersion ||
+		resource.EvaluationStatus != evaluation.StatusQueued ||
+		len(resource.AvailableSections) != 2 {
+		t.Fatalf("reader=%#v resource=%#v", reader, resource)
+	}
+}
+
+func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
+	t *testing.T,
+) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		detailSchema string
+		wantError    error
+	}{
+		{
+			name:         "dedicated IELTS practice report",
+			detailSchema: ieltsSpeakingPracticeReportSchemaVersion,
+		},
+		{
+			name:         "legacy general scene report",
+			detailSchema: legacyIELTSSpeakingPracticeReportSchemaVersion,
+		},
+		{
+			name:         "unknown report",
+			detailSchema: "unknown-report/v1",
+			wantError:    evaluation.ErrInvalidRequest,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ownerUserID, state := readyPart1SessionReportState(
+				test.detailSchema,
+			)
+			resource, err := sessionReportResource(
+				"session_ielts_001",
+				ownerUserID,
+				state,
+			)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("error = %v, want %v", err, test.wantError)
+			}
+			if test.wantError != nil {
+				return
+			}
+			if resource.DetailSchema != test.detailSchema ||
+				resource.EvaluationStatus != evaluation.StatusReady ||
+				resource.ReportID != "30000000-0000-4000-8000-000000000001" {
+				t.Fatalf("resource = %#v", resource)
+			}
+		})
+	}
+}
+
+func readyPart1SessionReportState(
+	detailSchema string,
+) (string, evaluationreport.SessionReportReadState) {
+	value := evaluationTestIELTSValue(evaluation.StatusReady)
+	value.Revision.SceneStrategyRef = scoring.GeneralSceneStrategyRef
+	value.Revision.PipelineVersion = scoring.GeneralScenePipelineVersion
+	stored := evaluationreport.StoredFormalReport{
+		ReportID:             "30000000-0000-4000-8000-000000000001",
+		EvaluationID:         value.ID,
+		EvaluationRevisionID: value.Revision.ID,
+		OwnerUserID:          value.OwnerUserID,
+		PracticeSessionID:    value.PracticeSessionID,
+		Revision:             value.Revision.Number,
+		CreatedAt:            value.CreatedAt,
+		Report: evaluationreport.FormalReport{
+			SchemaVersion:      evaluationreport.FormalReportSchemaVersion,
+			SceneType:          evaluation.SceneIELTSSpeaking,
+			PracticeExperience: "IELTS_SPEAKING",
+			SceneCategory:      "IELTS_SPEAKING",
+			PracticeMode:       "PART_1",
+			ScoreabilityStatus: evaluationreport.ReportScoreabilityProvisional,
+			Summary:            "本次专项练习已生成报告。",
+			Dimensions: []evaluationreport.ReportDimension{
+				{
+					Key:          "fluency",
+					Scale:        evaluationreport.ReportScalePercentage100,
+					Coverage:     1,
+					Confidence:   1,
+					ReasonCodes:  []string{},
+					EvidenceRefs: []string{},
+					Strengths:    []evaluationreport.ReportFinding{},
+					Improvements: []evaluationreport.ReportFinding{},
+					Examples:     []evaluationreport.ReportFinding{},
+				},
+			},
+			PriorityActions: []evaluationreport.ReportPriorityAction{},
+			DetailSchema:    detailSchema,
+			Detail:          json.RawMessage(`{"schema_version":"` + detailSchema + `"}`),
+		},
+	}
+	return value.OwnerUserID, evaluationreport.SessionReportReadState{
+		PracticeMode:      "PART_1",
+		AvailableSections: []string{"PART_1"},
+		Status:            evaluation.StatusReady,
+		Evaluation:        &value,
+		FormalReport:      &stored,
+	}
+}
+
+func TestEvaluationHTTPApplicationMapsSessionReportConflict(t *testing.T) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	application := &Application{
+		sessionReports: &sessionReportReaderStub{
+			err: evaluationreport.ErrSessionReportConfigurationConflict,
+		},
+	}
+	_, err := application.GetSessionReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	appError, ok := apperror.From(err)
+	if !ok || appError.Code() != "evaluation_version_conflict" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -558,6 +714,27 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 		t.Fatalf(
 			"IELTS failed report resource = %#v, %v",
 			ieltsResource,
+			err,
+		)
+	}
+	sessionResource, err := sessionReportResource(
+		"session_ielts_001",
+		ieltsFailed.OwnerUserID,
+		evaluationreport.SessionReportReadState{
+			PracticeMode:      "PART_1",
+			AvailableSections: []string{"PART_1"},
+			Status:            evaluation.StatusFailed,
+			Failure: &evaluationreport.SessionReportFailure{
+				Code: "provider_timeout",
+			},
+		},
+	)
+	if err != nil || sessionResource.StableFailure == nil ||
+		sessionResource.StableFailure.ReasonCode != ReasonInternalRetryable ||
+		!sessionResource.StableFailure.Retryable {
+		t.Fatalf(
+			"IELTS Session failed report resource = %#v, %v",
+			sessionResource,
 			err,
 		)
 	}
@@ -763,6 +940,23 @@ type ieltsSpeakingReportReaderStub struct {
 	err               error
 	ownerUserID       string
 	practiceSessionID string
+}
+
+type sessionReportReaderStub struct {
+	result            evaluationreport.SessionReportReadState
+	err               error
+	ownerUserID       string
+	practiceSessionID string
+}
+
+func (stub *sessionReportReaderStub) GetCurrentSessionReportState(
+	_ context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+) (evaluationreport.SessionReportReadState, error) {
+	stub.ownerUserID = ownerUserID
+	stub.practiceSessionID = practiceSessionID
+	return stub.result, stub.err
 }
 
 func (stub *ieltsSpeakingReportReaderStub) GetCurrentIELTSSpeakingReportState(

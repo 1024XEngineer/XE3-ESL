@@ -159,6 +159,7 @@ const validators = Object.fromEntries(
     'Evaluation',
     'InterviewReportEnvelope',
     'IeltsSpeakingReportEnvelope',
+    'PracticeSessionReportEnvelope',
     'SceneEvaluationResult',
     'CoreAbilityObservation',
     'EvidenceRef',
@@ -1661,4 +1662,178 @@ assertValid(
 assert.throws(
   () => assertIeltsSpeakingReportSemantics(mismatchedIeltsStatusUrl),
   /same Practice Session/,
+);
+
+const sessionReportCases = [
+  {
+    practice_session_id: 'session_part_2',
+    practice_mode: 'PART_2',
+    report_scope: 'PART_2_3',
+    available_sections: ['PART_2', 'PART_3'],
+    detail_schema: 'ielts-speaking-practice-report/v1',
+    evaluation_status: 'QUEUED',
+    status_url: '/v1/practice-sessions/session_part_2/report',
+  },
+  {
+    practice_session_id: 'session_full_mock',
+    practice_mode: 'FULL_MOCK',
+    report_scope: 'FULL_MOCK',
+    available_sections: ['PART_1', 'PART_2', 'PART_3'],
+    detail_schema: 'ielts-speaking-report/v1',
+    evaluation_status: 'READY',
+    evaluation_id: '7b000001-0000-4000-8000-000000000001',
+    evaluation_revision_id: 'a1000001-0000-4000-8000-000000000001',
+    revision: 1,
+    status_url: '/v1/practice-sessions/session_full_mock/report',
+    report_ref: {
+      report_id: '20000000-0000-4000-8000-000000000002',
+      href: '/v1/evaluation-reports/20000000-0000-4000-8000-000000000002',
+    },
+    scoreability_status: 'PROVISIONAL',
+    summary: '本次练习已形成 IELTS 口语评估。',
+  },
+  {
+    practice_session_id: 'session_part_3',
+    practice_mode: 'PART_3',
+    report_scope: 'PART_3',
+    available_sections: ['PART_3'],
+    detail_schema: 'ielts-speaking-practice-report/v1',
+    evaluation_status: 'FAILED',
+    status_url: '/v1/practice-sessions/session_part_3/report',
+    stable_failure: {
+      reason_code: 'INTERNAL_RETRYABLE',
+      retryable: true,
+    },
+  },
+  {
+    practice_session_id: 'session_part_1_new_report',
+    practice_mode: 'PART_1',
+    report_scope: 'PART_1',
+    available_sections: ['PART_1'],
+    detail_schema: 'ielts-speaking-practice-report/v1',
+    evaluation_status: 'READY',
+    evaluation_id: '7b000002-0000-4000-8000-000000000001',
+    evaluation_revision_id: 'a1000002-0000-4000-8000-000000000001',
+    revision: 1,
+    status_url:
+      '/v1/practice-sessions/session_part_1_new_report/report',
+    report_ref: {
+      report_id: '20000000-0000-4000-8000-000000000003',
+      href: '/v1/evaluation-reports/20000000-0000-4000-8000-000000000003',
+    },
+    scoreability_status: 'PROVISIONAL',
+    summary: '本次专项练习已形成新版 IELTS 口语评估。',
+  },
+  {
+    practice_session_id: 'session_part_1_legacy_report',
+    practice_mode: 'PART_1',
+    report_scope: 'PART_1',
+    available_sections: ['PART_1'],
+    detail_schema: 'general-scene-evaluation/v1',
+    evaluation_status: 'READY',
+    evaluation_id: '7b000003-0000-4000-8000-000000000001',
+    evaluation_revision_id: 'a1000003-0000-4000-8000-000000000001',
+    revision: 1,
+    status_url:
+      '/v1/practice-sessions/session_part_1_legacy_report/report',
+    report_ref: {
+      report_id: '20000000-0000-4000-8000-000000000004',
+      href: '/v1/evaluation-reports/20000000-0000-4000-8000-000000000004',
+    },
+    scoreability_status: 'PROVISIONAL',
+    summary: '本次专项练习已形成兼容版 IELTS 口语评估。',
+  },
+];
+
+const expectedSessionReportShape = {
+  PART_1: ['PART_1', ['PART_1'], 'ielts-speaking-practice-report/v1'],
+  PART_2: [
+    'PART_2_3',
+    ['PART_2', 'PART_3'],
+    'ielts-speaking-practice-report/v1',
+  ],
+  PART_3: ['PART_3', ['PART_3'], 'ielts-speaking-practice-report/v1'],
+  FULL_MOCK: [
+    'FULL_MOCK',
+    ['PART_1', 'PART_2', 'PART_3'],
+    'ielts-speaking-report/v1',
+  ],
+};
+const assertSessionReportSemantics = (envelope) => {
+  const [scope, sections, detailSchema] =
+    expectedSessionReportShape[envelope.practice_mode];
+  assert.equal(envelope.report_scope, scope);
+  assert.deepEqual(envelope.available_sections, sections);
+  const allowedDetailSchemas =
+    envelope.practice_mode !== 'FULL_MOCK' &&
+    envelope.evaluation_status === 'READY'
+      ? [detailSchema, 'general-scene-evaluation/v1']
+      : [detailSchema];
+  assert.ok(
+    allowedDetailSchemas.includes(envelope.detail_schema),
+    `Unexpected IELTS Session report detail schema ${envelope.detail_schema}`,
+  );
+  assert.equal(
+    envelope.status_url,
+    `/v1/practice-sessions/${envelope.practice_session_id}/report`,
+  );
+  if (envelope.report_ref !== undefined) {
+    assert.equal(
+      envelope.report_ref.href,
+      `/v1/evaluation-reports/${envelope.report_ref.report_id}`,
+    );
+  }
+};
+
+for (const envelope of sessionReportCases) {
+  assertValid(
+    `IELTS Session report ${envelope.evaluation_status}`,
+    'PracticeSessionReportEnvelope',
+    envelope,
+  );
+  assertSessionReportSemantics(envelope);
+}
+
+const forgedPart2Scope = structuredClone(sessionReportCases[0]);
+forgedPart2Scope.report_scope = 'FULL_MOCK';
+assertValid(
+  'schema-valid forged Part 2 Session report scope',
+  'PracticeSessionReportEnvelope',
+  forgedPart2Scope,
+);
+assert.throws(
+  () => assertSessionReportSemantics(forgedPart2Scope),
+  /Expected values to be strictly equal/,
+);
+
+const readyWithoutReportRef = structuredClone(sessionReportCases[1]);
+delete readyWithoutReportRef.report_ref;
+assertSchemaRejected(
+  'READY IELTS Session report without canonical report ref',
+  'PracticeSessionReportEnvelope',
+  readyWithoutReportRef,
+);
+
+const queuedWithLegacyDetail = structuredClone(sessionReportCases[0]);
+queuedWithLegacyDetail.detail_schema = 'general-scene-evaluation/v1';
+assertSchemaRejected(
+  'QUEUED IELTS practice Session report with legacy detail schema',
+  'PracticeSessionReportEnvelope',
+  queuedWithLegacyDetail,
+);
+
+const fullMockWithLegacyDetail = structuredClone(sessionReportCases[1]);
+fullMockWithLegacyDetail.detail_schema = 'general-scene-evaluation/v1';
+assertSchemaRejected(
+  'FULL_MOCK Session report with legacy detail schema',
+  'PracticeSessionReportEnvelope',
+  fullMockWithLegacyDetail,
+);
+
+const readyWithUnknownDetail = structuredClone(sessionReportCases[3]);
+readyWithUnknownDetail.detail_schema = 'unknown-report/v1';
+assertSchemaRejected(
+  'READY IELTS practice Session report with unknown detail schema',
+  'PracticeSessionReportEnvelope',
+  readyWithUnknownDetail,
 );
