@@ -369,7 +369,7 @@ func sessionReportResource(
 		resource.Revision = value.Revision.Number
 	}
 	switch state.Status {
-	case evaluation.StatusQueued:
+	case evaluation.StatusValidating, evaluation.StatusQueued:
 		if state.FormalReport != nil || state.Failure != nil {
 			return SessionReportResource{}, evaluation.ErrInvalidRequest
 		}
@@ -516,7 +516,8 @@ func ieltsSpeakingShadowAccepted(
 	}
 	if replayed {
 		switch value.Revision.Status {
-		case evaluation.StatusQueued,
+		case evaluation.StatusValidating,
+			evaluation.StatusQueued,
 			evaluation.StatusRunning,
 			evaluation.StatusReady,
 			evaluation.StatusFailed:
@@ -524,7 +525,8 @@ func ieltsSpeakingShadowAccepted(
 			return EvaluationAccepted{},
 				interviewShadowVersionConflictError()
 		}
-	} else if value.Revision.Status != evaluation.StatusQueued {
+	} else if value.Revision.Status != evaluation.StatusValidating &&
+		value.Revision.Status != evaluation.StatusQueued {
 		return EvaluationAccepted{},
 			interviewShadowVersionConflictError()
 	}
@@ -752,7 +754,7 @@ func ieltsSpeakingReportResource(
 		IsFinal:              false,
 	}
 	switch value.Revision.Status {
-	case evaluation.StatusQueued:
+	case evaluation.StatusValidating, evaluation.StatusQueued:
 		if state.Runtime.ModuleStatus !=
 			scoring.IELTSSpeakingShadowRuntimePending ||
 			state.Runtime.Result != nil ||

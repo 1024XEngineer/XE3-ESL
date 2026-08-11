@@ -247,6 +247,25 @@ func TestEvaluationHTTPApplicationReevaluatesIELTSSpeakingReport(
 	}
 }
 
+func TestIELTSSpeakingShadowAcceptedAllowsValidatingFreshAndReplay(
+	t *testing.T,
+) {
+	t.Parallel()
+	value := evaluationTestIELTSValue(evaluation.StatusValidating)
+	for _, replayed := range []bool{false, true} {
+		accepted, err := ieltsSpeakingShadowAccepted(value, replayed)
+		if err != nil || accepted.EvaluationStatus != evaluation.StatusValidating ||
+			accepted.Replayed != replayed {
+			t.Fatalf(
+				"replayed=%t accepted=%#v err=%v",
+				replayed,
+				accepted,
+				err,
+			)
+		}
+	}
+}
+
 func TestEvaluationHTTPApplicationRejectsReevaluationBeforeMutation(
 	t *testing.T,
 ) {
@@ -385,6 +404,38 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedIELTSSpeakingReport(
 	}
 }
 
+func TestEvaluationHTTPApplicationProjectsValidatingIELTSSpeakingReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	application := &Application{
+		ieltsReports: &ieltsSpeakingReportReaderStub{
+			result: evaluationreport.IELTSSpeakingReadState{
+				Evaluation: evaluationTestIELTSValue(
+					evaluation.StatusValidating,
+				),
+				Runtime: scoring.IELTSSpeakingShadowReadState{
+					ModuleStatus: scoring.IELTSSpeakingShadowRuntimePending,
+				},
+			},
+		},
+		ieltsConfiguration: evaluationTestIELTSRuntimeConfiguration(t),
+	}
+	resource, err := application.GetIELTSSpeakingReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	if err != nil || resource.EvaluationStatus != evaluation.StatusValidating ||
+		resource.Report != nil || resource.StableFailure != nil {
+		t.Fatalf("validating resource=%#v err=%v", resource, err)
+	}
+}
+
 func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
 	t *testing.T,
 ) {
@@ -417,6 +468,38 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedQueuedSessionReport(
 		resource.EvaluationStatus != evaluation.StatusQueued ||
 		len(resource.AvailableSections) != 2 {
 		t.Fatalf("reader=%#v resource=%#v", reader, resource)
+	}
+}
+
+func TestEvaluationHTTPApplicationProjectsValidatingFullMockSessionReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	value := evaluationTestIELTSValue(evaluation.StatusValidating)
+	application := &Application{
+		sessionReports: &sessionReportReaderStub{
+			result: evaluationreport.SessionReportReadState{
+				PracticeMode: "FULL_MOCK",
+				AvailableSections: []string{
+					"PART_1", "PART_2", "PART_3",
+				},
+				Status:     evaluation.StatusValidating,
+				Evaluation: &value,
+			},
+		},
+	}
+	resource, err := application.GetSessionReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	if err != nil || resource.EvaluationStatus != evaluation.StatusValidating ||
+		resource.ReportID != "" || resource.StableFailure != nil {
+		t.Fatalf("validating resource=%#v err=%v", resource, err)
 	}
 }
 

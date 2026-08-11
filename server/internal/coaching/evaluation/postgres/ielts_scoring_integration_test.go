@@ -209,9 +209,21 @@ func TestPostgresIELTSSpeakingReportReadsValidatingBarrierAsPending(
 func TestIELTSAcousticSnapshotFailureWithoutRunIsReadable(t *testing.T) {
 	pool, repository, value, _ := prepareIELTSSpeakingValidatingRuntime(t)
 	ctx := context.Background()
-	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx)
+	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx, nil)
 	if err != nil || !found || claim.EvaluationID != value.ID {
 		t.Fatalf("pending acoustic claim=%#v found=%t err=%v", claim, found, err)
+	}
+	cursor := claim.Cursor()
+	if next, nextFound, nextErr := repository.FindPendingIELTSAcousticSnapshot(
+		ctx,
+		&cursor,
+	); nextErr != nil || nextFound || next.EvaluationID != "" {
+		t.Fatalf(
+			"pending acoustic cursor next=%#v found=%t err=%v",
+			next,
+			nextFound,
+			nextErr,
+		)
 	}
 	failures := make(chan error, 2)
 	var wait sync.WaitGroup
@@ -942,7 +954,7 @@ func TestIELTSAcousticSnapshotFailureTerminatesLegacyRunAtomically(
 	running := claimIELTSSpeakingShadow(t, repository, configuration)
 	reapplyIELTSAcousticSnapshotMigration(t, pool)
 
-	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx)
+	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx, nil)
 	if err != nil || !found || claim.EvaluationID != value.ID ||
 		claim.EvaluationRevisionID != value.Revision.ID {
 		t.Fatalf("pending acoustic claim=%#v found=%t err=%v", claim, found, err)

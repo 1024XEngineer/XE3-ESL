@@ -3,6 +3,7 @@ package scoring
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
@@ -22,6 +23,23 @@ type IELTSAcousticSnapshotClaim struct {
 	Snapshot             evidence.EvidenceSnapshot
 }
 
+type IELTSAcousticSnapshotCursor struct {
+	RevisionCreatedAt    time.Time
+	EvaluationRevisionID string
+}
+
+func (cursor IELTSAcousticSnapshotCursor) Valid() bool {
+	return !cursor.RevisionCreatedAt.IsZero() &&
+		validUUID(cursor.EvaluationRevisionID)
+}
+
+func (claim IELTSAcousticSnapshotClaim) Cursor() IELTSAcousticSnapshotCursor {
+	return IELTSAcousticSnapshotCursor{
+		RevisionCreatedAt:    claim.RevisionCreatedAt,
+		EvaluationRevisionID: claim.EvaluationRevisionID,
+	}
+}
+
 func (claim IELTSAcousticSnapshotClaim) Valid() bool {
 	return validUUID(claim.EvaluationID) &&
 		validUUID(claim.EvaluationRevisionID) &&
@@ -36,6 +54,7 @@ func (claim IELTSAcousticSnapshotClaim) Valid() bool {
 type IELTSAcousticSnapshotRepository interface {
 	FindPendingIELTSAcousticSnapshot(
 		context.Context,
+		*IELTSAcousticSnapshotCursor,
 	) (IELTSAcousticSnapshotClaim, bool, error)
 	EnsureIELTSAcousticSnapshot(
 		context.Context,
@@ -67,6 +86,8 @@ type IELTSAcousticSnapshotFreezer struct {
 	source       IELTSSpeakingAcousticSource
 	waitDuration time.Duration
 	now          func() time.Time
+	cursorMu     sync.Mutex
+	cursor       *IELTSAcousticSnapshotCursor
 }
 
 func NewIELTSAcousticSnapshotFreezer(
@@ -95,18 +116,36 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 		return IELTSAcousticSnapshotSweepResult{}, evaluation.ErrInvalidRequest
 	}
 	var sweep IELTSAcousticSnapshotSweepResult
+	freezer.cursorMu.Lock()
+	defer freezer.cursorMu.Unlock()
+	cursor := freezer.cursor
+	wrapped := false
+	seen := make(map[string]struct{}, limit)
+	var firstErr error
 	for sweep.Inspected < limit {
 		claim, found, err := freezer.repository.
-			FindPendingIELTSAcousticSnapshot(ctx)
+			FindPendingIELTSAcousticSnapshot(ctx, cursor)
 		if err != nil {
 			return sweep, err
 		}
 		if !found {
-			return sweep, nil
+			if cursor == nil || wrapped {
+				return sweep, firstErr
+			}
+			cursor = nil
+			wrapped = true
+			continue
 		}
 		if !claim.Valid() {
 			return sweep, evaluation.ErrInvalidRequest
 		}
+		if _, alreadySeen := seen[claim.EvaluationRevisionID]; alreadySeen {
+			return sweep, firstErr
+		}
+		seen[claim.EvaluationRevisionID] = struct{}{}
+		nextCursor := claim.Cursor()
+		cursor = &nextCursor
+		freezer.cursor = &nextCursor
 		sweep.Inspected++
 		requests, err := ieltsSpeakingAcousticRequests(claim.Snapshot)
 		if err != nil {
@@ -138,7 +177,14 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 				sweep.Failed++
 				continue
 			}
-			return sweep, err
+			if errors.Is(err, context.Canceled) ||
+				errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				return sweep, err
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		deadlineReached := !freezer.now().UTC().Before(
 			claim.RevisionCreatedAt.Add(freezer.waitDuration),
@@ -150,7 +196,7 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 			deadlineReached,
 		)
 		if err == ErrIELTSAcousticSnapshotPending {
-			return sweep, nil
+			continue
 		}
 		if err != nil {
 			if errors.Is(err, evaluation.ErrInvalidRequest) {
@@ -175,5 +221,5 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 		}
 		sweep.Frozen++
 	}
-	return sweep, nil
+	return sweep, firstErr
 }

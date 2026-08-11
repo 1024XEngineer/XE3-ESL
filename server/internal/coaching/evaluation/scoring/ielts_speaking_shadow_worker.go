@@ -208,9 +208,12 @@ func (worker *IELTSSpeakingShadowWorker) ProcessPending(
 		worker.engine == nil || ctx == nil {
 		return IELTSSpeakingShadowSweepResult{}, evaluation.ErrInvalidRequest
 	}
+	var freezerErr error
 	if worker.freezer != nil {
-		if _, err := worker.freezer.ProcessPending(ctx, limit); err != nil {
-			return IELTSSpeakingShadowSweepResult{}, err
+		_, freezerErr = worker.freezer.ProcessPending(ctx, limit)
+		if errors.Is(freezerErr, context.Canceled) ||
+			errors.Is(freezerErr, context.DeadlineExceeded) || ctx.Err() != nil {
+			return IELTSSpeakingShadowSweepResult{}, freezerErr
 		}
 	}
 	sweep, err := processDurableSceneJobs(
@@ -239,12 +242,16 @@ func (worker *IELTSSpeakingShadowWorker) ProcessPending(
 			return durableSceneJobStatus(status), processErr
 		},
 	)
-	return IELTSSpeakingShadowSweepResult{
+	result := IELTSSpeakingShadowSweepResult{
 		Claimed:   sweep.Claimed,
 		Completed: sweep.Completed,
 		Retried:   sweep.Retried,
 		Failed:    sweep.Failed,
-	}, err
+	}
+	if err != nil {
+		return result, err
+	}
+	return result, freezerErr
 }
 
 func (worker *IELTSSpeakingShadowWorker) processClaim(

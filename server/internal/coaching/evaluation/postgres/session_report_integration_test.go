@@ -84,6 +84,48 @@ func TestPostgresSessionReportReadsMigratedActiveLeaseAsValidating(
 		state.FormalReport != nil || state.Failure != nil {
 		t.Fatalf("migrated active Session report state=%#v err=%v", state, err)
 	}
+	var leaseCleared bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT lease_expires_at IS NULL
+		FROM evaluation_outbox
+		WHERE id = $1
+	`, claim.OutboxID).Scan(&leaseCleared); err != nil || !leaseCleared {
+		t.Fatalf("migrated active lease cleared=%t err=%v", leaseCleared, err)
+	}
+
+	draft, err := scoring.BuildIELTSAcousticSnapshot(
+		value.ID,
+		claim.Snapshot,
+		scoring.IELTSSpeakingAcousticRead{},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = repository.EnsureIELTSAcousticSnapshot(
+		context.Background(),
+		scoring.IELTSAcousticSnapshotClaim{
+			EvaluationID:         value.ID,
+			EvaluationRevisionID: value.Revision.ID,
+			OwnerUserID:          testOwnerA,
+			RevisionCreatedAt:    value.Revision.CreatedAt,
+			Snapshot:             claim.Snapshot,
+		},
+		draft,
+	)
+	if err != nil {
+		t.Fatalf("freeze migrated active lease: %v", err)
+	}
+	state, err = repository.GetCurrentSessionReportState(
+		context.Background(),
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil || state.Status != evaluationcore.StatusQueued ||
+		state.Evaluation == nil || state.FormalReport != nil ||
+		state.Failure != nil {
+		t.Fatalf("frozen migrated Session report state=%#v err=%v", state, err)
+	}
 }
 
 func installIELTSSessionReportAuthorityFixture(

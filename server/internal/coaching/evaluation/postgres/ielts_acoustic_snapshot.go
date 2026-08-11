@@ -17,12 +17,20 @@ var _ scoring.IELTSAcousticSnapshotRepository = (*PostgresRepository)(nil)
 
 func (r *PostgresRepository) FindPendingIELTSAcousticSnapshot(
 	ctx context.Context,
+	after *scoring.IELTSAcousticSnapshotCursor,
 ) (scoring.IELTSAcousticSnapshotClaim, bool, error) {
-	if r == nil || r.pool == nil || ctx == nil {
+	if r == nil || r.pool == nil || ctx == nil ||
+		(after != nil && !after.Valid()) {
 		return scoring.IELTSAcousticSnapshotClaim{}, false,
 			evaluation.ErrInvalidRequest
 	}
 	var claim scoring.IELTSAcousticSnapshotClaim
+	var afterCreatedAt any
+	var afterRevisionID any
+	if after != nil {
+		afterCreatedAt = after.RevisionCreatedAt
+		afterRevisionID = after.EvaluationRevisionID
+	}
 	err := r.pool.QueryRow(ctx, `
 		SELECT
 			ledger.id::text,
@@ -65,11 +73,16 @@ func (r *PostgresRepository) FindPendingIELTSAcousticSnapshot(
 		      FROM evaluation_deletion_fences AS fence
 		      WHERE fence.owner_user_id = ledger.owner_user_id
 		  )
+		  AND (
+		      $4::timestamptz IS NULL
+		      OR (revision.created_at, revision.id) >
+		         ($4::timestamptz, $5::uuid)
+		  )
 		ORDER BY revision.created_at, revision.id
 		LIMIT 1
 	`, scoring.IELTSSpeakingShadowStrategyRef,
 		scoring.IELTSSpeakingShadowPipelineVersion,
-		evaluation.SchemaVersion).Scan(
+		evaluation.SchemaVersion, afterCreatedAt, afterRevisionID).Scan(
 		&claim.EvaluationID,
 		&claim.EvaluationRevisionID,
 		&claim.OwnerUserID,

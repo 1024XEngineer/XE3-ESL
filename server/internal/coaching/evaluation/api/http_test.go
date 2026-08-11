@@ -288,6 +288,7 @@ func TestWriteEndpointsReturnIdempotentReplayStateHonestly(t *testing.T) {
 		status     evaluation.Status
 		wantStatus int
 	}{
+		{status: evaluation.StatusValidating, wantStatus: http.StatusOK},
 		{status: evaluation.StatusQueued, wantStatus: http.StatusAccepted},
 		{status: evaluation.StatusRunning, wantStatus: http.StatusOK},
 		{status: evaluation.StatusReady, wantStatus: http.StatusOK},
@@ -358,6 +359,32 @@ func TestWriteEndpointsReturnIdempotentReplayStateHonestly(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestReevaluateReturnsFreshValidatingIdentity(t *testing.T) {
+	accepted := queuedReevaluation()
+	accepted.EvaluationStatus = evaluation.StatusValidating
+	router := newTestRouter(t, applicationStub{
+		reevaluate: fixedReevaluation(accepted),
+	}, &testActor)
+	response := performRequest(
+		router,
+		http.MethodPost,
+		"/v1/evaluations/"+testEvaluationID+"/re-evaluate",
+		validReevaluateBody(),
+		"application/json",
+	)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+	}
+	assertJSONEquals(t, response.Body.String(), map[string]any{
+		"evaluation_id":          testEvaluationID,
+		"evaluation_revision_id": testNextRevision,
+		"revision":               float64(2),
+		"supersedes_revision_id": testRevisionID,
+		"evaluation_status":      "VALIDATING",
+		"status_url":             "/v1/evaluations/" + testEvaluationID,
+	})
 }
 
 func TestGetPublishesEveryLifecycleStateHonestly(t *testing.T) {
@@ -687,6 +714,41 @@ func TestGetIELTSSpeakingReportPublishesPollableEnvelope(t *testing.T) {
 	})
 }
 
+func TestGetIELTSSpeakingReportPublishesValidatingAsQueued(t *testing.T) {
+	resource := ieltsSpeakingReportResourceForStatus(
+		evaluation.StatusValidating,
+	)
+	router := newTestRouter(t, applicationStub{
+		getIELTSSpeakingReport: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+		) (IELTSSpeakingReportResource, error) {
+			return resource, nil
+		},
+	}, &testActor)
+	response := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/practice-sessions/session_ielts_001/ielts-speaking-report",
+		"",
+		"",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+	}
+	assertJSONEquals(t, response.Body.String(), map[string]any{
+		"practice_session_id":    "session_ielts_001",
+		"evaluation_id":          testEvaluationID,
+		"evaluation_revision_id": testRevisionID,
+		"revision":               float64(1),
+		"evaluation_status":      "QUEUED",
+		"is_final":               false,
+		"status_url": "/v1/practice-sessions/session_ielts_001/" +
+			"ielts-speaking-report",
+	})
+}
+
 func TestGetSessionReportPublishesCanonicalLifecycleEnvelope(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -709,6 +771,30 @@ func TestGetSessionReportPublishesCanonicalLifecycleEnvelope(t *testing.T) {
 				"detail_schema":      "ielts-speaking-practice-report/v1",
 				"evaluation_status":  "QUEUED",
 				"status_url":         "/v1/practice-sessions/session_ielts_001/report",
+			},
+		},
+		{
+			name: "validating full mock remains wire compatible",
+			resource: SessionReportResource{
+				PracticeSessionID: "session_ielts_001",
+				PracticeMode:      "FULL_MOCK", ReportScope: "FULL_MOCK",
+				AvailableSections:    []string{"PART_1", "PART_2", "PART_3"},
+				DetailSchema:         evaluationreport.IELTSSpeakingReportSchemaVersion,
+				EvaluationStatus:     evaluation.StatusValidating,
+				EvaluationID:         testEvaluationID,
+				EvaluationRevisionID: testRevisionID,
+				Revision:             1,
+			},
+			want: map[string]any{
+				"practice_session_id": "session_ielts_001",
+				"practice_mode":       "FULL_MOCK", "report_scope": "FULL_MOCK",
+				"available_sections":     []any{"PART_1", "PART_2", "PART_3"},
+				"detail_schema":          "ielts-speaking-report/v1",
+				"evaluation_status":      "QUEUED",
+				"evaluation_id":          testEvaluationID,
+				"evaluation_revision_id": testRevisionID,
+				"revision":               float64(1),
+				"status_url":             "/v1/practice-sessions/session_ielts_001/report",
 			},
 		},
 		{

@@ -177,6 +177,125 @@ func TestIELTSAcousticSnapshotFreezerFailsCorruptHeadAndContinues(
 	}
 }
 
+func TestIELTSAcousticSnapshotFreezerSkipsPendingHeadWithinSweep(
+	t *testing.T,
+) {
+	t.Parallel()
+	first := ieltsAcousticSnapshotClaimForTest(t)
+	second := first
+	second.EvaluationID = "72000000-0000-4000-8000-000000000007"
+	second.EvaluationRevisionID = "62000000-0000-4000-8000-000000000006"
+	repository := &ieltsAcousticSnapshotQueueRepositoryStub{
+		claims: []IELTSAcousticSnapshotClaim{first, second},
+	}
+	source := &ieltsAcousticSnapshotQueueSourceStub{
+		reads: []IELTSSpeakingAcousticRead{{
+			PendingTurnIDs: []string{"turn-1"},
+		}, {}},
+	}
+	freezer, err := NewIELTSAcousticSnapshotFreezer(
+		repository,
+		source,
+		IELTSAcousticSnapshotWaitDurationV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezer.now = func() time.Time {
+		return first.RevisionCreatedAt.Add(time.Second)
+	}
+	sweep, err := freezer.ProcessPending(context.Background(), 2)
+	if err != nil || sweep != (IELTSAcousticSnapshotSweepResult{
+		Inspected: 2,
+		Frozen:    1,
+	}) || repository.frozen != 1 || len(repository.claims) != 1 {
+		t.Fatalf("sweep=%#v err=%v repository=%#v", sweep, err, repository)
+	}
+}
+
+func TestIELTSAcousticSnapshotFreezerCursorReachesPastSweepLimit(
+	t *testing.T,
+) {
+	t.Parallel()
+	first := ieltsAcousticSnapshotClaimForTest(t)
+	second := first
+	second.EvaluationID = "72000000-0000-4000-8000-000000000007"
+	second.EvaluationRevisionID = "62000000-0000-4000-8000-000000000006"
+	repository := &ieltsAcousticSnapshotQueueRepositoryStub{
+		claims: []IELTSAcousticSnapshotClaim{first, second},
+	}
+	source := &ieltsAcousticSnapshotQueueSourceStub{
+		reads: []IELTSSpeakingAcousticRead{{
+			PendingTurnIDs: []string{"turn-1"},
+		}, {}},
+	}
+	freezer, err := NewIELTSAcousticSnapshotFreezer(
+		repository,
+		source,
+		IELTSAcousticSnapshotWaitDurationV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezer.now = func() time.Time {
+		return first.RevisionCreatedAt.Add(time.Second)
+	}
+	firstSweep, err := freezer.ProcessPending(context.Background(), 1)
+	if err != nil || firstSweep != (IELTSAcousticSnapshotSweepResult{
+		Inspected: 1,
+	}) {
+		t.Fatalf("first sweep=%#v err=%v", firstSweep, err)
+	}
+	secondSweep, err := freezer.ProcessPending(context.Background(), 1)
+	if err != nil || secondSweep != (IELTSAcousticSnapshotSweepResult{
+		Inspected: 1,
+		Frozen:    1,
+	}) || repository.frozen != 1 || len(repository.claims) != 1 {
+		t.Fatalf(
+			"second sweep=%#v err=%v repository=%#v",
+			secondSweep,
+			err,
+			repository,
+		)
+	}
+}
+
+func TestIELTSAcousticSnapshotFreezerSkipsTransientHeadWithinSweep(
+	t *testing.T,
+) {
+	t.Parallel()
+	first := ieltsAcousticSnapshotClaimForTest(t)
+	second := first
+	second.EvaluationID = "72000000-0000-4000-8000-000000000007"
+	second.EvaluationRevisionID = "62000000-0000-4000-8000-000000000006"
+	repository := &ieltsAcousticSnapshotQueueRepositoryStub{
+		claims: []IELTSAcousticSnapshotClaim{first, second},
+	}
+	sourceErr := errors.New("source temporarily unavailable")
+	source := &ieltsAcousticSnapshotQueueSourceStub{
+		errors: []error{sourceErr, nil},
+	}
+	freezer, err := NewIELTSAcousticSnapshotFreezer(
+		repository,
+		source,
+		IELTSAcousticSnapshotWaitDurationV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezer.now = func() time.Time {
+		return first.RevisionCreatedAt.Add(time.Second)
+	}
+	sweep, err := freezer.ProcessPending(context.Background(), 2)
+	if !errors.Is(err, sourceErr) ||
+		sweep != (IELTSAcousticSnapshotSweepResult{
+			Inspected: 2,
+			Frozen:    1,
+		}) || repository.frozen != 1 || len(repository.claims) != 1 {
+		t.Fatalf("sweep=%#v err=%v repository=%#v", sweep, err, repository)
+	}
+}
+
 func TestIELTSAcousticSnapshotFreezerPreservesTransientFailures(
 	t *testing.T,
 ) {
@@ -269,6 +388,7 @@ type ieltsAcousticSnapshotRepositoryStub struct {
 
 func (stub *ieltsAcousticSnapshotRepositoryStub) FindPendingIELTSAcousticSnapshot(
 	context.Context,
+	*IELTSAcousticSnapshotCursor,
 ) (IELTSAcousticSnapshotClaim, bool, error) {
 	if stub.findErr != nil {
 		return IELTSAcousticSnapshotClaim{}, false, stub.findErr
@@ -315,9 +435,17 @@ type ieltsAcousticSnapshotQueueRepositoryStub struct {
 }
 
 func (stub *ieltsAcousticSnapshotQueueRepositoryStub) FindPendingIELTSAcousticSnapshot(
-	context.Context,
+	_ context.Context,
+	after *IELTSAcousticSnapshotCursor,
 ) (IELTSAcousticSnapshotClaim, bool, error) {
-	if len(stub.claims) == 0 {
+	for _, claim := range stub.claims {
+		if after == nil || claim.RevisionCreatedAt.After(after.RevisionCreatedAt) ||
+			(claim.RevisionCreatedAt.Equal(after.RevisionCreatedAt) &&
+				claim.EvaluationRevisionID > after.EvaluationRevisionID) {
+			return claim, true, nil
+		}
+	}
+	if len(stub.claims) == 0 || after != nil {
 		return IELTSAcousticSnapshotClaim{}, false, nil
 	}
 	return stub.claims[0], true, nil
@@ -328,11 +456,11 @@ func (stub *ieltsAcousticSnapshotQueueRepositoryStub) EnsureIELTSAcousticSnapsho
 	claim IELTSAcousticSnapshotClaim,
 	draft IELTSAcousticSnapshot,
 ) (IELTSAcousticSnapshot, bool, error) {
-	if len(stub.claims) == 0 ||
-		claim.EvaluationID != stub.claims[0].EvaluationID {
+	index := stub.claimIndex(claim.EvaluationID)
+	if index < 0 {
 		return IELTSAcousticSnapshot{}, false, evaluation.ErrInvalidRequest
 	}
-	stub.claims = stub.claims[1:]
+	stub.claims = append(stub.claims[:index], stub.claims[index+1:]...)
 	stub.frozen++
 	return draft, false, nil
 }
@@ -341,17 +469,29 @@ func (stub *ieltsAcousticSnapshotQueueRepositoryStub) FailIELTSAcousticSnapshot(
 	_ context.Context,
 	claim IELTSAcousticSnapshotClaim,
 ) error {
-	if len(stub.claims) == 0 ||
-		claim.EvaluationID != stub.claims[0].EvaluationID {
+	index := stub.claimIndex(claim.EvaluationID)
+	if index < 0 {
 		return evaluation.ErrInvalidRequest
 	}
-	stub.claims = stub.claims[1:]
+	stub.claims = append(stub.claims[:index], stub.claims[index+1:]...)
 	stub.failed++
 	return nil
 }
 
+func (stub *ieltsAcousticSnapshotQueueRepositoryStub) claimIndex(
+	evaluationID string,
+) int {
+	for index := range stub.claims {
+		if stub.claims[index].EvaluationID == evaluationID {
+			return index
+		}
+	}
+	return -1
+}
+
 type ieltsAcousticSnapshotQueueSourceStub struct {
 	errors []error
+	reads  []IELTSSpeakingAcousticRead
 	calls  int
 }
 
@@ -360,10 +500,17 @@ func (stub *ieltsAcousticSnapshotQueueSourceStub) ReadIELTSSpeakingAcoustics(
 	string,
 	[]IELTSSpeakingAcousticRequest,
 ) (IELTSSpeakingAcousticRead, error) {
-	if stub.calls >= len(stub.errors) {
+	if stub.calls >= len(stub.errors) && stub.calls >= len(stub.reads) {
 		return IELTSSpeakingAcousticRead{}, evaluation.ErrInvalidRequest
 	}
-	err := stub.errors[stub.calls]
+	var read IELTSSpeakingAcousticRead
+	if stub.calls < len(stub.reads) {
+		read = stub.reads[stub.calls]
+	}
+	var err error
+	if stub.calls < len(stub.errors) {
+		err = stub.errors[stub.calls]
+	}
 	stub.calls++
-	return IELTSSpeakingAcousticRead{}, err
+	return read, err
 }

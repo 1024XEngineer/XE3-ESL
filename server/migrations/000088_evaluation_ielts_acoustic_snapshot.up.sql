@@ -422,4 +422,32 @@ WHERE state.revision_id = revision.id
   )
 ;
 
+-- A worker leased before this migration cannot complete while the revision is
+-- VALIDATING. Release that lease so the frozen revision can be reclaimed with
+-- a new fencing token as soon as it returns to QUEUED.
+UPDATE evaluation_outbox AS outbox
+SET lease_expires_at = NULL,
+    updated_at = transaction_timestamp()
+FROM evaluation_revisions AS revision
+JOIN evaluation_ledgers AS ledger
+  ON ledger.id = revision.evaluation_id
+ AND ledger.owner_user_id = revision.owner_user_id
+JOIN evaluation_revision_states AS state
+  ON state.evaluation_id = ledger.id
+ AND state.revision_id = revision.id
+ AND state.owner_user_id = ledger.owner_user_id
+WHERE outbox.evaluation_id = ledger.id
+  AND outbox.evaluation_revision_id = revision.id
+  AND outbox.owner_user_id = ledger.owner_user_id
+  AND outbox.channel = 'SCENE'
+  AND outbox.delivery_status = 'PENDING'
+  AND outbox.lease_expires_at IS NOT NULL
+  AND state.evaluation_status = 'VALIDATING'
+  AND ledger.scope = 'SESSION'
+  AND ledger.scene_type = 'IELTS_SPEAKING'
+  AND revision.channels = ARRAY['SCENE']::text[]
+  AND revision.scene_strategy_ref = 'ielts-speaking-full-mock-shadow/v1'
+  AND revision.pipeline_version = 'evaluation-pipeline-shadow/v1'
+;
+
 COMMIT;
