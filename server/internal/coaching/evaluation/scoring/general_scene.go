@@ -983,6 +983,15 @@ func normalizeGeneralSceneFindings(
 	if !exists {
 		return nil, ErrInvalidGeneralSceneResult
 	}
+	if prepared.result.SceneType != evaluation.SceneIELTSSpeaking {
+		return normalizeNonIELTSGeneralSceneFindings(
+			prepared,
+			dimension,
+			kind,
+			template,
+			source,
+		)
+	}
 	if len(source) == 0 {
 		return []GeneralSceneFinding{}, nil
 	}
@@ -1051,6 +1060,56 @@ func normalizeGeneralSceneFindings(
 	}
 	if len(result) > generalSceneMaximumNormalizedFindings {
 		return nil, ErrInvalidGeneralSceneResult
+	}
+	return result, nil
+}
+
+func normalizeNonIELTSGeneralSceneFindings(
+	prepared preparedGeneralScene,
+	dimension GeneralSceneDimension,
+	kind generalSceneFindingKind,
+	template generalSceneFeedbackTemplate,
+	source []generalSceneProviderFinding,
+) ([]GeneralSceneFinding, error) {
+	result := make([]GeneralSceneFinding, 0, len(source))
+	seen := make(map[string]struct{}, len(source))
+	for _, item := range source {
+		if item.TemplateID != template.ID || len(item.Evidence) == 0 ||
+			len(item.Evidence) > generalSceneMaximumAnchors {
+			return nil, ErrInvalidGeneralSceneResult
+		}
+		evidence := make([]GeneralSceneEvidence, 0, len(item.Evidence))
+		seenAnchors := make(map[string]struct{}, len(item.Evidence))
+		for _, anchor := range item.Evidence {
+			resolved, err := resolveGeneralSceneAnchor(prepared, anchor)
+			if err != nil {
+				return nil, err
+			}
+			key := resolved.EvidenceRefID + "\x00" +
+				strconv.Itoa(resolved.StartUTF8Byte) + "\x00" +
+				strconv.Itoa(resolved.EndUTF8Byte)
+			if _, duplicate := seenAnchors[key]; duplicate {
+				return nil, ErrInvalidGeneralSceneResult
+			}
+			seenAnchors[key] = struct{}{}
+			evidence = append(evidence, resolved)
+		}
+		finding := GeneralSceneFinding{
+			Message:    template.Message,
+			Suggestion: template.Suggestion,
+			Evidence:   evidence,
+		}
+		finding.ID = stableGeneralSceneFindingID(
+			prepared.result.SnapshotID,
+			dimension,
+			kind,
+			finding,
+		)
+		if _, duplicate := seen[finding.ID]; duplicate {
+			return nil, ErrInvalidGeneralSceneResult
+		}
+		seen[finding.ID] = struct{}{}
+		result = append(result, finding)
 	}
 	return result, nil
 }
@@ -1294,6 +1353,10 @@ func ValidateGeneralSceneResult(
 		!validGeneralSceneLineage(result.SceneType, result.Provider) {
 		return ErrInvalidGeneralSceneResult
 	}
+	maximumFindings := generalSceneMaximumProviderFindings
+	if result.SceneType == evaluation.SceneIELTSSpeaking {
+		maximumFindings = generalSceneMaximumNormalizedFindings
+	}
 	seenFindings := make(map[string]struct{})
 	for index, dimension := range result.Dimensions {
 		expected := generalSceneDimensionOrder[index]
@@ -1318,9 +1381,9 @@ func ValidateGeneralSceneResult(
 			!sameRatio(dimension.Confidence, prepared.confidence) ||
 			!slices.Equal(dimension.ReasonCodes, []string{"ASR_CONFIDENCE_UNAVAILABLE"}) ||
 			len(dimension.Strengths)+len(dimension.Improvements) == 0 ||
-			len(dimension.Strengths) > generalSceneMaximumNormalizedFindings ||
-			len(dimension.Improvements) > generalSceneMaximumNormalizedFindings ||
-			len(dimension.Examples) > generalSceneMaximumNormalizedFindings ||
+			len(dimension.Strengths) > maximumFindings ||
+			len(dimension.Improvements) > maximumFindings ||
+			len(dimension.Examples) > maximumFindings ||
 			!validateGeneralSceneDimensionFindings(
 				prepared,
 				expected,
@@ -1345,6 +1408,11 @@ func validateGeneralSceneDimensionFindings(
 	result GeneralSceneDimensionResult,
 	seenFindings map[string]struct{},
 ) bool {
+	ielts := prepared.result.SceneType == evaluation.SceneIELTSSpeaking
+	maximumFindings := generalSceneMaximumProviderFindings
+	if ielts {
+		maximumFindings = generalSceneMaximumNormalizedFindings
+	}
 	refSet := make(map[string]struct{})
 	collections := []struct {
 		kind     generalSceneFindingKind
@@ -1357,10 +1425,10 @@ func validateGeneralSceneDimensionFindings(
 	for _, collection := range collections {
 		template, exists := generalSceneTemplate(dimension, collection.kind)
 		if !exists ||
-			len(collection.findings) > generalSceneMaximumNormalizedFindings {
+			len(collection.findings) > maximumFindings {
 			return false
 		}
-		seenAnchors := make(map[string]struct{})
+		sectionAnchors := make(map[string]struct{})
 		lastChunkSizes := make(map[IELTSPart]int)
 		for _, finding := range collection.findings {
 			if finding.Message != template.Message ||
@@ -1375,24 +1443,36 @@ func validateGeneralSceneDimensionFindings(
 				) {
 				return false
 			}
-			section, sectionExists :=
-				prepared.findingSectionsByRef[finding.Evidence[0].EvidenceRefID]
-			if !sectionExists {
-				return false
-			}
-			if previousSize, seen := lastChunkSizes[section]; seen && previousSize < generalSceneMaximumAnchors {
-				return false
+			var section IELTSPart
+			if ielts {
+				var sectionExists bool
+				section, sectionExists =
+					prepared.findingSectionsByRef[finding.Evidence[0].EvidenceRefID]
+				if !sectionExists {
+					return false
+				}
+				if previousSize, seen := lastChunkSizes[section]; seen && previousSize < generalSceneMaximumAnchors {
+					return false
+				}
 			}
 			if _, duplicate := seenFindings[finding.ID]; duplicate {
 				return false
 			}
 			seenFindings[finding.ID] = struct{}{}
+			seenAnchors := sectionAnchors
+			if !ielts {
+				seenAnchors = make(map[string]struct{}, len(finding.Evidence))
+			}
 			for _, evidence := range finding.Evidence {
-				evidenceSection, exists :=
-					prepared.findingSectionsByRef[evidence.EvidenceRefID]
-				if !exists || evidenceSection != section ||
-					!validResolvedGeneralSceneEvidence(prepared, evidence) {
+				if !validResolvedGeneralSceneEvidence(prepared, evidence) {
 					return false
+				}
+				if ielts {
+					evidenceSection, exists :=
+						prepared.findingSectionsByRef[evidence.EvidenceRefID]
+					if !exists || evidenceSection != section {
+						return false
+					}
 				}
 				key := evidence.EvidenceRefID + "\x00" +
 					strconv.Itoa(evidence.StartUTF8Byte) + "\x00" +
@@ -1403,7 +1483,9 @@ func validateGeneralSceneDimensionFindings(
 				seenAnchors[key] = struct{}{}
 				refSet[evidence.EvidenceRefID] = struct{}{}
 			}
-			lastChunkSizes[section] = len(finding.Evidence)
+			if ielts {
+				lastChunkSizes[section] = len(finding.Evidence)
+			}
 		}
 	}
 	expectedRefs := make([]string, 0, len(refSet))

@@ -176,10 +176,10 @@ func TestGeneralSceneEngineChunksCombinedEvidenceWithoutDroppingAnchors(
 	const transcript = "one two three four five"
 	snapshot := generalSceneTestSnapshot(
 		t,
-		evaluation.SceneOverseasDaily,
-		scene.PracticeExperienceLifeAndTravel,
-		scene.SceneCategoryLifeTravel,
-		scene.PracticeModeFullSimulation,
+		evaluation.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
 		transcript,
 	)
 	provider := &generalSceneProviderStub{mutate: func(
@@ -223,6 +223,95 @@ func TestGeneralSceneEngineChunksCombinedEvidenceWithoutDroppingAnchors(
 	}
 	if !slices.Equal(excerpts, []string{"one", "two", "three", "four", "five"}) {
 		t.Fatalf("evidence excerpts = %#v", excerpts)
+	}
+}
+
+func TestGeneralSceneEnginePreservesNonIELTSFindingNormalization(t *testing.T) {
+	t.Parallel()
+	const transcript = "First detail. Second detail. Third detail."
+	tests := []struct {
+		name       string
+		sceneType  evaluation.SceneType
+		experience scene.PracticeExperience
+		category   scene.SceneCategory
+		wantDigest string
+	}{
+		{
+			name:       "daily",
+			sceneType:  evaluation.SceneOverseasDaily,
+			experience: scene.PracticeExperienceLifeAndTravel,
+			category:   scene.SceneCategoryLifeTravel,
+			wantDigest: "9ad7653d01757381ecc7d7b211d3f8b3fc33604e913fdee15e912bff5fd0342e",
+		},
+		{
+			name:       "workplace",
+			sceneType:  evaluation.SceneOverseasWorkplace,
+			experience: scene.PracticeExperienceWorkplace,
+			category:   scene.SceneCategoryWorkplaceGeneral,
+			wantDigest: "af683139571fc51ce74a3f54f472fb9edd8a1c11f8b1bf7bea27e51d7bfa1498",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			snapshot := generalSceneTestSnapshot(
+				t,
+				test.sceneType,
+				test.experience,
+				test.category,
+				scene.PracticeModeFullSimulation,
+				transcript,
+			)
+			provider := &generalSceneProviderStub{mutate: func(
+				payload *generalSceneProviderPayload,
+			) {
+				for index := range payload.Dimensions {
+					base := payload.Dimensions[index].Improvements[0]
+					payload.Dimensions[index].Improvements = nil
+					for _, quote := range []string{
+						"First detail",
+						"Second detail",
+						"Third detail",
+					} {
+						item := base
+						item.Evidence = []generalSceneProviderAnchor{{
+							EvidenceRefID: base.Evidence[0].EvidenceRefID,
+							Quote:         quote,
+							Occurrence:    1,
+						}}
+						payload.Dimensions[index].Improvements = append(
+							payload.Dimensions[index].Improvements,
+							item,
+						)
+					}
+				}
+			}}
+
+			result, err := NewGeneralSceneEngine(provider).Evaluate(
+				context.Background(),
+				snapshot,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, dimension := range result.Dimensions {
+				if len(dimension.Improvements) != 3 {
+					t.Errorf(
+						"dimension %s improvements = %d, want 3",
+						dimension.Key,
+						len(dimension.Improvements),
+					)
+				}
+			}
+			encoded, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := fmt.Sprintf("%x", sha256.Sum256(encoded))
+			if digest != test.wantDigest {
+				t.Errorf("result digest = %s, want %s", digest, test.wantDigest)
+			}
+		})
 	}
 }
 
