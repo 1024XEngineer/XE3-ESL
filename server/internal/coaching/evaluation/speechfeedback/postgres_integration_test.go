@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
@@ -205,6 +207,48 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 		assessment.SemanticScore == nil ||
 		*assessment.SemanticScore != semantic {
 		t.Fatalf("topic assessment = %#v", assessment)
+	}
+	var acousticRequest scoring.IELTSSpeakingAcousticRequest
+	acousticRequest.TurnID = turnID
+	acousticRequest.EvidenceRefID = "full-mock-evidence-ref"
+	acousticRequest.RecordingDurationMS = 1_000
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			input_revision,
+			audio_asset_id,
+			audio_asset_version,
+			audio_checksum_sha256
+		FROM evaluation_speech_feedback_turn_snapshots
+		WHERE owner_user_id = $1
+		  AND turn_id = $2
+	`, ownerID, turnID).Scan(
+		&acousticRequest.EvidenceVersion,
+		&acousticRequest.AudioAssetID,
+		&acousticRequest.AudioAssetVersion,
+		&acousticRequest.AudioChecksumSHA256,
+	); err != nil {
+		t.Fatal(err)
+	}
+	source, err := speechfeedback.NewIELTSSpeakingAcousticSource(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := source.ReadIELTSSpeakingAcoustics(
+		context.Background(),
+		ownerID,
+		[]scoring.IELTSSpeakingAcousticRequest{acousticRequest},
+	)
+	if err != nil || len(read.PendingTurnIDs) != 1 ||
+		read.PendingTurnIDs[0] != turnID {
+		t.Fatalf("version-bound pending read=%#v err=%v", read, err)
+	}
+	acousticRequest.AudioChecksumSHA256 = strings.Repeat("f", 64)
+	if _, err := source.ReadIELTSSpeakingAcoustics(
+		context.Background(),
+		ownerID,
+		[]scoring.IELTSSpeakingAcousticRequest{acousticRequest},
+	); !errors.Is(err, evaluation.ErrInvalidRequest) {
+		t.Fatalf("stale acoustic projection error=%v", err)
 	}
 }
 

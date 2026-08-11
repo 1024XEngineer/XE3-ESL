@@ -190,7 +190,8 @@ func (r *PostgresRepository) GetCurrentSessionReportState(
 	state.Status = value.Revision.Status
 	switch runtime.ModuleStatus {
 	case durableSceneJobPending:
-		if state.Status != evaluation.StatusQueued &&
+		if state.Status != evaluation.StatusValidating &&
+			state.Status != evaluation.StatusQueued &&
 			state.Status != evaluation.StatusRunning {
 			return report.SessionReportReadState{},
 				report.ErrSessionReportConfigurationConflict

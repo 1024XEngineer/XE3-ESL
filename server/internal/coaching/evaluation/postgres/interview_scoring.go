@@ -387,6 +387,27 @@ func (r *PostgresRepository) claimDurableSceneJob(
 			err,
 		)
 	}
+	if spec.sceneType == evaluation.SceneIELTSSpeaking &&
+		spec.strategyRef == scoring.IELTSSpeakingShadowStrategyRef {
+		acoustics, acousticErr := getIELTSAcousticSnapshot(
+			ctx,
+			tx,
+			claim.OwnerUserID,
+			claim.EvaluationID,
+			claim.Snapshot,
+		)
+		if acousticErr != nil {
+			return durableSceneJobClaim{}, false, fmt.Errorf(
+				"read claimed IELTS acoustic snapshot: %w",
+				acousticErr,
+			)
+		}
+		claim.AcousticSnapshot = &acoustics
+		claim.InputBundleHash = scoring.IELTSAcousticInputBundleHash(
+			claim.Snapshot,
+			acoustics,
+		)
+	}
 
 	claim.StrategyRef = spec.strategyRef
 	claim.PromptVersion = configuration.PromptVersion
@@ -408,6 +429,9 @@ func (r *PostgresRepository) claimDurableSceneJob(
 			scope,
 			scene_type,
 			snapshot_hash,
+			acoustic_snapshot_id,
+			acoustic_snapshot_hash,
+			input_bundle_hash,
 			full_config_hash,
 			prompt_version,
 			provider,
@@ -417,7 +441,7 @@ func (r *PostgresRepository) claimDurableSceneJob(
 		)
 		VALUES (
 			$1, $2, $3, $4, 'SCENE', $5, $6, $7, $8,
-			'SESSION', $16, $9, $10, $11, $12, $13,
+			'SESSION', $16, $9, $17, $18, $19, $10, $11, $12, $13,
 			$14, $15
 		)
 		ON CONFLICT (
@@ -427,6 +451,18 @@ func (r *PostgresRepository) claimDurableSceneJob(
 		) DO UPDATE
 		SET attempt_count = EXCLUDED.attempt_count,
 		    fencing_token = EXCLUDED.fencing_token,
+		    acoustic_snapshot_id = coalesce(
+		        evaluation_module_runs.acoustic_snapshot_id,
+		        EXCLUDED.acoustic_snapshot_id
+		    ),
+		    acoustic_snapshot_hash = coalesce(
+		        evaluation_module_runs.acoustic_snapshot_hash,
+		        EXCLUDED.acoustic_snapshot_hash
+		    ),
+		    input_bundle_hash = coalesce(
+		        evaluation_module_runs.input_bundle_hash,
+		        EXCLUDED.input_bundle_hash
+		    ),
 		    last_failure_code = NULL,
 		    updated_at = transaction_timestamp()
 		WHERE evaluation_module_runs.run_status = 'RUNNING'
@@ -443,6 +479,24 @@ func (r *PostgresRepository) claimDurableSceneJob(
 		      EXCLUDED.input_revision
 		  AND evaluation_module_runs.snapshot_hash =
 		      EXCLUDED.snapshot_hash
+		  AND (
+		      (
+		          evaluation_module_runs.acoustic_snapshot_id IS NULL
+		          AND evaluation_module_runs.acoustic_snapshot_hash IS NULL
+		          AND evaluation_module_runs.input_bundle_hash IS NULL
+		          AND EXCLUDED.acoustic_snapshot_id IS NOT NULL
+		          AND EXCLUDED.acoustic_snapshot_hash IS NOT NULL
+		          AND EXCLUDED.input_bundle_hash IS NOT NULL
+		      )
+		      OR (
+		          evaluation_module_runs.acoustic_snapshot_id
+		              IS NOT DISTINCT FROM EXCLUDED.acoustic_snapshot_id
+		          AND evaluation_module_runs.acoustic_snapshot_hash
+		              IS NOT DISTINCT FROM EXCLUDED.acoustic_snapshot_hash
+		          AND evaluation_module_runs.input_bundle_hash
+		              IS NOT DISTINCT FROM EXCLUDED.input_bundle_hash
+		      )
+		  )
 		  AND evaluation_module_runs.full_config_hash =
 		      EXCLUDED.full_config_hash
 		  AND evaluation_module_runs.prompt_version =
@@ -461,7 +515,10 @@ func (r *PostgresRepository) claimDurableSceneJob(
 		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
 		claim.PromptVersion, claim.Provider, claim.Model,
 		claim.AttemptCount, claim.FencingToken,
-		spec.sceneType).Scan(
+		spec.sceneType,
+		nullableAcousticSnapshotID(claim.AcousticSnapshot),
+		nullableAcousticSnapshotHash(claim.AcousticSnapshot),
+		nullableDigest(claim.InputBundleHash)).Scan(
 		&claim.ModuleRunID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1218,7 +1275,8 @@ func getDurableSceneJobState(
 				FullConfigHash: persistedConfigHash,
 			}, nil, nil
 		}
-		if revisionStatus != "QUEUED" &&
+		if revisionStatus != "VALIDATING" &&
+			revisionStatus != "QUEUED" &&
 			revisionStatus != "RUNNING" {
 			return durableSceneJobReadState{}, nil,
 				scoring.ErrRuntimeConfigurationConflict

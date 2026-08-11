@@ -51,10 +51,6 @@ var errIELTSSpeakingProviderSchemaMismatch = fmt.Errorf(
 	ErrInvalidIELTSSpeakingShadow,
 )
 
-var ErrIELTSSpeakingAcousticsPending = errors.New(
-	"evaluation: IELTS Speaking acoustics pending",
-)
-
 type IELTSCriterion string
 
 const (
@@ -194,6 +190,10 @@ type IELTSSpeakingProviderResponse struct {
 type IELTSSpeakingAcousticRequest struct {
 	TurnID              string
 	EvidenceRefID       string
+	EvidenceVersion     int64
+	AudioAssetID        string
+	AudioAssetVersion   uint64
+	AudioChecksumSHA256 string
 	RecordingDurationMS int64
 }
 
@@ -205,14 +205,6 @@ type IELTSSpeakingTurnAcoustics struct {
 	SpeakingSpeedWPM     *float64
 	Provider             string
 	ProviderRun          string
-}
-
-type IELTSSpeakingAcousticSource interface {
-	GetIELTSSpeakingAcoustics(
-		context.Context,
-		string,
-		[]IELTSSpeakingAcousticRequest,
-	) ([]IELTSSpeakingTurnAcoustics, error)
 }
 
 type IELTSSpeakingShadowProviderLineage struct {
@@ -287,8 +279,7 @@ type IELTSSpeakingShadowEvidence struct {
 }
 
 type IELTSSpeakingShadowEngine struct {
-	provider  IELTSSpeakingShadowProvider
-	acoustics IELTSSpeakingAcousticSource
+	provider IELTSSpeakingShadowProvider
 }
 
 func NewIELTSSpeakingShadowEngine(
@@ -297,34 +288,28 @@ func NewIELTSSpeakingShadowEngine(
 	return &IELTSSpeakingShadowEngine{provider: provider}
 }
 
-func NewIELTSSpeakingShadowEngineWithAcoustics(
-	provider IELTSSpeakingShadowProvider,
-	acoustics IELTSSpeakingAcousticSource,
-) *IELTSSpeakingShadowEngine {
-	return &IELTSSpeakingShadowEngine{
-		provider:  provider,
-		acoustics: acoustics,
-	}
-}
-
 func (engine *IELTSSpeakingShadowEngine) Evaluate(
 	ctx context.Context,
 	snapshot evidence.EvidenceSnapshot,
 ) (IELTSSpeakingShadowResult, error) {
-	return engine.evaluate(ctx, snapshot, true)
+	return engine.evaluate(ctx, snapshot, nil)
 }
 
-func (engine *IELTSSpeakingShadowEngine) evaluateWithoutAcoustics(
+func (engine *IELTSSpeakingShadowEngine) EvaluateWithAcousticSnapshot(
 	ctx context.Context,
 	snapshot evidence.EvidenceSnapshot,
+	acoustics IELTSAcousticSnapshot,
 ) (IELTSSpeakingShadowResult, error) {
-	return engine.evaluate(ctx, snapshot, false)
+	if !acoustics.ValidFor(snapshot) {
+		return IELTSSpeakingShadowResult{}, evaluation.ErrInvalidRequest
+	}
+	return engine.evaluate(ctx, snapshot, &acoustics)
 }
 
 func (engine *IELTSSpeakingShadowEngine) evaluate(
 	ctx context.Context,
 	snapshot evidence.EvidenceSnapshot,
-	includeAcoustics bool,
+	acoustics *IELTSAcousticSnapshot,
 ) (IELTSSpeakingShadowResult, error) {
 	if engine == nil || engine.provider == nil || ctx == nil {
 		return IELTSSpeakingShadowResult{}, evaluation.ErrInvalidRequest
@@ -337,8 +322,12 @@ func (engine *IELTSSpeakingShadowEngine) evaluate(
 		IELTSSpeakingScoreabilityInsufficient {
 		return prepared.result, nil
 	}
-	if includeAcoustics && engine.acoustics != nil {
-		prepared, err = engine.withAcoustics(ctx, snapshot, prepared)
+	if acoustics != nil {
+		prepared, err = withFrozenIELTSAcoustics(
+			snapshot,
+			*acoustics,
+			prepared,
+		)
 		if err != nil {
 			return IELTSSpeakingShadowResult{}, err
 		}
@@ -366,31 +355,12 @@ func (engine *IELTSSpeakingShadowEngine) evaluate(
 	return result, nil
 }
 
-func (engine *IELTSSpeakingShadowEngine) withAcoustics(
-	ctx context.Context,
+func withFrozenIELTSAcoustics(
 	snapshot evidence.EvidenceSnapshot,
+	acoustics IELTSAcousticSnapshot,
 	prepared preparedIELTSSpeakingShadow,
 ) (preparedIELTSSpeakingShadow, error) {
-	requests := make(
-		[]IELTSSpeakingAcousticRequest,
-		0,
-		len(prepared.input.Questions),
-	)
-	for _, question := range prepared.input.Questions {
-		if question.Response == nil {
-			return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
-		}
-		requests = append(requests, IELTSSpeakingAcousticRequest{
-			TurnID:              question.Response.TurnID,
-			EvidenceRefID:       question.Response.EvidenceRefID,
-			RecordingDurationMS: question.Response.RecordingDurationMS,
-		})
-	}
-	values, err := engine.acoustics.GetIELTSSpeakingAcoustics(
-		ctx,
-		snapshot.OwnerUserID,
-		requests,
-	)
+	values, err := acoustics.assessedValues(snapshot)
 	if err != nil {
 		return preparedIELTSSpeakingShadow{}, err
 	}
@@ -398,15 +368,8 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 		return prepared, nil
 	}
 	byTurn := make(map[string]IELTSSpeakingTurnAcoustics, len(values))
-	requestedTurns := make(map[string]struct{}, len(requests))
-	for _, request := range requests {
-		requestedTurns[request.TurnID] = struct{}{}
-	}
 	for _, value := range values {
 		if !validIELTSSpeakingTurnAcoustics(value) {
-			return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
-		}
-		if _, requested := requestedTurns[value.TurnID]; !requested {
 			return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
 		}
 		if _, duplicate := byTurn[value.TurnID]; duplicate {

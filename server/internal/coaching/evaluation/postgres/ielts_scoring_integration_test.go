@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -156,6 +157,168 @@ func TestPostgresIELTSSpeakingReportReadIsOwnerScoped(
 		evaluation.PracticeSessionID,
 	); !errors.Is(err, evaluationcore.ErrNotFound) {
 		t.Fatalf("cross-owner report error = %v", err)
+	}
+}
+
+func TestPostgresIELTSSpeakingReportReadsValidatingBarrierAsPending(
+	t *testing.T,
+) {
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	repository := NewPostgresRepository(pool)
+	evidenceRepository := evidence.NewPostgresRepository(pool)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
+	persistEvidenceSnapshotFixture(t, pool, snapshot)
+	service := evaluationcore.NewService(repository, evidenceRepository)
+	value, replayed, err := service.Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		evaluationcore.CreateRequest{
+			PracticeSessionID: snapshot.PracticeSessionID,
+			InputSnapshotID:   snapshot.ID,
+			InputRevision:     snapshot.InputRevision,
+			Scope:             evaluationcore.ScopeSession,
+			SceneType:         evaluationcore.SceneIELTSSpeaking,
+			Channels: []evaluationcore.Channel{
+				evaluationcore.ChannelScene,
+			},
+			SceneStrategyRef: scoring.IELTSSpeakingShadowStrategyRef,
+			PipelineVersion:  scoring.IELTSSpeakingShadowPipelineVersion,
+		},
+	)
+	if err != nil || replayed ||
+		value.Revision.Status != evaluationcore.StatusValidating {
+		t.Fatalf("evaluation=%#v replayed=%t err=%v", value, replayed, err)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		context.Background(),
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil ||
+		state.Evaluation.Revision.Status != evaluationcore.StatusValidating ||
+		state.Runtime.ModuleStatus !=
+			scoring.IELTSSpeakingShadowRuntimePending ||
+		state.Runtime.Result != nil || state.Snapshot != nil {
+		t.Fatalf("state=%#v err=%v", state, err)
+	}
+	configuration := scoring.IELTSSpeakingShadowRuntimeConfiguration{
+		MaxAttempts:          3,
+		LeaseDuration:        5 * time.Second,
+		AcousticWaitDuration: 15 * time.Second,
+		StrategyRef:          scoring.IELTSSpeakingShadowStrategyRef,
+		PipelineVersion:      scoring.IELTSSpeakingShadowPipelineVersion,
+		FullConfigHash:       sha256.Sum256([]byte("validating-barrier")),
+		PromptVersion:        scoring.IELTSSpeakingShadowPromptVersion,
+		Provider:             "qianwen",
+		Model:                "qwen-plus",
+	}
+	claim, acquired, err := repository.ClaimIELTSSpeakingShadow(
+		context.Background(),
+		configuration,
+	)
+	if err != nil || acquired || claim.EvaluationID != "" ||
+		claim.AttemptCount != 0 {
+		t.Fatalf("validating claim=%#v acquired=%t err=%v", claim, acquired, err)
+	}
+	var attemptCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT attempt_count
+		FROM evaluation_outbox
+		WHERE evaluation_revision_id = $1
+		  AND channel = 'SCENE'
+	`, value.Revision.ID).Scan(&attemptCount); err != nil || attemptCount != 0 {
+		t.Fatalf("validating attempt_count=%d err=%v", attemptCount, err)
+	}
+}
+
+func TestPostgresIELTSSpeakingReevaluationReusesFrozenAcousticBundle(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	var frozenID string
+	var frozenHash []byte
+	if err := pool.QueryRow(context.Background(), `
+		SELECT id, snapshot_hash
+		FROM evaluation_ielts_speaking_acoustic_snapshots
+		WHERE evaluation_id = $1
+	`, value.ID).Scan(&frozenID, &frozenHash); err != nil {
+		t.Fatal(err)
+	}
+	service := evaluationcore.NewService(
+		repository,
+		evidence.NewPostgresRepository(pool),
+	)
+	next, replayed, err := service.Reevaluate(
+		context.Background(),
+		testActor(testOwnerA),
+		value.ID,
+		evaluationcore.ReevaluateRequest{
+			Channels: []evaluationcore.Channel{
+				evaluationcore.ChannelScene,
+			},
+			SceneStrategyRef: scoring.IELTSSpeakingShadowStrategyRef,
+			PipelineVersion:  scoring.IELTSSpeakingShadowPipelineVersion,
+			ClientRequestID:  "ielts-acoustic-reuse",
+		},
+	)
+	if err != nil || replayed || next.Revision.Number != 2 ||
+		next.Revision.Status != evaluationcore.StatusQueued {
+		t.Fatalf("reevaluation=%#v replayed=%t err=%v", next, replayed, err)
+	}
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	if claim.AcousticSnapshot.ID != frozenID ||
+		!bytes.Equal(claim.AcousticSnapshot.SnapshotHash[:], frozenHash) ||
+		claim.InputBundleHash != scoring.IELTSAcousticInputBundleHash(
+			claim.Snapshot,
+			claim.AcousticSnapshot,
+		) {
+		t.Fatalf("reevaluation acoustic claim = %#v", claim)
+	}
+}
+
+func TestPostgresIELTSAcousticSnapshotAndRunBindingAreImmutable(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	var hashMatches bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT snapshot_hash = sha256(convert_to(canonical_payload, 'UTF8'))
+		FROM evaluation_ielts_speaking_acoustic_snapshots
+		WHERE evaluation_id = $1
+	`, value.ID).Scan(&hashMatches); err != nil || !hashMatches {
+		t.Fatalf("snapshot hash matches=%t err=%v", hashMatches, err)
+	}
+	_, err := pool.Exec(context.Background(), `
+		UPDATE evaluation_ielts_speaking_acoustic_snapshots
+		SET resolution = 'PARTIAL'
+		WHERE evaluation_id = $1
+	`, value.ID)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "55000" {
+		t.Fatalf("snapshot mutation error=%v", err)
+	}
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	if err := pool.QueryRow(context.Background(), `
+		SELECT input_bundle_hash = sha256(
+			convert_to('ielts-speaking-input-bundle/v1', 'UTF8') ||
+			decode('00', 'hex') || snapshot_hash || acoustic_snapshot_hash
+		)
+		FROM evaluation_module_runs
+		WHERE id = $1
+	`, claim.ModuleRunID).Scan(&hashMatches); err != nil || !hashMatches {
+		t.Fatalf("bundle hash matches=%t err=%v", hashMatches, err)
+	}
+	_, err = pool.Exec(context.Background(), `
+		UPDATE evaluation_module_runs
+		SET input_bundle_hash = decode(repeat('00', 32), 'hex')
+		WHERE id = $1
+	`, claim.ModuleRunID)
+	databaseError = nil
+	if !errors.As(err, &databaseError) || databaseError.Code != "55000" {
+		t.Fatalf("module run binding mutation error=%v", err)
 	}
 }
 
@@ -554,6 +717,169 @@ func TestIELTSSpeakingShadowRuntimeMigrationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIELTSAcousticSnapshotMigrationRoundTrip(t *testing.T) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	ctx := context.Background()
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	result := evaluateIELTSSpeakingClaim(t, claim)
+	if err := repository.CompleteIELTSSpeakingShadow(
+		ctx,
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("complete pre-migration IELTS report: %v", err)
+	}
+	down, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.down.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(down)); err != nil {
+		t.Fatalf("apply IELTS acoustic snapshot down migration: %v", err)
+	}
+	var tableExists bool
+	var columnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			to_regclass(
+				'evaluation_ielts_speaking_acoustic_snapshots'
+			) IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = current_schema()
+				  AND table_name = 'evaluation_module_runs'
+				  AND column_name = 'input_bundle_hash'
+			)
+	`).Scan(&tableExists, &columnExists); err != nil {
+		t.Fatal(err)
+	}
+	if tableExists || columnExists {
+		t.Fatalf("down table=%t column=%t", tableExists, columnExists)
+	}
+	up, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(up)); err != nil {
+		t.Fatalf("reapply IELTS acoustic snapshot up migration: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			to_regclass(
+				'evaluation_ielts_speaking_acoustic_snapshots'
+			) IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = current_schema()
+				  AND table_name = 'evaluation_module_runs'
+				  AND column_name = 'input_bundle_hash'
+			)
+	`).Scan(&tableExists, &columnExists); err != nil {
+		t.Fatal(err)
+	}
+	if !tableExists || !columnExists {
+		t.Fatalf("up table=%t column=%t", tableExists, columnExists)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		ctx,
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil ||
+		state.Runtime.ModuleStatus != scoring.IELTSSpeakingShadowRuntimeReady ||
+		state.Runtime.Result == nil || state.Snapshot == nil {
+		t.Fatalf("historical IELTS report state=%#v err=%v", state, err)
+	}
+}
+
+func TestIELTSAcousticSnapshotMigrationBindsLegacyRunningRetry(t *testing.T) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	ctx := context.Background()
+	first := claimIELTSSpeakingShadow(t, repository, configuration)
+	status, err := repository.FailIELTSSpeakingShadow(
+		ctx,
+		first,
+		scoring.IELTSSpeakingShadowFailure{
+			Code:      "provider_timeout",
+			Retryable: true,
+		},
+		configuration,
+	)
+	if err != nil || status != scoring.IELTSSpeakingShadowRuntimePending {
+		t.Fatalf("queue pre-migration retry status=%q err=%v", status, err)
+	}
+	down, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.down.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(down)); err != nil {
+		t.Fatalf("apply IELTS acoustic snapshot down migration: %v", err)
+	}
+	up, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(up)); err != nil {
+		t.Fatalf("reapply IELTS acoustic snapshot up migration: %v", err)
+	}
+	migrated, err := repository.Get(ctx, testOwnerA, value.ID)
+	if err != nil ||
+		migrated.Revision.Status != evaluationcore.StatusValidating {
+		t.Fatalf("migrated evaluation=%#v err=%v", migrated, err)
+	}
+	draft, err := scoring.BuildIELTSAcousticSnapshot(
+		value.ID,
+		first.Snapshot,
+		scoring.IELTSSpeakingAcousticRead{},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, replayed, err := repository.EnsureIELTSAcousticSnapshot(
+		ctx,
+		scoring.IELTSAcousticSnapshotClaim{
+			EvaluationID:         value.ID,
+			EvaluationRevisionID: value.Revision.ID,
+			OwnerUserID:          testOwnerA,
+			RevisionCreatedAt:    value.Revision.CreatedAt,
+			Snapshot:             first.Snapshot,
+		},
+		draft,
+	)
+	if err != nil || replayed || !stored.ValidFor(first.Snapshot) {
+		t.Fatalf("freeze migrated retry=%#v replayed=%t err=%v", stored, replayed, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE evaluation_outbox
+		SET available_at = transaction_timestamp() - interval '1 second',
+		    updated_at = transaction_timestamp()
+		WHERE id = $1
+	`, first.OutboxID); err != nil {
+		t.Fatalf("make migrated retry available: %v", err)
+	}
+	second := claimIELTSSpeakingShadow(t, repository, configuration)
+	if second.ModuleRunID != first.ModuleRunID || second.AttemptCount != 2 ||
+		second.AcousticSnapshot.ID != stored.ID ||
+		second.InputBundleHash != scoring.IELTSAcousticInputBundleHash(
+			second.Snapshot,
+			second.AcousticSnapshot,
+		) {
+		t.Fatalf("migrated retry claim=%#v first=%#v", second, first)
+	}
+}
+
 func prepareIELTSSpeakingShadowRuntime(
 	t *testing.T,
 ) (
@@ -596,11 +922,77 @@ func prepareIELTSSpeakingShadowRuntime(
 			err,
 		)
 	}
+	if evaluation.Revision.Status != evaluationcore.StatusValidating {
+		t.Fatalf("initial IELTS status = %s", evaluation.Revision.Status)
+	}
+	freezeClaim := scoring.IELTSAcousticSnapshotClaim{
+		EvaluationID:         evaluation.ID,
+		EvaluationRevisionID: evaluation.Revision.ID,
+		OwnerUserID:          testOwnerA,
+		RevisionCreatedAt:    evaluation.Revision.CreatedAt,
+		Snapshot:             snapshot,
+	}
+	draft, err := scoring.BuildIELTSAcousticSnapshot(
+		evaluation.ID,
+		snapshot,
+		scoring.IELTSSpeakingAcousticRead{},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("build IELTS acoustic snapshot: %v", err)
+	}
+	type freezeResult struct {
+		stored   scoring.IELTSAcousticSnapshot
+		replayed bool
+		err      error
+	}
+	freezeResults := make(chan freezeResult, 2)
+	var freezeWait sync.WaitGroup
+	freezeWait.Add(2)
+	for range 2 {
+		go func() {
+			defer freezeWait.Done()
+			stored, wasReplay, ensureErr :=
+				repository.EnsureIELTSAcousticSnapshot(
+					context.Background(),
+					freezeClaim,
+					draft,
+				)
+			freezeResults <- freezeResult{stored, wasReplay, ensureErr}
+		}()
+	}
+	freezeWait.Wait()
+	close(freezeResults)
+	replays := 0
+	for result := range freezeResults {
+		if result.err != nil || !result.stored.ValidFor(snapshot) {
+			t.Fatalf(
+				"freeze IELTS acoustics valid=%t error=%v",
+				result.stored.ValidFor(snapshot),
+				result.err,
+			)
+		}
+		if result.replayed {
+			replays++
+		}
+	}
+	if replays != 1 {
+		t.Fatalf("concurrent IELTS acoustic snapshot replays = %d", replays)
+	}
+	evaluation, err = repository.Get(
+		context.Background(),
+		testOwnerA,
+		evaluation.ID,
+	)
+	if err != nil || evaluation.Revision.Status != evaluationcore.StatusQueued {
+		t.Fatalf("queued IELTS Evaluation=%#v error=%v", evaluation, err)
+	}
 	configuration := scoring.IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     3,
-		LeaseDuration:   5 * time.Second,
-		StrategyRef:     scoring.IELTSSpeakingShadowStrategyRef,
-		PipelineVersion: scoring.IELTSSpeakingShadowPipelineVersion,
+		MaxAttempts:          3,
+		LeaseDuration:        5 * time.Second,
+		AcousticWaitDuration: 15 * time.Second,
+		StrategyRef:          scoring.IELTSSpeakingShadowStrategyRef,
+		PipelineVersion:      scoring.IELTSSpeakingShadowPipelineVersion,
 		FullConfigHash: sha256.Sum256(
 			[]byte("ielts-shadow-integration-config/v1"),
 		),
@@ -640,7 +1032,11 @@ func evaluateIELTSSpeakingClaim(
 	t.Helper()
 	result, err := scoring.NewIELTSSpeakingShadowEngine(
 		&ieltsProviderStub{},
-	).Evaluate(context.Background(), claim.Snapshot)
+	).EvaluateWithAcousticSnapshot(
+		context.Background(),
+		claim.Snapshot,
+		claim.AcousticSnapshot,
+	)
 	if err != nil {
 		t.Fatalf("evaluate IELTS claim: %v", err)
 	}

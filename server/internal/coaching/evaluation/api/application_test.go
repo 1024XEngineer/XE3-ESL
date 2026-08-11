@@ -761,14 +761,15 @@ func evaluationTestIELTSRuntimeConfiguration(
 ) scoring.IELTSSpeakingShadowRuntimeConfiguration {
 	t.Helper()
 	return scoring.IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     3,
-		LeaseDuration:   30 * time.Second,
-		StrategyRef:     scoring.IELTSSpeakingShadowStrategyRef,
-		PipelineVersion: scoring.IELTSSpeakingShadowPipelineVersion,
-		FullConfigHash:  sha256.Sum256([]byte("ielts-config")),
-		PromptVersion:   scoring.IELTSSpeakingShadowPromptVersion,
-		Provider:        "qianwen",
-		Model:           "qwen-plus",
+		MaxAttempts:          3,
+		LeaseDuration:        30 * time.Second,
+		AcousticWaitDuration: 15 * time.Second,
+		StrategyRef:          scoring.IELTSSpeakingShadowStrategyRef,
+		PipelineVersion:      scoring.IELTSSpeakingShadowPipelineVersion,
+		FullConfigHash:       sha256.Sum256([]byte("ielts-config")),
+		PromptVersion:        scoring.IELTSSpeakingShadowPromptVersion,
+		Provider:             "qianwen",
+		Model:                "qwen-plus",
 	}
 }
 

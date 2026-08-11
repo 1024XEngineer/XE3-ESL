@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	runtimeLeaseDuration = 60 * time.Second
-	runtimeRetryDelay    = 5 * time.Second
-	runtimeMaxAttempts   = 3
+	runtimeLeaseDuration             = 60 * time.Second
+	runtimeRetryDelay                = 5 * time.Second
+	runtimeMaxAttempts               = 3
+	runtimeIELTSAcousticWaitDuration = 15 * time.Second
 )
 
 type Configuration struct {
@@ -65,6 +66,7 @@ func (configuration Configuration) valid() bool {
 type RuntimeRepository interface {
 	InterviewShadowRuntimeRepository
 	IELTSSpeakingShadowRuntimeRepository
+	IELTSAcousticSnapshotRepository
 	GeneralSceneRuntimeRepository
 }
 
@@ -86,27 +88,6 @@ type Runtime struct {
 	ieltsConfiguration     IELTSSpeakingShadowRuntimeConfiguration
 }
 
-func NewRuntime(
-	repository RuntimeRepository,
-	completions practice.CompletionHandoffRepository,
-	evidenceService RuntimeEvidence,
-	evaluationService RuntimeEvaluations,
-	textGenerator TextGenerator,
-	policies *EvaluationPolicyRegistry,
-	configuration Configuration,
-) (*Runtime, error) {
-	return NewRuntimeWithIELTSAcoustics(
-		repository,
-		completions,
-		evidenceService,
-		evaluationService,
-		textGenerator,
-		policies,
-		configuration,
-		nil,
-	)
-}
-
 func NewRuntimeWithIELTSAcoustics(
 	repository RuntimeRepository,
 	completions practice.CompletionHandoffRepository,
@@ -119,6 +100,7 @@ func NewRuntimeWithIELTSAcoustics(
 ) (*Runtime, error) {
 	if repository == nil || completions == nil || evidenceService == nil ||
 		evaluationService == nil || textGenerator == nil || policies == nil ||
+		acoustics == nil ||
 		!configuration.valid() {
 		return nil, evaluation.ErrInvalidRequest
 	}
@@ -158,16 +140,11 @@ func NewRuntimeWithIELTSAcoustics(
 		return nil, err
 	}
 	ieltsEngine := NewIELTSSpeakingShadowEngine(ieltsProvider)
-	if acoustics != nil {
-		ieltsEngine = NewIELTSSpeakingShadowEngineWithAcoustics(
-			ieltsProvider,
-			acoustics,
-		)
-	}
-	ieltsWorker, err := NewIELTSSpeakingShadowWorker(
+	ieltsWorker, err := NewIELTSSpeakingShadowWorkerWithAcousticSnapshots(
 		repository,
 		ieltsEngine,
 		ieltsConfiguration,
+		acoustics,
 	)
 	if err != nil {
 		return nil, err
@@ -412,14 +389,15 @@ func ieltsRuntimeConfiguration(
 		return IELTSSpeakingShadowRuntimeConfiguration{}, err
 	}
 	result := IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     configuration.maxAttempts,
-		LeaseDuration:   configuration.leaseDuration,
-		StrategyRef:     IELTSSpeakingShadowStrategyRef,
-		PipelineVersion: IELTSSpeakingShadowPipelineVersion,
-		FullConfigHash:  sha256.Sum256(encoded),
-		PromptVersion:   IELTSSpeakingShadowPromptVersion,
-		Provider:        configuration.provider,
-		Model:           configuration.model,
+		MaxAttempts:          configuration.maxAttempts,
+		LeaseDuration:        configuration.leaseDuration,
+		AcousticWaitDuration: runtimeIELTSAcousticWaitDuration,
+		StrategyRef:          IELTSSpeakingShadowStrategyRef,
+		PipelineVersion:      IELTSSpeakingShadowPipelineVersion,
+		FullConfigHash:       sha256.Sum256(encoded),
+		PromptVersion:        IELTSSpeakingShadowPromptVersion,
+		Provider:             configuration.provider,
+		Model:                configuration.model,
 	}
 	if !result.Valid() {
 		return IELTSSpeakingShadowRuntimeConfiguration{}, evaluation.ErrInvalidRequest
