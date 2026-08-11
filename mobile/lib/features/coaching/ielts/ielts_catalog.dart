@@ -121,7 +121,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           ),
         ),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 8),
       _FilterRow(
         semanticLabel: 'Part 筛选',
         allLabel: '全部',
@@ -129,7 +129,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
         selected: _part,
         onSelected: (value) => setState(() => _part = value),
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: 8),
       _FilterRow(
         key: const Key('ielts-release-filter'),
         semanticLabel: '题季筛选',
@@ -138,16 +138,16 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
         selected: _release,
         onSelected: (value) => setState(() => _release = value),
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: 8),
       _FilterRow(
         key: const Key('ielts-tag-filter'),
-        semanticLabel: '标签筛选',
+        semanticLabel: '题型分类',
         allLabel: '全部',
-        options: [...bank.filters.cueCardTypes, ...bank.filters.topicTags],
+        options: bank.filters.cueCardTypes,
         selected: _tag,
         onSelected: (value) => setState(() => _tag = value),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 8),
       Text(
         '${items.length} 道题',
         style: PreparationDesign.sectionTitle.copyWith(
@@ -216,7 +216,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           ),
         );
       }
-      if (_part == null || _part == 'PART_3') {
+      if (_part == 'PART_3') {
         items.add(
           _CatalogItem(
             id: group.id,
@@ -388,6 +388,8 @@ class _FilterChoice extends StatelessWidget {
     selectedColor: PreparationDesign.ink,
     backgroundColor: PreparationDesign.surfaceMuted,
     side: BorderSide.none,
+    visualDensity: const VisualDensity(vertical: -2),
+    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     labelStyle: PreparationDesign.label.copyWith(
       color: selected ? Colors.white : PreparationDesign.ink,
     ),
