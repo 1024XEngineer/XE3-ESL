@@ -42,6 +42,29 @@ func TestGeneralSceneWorkerClaimsAcrossSceneTypesAndCompletes(t *testing.T) {
 	}
 }
 
+func TestGeneralSceneProviderRejectionStageIsStableAndContentFree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{name: "invalid JSON", cause: errGeneralSceneProviderInvalidJSON, want: "json_decode"},
+		{name: "schema mismatch", cause: errGeneralSceneProviderSchemaMismatch, want: "schema_validation"},
+		{name: "semantic mismatch", cause: ErrInvalidGeneralSceneResult, want: "semantic_validation"},
+		{name: "invalid request", cause: evaluation.ErrInvalidRequest, want: "request_validation"},
+		{name: "unrelated", cause: context.Canceled, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := generalSceneProviderRejectionStage(test.cause); got != test.want {
+				t.Fatalf("stage = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func generalSceneRuntimeConfigurationFixture() GeneralSceneRuntimeConfiguration {
 	return GeneralSceneRuntimeConfiguration{
 		MaxAttempts:     3,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -220,10 +221,20 @@ func (worker *GeneralSceneWorker) recordFailure(
 	claim GeneralSceneClaim,
 	cause error,
 ) (GeneralSceneRuntimeStatus, error) {
+	failure := classifyGeneralSceneFailure(cause)
+	if rejectionStage := generalSceneProviderRejectionStage(cause); rejectionStage != "" {
+		slog.Warn(
+			"general Scene provider response rejected",
+			"failure_code",
+			failure.Code,
+			"rejection_stage",
+			rejectionStage,
+		)
+	}
 	status, err := worker.repository.FailGeneralScene(
 		ctx,
 		claim,
-		classifyGeneralSceneFailure(cause),
+		failure,
 		worker.configuration,
 	)
 	if err != nil {
@@ -234,6 +245,21 @@ func (worker *GeneralSceneWorker) recordFailure(
 		return "", evaluation.ErrInvalidRequest
 	}
 	return status, nil
+}
+
+func generalSceneProviderRejectionStage(cause error) string {
+	switch {
+	case errors.Is(cause, errGeneralSceneProviderInvalidJSON):
+		return "json_decode"
+	case errors.Is(cause, errGeneralSceneProviderSchemaMismatch):
+		return "schema_validation"
+	case errors.Is(cause, ErrInvalidGeneralSceneResult):
+		return "semantic_validation"
+	case errors.Is(cause, evaluation.ErrInvalidRequest):
+		return "request_validation"
+	default:
+		return ""
+	}
 }
 
 func generalSceneClaimMatchesRuntime(

@@ -106,6 +106,124 @@ func TestGeneralSceneEngineRejectsUngroundedProviderQuote(t *testing.T) {
 	}
 }
 
+func TestGeneralSceneEngineCombinesPart1TemplateFindingsWithoutDroppingEvidence(
+	t *testing.T,
+) {
+	t.Parallel()
+	const transcript = "First detail. Second detail. Third detail."
+	quotes := []string{"First detail", "Second detail", "Third detail"}
+	counts := []int{2, 2, 3, 2}
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluation.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		transcript,
+	)
+	provider := &generalSceneProviderStub{mutate: func(
+		payload *generalSceneProviderPayload,
+	) {
+		for index := range payload.Dimensions {
+			base := payload.Dimensions[index].Improvements[0]
+			items := make([]generalSceneProviderFinding, 0, counts[index])
+			for _, quote := range quotes[:counts[index]] {
+				item := base
+				item.Evidence = []generalSceneProviderAnchor{{
+					EvidenceRefID: base.Evidence[0].EvidenceRefID,
+					Quote:         quote,
+					Occurrence:    1,
+				}}
+				items = append(items, item)
+			}
+			payload.Dimensions[index].Improvements = items
+		}
+	}}
+
+	result, err := NewGeneralSceneEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for index, dimension := range result.Dimensions {
+		findings := dimension.Improvements
+		if len(findings) != 1 {
+			t.Fatalf("dimension %s improvements = %#v", dimension.Key, findings)
+		}
+		excerpts := make([]string, 0, len(findings[0].Evidence))
+		for _, item := range findings[0].Evidence {
+			excerpts = append(excerpts, item.OriginalExcerpt)
+		}
+		if !slices.Equal(excerpts, quotes[:counts[index]]) {
+			t.Fatalf("dimension %s evidence excerpts = %#v", dimension.Key, excerpts)
+		}
+		total += len(findings)
+	}
+	if total != len(result.Dimensions) {
+		t.Fatalf("total improvements = %d", total)
+	}
+}
+
+func TestGeneralSceneEngineChunksCombinedEvidenceWithoutDroppingAnchors(
+	t *testing.T,
+) {
+	t.Parallel()
+	const transcript = "one two three four five"
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluation.SceneOverseasDaily,
+		scene.PracticeExperienceLifeAndTravel,
+		scene.SceneCategoryLifeTravel,
+		scene.PracticeModeFullSimulation,
+		transcript,
+	)
+	provider := &generalSceneProviderStub{mutate: func(
+		payload *generalSceneProviderPayload,
+	) {
+		base := payload.Dimensions[0].Improvements[0]
+		anchors := make([]generalSceneProviderAnchor, 0, 5)
+		for _, quote := range []string{"one", "two", "three", "four", "five"} {
+			anchors = append(anchors, generalSceneProviderAnchor{
+				EvidenceRefID: base.Evidence[0].EvidenceRefID,
+				Quote:         quote,
+				Occurrence:    1,
+			})
+		}
+		first := base
+		first.Evidence = anchors[:generalSceneMaximumAnchors]
+		second := base
+		second.Evidence = anchors[generalSceneMaximumAnchors:]
+		payload.Dimensions[0].Improvements =
+			[]generalSceneProviderFinding{first, second}
+	}}
+
+	result, err := NewGeneralSceneEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := result.Dimensions[0].Improvements
+	if len(findings) != 2 ||
+		len(findings[0].Evidence) != generalSceneMaximumAnchors ||
+		len(findings[1].Evidence) != 1 {
+		t.Fatalf("improvements = %#v", findings)
+	}
+	excerpts := make([]string, 0, 5)
+	for _, finding := range findings {
+		for _, item := range finding.Evidence {
+			excerpts = append(excerpts, item.OriginalExcerpt)
+		}
+	}
+	if !slices.Equal(excerpts, []string{"one", "two", "three", "four", "five"}) {
+		t.Fatalf("evidence excerpts = %#v", excerpts)
+	}
+}
+
 type generalSceneProviderStub struct {
 	input  GeneralSceneProviderInput
 	calls  int

@@ -20,6 +20,11 @@ func TestProjectIELTSSpeakingPracticeReportSeparatesPart2AndPart3(t *testing.T) 
 	if err != nil {
 		t.Fatalf("evaluate IELTS practice fixture: %v", err)
 	}
+	for _, dimension := range result.Dimensions {
+		if len(dimension.Improvements) != 2 || len(dimension.Examples) != 2 {
+			t.Fatalf("cross-Part dimension = %#v", dimension)
+		}
+	}
 	formal, err := ProjectGeneralSceneFormalReport(snapshot, result)
 	if err != nil {
 		t.Fatalf("project IELTS practice FormalReport: %v", err)
@@ -48,11 +53,11 @@ func TestProjectIELTSSpeakingPracticeReportSeparatesPart2AndPart3(t *testing.T) 
 		len(part3.QuestionIndexes) != ieltsReportQuestionCount-
 			ieltsReportPart1QuestionCount-ieltsReportPart2QuestionCount ||
 		len(part2.StrengthFindingIDs) != len(result.Dimensions) ||
-		len(part2.ImprovementFindingIDs) != 0 ||
-		len(part2.UpgradeExampleFindingIDs) != 0 ||
+		len(part2.ImprovementFindingIDs) != len(result.Dimensions) ||
+		len(part2.UpgradeExampleFindingIDs) != len(result.Dimensions) ||
 		len(part3.StrengthFindingIDs) != 0 ||
 		len(part3.ImprovementFindingIDs) != len(result.Dimensions) ||
-		len(part3.UpgradeExampleFindingIDs) != 0 {
+		len(part3.UpgradeExampleFindingIDs) != len(result.Dimensions) {
 		t.Fatalf("section reviews = %#v", detail.SectionReviews)
 	}
 }
@@ -121,14 +126,24 @@ func (*ieltsPracticeReportProvider) AnalyzeGeneralScene(
 						Occurrence:    1,
 					}},
 				}},
-				Improvements: []generalSceneReportProviderFinding{{
-					TemplateID: string(dimension) + ":IMPROVEMENT:v1",
-					Evidence: []generalSceneReportProviderAnchor{{
-						EvidenceRefID: last.EvidenceRefID,
-						Quote:         last.Transcript,
-						Occurrence:    1,
-					}},
-				}},
+				Improvements: []generalSceneReportProviderFinding{
+					{
+						TemplateID: string(dimension) + ":IMPROVEMENT:v1",
+						Evidence: []generalSceneReportProviderAnchor{{
+							EvidenceRefID: first.EvidenceRefID,
+							Quote:         first.Transcript,
+							Occurrence:    1,
+						}},
+					},
+					{
+						TemplateID: string(dimension) + ":IMPROVEMENT:v1",
+						Evidence: []generalSceneReportProviderAnchor{{
+							EvidenceRefID: last.EvidenceRefID,
+							Quote:         last.Transcript,
+							Occurrence:    1,
+						}},
+					},
+				},
 				Examples: []generalSceneReportProviderFinding{{
 					TemplateID: string(dimension) + ":RECOMMENDED_EXAMPLE:v1",
 					Evidence: []generalSceneReportProviderAnchor{

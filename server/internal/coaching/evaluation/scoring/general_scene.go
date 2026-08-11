@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"math"
@@ -24,16 +25,29 @@ const (
 	GeneralSceneProviderSchemaVersion = "general-scene-evaluation-provider/v1"
 	GeneralScenePromptVersion         = "general-scene-evaluation-prompt/v1"
 
-	generalSceneMinimumWords      = 3
-	generalSceneMaximumPayload    = 64 * 1024
-	generalSceneMaximumTextBytes  = 2048
-	generalSceneMaximumFindings   = 3
-	generalSceneMaximumAnchors    = 4
-	generalSceneMaximumOccurrence = 16
+	generalSceneMinimumWords            = 3
+	generalSceneMaximumPayload          = 64 * 1024
+	generalSceneMaximumTextBytes        = 2048
+	generalSceneMaximumProviderFindings = 3
+	// Twelve provider anchors split across three IELTS Parts need at most five
+	// four-anchor findings after section-preserving normalization.
+	generalSceneMaximumNormalizedFindings = 5
+	generalSceneMaximumAnchors            = 4
+	generalSceneMaximumOccurrence         = 16
 )
 
 var ErrInvalidGeneralSceneResult = errors.New(
 	"evaluation: invalid general Scene result",
+)
+
+var errGeneralSceneProviderInvalidJSON = fmt.Errorf(
+	"evaluation: general Scene provider returned invalid JSON: %w",
+	ErrInvalidGeneralSceneResult,
+)
+
+var errGeneralSceneProviderSchemaMismatch = fmt.Errorf(
+	"evaluation: general Scene provider response schema mismatch: %w",
+	ErrInvalidGeneralSceneResult,
 )
 
 type GeneralSceneDimension string
@@ -209,13 +223,14 @@ func (engine *GeneralSceneEngine) Evaluate(
 }
 
 type preparedGeneralScene struct {
-	input       GeneralSceneProviderInput
-	result      GeneralSceneResult
-	turnsByID   map[string]evidence.ConfirmedTurn
-	refsByID    map[string]evidence.Ref
-	allowedRefs map[string]struct{}
-	coverage    float64
-	confidence  float64
+	input                GeneralSceneProviderInput
+	result               GeneralSceneResult
+	turnsByID            map[string]evidence.ConfirmedTurn
+	refsByID             map[string]evidence.Ref
+	allowedRefs          map[string]struct{}
+	findingSectionsByRef map[string]IELTSPart
+	coverage             float64
+	confidence           float64
 }
 
 func prepareGeneralScene(
@@ -244,7 +259,16 @@ func prepareGeneralScene(
 	if len(payload.OpportunityManifest) == 0 {
 		return preparedGeneralScene{}, evaluation.ErrInvalidRequest
 	}
+	findingSections, err := generalSceneFindingSections(
+		snapshot.SceneType,
+		payload.PracticeContext,
+		len(payload.OpportunityManifest),
+	)
+	if err != nil {
+		return preparedGeneralScene{}, err
+	}
 	allowedRefs := make(map[string]struct{}, len(payload.EvidenceRefs))
+	findingSectionsByRef := make(map[string]IELTSPart, len(payload.EvidenceRefs))
 	opportunities := make(
 		[]GeneralSceneOpportunity,
 		0,
@@ -252,7 +276,7 @@ func prepareGeneralScene(
 	)
 	wordCount := 0
 	answered := 0
-	for _, opportunity := range payload.OpportunityManifest {
+	for index, opportunity := range payload.OpportunityManifest {
 		providerOpportunity := GeneralSceneOpportunity{
 			QuestionID:   opportunity.QuestionID,
 			ObjectiveID:  opportunity.ObjectiveID,
@@ -268,6 +292,7 @@ func prepareGeneralScene(
 			answered++
 			wordCount += generalSceneWordCount(turn.Transcript.Text)
 			allowedRefs[ref.EvidenceRefID] = struct{}{}
+			findingSectionsByRef[ref.EvidenceRefID] = findingSections[index]
 			providerOpportunity.Response = &GeneralSceneResponse{
 				TurnID:        turn.TurnID,
 				EvidenceRefID: ref.EvidenceRefID,
@@ -313,13 +338,47 @@ func prepareGeneralScene(
 			AssessableDimensions: GeneralSceneDimensions(),
 			Opportunities:        opportunities,
 		},
-		result:      result,
-		turnsByID:   turnsByID,
-		refsByID:    refsByID,
-		allowedRefs: allowedRefs,
-		coverage:    coverage,
-		confidence:  confidence,
+		result:               result,
+		turnsByID:            turnsByID,
+		refsByID:             refsByID,
+		allowedRefs:          allowedRefs,
+		findingSectionsByRef: findingSectionsByRef,
+		coverage:             coverage,
+		confidence:           confidence,
 	}, nil
+}
+
+func generalSceneFindingSections(
+	sceneType evaluation.SceneType,
+	context evidence.PracticeContext,
+	opportunityCount int,
+) ([]IELTSPart, error) {
+	sections := make([]IELTSPart, opportunityCount)
+	if sceneType != evaluation.SceneIELTSSpeaking {
+		return sections, nil
+	}
+	assignment := context.IELTSAssignment
+	if assignment == nil {
+		return nil, evaluation.ErrInvalidRequest
+	}
+	index := 0
+	for _, part := range assignment.Parts {
+		partID := IELTSPart(part.Part)
+		if !slices.Contains(ieltsPartOrder[:], partID) {
+			return nil, evaluation.ErrInvalidRequest
+		}
+		for range part.TurnBlueprints {
+			if index >= len(sections) {
+				return nil, evaluation.ErrInvalidRequest
+			}
+			sections[index] = partID
+			index++
+		}
+	}
+	if index != len(sections) {
+		return nil, evaluation.ErrInvalidRequest
+	}
+	return sections, nil
 }
 
 func generalSceneTypeSupported(sceneType evaluation.SceneType) bool {
@@ -477,15 +536,27 @@ func normalizeGeneralSceneProviderResult(
 		!validProviderIdentifier(generated.Provider) ||
 		!validModelIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
-		return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+		return GeneralSceneResult{}, fmt.Errorf(
+			"provider envelope: %w",
+			ErrInvalidGeneralSceneResult,
+		)
 	}
 	var payload generalSceneProviderPayload
+	if !json.Valid(generated.Payload) {
+		return GeneralSceneResult{}, fmt.Errorf(
+			"provider JSON: %w",
+			errGeneralSceneProviderInvalidJSON,
+		)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(generated.Payload))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil ||
 		payload.SchemaVersion != GeneralSceneProviderSchemaVersion ||
 		len(payload.Dimensions) != len(generalSceneDimensionOrder) {
-		return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+		return GeneralSceneResult{}, fmt.Errorf(
+			"provider JSON shape: %w",
+			errGeneralSceneProviderSchemaMismatch,
+		)
 	}
 	byDimension := make(
 		map[GeneralSceneDimension]generalSceneProviderDimension,
@@ -493,10 +564,16 @@ func normalizeGeneralSceneProviderResult(
 	)
 	for _, dimension := range payload.Dimensions {
 		if !slices.Contains(generalSceneDimensionOrder[:], dimension.DimensionID) {
-			return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+			return GeneralSceneResult{}, fmt.Errorf(
+				"provider dimension: %w",
+				errGeneralSceneProviderSchemaMismatch,
+			)
 		}
 		if _, duplicate := byDimension[dimension.DimensionID]; duplicate {
-			return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+			return GeneralSceneResult{}, fmt.Errorf(
+				"provider duplicate dimension: %w",
+				errGeneralSceneProviderSchemaMismatch,
+			)
 		}
 		byDimension[dimension.DimensionID] = dimension
 	}
@@ -529,9 +606,9 @@ func normalizeGeneralSceneDimension(
 	if source.Score < 0 || source.Score > 100 ||
 		source.Strengths == nil || source.Improvements == nil ||
 		source.Examples == nil ||
-		len(source.Strengths) > generalSceneMaximumFindings ||
-		len(source.Improvements) > generalSceneMaximumFindings ||
-		len(source.Examples) > generalSceneMaximumFindings ||
+		len(source.Strengths) > generalSceneMaximumProviderFindings ||
+		len(source.Improvements) > generalSceneMaximumProviderFindings ||
+		len(source.Examples) > generalSceneMaximumProviderFindings ||
 		len(source.Strengths)+len(source.Improvements) == 0 {
 		return GeneralSceneDimensionResult{}, ErrInvalidGeneralSceneResult
 	}
@@ -592,15 +669,21 @@ func normalizeGeneralSceneFindings(
 	if !exists {
 		return nil, ErrInvalidGeneralSceneResult
 	}
-	result := make([]GeneralSceneFinding, 0, len(source))
-	seen := make(map[string]struct{}, len(source))
+	if len(source) == 0 {
+		return []GeneralSceneFinding{}, nil
+	}
+	type findingGroup struct {
+		evidence []GeneralSceneEvidence
+	}
+	groups := make([]findingGroup, 0, len(source))
+	groupIndexes := make(map[IELTSPart]int)
+	seenAnchors := make(map[string]struct{})
 	for _, item := range source {
 		if item.TemplateID != template.ID || len(item.Evidence) == 0 ||
 			len(item.Evidence) > generalSceneMaximumAnchors {
 			return nil, ErrInvalidGeneralSceneResult
 		}
-		evidence := make([]GeneralSceneEvidence, 0, len(item.Evidence))
-		seenAnchors := make(map[string]struct{}, len(item.Evidence))
+		itemAnchors := make(map[string]struct{}, len(item.Evidence))
 		for _, anchor := range item.Evidence {
 			resolved, err := resolveGeneralSceneAnchor(prepared, anchor)
 			if err != nil {
@@ -609,28 +692,51 @@ func normalizeGeneralSceneFindings(
 			key := resolved.EvidenceRefID + "\x00" +
 				strconv.Itoa(resolved.StartUTF8Byte) + "\x00" +
 				strconv.Itoa(resolved.EndUTF8Byte)
-			if _, duplicate := seenAnchors[key]; duplicate {
+			if _, duplicate := itemAnchors[key]; duplicate {
 				return nil, ErrInvalidGeneralSceneResult
 			}
+			itemAnchors[key] = struct{}{}
+			if _, duplicate := seenAnchors[key]; duplicate {
+				continue
+			}
 			seenAnchors[key] = struct{}{}
-			evidence = append(evidence, resolved)
+			section, sectionExists :=
+				prepared.findingSectionsByRef[resolved.EvidenceRefID]
+			if !sectionExists {
+				return nil, ErrInvalidGeneralSceneResult
+			}
+			groupIndex, groupExists := groupIndexes[section]
+			if !groupExists {
+				groupIndex = len(groups)
+				groupIndexes[section] = groupIndex
+				groups = append(groups, findingGroup{})
+			}
+			groups[groupIndex].evidence = append(
+				groups[groupIndex].evidence,
+				resolved,
+			)
 		}
-		finding := GeneralSceneFinding{
-			Message:    template.Message,
-			Suggestion: template.Suggestion,
-			Evidence:   evidence,
+	}
+	result := make([]GeneralSceneFinding, 0, len(groups))
+	for _, group := range groups {
+		for start := 0; start < len(group.evidence); start += generalSceneMaximumAnchors {
+			end := min(start+generalSceneMaximumAnchors, len(group.evidence))
+			finding := GeneralSceneFinding{
+				Message:    template.Message,
+				Suggestion: template.Suggestion,
+				Evidence:   slices.Clone(group.evidence[start:end]),
+			}
+			finding.ID = stableGeneralSceneFindingID(
+				prepared.result.SnapshotID,
+				dimension,
+				kind,
+				finding,
+			)
+			result = append(result, finding)
 		}
-		finding.ID = stableGeneralSceneFindingID(
-			prepared.result.SnapshotID,
-			dimension,
-			kind,
-			finding,
-		)
-		if _, duplicate := seen[finding.ID]; duplicate {
-			return nil, ErrInvalidGeneralSceneResult
-		}
-		seen[finding.ID] = struct{}{}
-		result = append(result, finding)
+	}
+	if len(result) > generalSceneMaximumNormalizedFindings {
+		return nil, ErrInvalidGeneralSceneResult
 	}
 	return result, nil
 }
@@ -748,9 +854,9 @@ func ValidateGeneralSceneResult(
 			!sameRatio(dimension.Confidence, prepared.confidence) ||
 			!slices.Equal(dimension.ReasonCodes, []string{"ASR_CONFIDENCE_UNAVAILABLE"}) ||
 			len(dimension.Strengths)+len(dimension.Improvements) == 0 ||
-			len(dimension.Strengths) > generalSceneMaximumFindings ||
-			len(dimension.Improvements) > generalSceneMaximumFindings ||
-			len(dimension.Examples) > generalSceneMaximumFindings ||
+			len(dimension.Strengths) > generalSceneMaximumNormalizedFindings ||
+			len(dimension.Improvements) > generalSceneMaximumNormalizedFindings ||
+			len(dimension.Examples) > generalSceneMaximumNormalizedFindings ||
 			!validateGeneralSceneDimensionFindings(
 				prepared,
 				expected,
@@ -786,9 +892,12 @@ func validateGeneralSceneDimensionFindings(
 	}
 	for _, collection := range collections {
 		template, exists := generalSceneTemplate(dimension, collection.kind)
-		if !exists {
+		if !exists ||
+			len(collection.findings) > generalSceneMaximumNormalizedFindings {
 			return false
 		}
+		seenAnchors := make(map[string]struct{})
+		lastChunkSizes := make(map[IELTSPart]int)
 		for _, finding := range collection.findings {
 			if finding.Message != template.Message ||
 				finding.Suggestion != template.Suggestion ||
@@ -802,13 +911,23 @@ func validateGeneralSceneDimensionFindings(
 				) {
 				return false
 			}
+			section, sectionExists :=
+				prepared.findingSectionsByRef[finding.Evidence[0].EvidenceRefID]
+			if !sectionExists {
+				return false
+			}
+			if previousSize, seen := lastChunkSizes[section]; seen && previousSize < generalSceneMaximumAnchors {
+				return false
+			}
 			if _, duplicate := seenFindings[finding.ID]; duplicate {
 				return false
 			}
 			seenFindings[finding.ID] = struct{}{}
-			seenAnchors := make(map[string]struct{}, len(finding.Evidence))
 			for _, evidence := range finding.Evidence {
-				if !validResolvedGeneralSceneEvidence(prepared, evidence) {
+				evidenceSection, exists :=
+					prepared.findingSectionsByRef[evidence.EvidenceRefID]
+				if !exists || evidenceSection != section ||
+					!validResolvedGeneralSceneEvidence(prepared, evidence) {
 					return false
 				}
 				key := evidence.EvidenceRefID + "\x00" +
@@ -820,6 +939,7 @@ func validateGeneralSceneDimensionFindings(
 				seenAnchors[key] = struct{}{}
 				refSet[evidence.EvidenceRefID] = struct{}{}
 			}
+			lastChunkSizes[section] = len(finding.Evidence)
 		}
 	}
 	expectedRefs := make([]string, 0, len(refSet))
