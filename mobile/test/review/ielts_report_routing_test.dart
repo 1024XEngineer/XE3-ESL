@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/review/evaluation_report_presentation.
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
@@ -47,7 +48,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
 
     expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    expect(find.text('Part 2 + Part 3 联合复盘'), findsWidgets);
+    expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
+    await tester.tap(find.text('详细反馈'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('ielts-section-part2')), findsOneWidget);
     expect(find.byKey(const Key('ielts-section-part3')), findsOneWidget);
     expect(
@@ -71,11 +74,94 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    expect(find.text('Part 2 + Part 3 联合复盘'), findsWidgets);
-    expect(find.byKey(const Key('review-detail-summary')), findsOneWidget);
+    expect(find.text('Part 2 + Part 3 联合复盘'), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-summary')), findsNothing);
+    expect(find.text('整体表现'), findsNothing);
     expect(find.byKey(const Key('ielts-section-report')), findsNothing);
     expect(find.byKey(const Key('ielts-section-detail-invalid')), findsNothing);
   });
+
+  testWidgets(
+    'single Part report prioritizes summary, scores, and next action',
+    (tester) async {
+      const finding = EvaluationReportFinding(
+        id: 'improvement_task',
+        message: '交流目标表达不够清晰。',
+        suggestion: 'State the intended outcome first.',
+        evidence: <EvaluationReportEvidence>[
+          EvaluationReportEvidence(
+            evidenceRefId: 'evidence_1',
+            turnId: 'turn_1',
+            startUtf8Byte: 0,
+            endUtf8Byte: 8,
+            originalExcerpt: 'I think maybe...',
+          ),
+        ],
+      );
+      final item = _item(
+        practiceMode: 'PART_1',
+        detailSchema: 'general-scene-evaluation/v1',
+        summary: '回答基本完成，但交流目标表达不够清晰。',
+        dimensions: const <EvaluationReportDimension>[
+          EvaluationReportDimension(
+            key: 'TASK_ACHIEVEMENT',
+            score: 5,
+            scale: EvaluationReportScoreScale.percentage100,
+            coverage: 1,
+            confidence: 0.8,
+            reasonCodes: <String>[],
+            evidenceRefIds: <String>['evidence_1'],
+            strengths: <EvaluationReportFinding>[],
+            improvements: <EvaluationReportFinding>[finding],
+            recommendedExamples: <EvaluationReportFinding>[],
+          ),
+        ],
+        priorityActions: const <EvaluationReportPriorityAction>[
+          EvaluationReportPriorityAction(
+            dimensionKey: 'TASK_ACHIEVEMENT',
+            findingId: 'improvement_task',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewReportDetailPage(item: item)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('已完成'), findsNothing);
+      expect(find.text('本次表现'), findsNothing);
+      expect(find.text(item.report.summary), findsNothing);
+      expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
+      expect(
+        find.byKey(const Key('review-section-score-radar')),
+        findsOneWidget,
+      );
+      expect(find.byType(FourAxisScoreRadar), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.text('任务达成'), findsWidgets);
+      expect(find.text('5'), findsOneWidget);
+      expect(find.textContaining('非 IELTS'), findsNothing);
+      await tester.drag(
+        find.byKey(const Key('review-detail-content')),
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('review-detail-priority-focus')),
+        findsOneWidget,
+      );
+      expect(find.text('下一步先练这个'), findsOneWidget);
+      expect(find.text('State the intended outcome first.'), findsOneWidget);
+      expect(find.text('“I think maybe...”'), findsOneWidget);
+      await tester.drag(
+        find.byKey(const Key('review-detail-content')),
+        const Offset(0, -500),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
+    },
+  );
 
   testWidgets('section detail must match the outer practice mode', (
     tester,
@@ -137,7 +223,7 @@ void main() {
       expect(find.byKey(const Key('review-detail-page')), findsNothing);
       expect(
         find.byKey(const Key('ielts-speaking-report-scope-tabs')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.byKey(const Key('ielts-speaking-report-generating')),
@@ -151,6 +237,11 @@ void main() {
 ReviewHistoryItem _item({
   required String practiceMode,
   required String detailSchema,
+  String summary = '本次练习已形成复盘。',
+  List<EvaluationReportDimension> dimensions =
+      const <EvaluationReportDimension>[],
+  List<EvaluationReportPriorityAction> priorityActions =
+      const <EvaluationReportPriorityAction>[],
 }) {
   final createdAt = DateTime.utc(2026, 8, 11, 4);
   final report = EvaluationReport(
@@ -164,9 +255,9 @@ ReviewHistoryItem _item({
     sceneCategory: 'IELTS_SPEAKING',
     practiceMode: practiceMode,
     scoreability: EvaluationReportScoreability.provisional,
-    summary: '本次练习已形成复盘。',
-    dimensions: const <EvaluationReportDimension>[],
-    priorityActions: const <EvaluationReportPriorityAction>[],
+    summary: summary,
+    dimensions: dimensions,
+    priorityActions: priorityActions,
     detailSchema: detailSchema,
     detail: switch (detailSchema) {
       'ielts-speaking-practice-report/v1' => _sectionDetail(),
