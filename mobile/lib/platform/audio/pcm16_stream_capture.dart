@@ -44,6 +44,8 @@ final class Pcm16StreamCapture {
   late final StreamController<Uint8List> _output;
   StreamSubscription<Uint8List>? _subscription;
   Pcm16StreamCaptureException? _failure;
+  bool _stopping = false;
+  bool _outputListenerCancelled = false;
   bool _outputClosed = false;
 
   Stream<Uint8List> get stream => _output.stream;
@@ -100,20 +102,18 @@ final class Pcm16StreamCapture {
 
   Future<void> cancel() async {
     if (!_done.isCompleted) {
+      _stopping = true;
       _failure ??= const Pcm16StreamCaptureException(
         Pcm16StreamCaptureFailureKind.cancelled,
       );
-      if (!_outputClosed) {
-        _output.addError(_failure!);
-      }
-      await _subscription?.cancel();
+      await _cancelInput();
       _complete();
     }
     _discardBufferedPcm();
   }
 
   void _handleChunk(Uint8List chunk) {
-    if (_done.isCompleted) {
+    if (_done.isCompleted || _stopping) {
       return;
     }
     if (chunk.isEmpty || _pcm.length + chunk.lengthInBytes > maximumPcmBytes) {
@@ -125,7 +125,9 @@ final class Pcm16StreamCapture {
       return;
     }
     _pcm.add(chunk);
-    _output.add(chunk);
+    if (!_outputListenerCancelled && !_outputClosed) {
+      _output.add(chunk);
+    }
   }
 
   void _handleInputError(Object _, StackTrace _) {
@@ -138,31 +140,37 @@ final class Pcm16StreamCapture {
 
   void _handleInputDone() => _complete();
 
-  Future<void> _handleOutputCancel() async {
+  void _handleOutputCancel() {
     if (_done.isCompleted) {
       return;
     }
-    _failure ??= const Pcm16StreamCaptureException(
-      Pcm16StreamCaptureFailureKind.cancelled,
-    );
-    await _subscription?.cancel();
-    _complete();
-    _discardBufferedPcm();
+    _outputListenerCancelled = true;
   }
 
   void _fail(Pcm16StreamCaptureException failure) {
-    if (_done.isCompleted) {
+    if (_done.isCompleted || _stopping) {
       return;
     }
-    _failure = failure;
-    _output.addError(failure);
+    _stopping = true;
+    _failure ??= failure;
+    if (!_outputListenerCancelled && !_outputClosed) {
+      _output.addError(_failure!);
+    }
     _discardBufferedPcm();
+    unawaited(_cancelInput().whenComplete(_complete));
+  }
+
+  Future<void> _cancelInput() async {
     final subscription = _subscription;
+    _subscription = null;
     if (subscription == null) {
-      scheduleMicrotask(_complete);
       return;
     }
-    unawaited(subscription.cancel().whenComplete(_complete));
+    try {
+      await subscription.cancel();
+    } on Object {
+      // Cancellation is cleanup; the capture's terminal failure is already set.
+    }
   }
 
   void _complete() {

@@ -10,12 +10,14 @@ class PracticeStageLayout extends StatelessWidget {
     required this.avatar,
     required this.content,
     this.avatarRegionKey,
+    this.portraitAvatarFraction = 0.34,
     super.key,
   });
 
   final Widget avatar;
   final Widget content;
   final Key? avatarRegionKey;
+  final double portraitAvatarFraction;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +40,7 @@ class PracticeStageLayout extends StatelessWidget {
           children: [
             SizedBox(
               key: avatarRegionKey,
-              height: constraints.maxHeight * 0.34,
+              height: constraints.maxHeight * portraitAvatarFraction,
               child: avatar,
             ),
             Expanded(child: content),

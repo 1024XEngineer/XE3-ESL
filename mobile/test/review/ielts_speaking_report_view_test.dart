@@ -111,6 +111,35 @@ void main() {
     expect(find.text('发音'), findsWidgets);
   });
 
+  testWidgets('full mock report switches between overall and three parts', (
+    tester,
+  ) async {
+    final controller = await _controllerFor('ready');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('ielts-speaking-report-scope-tabs')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('ielts-speaking-report-scope-2')));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('ielts-speaking-report-part2')),
+      findsOneWidget,
+    );
+    expect(find.text('Part 2 复盘'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ielts-speaking-report-scope-3')));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('ielts-speaking-report-part3')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('same-question list starts the selected question directly', (
     tester,
   ) async {

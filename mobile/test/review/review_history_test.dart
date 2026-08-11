@@ -899,7 +899,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _expandHistory(tester);
-    expect(find.text('IELTS 口语复盘'), findsOneWidget);
+    expect(find.text('IELTS 口语模考报告'), findsOneWidget);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );

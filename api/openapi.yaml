@@ -193,6 +193,8 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interview-report
   /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1ielts-speaking-report
+  /v1/practice-sessions/{practice_session_id}/report:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1report
   /v1/scenes/{scene_id}:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}
   /v1/scenes/{scene_id}/roles:
@@ -432,6 +434,8 @@ components:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportEnvelope
     IeltsSpeakingReport:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReport
+    IeltsSpeakingPracticeReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingPracticeReport
     Evaluation:
       $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
     SceneEvaluationResult:

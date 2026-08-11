@@ -81,6 +81,14 @@ IeltsSpeakingReportEnvelope decodeIeltsSpeakingReport(Object? value) {
   );
 }
 
+IeltsSpeakingReport decodeIeltsSpeakingReportDetail(Object? value) {
+  try {
+    return _report(value);
+  } on FormatException {
+    throw const IeltsSpeakingReportDecodeException();
+  }
+}
+
 IeltsSpeakingReport _report(Object? value) {
   final root = _exactObject(
     value,

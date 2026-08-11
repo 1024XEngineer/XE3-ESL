@@ -36,7 +36,7 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	if firstIELTS != secondIELTS || !firstIELTS.Valid() {
 		t.Fatalf("IELTS runtime configuration is unstable: %#v %#v", firstIELTS, secondIELTS)
 	}
-	if firstIELTS.MaxAttempts != ieltsRuntimeMaxAttempts {
+	if firstIELTS.MaxAttempts != runtimeMaxAttempts {
 		t.Fatalf("IELTS max attempts = %d", firstIELTS.MaxAttempts)
 	}
 

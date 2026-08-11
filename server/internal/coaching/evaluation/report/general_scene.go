@@ -17,11 +17,27 @@ func ProjectGeneralSceneFormalReport(
 	}
 	summary := "本次练习已形成场景沟通评估，可按优先行动继续复练。"
 	scoreability := ReportScoreabilityProvisional
+	if result.SceneType == evaluation.SceneIELTSSpeaking {
+		summary = "本次 IELTS 专项练习已形成分段复盘，可按对应 Part 继续练习。"
+	}
 	if result.ScoreabilityStatus == scoring.GeneralSceneScoreabilityInsufficient {
 		summary = "本次练习的有效证据不足，暂不形成能力结论。"
+		if result.SceneType == evaluation.SceneIELTSSpeaking {
+			summary = "本次 IELTS 专项练习的有效证据不足，暂不形成能力结论。"
+		}
 		scoreability = ReportScoreabilityInsufficient
 	}
-	detail, err := json.Marshal(result)
+	detailSchema := scoring.GeneralSceneSchemaVersion
+	var detailValue any = result
+	if result.SceneType == evaluation.SceneIELTSSpeaking {
+		practiceDetail, err := ProjectIELTSSpeakingPracticeReport(snapshot, result)
+		if err != nil {
+			return FormalReport{}, err
+		}
+		detailSchema = practiceDetail.SchemaVersion
+		detailValue = practiceDetail
+	}
+	detail, err := json.Marshal(detailValue)
 	if err != nil {
 		return FormalReport{}, evaluation.ErrInvalidRequest
 	}
@@ -43,7 +59,7 @@ func ProjectGeneralSceneFormalReport(
 		Summary:            summary,
 		Dimensions:         dimensions,
 		PriorityActions:    actions,
-		DetailSchema:       scoring.GeneralSceneSchemaVersion,
+		DetailSchema:       detailSchema,
 		Detail:             detail,
 	}
 	if !formal.Valid() {

@@ -250,7 +250,7 @@ func run() int {
 
 	evaluationConfiguration, err := scoring.NewConfiguration(
 		textConfig.Provider,
-		textConfig.Model,
+		textConfig.EvaluationModel,
 		textConfig.MaxOutputTokens,
 	)
 	if err != nil {

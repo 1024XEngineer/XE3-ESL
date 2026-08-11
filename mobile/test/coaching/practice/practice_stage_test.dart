@@ -41,6 +41,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('accepts a custom portrait avatar fraction', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: PracticeStageLayout(
+          avatarRegionKey: Key('avatar-region'),
+          portraitAvatarFraction: 0.40,
+          avatar: ColoredBox(color: Colors.blue),
+          content: ColoredBox(color: Colors.white),
+        ),
+      ),
+    );
+
+    expect(
+      tester.getSize(find.byKey(const Key('avatar-region'))).height,
+      closeTo(844 * 0.40, 0.1),
+    );
+  });
+
   testWidgets('avatar stage accepts a surface and shared chrome', (
     tester,
   ) async {

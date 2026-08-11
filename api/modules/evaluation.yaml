@@ -277,6 +277,50 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/report:
+    get:
+      tags:
+        - Evaluation
+      summary: Get the canonical IELTS Session report state
+      description: |
+        Returns one Actor-owned completed IELTS Practice Session's canonical
+        report envelope. The read includes the durable completion handoff, so
+        QUEUED may precede creation of the Evaluation ledger. FULL_MOCK resolves
+        only the IELTS Speaking Shadow strategy; PART_1, PART_2, and PART_3
+        resolve only the General Scene strategy. Cross-Actor resources are
+        indistinguishable from missing resources.
+
+        `available_sections` is ordered metadata copied from the frozen IELTS
+        assignment. PART_2 remains one combined Part 2 + Part 3 Session; this
+        endpoint does not synthesize per-section scores. READY points to the
+        canonical FormalReport through `report_ref`.
+
+        This GET is read-only and private. It never freezes evidence, queues
+        scoring, invokes a provider, or logs report content.
+      operationId: getPracticeSessionReport
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: Pollable canonical report state.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSessionReportEnvelope'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   responses:
     EvaluationNotFound:
@@ -366,6 +410,200 @@ components:
         - INTERVIEW
         - OVERSEAS_DAILY_LIFE
         - OVERSEAS_WORKPLACE
+    PracticeSessionReportEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - practice_mode
+        - report_scope
+        - available_sections
+        - detail_schema
+        - evaluation_status
+        - status_url
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        practice_mode:
+          type: string
+          enum: [PART_1, PART_2, PART_3, FULL_MOCK]
+        report_scope:
+          type: string
+          enum: [PART_1, PART_2_3, PART_3, FULL_MOCK]
+        available_sections:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: string
+            enum: [PART_1, PART_2, PART_3]
+        detail_schema:
+          type: string
+          enum:
+            - ielts-speaking-practice-report/v1
+            - general-scene-evaluation/v1
+            - ielts-speaking-report/v1
+        evaluation_status:
+          type: string
+          enum: [QUEUED, RUNNING, READY, FAILED]
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        revision:
+          type: integer
+          minimum: 1
+        status_url:
+          type: string
+          maxLength: 157
+          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/report$'
+        report_ref:
+          $ref: '#/components/schemas/PracticeSessionReportRef'
+        scoreability_status:
+          $ref: '#/components/schemas/EvaluationReportScoreabilityStatus'
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^\S(?:[\s\S]*\S)?$'
+        stable_failure:
+          $ref: '#/components/schemas/PracticeSessionReportFailure'
+      dependentRequired:
+        evaluation_id: [evaluation_revision_id, revision]
+        evaluation_revision_id: [evaluation_id, revision]
+        revision: [evaluation_id, evaluation_revision_id]
+      allOf:
+        - if:
+            properties:
+              evaluation_status:
+                const: RUNNING
+            required: [evaluation_status]
+          then:
+            required: [evaluation_id, evaluation_revision_id, revision]
+        - if:
+            properties:
+              evaluation_status:
+                const: READY
+            required: [evaluation_status]
+          then:
+            required:
+              - evaluation_id
+              - evaluation_revision_id
+              - revision
+              - report_ref
+              - scoreability_status
+              - summary
+            not:
+              required: [stable_failure]
+        - if:
+            properties:
+              evaluation_status:
+                const: FAILED
+            required: [evaluation_status]
+          then:
+            required: [stable_failure]
+            not:
+              anyOf:
+                - required: [report_ref]
+                - required: [scoreability_status]
+                - required: [summary]
+        - if:
+            properties:
+              evaluation_status:
+                enum: [QUEUED, RUNNING]
+            required: [evaluation_status]
+          then:
+            not:
+              anyOf:
+                - required: [report_ref]
+                - required: [scoreability_status]
+                - required: [summary]
+                - required: [stable_failure]
+        - if:
+            properties:
+              practice_mode:
+                const: FULL_MOCK
+            required: [practice_mode]
+          then:
+            properties:
+              detail_schema:
+                const: ielts-speaking-report/v1
+        - if:
+            properties:
+              practice_mode:
+                enum: [PART_1, PART_2, PART_3]
+              evaluation_status:
+                const: READY
+            required: [practice_mode, evaluation_status]
+          then:
+            properties:
+              detail_schema:
+                enum:
+                  - ielts-speaking-practice-report/v1
+                  - general-scene-evaluation/v1
+        - if:
+            properties:
+              practice_mode:
+                enum: [PART_1, PART_2, PART_3]
+              evaluation_status:
+                enum: [QUEUED, RUNNING, FAILED]
+            required: [practice_mode, evaluation_status]
+          then:
+            properties:
+              detail_schema:
+                const: ielts-speaking-practice-report/v1
+    PracticeSessionReportRef:
+      type: object
+      additionalProperties: false
+      required: [report_id, href]
+      properties:
+        report_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        href:
+          type: string
+          maxLength: 64
+          pattern: '^/v1/evaluation-reports/[0-9a-fA-F-]{36}$'
+    PracticeSessionReportFailure:
+      type: object
+      additionalProperties: false
+      required: [reason_code, retryable]
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - STRATEGY_NOT_AVAILABLE
+            - POLICY_VIOLATION
+            - EVIDENCE_REF_INVALID
+            - VERSION_CONFLICT
+            - INTERNAL_RETRYABLE
+            - INTERNAL_NON_RETRYABLE
+        retryable:
+          type: boolean
+      allOf:
+        - if:
+            properties:
+              reason_code:
+                const: INTERNAL_RETRYABLE
+            required: [reason_code]
+          then:
+            properties:
+              retryable:
+                const: true
+        - if:
+            properties:
+              reason_code:
+                enum:
+                  - STRATEGY_NOT_AVAILABLE
+                  - POLICY_VIOLATION
+                  - EVIDENCE_REF_INVALID
+                  - VERSION_CONFLICT
+                  - INTERNAL_NON_RETRYABLE
+            required: [reason_code]
+          then:
+            properties:
+              retryable:
+                const: false
     EvaluationFormalReport:
       type: object
       additionalProperties: false
@@ -2030,6 +2268,132 @@ components:
         - PART_1
         - PART_2
         - PART_3
+    IeltsSpeakingPracticeReport:
+      type: object
+      additionalProperties: false
+      description: |
+        Canonical section projection for one IELTS standalone practice
+        FormalReport. It groups only questions, evidence and findings that
+        belong to the frozen Part assignment; scores remain in the parent
+        EvaluationFormalReport and no full-mock Overall Band is inferred.
+      required:
+        - schema_version
+        - report_scope
+        - available_sections
+        - questions
+        - section_reviews
+      properties:
+        schema_version:
+          type: string
+          const: ielts-speaking-practice-report/v1
+        report_scope:
+          type: string
+          enum:
+            - PART_1
+            - PART_2_3
+            - PART_3
+        available_sections:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPartId'
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPracticeQuestionReview'
+        section_reviews:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPartReview'
+      oneOf:
+        - properties:
+            report_scope:
+              const: PART_1
+            available_sections:
+              prefixItems:
+                - const: PART_1
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartOneReview'
+              items: false
+        - properties:
+            report_scope:
+              const: PART_2_3
+            available_sections:
+              prefixItems:
+                - const: PART_2
+                - const: PART_3
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartTwoReview'
+                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
+              items: false
+        - properties:
+            report_scope:
+              const: PART_3
+            available_sections:
+              prefixItems:
+                - const: PART_3
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
+              items: false
+    IeltsSpeakingPracticeQuestionReview:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - part_id
+        - index
+        - question_text
+        - evidence_ref_ids
+      properties:
+        question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        part_id:
+          $ref: '#/components/schemas/IeltsSpeakingPartId'
+        index:
+          type: integer
+          minimum: 1
+          maximum: 64
+        question_text:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        confirmed_transcript:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        response_turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evidence_ref_ids:
+          type: array
+          maxItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+      allOf:
+        - if:
+            required:
+              - response_turn_id
+          then:
+            required:
+              - confirmed_transcript
+            properties:
+              evidence_ref_ids:
+                minItems: 1
+          else:
+            properties:
+              evidence_ref_ids:
+                maxItems: 0
+            not:
+              required:
+                - confirmed_transcript
     IeltsSpeakingPartReviews:
       type: array
       minItems: 3

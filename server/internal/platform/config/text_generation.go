@@ -29,6 +29,7 @@ type TextGenerationConfig struct {
 	Provider            string
 	BaseURL             string
 	Model               string
+	EvaluationModel     string
 	SpeechFeedbackModel string
 	Timeout             time.Duration
 	MaxOutputTokens     int
@@ -77,6 +78,7 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	}
 	baseURLName := prefix + "_BASE_URL"
 	modelName := prefix + "_MODEL"
+	evaluationModelName := prefix + "_EVALUATION_MODEL"
 	speechFeedbackModelName := prefix + "_SPEECH_FEEDBACK_MODEL"
 	timeoutName := prefix + "_TIMEOUT"
 	maxOutputTokensName := prefix + "_MAX_OUTPUT_TOKENS"
@@ -90,6 +92,13 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 		return TextGenerationConfig{}, fmt.Errorf(
 			"%s must be a valid model ID",
 			modelName,
+		)
+	}
+	evaluationModel := os.Getenv(evaluationModelName)
+	if !modelid.Valid(evaluationModel) {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s must be a valid model ID",
+			evaluationModelName,
 		)
 	}
 	speechFeedbackModel := os.Getenv(speechFeedbackModelName)
@@ -158,6 +167,7 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 		Provider:            provider,
 		BaseURL:             baseURL,
 		Model:               model,
+		EvaluationModel:     evaluationModel,
 		SpeechFeedbackModel: speechFeedbackModel,
 		Timeout:             timeout,
 		MaxOutputTokens:     maxOutputTokens,

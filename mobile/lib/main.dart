@@ -43,6 +43,8 @@ import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
+import 'package:speakup/features/coaching/review/wire_practice_report_status_client.dart';
 import 'package:speakup/features/coaching/ielts/wire_ielts_answer_preparation_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -83,6 +85,8 @@ void main() {
           : null,
       interviewReportController: dependencies.interviewReportController,
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
+      practiceReportStatusController:
+          dependencies.practiceReportStatusController,
       speechFeedbackController: dependencies.speechFeedbackController,
       resumeController: dependencies.resumeController,
     ),
@@ -107,6 +111,7 @@ final class ProductionAppDependencies {
     required this.avatarControllerFactory,
     required this.interviewReportController,
     required this.ieltsSpeakingReportController,
+    required this.practiceReportStatusController,
     required this.speechFeedbackController,
     required this.resumeController,
   });
@@ -127,6 +132,7 @@ final class ProductionAppDependencies {
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController interviewReportController;
   final IeltsSpeakingReportController ieltsSpeakingReportController;
+  final PracticeReportStatusController practiceReportStatusController;
   final SpeechFeedbackController speechFeedbackController;
   final ResumeController resumeController;
 }
@@ -145,6 +151,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? reviewHistoryTransport,
   IdentityHttpTransport? interviewReportTransport,
   IdentityHttpTransport? ieltsSpeakingReportTransport,
+  IdentityHttpTransport? practiceReportStatusTransport,
   IdentityHttpTransport? ieltsAnswerPreparationTransport,
   IdentityHttpTransport? speechFeedbackTransport,
   PracticeWireTransport? practiceTransport,
@@ -281,12 +288,27 @@ ProductionAppDependencies createProductionAppDependencies({
         apiTransport: practiceMediaTransport,
         signedAudioTransport: signedAudioTransport,
       );
+  late final AgentMessageAudioController messageAudioController;
   final conversationController = ConversationController(
     client: agentClient,
     messageImageClient: agentImageClient,
+    onAssistantStreamStarted: (transientMessageId) => messageAudioController
+        .startLiveAssistantSpeech(transientMessageId: transientMessageId),
+    onAssistantStreamDelta: (transientMessageId, delta) =>
+        messageAudioController.appendLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          delta: delta,
+        ),
+    onAssistantStreamCompleted: (transientMessageId, message) =>
+        messageAudioController.completeLiveAssistantSpeech(
+          transientMessageId: transientMessageId,
+          message: message,
+        ),
+    onAssistantStreamFailed: (transientMessageId) => messageAudioController
+        .failLiveAssistantSpeech(transientMessageId: transientMessageId),
   );
   final GoalActivationClient goalActivationClient = goalClient;
-  final messageAudioController = AgentMessageAudioController(
+  messageAudioController = AgentMessageAudioController(
     conversationController: conversationController,
     client: agentVoiceClient,
     audioPlayer: agentMessageAudioPlayer ?? AudioplayersAgentAudioPlayer(),
@@ -367,6 +389,20 @@ ProductionAppDependencies createProductionAppDependencies({
   );
   final ieltsSpeakingReportController = IeltsSpeakingReportController(
     client: ieltsSpeakingReportClient,
+  );
+  final practiceReportStatusController = PracticeReportStatusController(
+    client: WirePracticeReportStatusClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: practiceReportStatusTransport,
+    ),
   );
   final speechFeedbackController = SpeechFeedbackController(
     client: WireSpeechFeedbackClient(
@@ -555,6 +591,7 @@ ProductionAppDependencies createProductionAppDependencies({
     clearPrivateState: () => _runAllPrivateStateCleanups([
       interviewReportController.clearPrivateState,
       ieltsSpeakingReportController.clearPrivateState,
+      practiceReportStatusController.clearPrivateState,
       speechFeedbackController.clearPrivateState,
       resumeController.clearPrivateState,
       preparationLaunchController.clearPrivateState,
@@ -588,6 +625,7 @@ ProductionAppDependencies createProductionAppDependencies({
     avatarControllerFactory: createAvatarController,
     interviewReportController: interviewReportController,
     ieltsSpeakingReportController: ieltsSpeakingReportController,
+    practiceReportStatusController: practiceReportStatusController,
     speechFeedbackController: speechFeedbackController,
     resumeController: resumeController,
   );
