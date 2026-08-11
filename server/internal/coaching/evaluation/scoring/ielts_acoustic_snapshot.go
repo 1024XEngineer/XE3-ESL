@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -15,8 +16,14 @@ import (
 
 const IELTSAcousticSnapshotSchemaVersion = "ielts-speaking-acoustic-snapshot/v1"
 
-var ErrIELTSAcousticSnapshotPending = errors.New(
-	"evaluation: IELTS acoustic snapshot pending",
+var (
+	ErrIELTSAcousticSnapshotPending = errors.New(
+		"evaluation: IELTS acoustic snapshot pending",
+	)
+	ErrIELTSAcousticEvidenceInvalid = fmt.Errorf(
+		"%w: IELTS acoustic evidence invalid",
+		evaluation.ErrInvalidRequest,
+	)
 )
 
 type IELTSAcousticSnapshotResolution string

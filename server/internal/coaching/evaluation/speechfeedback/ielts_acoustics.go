@@ -79,7 +79,7 @@ func (source *ieltsSpeakingAcousticSource) ReadIELTSSpeakingAcoustics(
 			projection.AudioAssetVersion != int64(request.AudioAssetVersion) ||
 			projection.AudioChecksum != request.AudioChecksumSHA256 {
 			return scoring.IELTSSpeakingAcousticRead{},
-				evaluation.ErrInvalidRequest
+				scoring.ErrIELTSAcousticEvidenceInvalid
 		}
 		switch projection.FeedbackStatus {
 		case SpeechFeedbackQueued, SpeechFeedbackRunning:

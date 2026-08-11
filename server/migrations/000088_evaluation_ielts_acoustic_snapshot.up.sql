@@ -392,7 +392,23 @@ JOIN evaluation_ledgers AS ledger
 WHERE state.revision_id = revision.id
   AND state.evaluation_id = ledger.id
   AND state.owner_user_id = ledger.owner_user_id
-  AND state.evaluation_status IN ('QUEUED', 'RUNNING')
+  AND (
+      state.evaluation_status = 'QUEUED'
+      OR (
+          state.evaluation_status = 'RUNNING'
+          AND EXISTS (
+              SELECT 1
+              FROM evaluation_outbox AS outbox
+              WHERE outbox.evaluation_id = state.evaluation_id
+                AND outbox.evaluation_revision_id = state.revision_id
+                AND outbox.owner_user_id = state.owner_user_id
+                AND outbox.channel = 'SCENE'
+                AND outbox.delivery_status = 'PENDING'
+                -- The migrated v1 runtime has a three-attempt budget.
+                AND outbox.attempt_count < 3
+          )
+      )
+  )
   AND ledger.scope = 'SESSION'
   AND ledger.scene_type = 'IELTS_SPEAKING'
   AND revision.channels = ARRAY['SCENE']::text[]

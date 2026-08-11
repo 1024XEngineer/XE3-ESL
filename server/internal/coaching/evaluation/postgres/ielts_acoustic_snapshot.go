@@ -143,6 +143,32 @@ func (r *PostgresRepository) EnsureIELTSAcousticSnapshot(
 	if err := lockActiveOwner(ctx, tx, claim.OwnerUserID); err != nil {
 		return scoring.IELTSAcousticSnapshot{}, false, err
 	}
+	if err := lockEvaluationLedgerAndRevisionRows(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.EvaluationID,
+		claim.EvaluationRevisionID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return scoring.IELTSAcousticSnapshot{}, false,
+				scoring.ErrRuntimeLeaseLost
+		}
+		return scoring.IELTSAcousticSnapshot{}, false, err
+	}
+	if err := lockEvaluationRevisionRuntimeRows(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.EvaluationID,
+		claim.EvaluationRevisionID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return scoring.IELTSAcousticSnapshot{}, false,
+				scoring.ErrRuntimeLeaseLost
+		}
+		return scoring.IELTSAcousticSnapshot{}, false, err
+	}
 	var status evaluation.Status
 	err = tx.QueryRow(ctx, `
 		SELECT state.evaluation_status
@@ -258,6 +284,202 @@ func (r *PostgresRepository) EnsureIELTSAcousticSnapshot(
 		)
 	}
 	return stored, command.RowsAffected() == 0, nil
+}
+
+func (r *PostgresRepository) FailIELTSAcousticSnapshot(
+	ctx context.Context,
+	claim scoring.IELTSAcousticSnapshotClaim,
+) error {
+	if r == nil || r.pool == nil || ctx == nil || !claim.Valid() {
+		return evaluation.ErrInvalidRequest
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin IELTS acoustic snapshot failure: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockActiveOwner(ctx, tx, claim.OwnerUserID); err != nil {
+		return err
+	}
+	if err := lockEvaluationLedgerAndRevisionRows(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.EvaluationID,
+		claim.EvaluationRevisionID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return scoring.ErrRuntimeLeaseLost
+		}
+		return err
+	}
+	if err := lockEvaluationRevisionRuntimeRows(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.EvaluationID,
+		claim.EvaluationRevisionID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return scoring.ErrRuntimeLeaseLost
+		}
+		return err
+	}
+
+	var revisionStatus, deliveryStatus, outboxFailureCode string
+	var moduleStatus, moduleFailureCode string
+	err = tx.QueryRow(ctx, `
+		SELECT
+			state.evaluation_status,
+			outbox.delivery_status,
+			coalesce(outbox.last_failure_code, ''),
+			coalesce(run.run_status, ''),
+			coalesce(run.last_failure_code, '')
+		FROM evaluation_ledgers AS ledger
+		JOIN evaluation_revisions AS revision
+		  ON revision.evaluation_id = ledger.id
+		 AND revision.owner_user_id = ledger.owner_user_id
+		JOIN evaluation_revision_states AS state
+		  ON state.evaluation_id = ledger.id
+		 AND state.revision_id = revision.id
+		 AND state.owner_user_id = ledger.owner_user_id
+		JOIN evaluation_evidence_snapshots AS snapshot
+		  ON snapshot.id = ledger.input_snapshot_id
+		 AND snapshot.owner_user_id = ledger.owner_user_id
+		JOIN evaluation_outbox AS outbox
+		  ON outbox.evaluation_id = ledger.id
+		 AND outbox.evaluation_revision_id = revision.id
+		 AND outbox.owner_user_id = ledger.owner_user_id
+		 AND outbox.channel = 'SCENE'
+		LEFT JOIN evaluation_module_runs AS run
+		  ON run.outbox_id = outbox.id
+		 AND run.evaluation_id = ledger.id
+		 AND run.evaluation_revision_id = revision.id
+		 AND run.owner_user_id = ledger.owner_user_id
+		 AND run.channel = outbox.channel
+		WHERE ledger.id = $1
+		  AND revision.id = $2
+		  AND ledger.owner_user_id = $3
+		  AND revision.created_at = $4
+		  AND ledger.input_snapshot_id = $5
+		  AND snapshot.snapshot_hash = $6
+		  AND ledger.scope = 'SESSION'
+		  AND ledger.scene_type = 'IELTS_SPEAKING'
+		  AND revision.channels = ARRAY['SCENE']::text[]
+		  AND revision.scene_strategy_ref = $7
+		  AND revision.pipeline_version = $8
+		  AND revision.schema_version = $9
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evaluation_revisions AS later
+		      WHERE later.evaluation_id = revision.evaluation_id
+		        AND later.revision > revision.revision
+		  )
+	`, claim.EvaluationID, claim.EvaluationRevisionID,
+		claim.OwnerUserID, claim.RevisionCreatedAt,
+		claim.Snapshot.ID, claim.Snapshot.SnapshotHash[:],
+		scoring.IELTSSpeakingShadowStrategyRef,
+		scoring.IELTSSpeakingShadowPipelineVersion,
+		evaluation.SchemaVersion).Scan(
+		&revisionStatus,
+		&deliveryStatus,
+		&outboxFailureCode,
+		&moduleStatus,
+		&moduleFailureCode,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return scoring.ErrRuntimeLeaseLost
+	}
+	if err != nil {
+		return fmt.Errorf("read IELTS acoustic snapshot failure state: %w", err)
+	}
+	if revisionStatus == "FAILED" {
+		moduleFailed := moduleStatus == "" ||
+			(moduleStatus == "FAILED" &&
+				moduleFailureCode == scoring.IELTSAcousticEvidenceFailureCode)
+		if deliveryStatus == "FAILED" &&
+			outboxFailureCode == scoring.IELTSAcousticEvidenceFailureCode &&
+			moduleFailed {
+			return nil
+		}
+		return scoring.ErrRuntimeConfigurationConflict
+	}
+	if revisionStatus != "VALIDATING" {
+		return scoring.ErrRuntimeLeaseLost
+	}
+	if deliveryStatus != "PENDING" ||
+		(moduleStatus != "" && moduleStatus != "RUNNING") {
+		return scoring.ErrRuntimeConfigurationConflict
+	}
+
+	if moduleStatus == "RUNNING" {
+		updated, updateErr := tx.Exec(ctx, `
+			UPDATE evaluation_module_runs
+			SET run_status = 'FAILED',
+			    last_failure_code = $1,
+			    updated_at = transaction_timestamp(),
+			    completed_at = transaction_timestamp()
+			WHERE evaluation_id = $2
+			  AND evaluation_revision_id = $3
+			  AND owner_user_id = $4
+			  AND channel = 'SCENE'
+			  AND strategy_ref = $5
+			  AND run_status = 'RUNNING'
+		`, scoring.IELTSAcousticEvidenceFailureCode,
+			claim.EvaluationID, claim.EvaluationRevisionID,
+			claim.OwnerUserID,
+			scoring.IELTSSpeakingShadowStrategyRef)
+		if updateErr != nil {
+			return fmt.Errorf("fail IELTS acoustic module run: %w", updateErr)
+		}
+		if updated.RowsAffected() != 1 {
+			return scoring.ErrRuntimeLeaseLost
+		}
+	}
+	outboxUpdate, err := tx.Exec(ctx, `
+		UPDATE evaluation_outbox
+		SET delivery_status = 'FAILED',
+		    lease_expires_at = NULL,
+		    last_failure_code = $1,
+		    failed_at = transaction_timestamp(),
+		    updated_at = transaction_timestamp()
+		WHERE evaluation_id = $2
+		  AND evaluation_revision_id = $3
+		  AND owner_user_id = $4
+		  AND channel = 'SCENE'
+		  AND delivery_status = 'PENDING'
+	`, scoring.IELTSAcousticEvidenceFailureCode,
+		claim.EvaluationID, claim.EvaluationRevisionID,
+		claim.OwnerUserID)
+	if err != nil {
+		return fmt.Errorf("fail IELTS acoustic outbox: %w", err)
+	}
+	if outboxUpdate.RowsAffected() != 1 {
+		return scoring.ErrRuntimeLeaseLost
+	}
+	stateUpdate, err := tx.Exec(ctx, `
+		UPDATE evaluation_revision_states
+		SET evaluation_status = 'FAILED',
+		    is_final = false,
+		    updated_at = transaction_timestamp(),
+		    completed_at = transaction_timestamp()
+		WHERE evaluation_id = $1
+		  AND revision_id = $2
+		  AND owner_user_id = $3
+		  AND evaluation_status = 'VALIDATING'
+		  AND completed_at IS NULL
+	`, claim.EvaluationID, claim.EvaluationRevisionID,
+		claim.OwnerUserID)
+	if err != nil {
+		return fmt.Errorf("fail IELTS acoustic revision: %w", err)
+	}
+	if stateUpdate.RowsAffected() != 1 {
+		return scoring.ErrRuntimeLeaseLost
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit IELTS acoustic snapshot failure: %w", err)
+	}
+	return nil
 }
 
 func getIELTSAcousticSnapshot(

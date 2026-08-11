@@ -135,7 +135,8 @@ func TestIELTSSpeakingAcousticSourceRejectsStaleAudioProjection(t *testing.T) {
 				"10000000-0000-4000-8000-000000000001",
 				[]scoring.IELTSSpeakingAcousticRequest{request},
 			)
-			if !errors.Is(err, evaluation.ErrInvalidRequest) {
+			if !errors.Is(err, scoring.ErrIELTSAcousticEvidenceInvalid) ||
+				!errors.Is(err, evaluation.ErrInvalidRequest) {
 				t.Fatalf("error = %v", err)
 			}
 		})

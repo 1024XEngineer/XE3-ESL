@@ -1268,6 +1268,16 @@ func getDurableSceneJobState(
 	}
 	switch deliveryStatus {
 	case "PENDING":
+		if revisionStatus == "VALIDATING" {
+			if moduleStatus != "" && moduleStatus != "RUNNING" {
+				return durableSceneJobReadState{}, nil,
+					scoring.ErrRuntimeConfigurationConflict
+			}
+			return durableSceneJobReadState{
+				ModuleStatus:   durableSceneJobPending,
+				FullConfigHash: persistedConfigHash,
+			}, nil, nil
+		}
 		if moduleStatus == "RUNNING" &&
 			leaseActive {
 			return durableSceneJobReadState{
@@ -1286,7 +1296,12 @@ func getDurableSceneJobState(
 			FullConfigHash: persistedConfigHash,
 		}, nil, nil
 	case "FAILED":
-		if moduleStatus != "FAILED" ||
+		acousticFailureBeforeRun := moduleStatus == "" &&
+			spec.sceneType == evaluation.SceneIELTSSpeaking &&
+			spec.strategyRef == scoring.IELTSSpeakingShadowStrategyRef &&
+			spec.pipelineVersion == scoring.IELTSSpeakingShadowPipelineVersion &&
+			failureCode == scoring.IELTSAcousticEvidenceFailureCode
+		if (moduleStatus != "FAILED" && !acousticFailureBeforeRun) ||
 			revisionStatus != "FAILED" ||
 			!durableSceneJobFailureCodePattern.MatchString(failureCode) {
 			return durableSceneJobReadState{}, nil,

@@ -163,33 +163,7 @@ func TestPostgresIELTSSpeakingReportReadIsOwnerScoped(
 func TestPostgresIELTSSpeakingReportReadsValidatingBarrierAsPending(
 	t *testing.T,
 ) {
-	pool := evaluationDatabase(t)
-	insertEvaluationUsers(t, pool, testOwnerA)
-	repository := NewPostgresRepository(pool)
-	evidenceRepository := evidence.NewPostgresRepository(pool)
-	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
-	persistEvidenceSnapshotFixture(t, pool, snapshot)
-	service := evaluationcore.NewService(repository, evidenceRepository)
-	value, replayed, err := service.Create(
-		testActorContext(testOwnerA),
-		testActor(testOwnerA),
-		evaluationcore.CreateRequest{
-			PracticeSessionID: snapshot.PracticeSessionID,
-			InputSnapshotID:   snapshot.ID,
-			InputRevision:     snapshot.InputRevision,
-			Scope:             evaluationcore.ScopeSession,
-			SceneType:         evaluationcore.SceneIELTSSpeaking,
-			Channels: []evaluationcore.Channel{
-				evaluationcore.ChannelScene,
-			},
-			SceneStrategyRef: scoring.IELTSSpeakingShadowStrategyRef,
-			PipelineVersion:  scoring.IELTSSpeakingShadowPipelineVersion,
-		},
-	)
-	if err != nil || replayed ||
-		value.Revision.Status != evaluationcore.StatusValidating {
-		t.Fatalf("evaluation=%#v replayed=%t err=%v", value, replayed, err)
-	}
+	pool, repository, value, _ := prepareIELTSSpeakingValidatingRuntime(t)
 	state, err := repository.GetCurrentIELTSSpeakingReportState(
 		context.Background(),
 		testOwnerA,
@@ -229,6 +203,85 @@ func TestPostgresIELTSSpeakingReportReadsValidatingBarrierAsPending(
 		  AND channel = 'SCENE'
 	`, value.Revision.ID).Scan(&attemptCount); err != nil || attemptCount != 0 {
 		t.Fatalf("validating attempt_count=%d err=%v", attemptCount, err)
+	}
+}
+
+func TestIELTSAcousticSnapshotFailureWithoutRunIsReadable(t *testing.T) {
+	pool, repository, value, _ := prepareIELTSSpeakingValidatingRuntime(t)
+	ctx := context.Background()
+	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx)
+	if err != nil || !found || claim.EvaluationID != value.ID {
+		t.Fatalf("pending acoustic claim=%#v found=%t err=%v", claim, found, err)
+	}
+	failures := make(chan error, 2)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	for range 2 {
+		go func() {
+			defer wait.Done()
+			failures <- repository.FailIELTSAcousticSnapshot(ctx, claim)
+		}()
+	}
+	wait.Wait()
+	close(failures)
+	for failure := range failures {
+		if failure != nil {
+			t.Fatalf("concurrent FailIELTSAcousticSnapshot: %v", failure)
+		}
+	}
+
+	var revisionStatus, deliveryStatus, failureCode string
+	var moduleRuns int
+	err = pool.QueryRow(ctx, `
+		SELECT
+			state.evaluation_status,
+			outbox.delivery_status,
+			coalesce(outbox.last_failure_code, ''),
+			(
+				SELECT count(*)
+				FROM evaluation_module_runs AS run
+				WHERE run.evaluation_revision_id = state.revision_id
+			)
+		FROM evaluation_revision_states AS state
+		JOIN evaluation_outbox AS outbox
+		  ON outbox.evaluation_id = state.evaluation_id
+		 AND outbox.evaluation_revision_id = state.revision_id
+		 AND outbox.owner_user_id = state.owner_user_id
+		 AND outbox.channel = 'SCENE'
+		WHERE state.evaluation_id = $1
+		  AND state.revision_id = $2
+		  AND state.owner_user_id = $3
+	`, value.ID, value.Revision.ID, testOwnerA).Scan(
+		&revisionStatus,
+		&deliveryStatus,
+		&failureCode,
+		&moduleRuns,
+	)
+	if err != nil || revisionStatus != "FAILED" ||
+		deliveryStatus != "FAILED" ||
+		failureCode != scoring.IELTSAcousticEvidenceFailureCode ||
+		moduleRuns != 0 {
+		t.Fatalf(
+			"failure revision=%q outbox=%q/%q modules=%d err=%v",
+			revisionStatus,
+			deliveryStatus,
+			failureCode,
+			moduleRuns,
+			err,
+		)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		ctx,
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil ||
+		state.Evaluation.Revision.Status != evaluationcore.StatusFailed ||
+		state.Runtime.ModuleStatus != scoring.IELTSSpeakingShadowRuntimeFailed ||
+		state.Runtime.Failure == nil ||
+		state.Runtime.Failure.Code != scoring.IELTSAcousticEvidenceFailureCode ||
+		state.Snapshot != nil {
+		t.Fatalf("failed IELTS report state=%#v err=%v", state, err)
 	}
 }
 
@@ -878,6 +931,193 @@ func TestIELTSAcousticSnapshotMigrationBindsLegacyRunningRetry(t *testing.T) {
 		) {
 		t.Fatalf("migrated retry claim=%#v first=%#v", second, first)
 	}
+}
+
+func TestIELTSAcousticSnapshotFailureTerminatesLegacyRunAtomically(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	ctx := context.Background()
+	running := claimIELTSSpeakingShadow(t, repository, configuration)
+	reapplyIELTSAcousticSnapshotMigration(t, pool)
+
+	claim, found, err := repository.FindPendingIELTSAcousticSnapshot(ctx)
+	if err != nil || !found || claim.EvaluationID != value.ID ||
+		claim.EvaluationRevisionID != value.Revision.ID {
+		t.Fatalf("pending acoustic claim=%#v found=%t err=%v", claim, found, err)
+	}
+	if err := repository.FailIELTSAcousticSnapshot(ctx, claim); err != nil {
+		t.Fatalf("FailIELTSAcousticSnapshot: %v", err)
+	}
+	if err := repository.FailIELTSAcousticSnapshot(ctx, claim); err != nil {
+		t.Fatalf("idempotent FailIELTSAcousticSnapshot: %v", err)
+	}
+
+	var revisionStatus, deliveryStatus, outboxCode string
+	var runStatus, runCode string
+	err = pool.QueryRow(ctx, `
+		SELECT
+			state.evaluation_status,
+			outbox.delivery_status,
+			coalesce(outbox.last_failure_code, ''),
+			run.run_status,
+			coalesce(run.last_failure_code, '')
+		FROM evaluation_revision_states AS state
+		JOIN evaluation_outbox AS outbox
+		  ON outbox.evaluation_id = state.evaluation_id
+		 AND outbox.evaluation_revision_id = state.revision_id
+		 AND outbox.owner_user_id = state.owner_user_id
+		 AND outbox.channel = 'SCENE'
+		JOIN evaluation_module_runs AS run
+		  ON run.outbox_id = outbox.id
+		 AND run.evaluation_id = state.evaluation_id
+		 AND run.evaluation_revision_id = state.revision_id
+		 AND run.owner_user_id = state.owner_user_id
+		WHERE state.evaluation_id = $1
+		  AND state.revision_id = $2
+		  AND state.owner_user_id = $3
+	`, value.ID, value.Revision.ID, testOwnerA).Scan(
+		&revisionStatus,
+		&deliveryStatus,
+		&outboxCode,
+		&runStatus,
+		&runCode,
+	)
+	if err != nil || revisionStatus != "FAILED" ||
+		deliveryStatus != "FAILED" || runStatus != "FAILED" ||
+		outboxCode != scoring.IELTSAcousticEvidenceFailureCode ||
+		runCode != scoring.IELTSAcousticEvidenceFailureCode {
+		t.Fatalf(
+			"failure revision=%q outbox=%q/%q run=%q/%q err=%v",
+			revisionStatus,
+			deliveryStatus,
+			outboxCode,
+			runStatus,
+			runCode,
+			err,
+		)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		ctx,
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil ||
+		state.Runtime.ModuleStatus != scoring.IELTSSpeakingShadowRuntimeFailed ||
+		state.Runtime.Failure == nil ||
+		state.Runtime.Failure.Code != scoring.IELTSAcousticEvidenceFailureCode ||
+		state.Snapshot != nil || running.ModuleRunID == "" {
+		t.Fatalf("failed IELTS report state=%#v err=%v", state, err)
+	}
+}
+
+func TestIELTSAcousticSnapshotMigrationLeavesExhaustedRunForCleanup(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	ctx := context.Background()
+	first := claimIELTSSpeakingShadow(t, repository, configuration)
+	expireInterviewShadowLease(t, pool, first.OutboxID)
+	second := claimIELTSSpeakingShadow(t, repository, configuration)
+	expireInterviewShadowLease(t, pool, second.OutboxID)
+	third := claimIELTSSpeakingShadow(t, repository, configuration)
+	if third.AttemptCount != configuration.MaxAttempts {
+		t.Fatalf("third attempt=%d", third.AttemptCount)
+	}
+	expireInterviewShadowLease(t, pool, third.OutboxID)
+	reapplyIELTSAcousticSnapshotMigration(t, pool)
+
+	migrated, err := repository.Get(ctx, testOwnerA, value.ID)
+	if err != nil || migrated.Revision.Status != evaluationcore.StatusRunning {
+		t.Fatalf("migrated exhausted evaluation=%#v err=%v", migrated, err)
+	}
+	claim, acquired, err := repository.ClaimIELTSSpeakingShadow(
+		ctx,
+		configuration,
+	)
+	if err != nil || acquired || claim.EvaluationID != "" {
+		t.Fatalf("exhausted cleanup claim=%#v acquired=%t err=%v", claim, acquired, err)
+	}
+	state, err := repository.GetCurrentIELTSSpeakingReportState(
+		ctx,
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil ||
+		state.Evaluation.Revision.Status != evaluationcore.StatusFailed ||
+		state.Runtime.ModuleStatus != scoring.IELTSSpeakingShadowRuntimeFailed ||
+		state.Runtime.Failure == nil ||
+		state.Runtime.Failure.Code != "attempts_exhausted" ||
+		state.Snapshot != nil {
+		t.Fatalf("exhausted report state=%#v err=%v", state, err)
+	}
+}
+
+func reapplyIELTSAcousticSnapshotMigration(
+	t *testing.T,
+	pool *pgxpool.Pool,
+) {
+	t.Helper()
+	ctx := context.Background()
+	down, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.down.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(down)); err != nil {
+		t.Fatalf("apply IELTS acoustic snapshot down migration: %v", err)
+	}
+	up, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(up)); err != nil {
+		t.Fatalf("reapply IELTS acoustic snapshot up migration: %v", err)
+	}
+}
+
+func prepareIELTSSpeakingValidatingRuntime(
+	t *testing.T,
+) (
+	*pgxpool.Pool,
+	*PostgresRepository,
+	evaluationcore.Evaluation,
+	evidence.EvidenceSnapshot,
+) {
+	t.Helper()
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	repository := NewPostgresRepository(pool)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
+	persistEvidenceSnapshotFixture(t, pool, snapshot)
+	service := evaluationcore.NewService(
+		repository,
+		evidence.NewPostgresRepository(pool),
+	)
+	value, replayed, err := service.Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		evaluationcore.CreateRequest{
+			PracticeSessionID: snapshot.PracticeSessionID,
+			InputSnapshotID:   snapshot.ID,
+			InputRevision:     snapshot.InputRevision,
+			Scope:             evaluationcore.ScopeSession,
+			SceneType:         evaluationcore.SceneIELTSSpeaking,
+			Channels:          []evaluationcore.Channel{evaluationcore.ChannelScene},
+			SceneStrategyRef:  scoring.IELTSSpeakingShadowStrategyRef,
+			PipelineVersion:   scoring.IELTSSpeakingShadowPipelineVersion,
+		},
+	)
+	if err != nil || replayed ||
+		value.Revision.Status != evaluationcore.StatusValidating {
+		t.Fatalf("evaluation=%#v replayed=%t err=%v", value, replayed, err)
+	}
+	return pool, repository, value, snapshot
 }
 
 func prepareIELTSSpeakingShadowRuntime(

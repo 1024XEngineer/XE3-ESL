@@ -2,10 +2,16 @@ package scoring
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+)
+
+const (
+	IELTSAcousticSnapshotWaitDurationV1 = 120 * time.Second
+	IELTSAcousticEvidenceFailureCode    = "acoustic_evidence_invalid"
 )
 
 type IELTSAcousticSnapshotClaim struct {
@@ -36,6 +42,10 @@ type IELTSAcousticSnapshotRepository interface {
 		IELTSAcousticSnapshotClaim,
 		IELTSAcousticSnapshot,
 	) (IELTSAcousticSnapshot, bool, error)
+	FailIELTSAcousticSnapshot(
+		context.Context,
+		IELTSAcousticSnapshotClaim,
+	) error
 }
 
 type IELTSSpeakingAcousticSource interface {
@@ -49,6 +59,7 @@ type IELTSSpeakingAcousticSource interface {
 type IELTSAcousticSnapshotSweepResult struct {
 	Inspected int
 	Frozen    int
+	Failed    int
 }
 
 type IELTSAcousticSnapshotFreezer struct {
@@ -99,6 +110,16 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 		sweep.Inspected++
 		requests, err := ieltsSpeakingAcousticRequests(claim.Snapshot)
 		if err != nil {
+			if errors.Is(err, evaluation.ErrInvalidRequest) {
+				if err := freezer.repository.FailIELTSAcousticSnapshot(
+					ctx,
+					claim,
+				); err != nil {
+					return sweep, err
+				}
+				sweep.Failed++
+				continue
+			}
 			return sweep, err
 		}
 		read, err := freezer.source.ReadIELTSSpeakingAcoustics(
@@ -107,6 +128,16 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 			requests,
 		)
 		if err != nil {
+			if errors.Is(err, ErrIELTSAcousticEvidenceInvalid) {
+				if err := freezer.repository.FailIELTSAcousticSnapshot(
+					ctx,
+					claim,
+				); err != nil {
+					return sweep, err
+				}
+				sweep.Failed++
+				continue
+			}
 			return sweep, err
 		}
 		deadlineReached := !freezer.now().UTC().Before(
@@ -122,6 +153,16 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 			return sweep, nil
 		}
 		if err != nil {
+			if errors.Is(err, evaluation.ErrInvalidRequest) {
+				if err := freezer.repository.FailIELTSAcousticSnapshot(
+					ctx,
+					claim,
+				); err != nil {
+					return sweep, err
+				}
+				sweep.Failed++
+				continue
+			}
 			return sweep, err
 		}
 		_, _, err = freezer.repository.EnsureIELTSAcousticSnapshot(

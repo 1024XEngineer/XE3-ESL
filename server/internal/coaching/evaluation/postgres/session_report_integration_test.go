@@ -61,6 +61,31 @@ func TestPostgresSessionReportReadsReadyFullMockAndIsOwnerScoped(
 	}
 }
 
+func TestPostgresSessionReportReadsMigratedActiveLeaseAsValidating(
+	t *testing.T,
+) {
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
+	installIELTSSessionReportAuthorityFixture(t, pool, snapshot)
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	if claim.AttemptCount != 1 || !claim.LeaseExpiresAt.After(time.Now()) {
+		t.Fatalf("active claim=%#v", claim)
+	}
+	reapplyIELTSAcousticSnapshotMigration(t, pool)
+
+	state, err := repository.GetCurrentSessionReportState(
+		context.Background(),
+		testOwnerA,
+		value.PracticeSessionID,
+	)
+	if err != nil || state.Status != evaluationcore.StatusValidating ||
+		state.Evaluation == nil || state.Evaluation.ID != value.ID ||
+		state.FormalReport != nil || state.Failure != nil {
+		t.Fatalf("migrated active Session report state=%#v err=%v", state, err)
+	}
+}
+
 func installIELTSSessionReportAuthorityFixture(
 	t *testing.T,
 	pool *pgxpool.Pool,

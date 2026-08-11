@@ -12,10 +12,9 @@ import (
 )
 
 const (
-	runtimeLeaseDuration             = 60 * time.Second
-	runtimeRetryDelay                = 5 * time.Second
-	runtimeMaxAttempts               = 3
-	runtimeIELTSAcousticWaitDuration = 15 * time.Second
+	runtimeLeaseDuration = 60 * time.Second
+	runtimeRetryDelay    = 5 * time.Second
+	runtimeMaxAttempts   = 3
 )
 
 type Configuration struct {
@@ -391,7 +390,7 @@ func ieltsRuntimeConfiguration(
 	result := IELTSSpeakingShadowRuntimeConfiguration{
 		MaxAttempts:          configuration.maxAttempts,
 		LeaseDuration:        configuration.leaseDuration,
-		AcousticWaitDuration: runtimeIELTSAcousticWaitDuration,
+		AcousticWaitDuration: IELTSAcousticSnapshotWaitDurationV1,
 		StrategyRef:          IELTSSpeakingShadowStrategyRef,
 		PipelineVersion:      IELTSSpeakingShadowPipelineVersion,
 		FullConfigHash:       sha256.Sum256(encoded),
