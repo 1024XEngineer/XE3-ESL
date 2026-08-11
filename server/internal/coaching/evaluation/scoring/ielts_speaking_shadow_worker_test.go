@@ -1,9 +1,13 @@
 package scoring
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +48,52 @@ func TestIELTSSpeakingShadowWorkerCompletesEvidenceBoundResult(
 			repository.result,
 		) != nil {
 		t.Fatalf("repository = %#v", repository)
+	}
+}
+
+func TestIELTSSpeakingShadowWorkerCompletesInsufficientEvidenceResult(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validIELTSSpeakingShadowClaim(t)
+	claim.Snapshot = ieltsSpeakingSnapshotWithTranscript(
+		t,
+		"Yes, yes. 666 这是中文。",
+	)
+	repository := &ieltsShadowRuntimeRepositoryStub{
+		claim:    claim,
+		acquired: true,
+	}
+	provider := &ieltsProviderStub{}
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		NewIELTSSpeakingShadowEngine(provider),
+		validIELTSSpeakingShadowRuntimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
+	}
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	if sweep != (IELTSSpeakingShadowSweepResult{
+		Claimed:   1,
+		Completed: 1,
+	}) || provider.calls != 0 || repository.completeCalls != 1 ||
+		repository.failCalls != 0 ||
+		repository.result.Scoreability !=
+			IELTSSpeakingScoreabilityInsufficient ||
+		ValidateIELTSSpeakingShadowResult(
+			claim.Snapshot,
+			repository.result,
+		) != nil {
+		t.Fatalf(
+			"sweep = %#v; provider calls = %d; repository = %#v",
+			sweep,
+			provider.calls,
+			repository,
+		)
 	}
 }
 
@@ -234,6 +284,55 @@ func TestIELTSSpeakingShadowWorkerFailsSchemaMismatchWithoutRetry(
 			sweep,
 			repository.failure,
 		)
+	}
+}
+
+func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
+	t *testing.T,
+) {
+	claim := validIELTSSpeakingShadowClaim(t)
+	prepared, err := prepareIELTSSpeakingShadow(claim.Snapshot)
+	if err != nil {
+		t.Fatalf("prepareIELTSSpeakingShadow: %v", err)
+	}
+	payload := validIELTSProviderPayload(prepared.input)
+	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
+	anchor.EvidenceRefID = "missing-evidence-ref"
+	anchor.Quote = "I explain"
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	repository := &ieltsShadowRuntimeRepositoryStub{
+		claim:      claim,
+		acquired:   true,
+		failStatus: IELTSSpeakingShadowRuntimeFailed,
+	}
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		NewIELTSSpeakingShadowEngine(&ieltsProviderStub{payload: raw}),
+		validIELTSSpeakingShadowRuntimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
+	}
+
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	logged := output.String()
+	if sweep.Failed != 1 ||
+		!strings.Contains(logged, `"failure_code":"provider_invalid_response"`) ||
+		!strings.Contains(logged, `"rejection_stage":"semantic_validation"`) ||
+		strings.Contains(logged, "I explain") {
+		t.Fatalf("sweep = %#v; log = %s", sweep, logged)
 	}
 }
 

@@ -25,15 +25,16 @@ const (
 	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v5"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
-	ieltsMaximumProviderPayload = 64 * 1024
-	ieltsMaximumFindingText     = 2048
-	ieltsMaximumFindings        = 3
-	ieltsMaximumAnchors         = 4
-	ieltsMaximumOccurrence      = 16
-	ieltsMaximumQuestions       = 64
-	ieltsMinimumEnglishWords    = 10
-	ieltsMinimumEnglishTurns    = 3
-	ieltsMinimumAcousticMS      = 3000
+	ieltsMaximumProviderPayload     = 64 * 1024
+	ieltsMaximumFindingText         = 2048
+	ieltsMaximumFindings            = 3
+	ieltsMaximumAnchors             = 4
+	ieltsMaximumOccurrence          = 16
+	ieltsMaximumQuestions           = 64
+	ieltsMinimumEnglishWords        = 10
+	ieltsMinimumEnglishTurns        = 3
+	ieltsMinimumEnglishWordsPerTurn = 3
+	ieltsMinimumAcousticMS          = 3000
 )
 
 var ErrInvalidIELTSSpeakingShadow = errors.New(
@@ -598,6 +599,8 @@ func prepareIELTSSpeakingShadow(
 				if cjkCount > 0 {
 					language = ieltsLanguageMixed
 				}
+			}
+			if wordCount >= ieltsMinimumEnglishWordsPerTurn {
 				englishTurns++
 				englishWords += wordCount
 			}
