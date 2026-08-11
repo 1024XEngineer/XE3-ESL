@@ -162,7 +162,7 @@ func TestLiveQiniuIELTSEvaluationContract(t *testing.T) {
 	}
 	provider, err := scoring.NewIELTSSpeakingShadowProvider(
 		generator,
-		configuration.Timeout,
+		scoring.MaxGenerationTimeout,
 	)
 	if err != nil {
 		t.Fatalf("create IELTS criterion provider: %v", err)
