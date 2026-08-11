@@ -2030,6 +2030,132 @@ components:
         - PART_1
         - PART_2
         - PART_3
+    IeltsSpeakingPracticeReport:
+      type: object
+      additionalProperties: false
+      description: |
+        Canonical section projection for one IELTS standalone practice
+        FormalReport. It groups only questions, evidence and findings that
+        belong to the frozen Part assignment; scores remain in the parent
+        EvaluationFormalReport and no full-mock Overall Band is inferred.
+      required:
+        - schema_version
+        - report_scope
+        - available_sections
+        - questions
+        - section_reviews
+      properties:
+        schema_version:
+          type: string
+          const: ielts-speaking-practice-report/v1
+        report_scope:
+          type: string
+          enum:
+            - PART_1
+            - PART_2_3
+            - PART_3
+        available_sections:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPartId'
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPracticeQuestionReview'
+        section_reviews:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPartReview'
+      oneOf:
+        - properties:
+            report_scope:
+              const: PART_1
+            available_sections:
+              prefixItems:
+                - const: PART_1
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartOneReview'
+              items: false
+        - properties:
+            report_scope:
+              const: PART_2_3
+            available_sections:
+              prefixItems:
+                - const: PART_2
+                - const: PART_3
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartTwoReview'
+                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
+              items: false
+        - properties:
+            report_scope:
+              const: PART_3
+            available_sections:
+              prefixItems:
+                - const: PART_3
+              items: false
+            section_reviews:
+              prefixItems:
+                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
+              items: false
+    IeltsSpeakingPracticeQuestionReview:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - part_id
+        - index
+        - question_text
+        - evidence_ref_ids
+      properties:
+        question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        part_id:
+          $ref: '#/components/schemas/IeltsSpeakingPartId'
+        index:
+          type: integer
+          minimum: 1
+          maximum: 64
+        question_text:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        confirmed_transcript:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        response_turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evidence_ref_ids:
+          type: array
+          maxItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+      allOf:
+        - if:
+            required:
+              - response_turn_id
+          then:
+            required:
+              - confirmed_transcript
+            properties:
+              evidence_ref_ids:
+                minItems: 1
+          else:
+            properties:
+              evidence_ref_ids:
+                maxItems: 0
+            not:
+              required:
+                - confirmed_transcript
     IeltsSpeakingPartReviews:
       type: array
       minItems: 3
