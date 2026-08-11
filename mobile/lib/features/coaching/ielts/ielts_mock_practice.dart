@@ -1721,6 +1721,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
               ? _buildAnimatedPhase(progress)
               : PracticeStageLayout(
                   avatarRegionKey: const Key('ielts-avatar-region'),
+                  portraitAvatarFraction: switch (stagePhase) {
+                    IeltsMockPhase.part2Intro ||
+                    IeltsMockPhase.part2CueCard ||
+                    IeltsMockPhase.part2Preparation ||
+                    IeltsMockPhase.part2Speaking => 0.40,
+                    _ => 0.34,
+                  },
                   avatar: PracticeAvatarStage(
                     title: _stageTitle(stagePhase),
                     fallback: const PracticeAvatarFallback(
@@ -3142,47 +3149,46 @@ class _Part2CueCardReading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
+    return SizedBox.expand(
       key: const Key('ielts-mock-part-2-cue-card-reading'),
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Listen to the examiner',
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.sectionTitle,
-          ),
-          const SizedBox(height: 18),
-          _CueCard(question: question),
-          const SizedBox(height: 18),
-          if (narrationBusy)
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                SizedBox(width: 10),
-                Text('考官正在朗读 Cue Card…'),
-              ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Listen to the examiner',
+              style: SpeakUpDesign.sectionTitle,
             ),
-          if (errorMessage != null) ...[
-            Text(
-              errorMessage!,
-              key: const Key('ielts-part2-narration-error'),
-              textAlign: TextAlign.center,
-              style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
-            ),
-            const SizedBox(height: 10),
-            FilledButton(
-              key: const Key('ielts-part2-retry-narration'),
-              onPressed: narrationBusy ? null : onRetry,
-              child: const Text('重新播放 Cue Card'),
-            ),
+            const SizedBox(height: 16),
+            _CueCard(question: question),
+            const SizedBox(height: 16),
+            if (narrationBusy)
+              const Row(
+                children: [
+                  SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Text('考官正在朗读 Cue Card…'),
+                ],
+              ),
+            if (errorMessage != null) ...[
+              Text(
+                errorMessage!,
+                key: const Key('ielts-part2-narration-error'),
+                style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
+              ),
+              const SizedBox(height: 10),
+              FilledButton(
+                key: const Key('ielts-part2-retry-narration'),
+                onPressed: narrationBusy ? null : onRetry,
+                child: const Text('重新播放 Cue Card'),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -3215,98 +3221,108 @@ class _Part2LongTurn extends StatelessWidget {
   Widget build(BuildContext context) {
     final minutes = secondsRemaining ~/ 60;
     final seconds = (secondsRemaining % 60).toString().padLeft(2, '0');
-    return SingleChildScrollView(
+    return SizedBox.expand(
       key: const Key('ielts-mock-part-2-long-turn'),
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '$minutes:$seconds',
-            key: Key(
-              speaking
-                  ? 'ielts-mock-speaking-countdown'
-                  : 'ielts-mock-preparation-countdown',
-            ),
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.pageTitle.copyWith(fontSize: 44),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            speaking ? '作答时间 · 已自动开始录音' : '准备时间 · 阅读题目并记录要点',
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.body,
-          ),
-          if (!speaking) ...[
-            const SizedBox(height: 18),
-            _CueCard(question: question),
-            const SizedBox(height: 14),
-            TextField(
-              key: const Key('ielts-mock-notes'),
-              controller: notesController,
-              minLines: 2,
-              maxLines: 4,
-              maxLength: 4000,
-              decoration: const InputDecoration(
-                hintText: '在这里记录要点…',
-                counterText: '',
-                alignLabelWithHint: true,
+      child: speaking
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _Part2RecordingStatus(
+                    state: recordingState,
+                    secondsRemaining: secondsRemaining,
+                  ),
+                  const SizedBox(height: 20),
+                  const Divider(height: 1, color: SpeakUpDesign.border),
+                  const SizedBox(height: 18),
+                  const Text('我的小抄', style: SpeakUpDesign.meta),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        notes.isEmpty ? '准备阶段未记录要点。' : notes,
+                        style: notes.isEmpty
+                            ? SpeakUpDesign.body
+                            : const TextStyle(
+                                color: SpeakUpDesign.ink,
+                                fontSize: 18,
+                                height: 1.5,
+                              ),
+                      ),
+                    ),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: SpeakUpDesign.error),
+                    ),
+                  ],
+                  if (recordingState == PracticeRecordingState.idle &&
+                      errorMessage != null) ...[
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      key: const Key('ielts-mock-finish-speaking'),
+                      onPressed: busy ? null : onPressed,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        backgroundColor: SpeakUpDesign.ink,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('重新录音 →'),
+                    ),
+                  ],
+                ],
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '$minutes:$seconds',
+                    key: const Key('ielts-mock-preparation-countdown'),
+                    textAlign: TextAlign.center,
+                    style: SpeakUpDesign.pageTitle.copyWith(fontSize: 44),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '准备时间 · 阅读题目并记录要点',
+                    textAlign: TextAlign.center,
+                    style: SpeakUpDesign.body,
+                  ),
+                  const SizedBox(height: 18),
+                  _CueCard(question: question),
+                  const SizedBox(height: 14),
+                  TextField(
+                    key: const Key('ielts-mock-notes'),
+                    controller: notesController,
+                    minLines: 2,
+                    maxLines: 4,
+                    maxLength: 4000,
+                    decoration: const InputDecoration(
+                      hintText: '在这里记录要点…',
+                      counterText: '',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    key: const Key('ielts-mock-start-speaking'),
+                    onPressed: busy ? null : onPressed,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      backgroundColor: SpeakUpDesign.ink,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('提前开始作答 →'),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 18),
-            FilledButton(
-              key: const Key('ielts-mock-start-speaking'),
-              onPressed: busy ? null : onPressed,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
-                backgroundColor: SpeakUpDesign.ink,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('提前开始作答 →'),
-            ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFAFAF9),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Text(
-                notes.isEmpty ? '准备阶段未记录要点。' : notes,
-                textAlign: TextAlign.center,
-                style: SpeakUpDesign.body,
-              ),
-            ),
-            const SizedBox(height: 20),
-            _Part2RecordingStatus(
-              state: recordingState,
-              elapsedSeconds: 120 - secondsRemaining,
-            ),
-            if (errorMessage != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                errorMessage!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: SpeakUpDesign.error),
-              ),
-            ],
-            if (recordingState == PracticeRecordingState.idle &&
-                errorMessage != null) ...[
-              const SizedBox(height: 20),
-              FilledButton(
-                key: const Key('ielts-mock-finish-speaking'),
-                onPressed: busy ? null : onPressed,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                  backgroundColor: SpeakUpDesign.ink,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('重新录音 →'),
-              ),
-            ],
-          ],
-        ],
-      ),
     );
   }
 }
@@ -3314,44 +3330,51 @@ class _Part2LongTurn extends StatelessWidget {
 class _Part2RecordingStatus extends StatelessWidget {
   const _Part2RecordingStatus({
     required this.state,
-    required this.elapsedSeconds,
+    required this.secondsRemaining,
   });
 
   final PracticeRecordingState state;
-  final int elapsedSeconds;
+  final int secondsRemaining;
 
   @override
   Widget build(BuildContext context) {
     final recording =
         state == PracticeRecordingState.starting ||
         state == PracticeRecordingState.recording;
-    final minutes = (elapsedSeconds.clamp(0, 120) ~/ 60).toString();
-    final seconds = (elapsedSeconds.clamp(0, 120) % 60).toString().padLeft(
+    final minutes = (secondsRemaining.clamp(0, 120) ~/ 60).toString();
+    final seconds = (secondsRemaining.clamp(0, 120) % 60).toString().padLeft(
       2,
       '0',
     );
     final label = switch (state) {
       PracticeRecordingState.starting => '正在打开麦克风…',
-      PracticeRecordingState.recording => '录音中·$minutes:$seconds',
+      PracticeRecordingState.recording => '录音中',
       PracticeRecordingState.transcribing => '正在识别你的作答…',
       PracticeRecordingState.awaitingConfirmation => '正在提交作答…',
       PracticeRecordingState.submitting => '正在进入下一环节…',
       _ => '等待录音',
     };
-    final color = recording ? const Color(0xFF197782) : SpeakUpDesign.secondary;
+    final color = recording ? SpeakUpDesign.ink : SpeakUpDesign.secondary;
 
-    return Column(
+    return Row(
       key: const Key('ielts-part2-recording-status'),
       mainAxisSize: MainAxisSize.min,
       children: [
+        Icon(Icons.graphic_eq_rounded, size: 26, color: color),
+        const SizedBox(width: 10),
         Text(
-          label,
-          key: const Key('ielts-part2-recording-label'),
-          textAlign: TextAlign.center,
-          style: SpeakUpDesign.cardTitle.copyWith(color: color),
+          '$minutes:$seconds',
+          key: const Key('ielts-mock-speaking-countdown'),
+          style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
         ),
-        const SizedBox(height: 10),
-        Icon(Icons.graphic_eq_rounded, size: 42, color: color),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            label,
+            key: const Key('ielts-part2-recording-label'),
+            style: SpeakUpDesign.body,
+          ),
+        ),
       ],
     );
   }
