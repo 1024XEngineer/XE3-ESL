@@ -353,6 +353,28 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationController controller,
     SceneDefinition scene,
   ) async {
+    final launch = widget.launchController;
+    if (launch?.hasResumablePractice ?? false) {
+      final action = await _chooseExistingPracticeAction(
+        currentTitle: launch?.resumablePracticeTitle,
+        nextTitle: scene.name,
+        startingFullMock: true,
+      );
+      if (!mounted || action == null) {
+        return;
+      }
+      if (action == _ExistingPracticeAction.continuePractice) {
+        await _continueCurrentPractice();
+        return;
+      }
+      await _startSceneDirectly(
+        controller,
+        scene,
+        practiceMode: PracticeMode.fullMock,
+        forceReplaceCurrentPractice: true,
+      );
+      return;
+    }
     await _startSceneDirectly(
       controller,
       scene,
@@ -363,6 +385,7 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<_ExistingPracticeAction?> _chooseExistingPracticeAction({
     required String? currentTitle,
     required String nextTitle,
+    bool startingFullMock = false,
   }) async {
     final activeTitle = currentTitle ?? '上次练习';
     return showModalBottomSheet<_ExistingPracticeAction>(
@@ -383,13 +406,16 @@ class _PreparationPageState extends State<PreparationPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '开始新的练习？',
+                        startingFullMock ? '开始新的模考？' : '开始新的练习？',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '你正在练“$activeTitle”。开始“$nextTitle”后，'
-                        '当前进度将结束。',
+                        startingFullMock
+                            ? '你还有未完成的“$activeTitle”。可以继续当前进度，'
+                                  '或结束它并开始新的完整模考。'
+                            : '你正在练“$activeTitle”。开始“$nextTitle”后，'
+                                  '当前进度将结束。',
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     ],
@@ -409,14 +435,14 @@ class _PreparationPageState extends State<PreparationPage> {
               onPressed: () => Navigator.of(
                 context,
               ).pop(_ExistingPracticeAction.continuePractice),
-              child: Text('继续“$activeTitle”'),
+              child: Text(startingFullMock ? '继续上次练习' : '继续“$activeTitle”'),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
               key: const Key('replace-existing-practice'),
               onPressed: () =>
                   Navigator.of(context).pop(_ExistingPracticeAction.replace),
-              child: Text('开始“$nextTitle”'),
+              child: Text(startingFullMock ? '开始新模考' : '开始“$nextTitle”'),
             ),
           ],
         ),
