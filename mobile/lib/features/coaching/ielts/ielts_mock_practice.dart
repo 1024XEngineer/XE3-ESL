@@ -165,6 +165,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (_mode != PracticeMode.fullMock && _mode != PracticeMode.part2) {
       return true;
     }
+    if (_part2ResponseAlreadyConfirmed) {
+      return true;
+    }
     final questionId = _part2QuestionId;
     if (questionId != null &&
         widget.controller.currentQuestion?.id != questionId) {
@@ -203,14 +206,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 widget.controller.hasPendingPracticeAudio) ||
             submissionActive);
   }
-
-  bool get _part2SubmissionStarted =>
-      switch (widget.controller.recordingState) {
-        PracticeRecordingState.transcribing ||
-        PracticeRecordingState.awaitingConfirmation ||
-        PracticeRecordingState.submitting => true,
-        _ => false,
-      };
 
   PracticeMode get _mode {
     final mode = widget.controller.practiceMode;
@@ -608,17 +603,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           clearSpeakingDeadline: true,
         );
       }
-      if (completed >= _partEnd(IeltsSpeakingPart.part2) ||
-          value.phase == IeltsMockPhase.part2Complete) {
-        return value.copyWith(
-          phase: IeltsMockPhase.part2Complete,
-          clearPreparationDeadline: true,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        );
-      }
-      if (value.phase == IeltsMockPhase.part2Speaking &&
-          _part2SubmissionStarted) {
+      if (completed >= _partEnd(IeltsSpeakingPart.part2)) {
         return value.copyWith(
           phase: IeltsMockPhase.part2Complete,
           clearPreparationDeadline: true,
@@ -630,7 +615,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2Intro ||
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation => value.phase,
-        IeltsMockPhase.part2Speaking => IeltsMockPhase.part2Speaking,
+        IeltsMockPhase.part2Speaking ||
+        IeltsMockPhase.part2Complete => IeltsMockPhase.part2Speaking,
         _ => IeltsMockPhase.part2Intro,
       };
       return value.copyWith(phase: phase);
@@ -670,10 +656,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2Intro ||
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation ||
-        IeltsMockPhase.part2Complete ||
         IeltsMockPhase.part3Intro => value.phase,
-        IeltsMockPhase.part2Speaking when _part2SubmissionStarted =>
-          IeltsMockPhase.part2Complete,
+        IeltsMockPhase.part2Complete => IeltsMockPhase.part2Speaking,
         IeltsMockPhase.part2Speaking
             when _part2RetryNeeded ||
                 widget.controller.errorMessage != null ||
@@ -1106,11 +1090,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _part2RetryNeeded = true;
       unawaited(_discardBufferedPart3Recording());
       final progress = _progress;
-      if (progress != null && progress.phase != IeltsMockPhase.part2Complete) {
+      if (progress != null) {
         unawaited(
           _setProgress(
             progress.copyWith(
-              phase: IeltsMockPhase.part2Complete,
+              phase: IeltsMockPhase.part2Speaking,
               clearPreparationDeadline: true,
               clearSpeakingStartedAt: true,
               clearSpeakingDeadline: true,
@@ -1303,7 +1287,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final progress = _progress;
     if (progress == null ||
         _startingPart2Recording ||
-        (progress.phase == IeltsMockPhase.part2Speaking &&
+        (!restart &&
+            progress.phase == IeltsMockPhase.part2Speaking &&
             (_part2DeadlineHandled ||
                 _secondsUntil(progress.speakingDeadline) <= 0)) ||
         (progress.phase == IeltsMockPhase.part2Speaking &&
@@ -1359,8 +1344,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   Future<void> _handlePart2SpeakingAction() async {
     if (widget.controller.recordingState == PracticeRecordingState.idle) {
       if (widget.controller.hasPendingPracticeAudio) {
-        await widget.controller.retryPracticeTranscription();
-        return;
+        await widget.controller.discardPendingPracticeAudio();
+        if (widget.controller.hasPendingPracticeAudio) {
+          return;
+        }
       }
       await _startPart2Speaking(restart: true);
       return;
@@ -1409,7 +1396,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 .clamp(0, 120);
       await _setProgress(
         progress.copyWith(
-          phase: IeltsMockPhase.part2Complete,
+          phase: IeltsMockPhase.part2Speaking,
           part2SpokenSeconds: spoken,
           clearPreparationDeadline: true,
           clearSpeakingStartedAt: true,
