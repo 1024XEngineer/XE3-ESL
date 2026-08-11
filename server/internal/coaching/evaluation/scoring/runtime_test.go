@@ -53,6 +53,9 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 			firstIELTS.AcousticWaitDuration,
 		)
 	}
+	if firstIELTS.LeaseDuration != 120*time.Second {
+		t.Fatalf("IELTS lease duration = %s, want 2m", firstIELTS.LeaseDuration)
+	}
 
 	firstGeneral, err := generalRuntimeConfiguration(configuration)
 	if err != nil {

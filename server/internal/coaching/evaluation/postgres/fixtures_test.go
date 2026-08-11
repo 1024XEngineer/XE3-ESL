@@ -591,10 +591,11 @@ func (*stubInterviewShadowProvider) AnalyzeInterview(
 
 type ieltsProviderStub struct{}
 
-func (*ieltsProviderStub) AnalyzeIELTSSpeaking(
+func (*ieltsProviderStub) AnalyzeIELTSCriterion(
 	_ context.Context,
-	input scoring.IELTSSpeakingShadowProviderInput,
+	request scoring.IELTSSpeakingCriterionProviderRequest,
 ) (scoring.IELTSSpeakingShadowProviderResult, error) {
+	input := request.Input
 	first := input.Questions[0].Response
 	if first == nil {
 		panic("IELTS provider fixture requires a response")
@@ -631,6 +632,11 @@ func (*ieltsProviderStub) AnalyzeIELTSSpeaking(
 	})
 	return scoring.IELTSSpeakingShadowProviderResult{
 		Payload: payload, Provider: "qianwen", Model: "qwen-plus",
-		RequestID: "provider-request-1",
+		RequestID: "provider-request-" + strings.ToLower(
+			strings.TrimPrefix(
+				string(input.AssessableCriteria[0]),
+				"IELTS_",
+			),
+		),
 	}, err
 }

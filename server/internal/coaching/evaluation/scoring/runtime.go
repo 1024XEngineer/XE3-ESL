@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	runtimeLeaseDuration = 60 * time.Second
-	runtimeRetryDelay    = 5 * time.Second
-	runtimeMaxAttempts   = 3
+	runtimeLeaseDuration   = 60 * time.Second
+	runtimeRetryDelay      = 5 * time.Second
+	runtimeMaxAttempts     = 3
+	ieltsRepairLeaseMargin = 30 * time.Second
 )
 
 type Configuration struct {
@@ -388,6 +389,7 @@ func ieltsRuntimeConfiguration(
 		PromptVersion         string `json:"prompt_version"`
 		PromptContractHash    string `json:"prompt_contract_hash"`
 		ProviderSchemaVersion string `json:"provider_schema_version"`
+		RepairPolicyVersion   string `json:"repair_policy_version"`
 		RubricVersion         string `json:"rubric_version"`
 		GateVersion           string `json:"gate_version"`
 		AggregationVersion    string `json:"aggregation_version"`
@@ -403,6 +405,7 @@ func ieltsRuntimeConfiguration(
 		PromptContractHash: "sha256:" +
 			hex.EncodeToString(promptContractHash[:]),
 		ProviderSchemaVersion: IELTSSpeakingShadowProviderSchemaVersion,
+		RepairPolicyVersion:   IELTSSpeakingCriterionRepairPolicyVersion,
 		RubricVersion:         IELTSSpeakingShadowRubricVersion,
 		GateVersion:           IELTSSpeakingShadowGateVersion,
 		AggregationVersion:    IELTSSpeakingShadowAggregationVersion,
@@ -416,8 +419,11 @@ func ieltsRuntimeConfiguration(
 		return IELTSSpeakingShadowRuntimeConfiguration{}, err
 	}
 	result := IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:          configuration.maxAttempts,
-		LeaseDuration:        configuration.leaseDuration,
+		MaxAttempts: configuration.maxAttempts,
+		LeaseDuration: max(
+			configuration.leaseDuration,
+			2*configuration.generationTimeout+ieltsRepairLeaseMargin,
+		),
 		AcousticWaitDuration: IELTSAcousticSnapshotWaitDurationV1,
 		StrategyRef:          IELTSSpeakingShadowStrategyRef,
 		PipelineVersion:      IELTSSpeakingShadowPipelineVersion,

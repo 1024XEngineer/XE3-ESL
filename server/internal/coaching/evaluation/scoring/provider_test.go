@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -127,12 +128,29 @@ func TestInterviewShadowTextProviderPropagatesGenerationFailure(t *testing.T) {
 
 func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 	t.Parallel()
+	prepared, err := prepareIELTSSpeakingShadow(
+		ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := ieltsCriterionProviderInput(
+		prepared.input,
+		IELTSCriterionLR,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(validIELTSProviderPayload(input))
+	if err != nil {
+		t.Fatal(err)
+	}
 	generator := &evaluationTextGenerator{
 		result: TextGenerationResult{
 			RequestID: "request-ielts-1",
 			Provider:  "qianwen",
 			Model:     "qwen-plus",
-			Content:   `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v2","criteria":[]}`,
+			Content:   string(payload),
 		},
 	}
 	provider, err := NewIELTSSpeakingShadowProvider(
@@ -142,45 +160,12 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIELTSSpeakingShadowProvider: %v", err)
 	}
-	input := IELTSSpeakingShadowProviderInput{
-		SchemaVersion: IELTSSpeakingShadowProviderSchemaVersion,
-		PromptVersion: IELTSSpeakingShadowPromptVersion,
-		RubricVersion: IELTSSpeakingShadowRubricVersion,
-		SceneType:     evaluation.SceneIELTSSpeaking,
-		PracticeMode:  "FULL_MOCK",
-		AssessableCriteria: []IELTSCriterion{
-			IELTSCriterionFC,
-			IELTSCriterionLR,
-			IELTSCriterionGRA,
-		},
-		RubricDescriptors: []IELTSRubricDescriptorSet{{
-			CriterionID: IELTSCriterionLR,
-			Descriptors: []IELTSRubricDescriptor{
-				{
-					ID:          "LR_PRACTICE_BAND_1",
-					Band:        1,
-					Description: "Uses only isolated words or memorised utterances.",
-				},
-			},
-		}},
-		Questions: []IELTSSpeakingProviderQuestion{{
-			QuestionID:   "question_1",
-			PartID:       IELTSPart1,
-			Index:        1,
-			QuestionText: "Where do you live?",
-			Response: &IELTSSpeakingProviderResponse{
-				TurnID:        "turn_1",
-				EvidenceRefID: "evidence_1",
-				Transcript:    "I live in Shanghai.",
-			},
-		}},
-	}
-	result, err := provider.AnalyzeIELTSSpeaking(
+	result, err := provider.AnalyzeIELTSCriterion(
 		context.Background(),
-		input,
+		IELTSSpeakingCriterionProviderRequest{Input: input},
 	)
 	if err != nil {
-		t.Fatalf("AnalyzeIELTSSpeaking: %v", err)
+		t.Fatalf("AnalyzeIELTSCriterion: %v", err)
 	}
 	if result.Provider != generator.result.Provider ||
 		result.Model != generator.result.Model ||
@@ -194,12 +179,16 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 	request := generator.requests[0]
 	if request.SystemPrompt != IELTSSpeakingShadowSystemContract ||
 		request.UserPrompt == "" ||
-		request.UserPrompt == request.SystemPrompt {
+		request.UserPrompt == request.SystemPrompt ||
+		request.OutputContract !=
+			TextGenerationOutputIELTSSpeakingCriterionV3 ||
+		request.OutputCriterion != IELTSCriterionLR {
 		t.Fatalf("request = %#v", request)
 	}
 	for _, required := range []string{
 		IELTSSpeakingShadowProviderSchemaVersion,
-		"each assessable_criteria value exactly once",
+		"exactly one item",
+		"complete frozen mock-test question sequence",
 		"ielts.pr.*",
 	} {
 		if !strings.Contains(request.SystemPrompt, required) {

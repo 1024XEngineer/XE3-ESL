@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
@@ -158,33 +160,57 @@ func TestLiveQiniuIELTSEvaluationContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Qiniu Evaluation generator: %v", err)
 	}
-	result, err := generator.Generate(
-		context.Background(),
-		scoring.TextGenerationRequest{
-			SystemPrompt: scoring.IELTSSpeakingShadowSystemContract,
-			UserPrompt:   liveIELTSEvaluationEvidence,
-		},
+	provider, err := scoring.NewIELTSSpeakingShadowProvider(
+		generator,
+		configuration.Timeout,
 	)
 	if err != nil {
-		t.Fatalf("live Qiniu IELTS Evaluation failed: %v", err)
+		t.Fatalf("create IELTS criterion provider: %v", err)
 	}
-	if result.Provider != TextProviderName ||
-		result.Model != configuration.EvaluationModel ||
-		strings.TrimSpace(result.RequestID) == "" {
-		t.Fatalf(
-			"invalid IELTS Evaluation lineage: provider=%q model=%q request_id_present=%t",
-			result.Provider,
-			result.Model,
-			strings.TrimSpace(result.RequestID) != "",
+	criteria := [...]scoring.IELTSCriterion{
+		scoring.IELTSCriterionFC,
+		scoring.IELTSCriterionLR,
+		scoring.IELTSCriterionGRA,
+	}
+	for index, criterion := range criteria {
+		if index > 0 {
+			time.Sleep(liveQiniuContractRequestInterval)
+		}
+		request, transcripts := liveIELTSEvaluationEvidence(
+			t,
+			criterion,
+		)
+		result, err := provider.AnalyzeIELTSCriterion(
+			context.Background(),
+			request,
+		)
+		if err != nil {
+			t.Fatalf("live Qiniu IELTS %s failed: %v", criterion, err)
+		}
+		if result.Provider != TextProviderName ||
+			result.Model != configuration.EvaluationModel ||
+			strings.TrimSpace(result.RequestID) == "" {
+			t.Fatalf(
+				"invalid IELTS %s lineage: provider=%q model=%q request_id_present=%t",
+				criterion,
+				result.Provider,
+				result.Model,
+				strings.TrimSpace(result.RequestID) != "",
+			)
+		}
+		if err := validateLiveIELTSEvaluationPayload(
+			result.Payload,
+			criterion,
+			transcripts,
+		); err != nil {
+			t.Fatalf("live Qiniu IELTS %s contract rejected: %v", criterion, err)
+		}
+		t.Logf(
+			"Qiniu IELTS criterion=%s model=%s passed strict sanitized contract",
+			criterion,
+			configuration.EvaluationModel,
 		)
 	}
-	if err := validateLiveIELTSEvaluationPayload([]byte(result.Content)); err != nil {
-		t.Fatalf("live Qiniu IELTS contract rejected: %v", err)
-	}
-	t.Logf(
-		"Qiniu IELTS Evaluation model=%s passed strict sanitized contract",
-		configuration.EvaluationModel,
-	)
 }
 
 func liveQiniuAgentGenerator(t *testing.T) (*AgentRunGenerator, string) {
@@ -245,25 +271,221 @@ type liveIELTSEvaluationAnchor struct {
 	Occurrence    int    `json:"occurrence"`
 }
 
-const liveIELTSEvaluationEvidence = `{
-  "schema_version":"ielts-speaking-full-mock-shadow-provider/v2",
-  "prompt_version":"ielts-speaking-full-mock-shadow-prompt/v5",
-  "rubric_version":"ielts-speaking-public-band-rubric/v2",
-  "scene_type":"IELTS_SPEAKING",
-  "practice_mode":"FULL_MOCK",
-  "rubric_descriptors":[
-    {"criterion_id":"IELTS_LR","descriptors":[{"descriptor_id":"LR_PRACTICE_BAND_6","band":6,"description":"Uses enough vocabulary to discuss topics at length."}]},
-    {"criterion_id":"IELTS_GRA","descriptors":[{"descriptor_id":"GRA_PRACTICE_BAND_6","band":6,"description":"Uses a mix of simple and complex structures."}]}
-  ],
-  "assessable_criteria":["IELTS_FC","IELTS_LR","IELTS_GRA"],
-  "questions":[
-    {"question_id":"question-1","part_id":"PART_1","index":1,"question_text":"What kind of music do you enjoy?","response":{"turn_id":"turn-1","evidence_ref_id":"evidence-1","confirmed_transcript":"I enjoy calm jazz because it helps me concentrate after a busy day.","recording_duration_ms":9000,"english_word_count":13,"cjk_character_count":0,"language_evidence":"ENGLISH"}},
-    {"question_id":"question-2","part_id":"PART_2","index":2,"question_text":"Describe a useful skill you learned.","response":{"turn_id":"turn-2","evidence_ref_id":"evidence-2","confirmed_transcript":"I learned to cook at university, and regular practice made me more confident.","recording_duration_ms":10000,"english_word_count":13,"cjk_character_count":0,"language_evidence":"ENGLISH"}},
-    {"question_id":"question-3","part_id":"PART_3","index":3,"question_text":"Why do adults continue learning?","response":{"turn_id":"turn-3","evidence_ref_id":"evidence-3","confirmed_transcript":"Adults keep learning because work changes quickly and new skills bring satisfaction.","recording_duration_ms":10000,"english_word_count":12,"cjk_character_count":0,"language_evidence":"ENGLISH"}}
-  ]
-}`
+type liveIELTSQuestion struct {
+	part       scoring.IELTSPart
+	question   string
+	transcript string
+}
 
-func validateLiveIELTSEvaluationPayload(raw []byte) error {
+type liveIELTSFixtureGenerator struct{}
+
+func (liveIELTSFixtureGenerator) Generate(
+	_ context.Context,
+	request scoring.TextGenerationRequest,
+) (scoring.TextGenerationResult, error) {
+	if request.OutputContract !=
+		scoring.TextGenerationOutputIELTSSpeakingCriterionV3 ||
+		request.OutputCriterion == "" {
+		return scoring.TextGenerationResult{},
+			errors.New("invalid live IELTS output contract")
+	}
+	return scoring.TextGenerationResult{
+		RequestID: "fixture-request",
+		Content:   `{}`,
+		Provider:  TextProviderName,
+		Model:     "fixture-model",
+	}, nil
+}
+
+var liveIELTSQuestions = [...]liveIELTSQuestion{
+	{
+		part:       scoring.IELTSPart1,
+		question:   "What kind of music do you enjoy?",
+		transcript: "I think calm jazz helps me focus, and I think it also makes busy evenings feel less stressful.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "What do you like about your hometown?",
+		transcript: "I think my hometown is welcoming because the parks are lively and neighbors often greet each other.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "What is the weather usually like there?",
+		transcript: "The summers are warm and humid, while the winters are short, dry, and generally comfortable.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "Do you work or study?",
+		transcript: "I work as a designer, so I regularly discuss ideas with colleagues and explain choices to clients.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "What is your usual morning routine?",
+		transcript: "I prepare breakfast, review my schedule, and walk for twenty minutes before I begin work.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "How often do you meet your friends?",
+		transcript: "We usually meet on weekends, and we either try a new restaurant or take a long walk together.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "Do you enjoy reading?",
+		transcript: "Yes, I enjoy biographies because they show how people respond to difficult choices and unexpected change.",
+	},
+	{
+		part:       scoring.IELTSPart1,
+		question:   "Would you like to live somewhere else in the future?",
+		transcript: "I may live near the coast for a few years because I would like a slower daily rhythm.",
+	},
+	{
+		part:       scoring.IELTSPart2,
+		question:   "Describe a useful skill you learned.",
+		transcript: "I learned to cook at university. At first I followed simple recipes, but regular practice made me confident enough to plan healthy meals for friends.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "Why do adults continue learning?",
+		transcript: "Adults continue learning because industries change quickly, and gaining a new skill can protect both confidence and employment.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "Should schools teach more practical skills?",
+		transcript: "Schools should teach practical skills alongside academic subjects so students can connect theory with everyday decisions.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "How has technology changed learning?",
+		transcript: "Technology gives learners immediate access to demonstrations and feedback, although they still need discipline to practice consistently.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "Is it ever too late to learn a skill?",
+		transcript: "It is rarely too late because adults can use experience to set realistic goals and recognize useful progress.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "Should employers support employee learning?",
+		transcript: "Employers benefit when they provide focused training because capable workers adapt faster and share knowledge with their teams.",
+	},
+	{
+		part:       scoring.IELTSPart3,
+		question:   "Why do some people stop learning after school?",
+		transcript: "Some people lack time or clear goals, so learning feels optional even when it could improve their opportunities.",
+	},
+}
+
+func liveIELTSEvaluationEvidence(
+	t testing.TB,
+	criterion scoring.IELTSCriterion,
+) (scoring.IELTSSpeakingCriterionProviderRequest, map[string]string) {
+	t.Helper()
+	questions := make(
+		[]scoring.IELTSSpeakingProviderQuestion,
+		0,
+		len(liveIELTSQuestions),
+	)
+	transcripts := make(map[string]string, len(liveIELTSQuestions))
+	for index, fixture := range liveIELTSQuestions {
+		questionID := fmt.Sprintf("question-%02d", index+1)
+		turnID := fmt.Sprintf("turn-%02d", index+1)
+		refID := fmt.Sprintf("evidence-%02d", index+1)
+		transcripts[refID] = fixture.transcript
+		questions = append(questions, scoring.IELTSSpeakingProviderQuestion{
+			QuestionID:   questionID,
+			PartID:       fixture.part,
+			Index:        index + 1,
+			QuestionText: fixture.question,
+			Response: &scoring.IELTSSpeakingProviderResponse{
+				TurnID:              turnID,
+				EvidenceRefID:       refID,
+				Transcript:          fixture.transcript,
+				RecordingDurationMS: int64(8000 + index*500),
+				EnglishWordCount:    len(strings.Fields(fixture.transcript)),
+				LanguageEvidence:    "ENGLISH",
+			},
+		})
+	}
+	input := scoring.IELTSSpeakingShadowProviderInput{
+		SchemaVersion:      scoring.IELTSSpeakingShadowProviderSchemaVersion,
+		PromptVersion:      scoring.IELTSSpeakingShadowPromptVersion,
+		RubricVersion:      scoring.IELTSSpeakingShadowRubricVersion,
+		SceneType:          evaluation.SceneIELTSSpeaking,
+		PracticeMode:       "FULL_MOCK",
+		RubricDescriptors:  liveIELTSRubricDescriptors(criterion),
+		AssessableCriteria: []scoring.IELTSCriterion{criterion},
+		Questions:          questions,
+	}
+	return scoring.IELTSSpeakingCriterionProviderRequest{Input: input},
+		transcripts
+}
+
+func liveIELTSRubricDescriptors(
+	criterion scoring.IELTSCriterion,
+) []scoring.IELTSRubricDescriptorSet {
+	if criterion == scoring.IELTSCriterionFC {
+		return []scoring.IELTSRubricDescriptorSet{}
+	}
+	return []scoring.IELTSRubricDescriptorSet{{
+		CriterionID: criterion,
+		Descriptors: scoring.IELTSRubricDescriptors(criterion),
+	}}
+}
+
+func TestLiveQiniuIELTSEvaluationFixtureUsesSingleCriterionV3(
+	t *testing.T,
+) {
+	t.Parallel()
+	provider, err := scoring.NewIELTSSpeakingShadowProvider(
+		liveIELTSFixtureGenerator{},
+		time.Second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	criteria := [...]scoring.IELTSCriterion{
+		scoring.IELTSCriterionFC,
+		scoring.IELTSCriterionLR,
+		scoring.IELTSCriterionGRA,
+	}
+	for _, criterion := range criteria {
+		request, transcripts := liveIELTSEvaluationEvidence(t, criterion)
+		if _, err := provider.AnalyzeIELTSCriterion(
+			context.Background(),
+			request,
+		); err != nil {
+			t.Fatalf("production criterion fixture %s: %v", criterion, err)
+		}
+		if request.Input.SchemaVersion !=
+			scoring.IELTSSpeakingShadowProviderSchemaVersion ||
+			request.Input.PromptVersion !=
+				scoring.IELTSSpeakingShadowPromptVersion ||
+			len(request.Input.AssessableCriteria) != 1 ||
+			request.Input.AssessableCriteria[0] != criterion ||
+			len(request.Input.Questions) != 15 || len(transcripts) != 15 {
+			t.Fatalf("live IELTS %s fixture = %#v", criterion, request)
+		}
+		parts := map[scoring.IELTSPart]int{}
+		for _, question := range request.Input.Questions {
+			parts[question.PartID]++
+		}
+		if parts[scoring.IELTSPart1] != 8 ||
+			parts[scoring.IELTSPart2] != 1 ||
+			parts[scoring.IELTSPart3] != 6 ||
+			strings.Count(
+				request.Input.Questions[0].Response.Transcript,
+				"I think",
+			) != 2 {
+			t.Fatalf("live IELTS %s fixture coverage = %#v", criterion, parts)
+		}
+	}
+}
+
+func validateLiveIELTSEvaluationPayload(
+	raw []byte,
+	target scoring.IELTSCriterion,
+	transcripts map[string]string,
+) error {
 	var payload liveIELTSEvaluationPayload
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -273,38 +495,21 @@ func validateLiveIELTSEvaluationPayload(raw []byte) error {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return io.ErrUnexpectedEOF
 	}
-	expected := [...]scoring.IELTSCriterion{
-		scoring.IELTSCriterionFC,
-		scoring.IELTSCriterionLR,
-		scoring.IELTSCriterionGRA,
-	}
 	if payload.SchemaVersion != scoring.IELTSSpeakingShadowProviderSchemaVersion ||
-		len(payload.Criteria) != len(expected) {
+		len(payload.Criteria) != 1 {
 		return errLiveIELTSEvaluationSchema
 	}
-	descriptors := map[scoring.IELTSCriterion]string{
-		scoring.IELTSCriterionLR:  "LR_PRACTICE_BAND_6",
-		scoring.IELTSCriterionGRA: "GRA_PRACTICE_BAND_6",
-	}
-	transcripts := map[string]string{
-		"evidence-1": "I enjoy calm jazz because it helps me concentrate after a busy day.",
-		"evidence-2": "I learned to cook at university, and regular practice made me more confident.",
-		"evidence-3": "Adults keep learning because work changes quickly and new skills bring satisfaction.",
-	}
-	for index, criterion := range payload.Criteria {
-		criterionID := expected[index]
-		if criterion.CriterionID != criterionID ||
-			!validLiveIELTSRubricDescriptor(
-				criterionID,
-				criterion.RubricDescriptor,
-				descriptors[criterionID],
-			) ||
-			!validLiveIELTSFindings(criterionID, "strength", criterion.Strengths, transcripts) ||
-			!validLiveIELTSFindings(criterionID, "improvement", criterion.Improvements, transcripts) ||
-			!validLiveIELTSFindings(criterionID, "upgrade", criterion.UpgradeExamples, transcripts) ||
-			len(criterion.Strengths)+len(criterion.Improvements) == 0 {
-			return errLiveIELTSEvaluationSchema
-		}
+	criterion := payload.Criteria[0]
+	if criterion.CriterionID != target ||
+		!validLiveIELTSRubricDescriptor(
+			target,
+			criterion.RubricDescriptor,
+		) ||
+		!validLiveIELTSFindings(target, "strength", criterion.Strengths, transcripts) ||
+		!validLiveIELTSFindings(target, "improvement", criterion.Improvements, transcripts) ||
+		!validLiveIELTSFindings(target, "upgrade", criterion.UpgradeExamples, transcripts) ||
+		len(criterion.Strengths)+len(criterion.Improvements) == 0 {
+		return errLiveIELTSEvaluationSchema
 	}
 	return nil
 }
@@ -312,47 +517,19 @@ func validateLiveIELTSEvaluationPayload(raw []byte) error {
 func validLiveIELTSRubricDescriptor(
 	criterion scoring.IELTSCriterion,
 	descriptor string,
-	expected string,
 ) bool {
-	if criterion != scoring.IELTSCriterionFC {
-		return descriptor == expected
+	switch criterion {
+	case scoring.IELTSCriterionFC:
+		if descriptor == "" {
+			return true
+		}
 	}
-	if descriptor == "" {
-		return true
+	for _, candidate := range scoring.IELTSRubricDescriptors(criterion) {
+		if descriptor == candidate.ID {
+			return true
+		}
 	}
-	const prefix = "FC_PRACTICE_BAND_"
-	return strings.HasPrefix(descriptor, prefix) &&
-		len(descriptor) == len(prefix)+1 &&
-		descriptor[len(prefix)] >= '1' && descriptor[len(prefix)] <= '9'
-}
-
-func TestValidLiveIELTSRubricDescriptor(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		criterion  scoring.IELTSCriterion
-		descriptor string
-		expected   string
-		valid      bool
-	}{
-		{name: "text-only FC omitted", criterion: scoring.IELTSCriterionFC, valid: true},
-		{name: "text-only FC known band", criterion: scoring.IELTSCriterionFC, descriptor: "FC_PRACTICE_BAND_6", valid: true},
-		{name: "text-only FC unknown band", criterion: scoring.IELTSCriterionFC, descriptor: "FC_PRACTICE_BAND_10"},
-		{name: "text-only FC arbitrary", criterion: scoring.IELTSCriterionFC, descriptor: "FC_UNTRUSTED"},
-		{name: "LR selected descriptor", criterion: scoring.IELTSCriterionLR, descriptor: "LR_PRACTICE_BAND_6", expected: "LR_PRACTICE_BAND_6", valid: true},
-		{name: "LR descriptor outside input", criterion: scoring.IELTSCriterionLR, descriptor: "LR_PRACTICE_BAND_7", expected: "LR_PRACTICE_BAND_6"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := validLiveIELTSRubricDescriptor(
-				test.criterion,
-				test.descriptor,
-				test.expected,
-			); got != test.valid {
-				t.Fatalf("valid = %t, want %t", got, test.valid)
-			}
-		})
-	}
+	return false
 }
 
 var errLiveIELTSEvaluationSchema = errors.New(

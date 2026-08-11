@@ -122,16 +122,12 @@ func (r *PostgresRepository) CompleteIELTSSpeakingShadow(
 	if err != nil {
 		return err
 	}
-	var providerRequestID any
-	if result.Provider != nil {
-		providerRequestID = result.Provider.RequestID
-	}
 	return r.completeDurableSceneJob(
 		ctx,
 		ieltsDurableSceneJobSpec,
 		durableClaimFromIELTS(claim),
 		payload,
-		providerRequestID,
+		nil,
 		report,
 	)
 }
