@@ -147,9 +147,11 @@ IeltsPracticeSectionReview _sectionReview(Object? value) {
     partId: _part(root['part_id']),
     questionIndexes: _positiveInts(root['question_indexes']),
     evidenceRefIds: _identifiers(root['evidence_ref_ids']),
-    strengthFindingIds: _identifiers(root['strength_finding_ids']),
-    improvementFindingIds: _identifiers(root['improvement_finding_ids']),
-    upgradeExampleFindingIds: _identifiers(root['upgrade_example_finding_ids']),
+    strengthFindingIds: _findingReferences(root['strength_finding_ids']),
+    improvementFindingIds: _findingReferences(root['improvement_finding_ids']),
+    upgradeExampleFindingIds: _findingReferences(
+      root['upgrade_example_finding_ids'],
+    ),
   );
 }
 
@@ -247,6 +249,26 @@ List<String> _identifiers(Object? value, {int maximum = 64}) {
     throw const IeltsPracticeReportDecodeException();
   }
   return result;
+}
+
+List<String> _findingReferences(Object? value) {
+  if (value is! List<Object?> || value.length > 64) {
+    throw const IeltsPracticeReportDecodeException();
+  }
+  final result = value.map(_findingReference).toList(growable: false);
+  if (result.toSet().length != result.length) {
+    throw const IeltsPracticeReportDecodeException();
+  }
+  return result;
+}
+
+String _findingReference(Object? value) {
+  if (value is! String ||
+      value.length > 160 ||
+      !RegExp(r'^[A-Za-z][A-Za-z0-9._:/-]*$').hasMatch(value)) {
+    throw const IeltsPracticeReportDecodeException();
+  }
+  return value;
 }
 
 bool _sameValues<T>(List<T> left, List<T> right) {

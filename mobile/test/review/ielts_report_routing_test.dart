@@ -183,6 +183,49 @@ void main() {
     );
   });
 
+  testWidgets('Part 1 report resolves versioned finding references', (
+    tester,
+  ) async {
+    const finding = EvaluationReportFinding(
+      id: 'general-finding:part1.improvement-v1',
+      message: 'Connect the answer to one clear reason.',
+      suggestion: 'Add a short reason after the direct answer.',
+      evidence: <EvaluationReportEvidence>[],
+    );
+    final item = _item(
+      practiceMode: 'PART_1',
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      detail: _part1SectionDetail(finding.id),
+      dimensions: const <EvaluationReportDimension>[
+        EvaluationReportDimension(
+          key: 'TASK_ACHIEVEMENT',
+          score: 75,
+          scale: EvaluationReportScoreScale.percentage100,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>['evidence_1'],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[finding],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-section-detail-invalid')), findsNothing);
+    expect(find.byKey(const Key('ielts-section-report')), findsOneWidget);
+    await tester.ensureVisible(find.text('详细反馈'));
+    await tester.tap(find.text('详细反馈'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining(finding.message), findsOneWidget);
+    expect(find.text('Answer 1.'), findsOneWidget);
+  });
+
   testWidgets(
     'full mock history opens its embedded report without refetching',
     (tester) async {
@@ -242,6 +285,7 @@ ReviewHistoryItem _item({
       const <EvaluationReportDimension>[],
   List<EvaluationReportPriorityAction> priorityActions =
       const <EvaluationReportPriorityAction>[],
+  Map<String, Object?>? detail,
 }) {
   final createdAt = DateTime.utc(2026, 8, 11, 4);
   final report = EvaluationReport(
@@ -259,13 +303,15 @@ ReviewHistoryItem _item({
     dimensions: dimensions,
     priorityActions: priorityActions,
     detailSchema: detailSchema,
-    detail: switch (detailSchema) {
-      'ielts-speaking-practice-report/v1' => _sectionDetail(),
-      'ielts-speaking-report/v1' =>
-        completeIeltsSpeakingReportContractFixture()['report']!
-            as Map<String, Object?>,
-      _ => <String, Object?>{'schema_version': detailSchema},
-    },
+    detail:
+        detail ??
+        switch (detailSchema) {
+          'ielts-speaking-practice-report/v1' => _sectionDetail(),
+          'ielts-speaking-report/v1' =>
+            completeIeltsSpeakingReportContractFixture()['report']!
+                as Map<String, Object?>,
+          _ => <String, Object?>{'schema_version': detailSchema},
+        },
     createdAt: createdAt,
   );
   return ReviewHistoryItem(
@@ -290,6 +336,20 @@ Map<String, Object?> _sectionDetail() => <String, Object?>{
     _sectionReview(part: 'PART_3', index: 2),
   ],
 };
+
+Map<String, Object?> _part1SectionDetail(String improvementFindingId) =>
+    <String, Object?>{
+      'schema_version': 'ielts-speaking-practice-report/v1',
+      'report_scope': 'PART_1',
+      'available_sections': <Object?>['PART_1'],
+      'questions': <Object?>[_sectionQuestion(part: 'PART_1', index: 1)],
+      'section_reviews': <Object?>[
+        <String, Object?>{
+          ..._sectionReview(part: 'PART_1', index: 1),
+          'improvement_finding_ids': <Object?>[improvementFindingId],
+        },
+      ],
+    };
 
 Map<String, Object?> _sectionQuestion({
   required String part,

@@ -318,6 +318,31 @@ void main() {
     expect(detail.sectionReviews.last.partId, IeltsSpeakingPartId.part3);
   });
 
+  test('accepts versioned finding references from formal reports', () {
+    final detail = _sectionDetail();
+    final reviews = detail['section_reviews']! as List<Object?>;
+    (reviews.first as Map<String, Object?>)['improvement_finding_ids'] =
+        <Object?>['general-finding:part2.improvement-v1'];
+
+    final decoded = decodeIeltsPracticeReportDetail(detail);
+
+    expect(decoded.sectionReviews.first.improvementFindingIds, <String>[
+      'general-finding:part2.improvement-v1',
+    ]);
+  });
+
+  test('rejects malformed versioned finding references', () {
+    final detail = _sectionDetail();
+    final reviews = detail['section_reviews']! as List<Object?>;
+    (reviews.first as Map<String, Object?>)['improvement_finding_ids'] =
+        <Object?>['general finding with spaces'];
+
+    expect(
+      () => decodeIeltsPracticeReportDetail(detail),
+      throwsA(isA<IeltsPracticeReportDecodeException>()),
+    );
+  });
+
   test('rejects practice report sections outside server order', () {
     final detail = _sectionDetail()
       ..['available_sections'] = <Object?>['PART_3', 'PART_2']
