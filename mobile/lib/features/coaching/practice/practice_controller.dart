@@ -154,17 +154,38 @@ final class PracticeController extends ChangeNotifier
     }
   }
 
+  /// Stops the active capture and returns once the shared recorder is free.
+  /// Server transcription continues through the existing recording operation.
+  Future<void> finishRecordingCapture() async {
+    if (_recordingState == PracticeRecordingState.starting) {
+      await _recorderStartFuture;
+    }
+    if (_recordingState == PracticeRecordingState.recording) {
+      unawaited(stopRecording());
+    }
+    await waitForPracticeRecorderRelease();
+  }
+
   /// Adopts a locally buffered answer for the current practice question.
   ///
   /// IELTS Part 3 uses this after it records while the previous Part 2 answer
   /// is still being transcribed. Returning true transfers audio ownership to
   /// this controller; false leaves ownership with the caller.
-  bool submitBufferedPracticeAudio(RecordedPracticeAudio audio) {
+  bool submitBufferedPracticeAudio(
+    RecordedPracticeAudio audio, {
+    required String expectedPracticeSessionId,
+    required String expectedQuestionId,
+    required int expectedCompletedTurns,
+  }) {
     final practice = client;
     final sessionId = _practiceSessionId;
     final question = _currentQuestion;
     if (sessionId == null ||
         question == null ||
+        sessionId != expectedPracticeSessionId ||
+        question.sessionId != expectedPracticeSessionId ||
+        question.id != expectedQuestionId ||
+        _completedTurns != expectedCompletedTurns ||
         _disposed ||
         isBusy ||
         _isSessionCompleted ||
@@ -1161,12 +1182,12 @@ final class PracticeController extends ChangeNotifier
     final usedRealtime =
         realtime != null && recorder is PracticeStreamingRecorder;
     _recordingState = PracticeRecordingState.transcribing;
-    notifyListeners();
     try {
       final stopOperation = usedRealtime
           ? (recorder as PracticeStreamingRecorder).stopAudioStream()
           : recorder.stop();
       _recorderStopFuture = stopOperation;
+      notifyListeners();
       try {
         audio = await stopOperation;
       } finally {
