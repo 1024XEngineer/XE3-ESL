@@ -10,10 +10,16 @@ import (
 )
 
 const (
-	speechFeedbackInterval     = 500 * time.Millisecond
-	speechFeedbackSweepTimeout = 25 * time.Second
-	speechFeedbackClaimLimit   = 1
+	speechFeedbackInterval              = 500 * time.Millisecond
+	speechFeedbackClaimLimit            = 1
+	speechFeedbackPersistenceTimeMargin = 30 * time.Second
+	speechFeedbackLeaseTimeMargin       = 30 * time.Second
 )
+
+type speechFeedbackExecutionBudget struct {
+	processingTimeout time.Duration
+	leaseDuration     time.Duration
+}
 
 type speechFeedbackProcessor interface {
 	ProcessPending(
@@ -23,23 +29,60 @@ type speechFeedbackProcessor interface {
 }
 
 type speechFeedbackWorker struct {
-	processor speechFeedbackProcessor
-	logger    *slog.Logger
+	processor         speechFeedbackProcessor
+	logger            *slog.Logger
+	processingTimeout time.Duration
+}
+
+func deriveSpeechFeedbackExecutionBudget(
+	acousticProviderTimeout time.Duration,
+	textProviderTimeout time.Duration,
+) speechFeedbackExecutionBudget {
+	processingTimeout := acousticProviderTimeout +
+		textProviderTimeout +
+		speechFeedbackPersistenceTimeMargin
+	return speechFeedbackExecutionBudget{
+		processingTimeout: processingTimeout,
+		leaseDuration: processingTimeout +
+			speechFeedbackLeaseTimeMargin,
+	}
 }
 
 func buildSpeechFeedbackWorker(
 	processor speechFeedbackProcessor,
 	logger *slog.Logger,
+	processingTimeout time.Duration,
 ) (*speechFeedbackWorker, error) {
-	if processor == nil || logger == nil {
+	if processor == nil || logger == nil || processingTimeout <= 0 {
 		return nil, errors.New(
 			"speech feedback worker dependency is required",
 		)
 	}
 	return &speechFeedbackWorker{
-		processor: processor,
-		logger:    logger,
+		processor:         processor,
+		logger:            logger,
+		processingTimeout: processingTimeout,
 	}, nil
+}
+
+func logSpeechFeedbackAcousticFallback(
+	logger *slog.Logger,
+	recordingStoreAvailable bool,
+	iseConfigured bool,
+) {
+	switch {
+	case !recordingStoreAvailable && iseConfigured:
+		logger.Warn(
+			"iFlytek ISE is configured but object storage is disabled; acoustic scoring is unavailable",
+			slog.String("fallback", "transcript_only"),
+			slog.String("reason", "object_storage_disabled"),
+		)
+	case recordingStoreAvailable && !iseConfigured:
+		logger.Warn(
+			"iFlytek ISE is not configured; acoustic scoring is unavailable",
+			slog.String("fallback", "transcript_only"),
+		)
+	}
 }
 
 func (worker *speechFeedbackWorker) Run(ctx context.Context) {
@@ -63,7 +106,7 @@ func (worker *speechFeedbackWorker) Run(ctx context.Context) {
 func (worker *speechFeedbackWorker) sweep(parent context.Context) int {
 	ctx, cancel := context.WithTimeout(
 		parent,
-		speechFeedbackSweepTimeout,
+		worker.processingTimeout,
 	)
 	defer cancel()
 	result, err := worker.processor.ProcessPending(

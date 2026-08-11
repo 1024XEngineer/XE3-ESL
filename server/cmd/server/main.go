@@ -330,8 +330,9 @@ func run() int {
 		}
 	}
 	var speechFeedbackAcoustics speechfeedback.SpeechFeedbackAcousticProvider
-	speechFeedbackLease := 30 * time.Second
-	if recordingStore != nil && config.ISEConfigured() {
+	var speechFeedbackAcousticTimeout time.Duration
+	iseConfigured := config.ISEConfigured()
+	if recordingStore != nil && iseConfigured {
 		iseConfig, configurationErr := config.LoadISE()
 		if configurationErr != nil {
 			logger.Error(
@@ -340,7 +341,7 @@ func run() int {
 			)
 			return 1
 		}
-		speechFeedbackLease = iseConfig.Timeout + 30*time.Second
+		speechFeedbackAcousticTimeout = iseConfig.Timeout
 		speechFeedbackAcoustics, err =
 			bootstrap.NewSpeechFeedbackAcousticProvider(
 				databasePool.Native(),
@@ -354,12 +355,16 @@ func run() int {
 			)
 			return 1
 		}
-	} else if recordingStore != nil {
-		logger.Warn(
-			"iFlytek ISE is not configured; acoustic scoring is unavailable",
-			slog.String("fallback", "transcript_only"),
-		)
 	}
+	logSpeechFeedbackAcousticFallback(
+		logger,
+		recordingStore != nil,
+		iseConfigured,
+	)
+	speechFeedbackBudget := deriveSpeechFeedbackExecutionBudget(
+		speechFeedbackAcousticTimeout,
+		textConfig.Timeout,
+	)
 	speechFeedbackComposition, err :=
 		bootstrap.NewSpeechFeedbackComposition(
 			databasePool.Native(),
@@ -367,7 +372,7 @@ func run() int {
 			bootstrap.SpeechFeedbackConfiguration{
 				Provider:      textConfig.Provider,
 				Model:         textConfig.SpeechFeedbackModel,
-				LeaseDuration: speechFeedbackLease,
+				LeaseDuration: speechFeedbackBudget.leaseDuration,
 				Acoustics:     speechFeedbackAcoustics,
 			},
 		)
@@ -523,6 +528,7 @@ func run() int {
 	speechFeedback, err := buildSpeechFeedbackWorker(
 		speechFeedbackComposition.Worker(),
 		logger,
+		speechFeedbackBudget.processingTimeout,
 	)
 	if err != nil {
 		logger.Error(

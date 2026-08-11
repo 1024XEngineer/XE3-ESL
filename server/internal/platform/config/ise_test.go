@@ -22,6 +22,23 @@ func TestLoadISE(t *testing.T) {
 	}
 }
 
+func TestLoadISEDefaultTimeoutCoversIELTSPart2(t *testing.T) {
+	setISEEnvironment(t)
+
+	configuration, err := LoadISE()
+	if err != nil {
+		t.Fatalf("load ISE: %v", err)
+	}
+	minimum := 120*time.Second + 30*time.Second
+	if configuration.Timeout < minimum {
+		t.Fatalf(
+			"default ISE timeout = %s, want at least %s",
+			configuration.Timeout,
+			minimum,
+		)
+	}
+}
+
 func TestISEConfiguredDistinguishesAbsentAndPartialCredentials(t *testing.T) {
 	t.Setenv("APPID", "")
 	t.Setenv("APIKey", "")

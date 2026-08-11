@@ -11,6 +11,10 @@ import (
 
 const maxSpeechFeedbackSweepLimit = 20
 
+// The lease holds two five-minute provider calls plus persistence and lease
+// margins.
+const maxSpeechFeedbackLeaseDuration = 11 * time.Minute
+
 type SpeechFeedbackWorkerConfiguration struct {
 	MaxAttempts     int
 	LeaseDuration   time.Duration
@@ -26,7 +30,7 @@ func (configuration SpeechFeedbackWorkerConfiguration) Valid() bool {
 	return configuration.MaxAttempts >= 1 &&
 		configuration.MaxAttempts <= 10 &&
 		configuration.LeaseDuration >= time.Second &&
-		configuration.LeaseDuration <= 10*time.Minute &&
+		configuration.LeaseDuration <= maxSpeechFeedbackLeaseDuration &&
 		configuration.RetryDelay >= time.Second &&
 		configuration.RetryDelay <= time.Hour &&
 		configuration.StrategyRef == SpeechFeedbackStrategyRef &&
