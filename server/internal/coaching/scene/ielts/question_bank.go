@@ -56,6 +56,7 @@ type Part1PracticeTopic struct {
 	TitleZH       string   `json:"title_zh"`
 	TitleEN       string   `json:"title_en"`
 	ReleaseStatus string   `json:"release_status"`
+	CueCardType   string   `json:"cue_card_type"`
 	TagCodes      []string `json:"tag_codes"`
 	Questions     []string `json:"questions"`
 }

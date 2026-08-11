@@ -189,7 +189,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             title: topic.titleZh,
             subtitle: topic.titleEn,
             release: topic.releaseStatus,
-            tags: topic.tagCodes,
+            tags: [topic.cueCardType, ...topic.tagCodes],
             imagePath: _topicImageFor(topic.tagCodes, topic.id),
             questions: topic.questions,
             searchable:

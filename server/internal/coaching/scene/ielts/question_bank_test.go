@@ -19,7 +19,7 @@ func TestCurrentQuestionBankImportDocumentIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeImportDocument: %v", err)
 	}
-	if document.SchemaVersion != 3 ||
+	if document.SchemaVersion != 4 ||
 		document.BankID != "ielts-speaking-2026-05-08-mainland" ||
 		len(document.Part1Topics) != 38 ||
 		len(document.Part1Sets) != 38 ||
@@ -27,8 +27,10 @@ func TestCurrentQuestionBankImportDocumentIsValid(t *testing.T) {
 		t.Fatalf("current document metadata = %#v", document)
 	}
 	part1Questions := 0
+	categoryCounts := map[string]int{}
 	for _, topic := range document.Part1Topics {
 		part1Questions += len(topic.Questions)
+		categoryCounts[topic.CueCardType]++
 		if len(topic.TagCodes) == 0 {
 			t.Fatalf("Part 1 topic %s has no semantic tag", topic.ID)
 		}
@@ -36,12 +38,17 @@ func TestCurrentQuestionBankImportDocumentIsValid(t *testing.T) {
 	part3Questions := 0
 	for _, group := range document.TopicGroups {
 		part3Questions += len(group.Part3Questions)
+		categoryCounts[group.CueCardType]++
 		if len(group.TagCodes) == 0 {
 			t.Fatalf("Part 2/3 group %s has no semantic tag", group.ID)
 		}
 	}
 	if part1Questions != 234 || part3Questions != 317 {
 		t.Fatalf("question counts = %d/%d", part1Questions, part3Questions)
+	}
+	if categoryCounts["person"]+categoryCounts["place"]+
+		categoryCounts["thing"]+categoryCounts["experience"] != 94 {
+		t.Fatalf("category counts = %#v", categoryCounts)
 	}
 }
 
@@ -66,7 +73,7 @@ func TestValidateImportDocumentRejectsUnknownTagReference(t *testing.T) {
 
 func validImportDocumentFixture() ImportDocument {
 	return ImportDocument{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		BankID:        "ielts-test-bank",
 		Season:        "2026-05-08",
 		SeasonLabel:   "5–8 月题库",
@@ -81,15 +88,18 @@ func validImportDocumentFixture() ImportDocument {
 		Part1Topics: []ImportPart1Topic{
 			{
 				ID: "topic-1", TitleZH: "话题一", TitleEN: "Topic one", ReleaseStatus: "new",
-				TagCodes: []string{"daily_life"}, Questions: []string{"Question 1?", "Question 2?", "Question 3?"},
+				CueCardType: "thing",
+				TagCodes:    []string{"daily_life"}, Questions: []string{"Question 1?", "Question 2?", "Question 3?"},
 			},
 			{
 				ID: "topic-2", TitleZH: "话题二", TitleEN: "Topic two", ReleaseStatus: "new",
-				TagCodes: []string{"daily_life"}, Questions: []string{"Question 4?", "Question 5?", "Question 6?"},
+				CueCardType: "person",
+				TagCodes:    []string{"daily_life"}, Questions: []string{"Question 4?", "Question 5?", "Question 6?"},
 			},
 			{
 				ID: "topic-3", TitleZH: "话题三", TitleEN: "Topic three", ReleaseStatus: "carry_over",
-				TagCodes: []string{"daily_life"}, Questions: []string{"Question 7?", "Question 8?"},
+				CueCardType: "experience",
+				TagCodes:    []string{"daily_life"}, Questions: []string{"Question 7?", "Question 8?"},
 			},
 		},
 		Part1Sets: []ImportPart1Set{{

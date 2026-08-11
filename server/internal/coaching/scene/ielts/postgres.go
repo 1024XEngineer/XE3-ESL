@@ -200,7 +200,7 @@ func loadPublishedCatalog(
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT topic_id, title_zh, title_en, release_status
+		SELECT topic_id, title_zh, title_en, release_status, cue_card_type
 		FROM ielts_part1_topics
 		WHERE bank_id = $1
 		ORDER BY display_order
@@ -210,7 +210,13 @@ func loadPublishedCatalog(
 	}
 	for rows.Next() {
 		var topic Part1PracticeTopic
-		if err := rows.Scan(&topic.ID, &topic.TitleZH, &topic.TitleEN, &topic.ReleaseStatus); err != nil {
+		if err := rows.Scan(
+			&topic.ID,
+			&topic.TitleZH,
+			&topic.TitleEN,
+			&topic.ReleaseStatus,
+			&topic.CueCardType,
+		); err != nil {
 			rows.Close()
 			return QuestionBank{}, fmt.Errorf("%w: scan Part 1 topic: %v", ErrQuestionBankUnavailable, err)
 		}

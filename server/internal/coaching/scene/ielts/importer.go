@@ -50,6 +50,7 @@ type ImportPart1Topic struct {
 	TitleZH       string   `json:"title_zh"`
 	TitleEN       string   `json:"title_en"`
 	ReleaseStatus string   `json:"release_status"`
+	CueCardType   string   `json:"cue_card_type"`
 	TagCodes      []string `json:"tag_codes"`
 	Questions     []string `json:"questions"`
 }
@@ -212,14 +213,16 @@ func (importer *Importer) Import(
 				title_zh,
 				title_en,
 				release_status,
+				cue_card_type,
 				display_order
-			) VALUES ($1, $2, $3, $4, $5, $6)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`,
 			document.BankID,
 			topic.ID,
 			topic.TitleZH,
 			topic.TitleEN,
 			topic.ReleaseStatus,
+			topic.CueCardType,
 			topicIndex+1,
 		); err != nil {
 			return ImportResult{}, importWriteError(err)
@@ -356,7 +359,7 @@ func validateImportDocument(document ImportDocument) error {
 	invalid := func(reason string) error {
 		return fmt.Errorf("%w: %s", ErrQuestionBankInvalid, reason)
 	}
-	if document.SchemaVersion != 3 || !validImportID(document.BankID) ||
+	if document.SchemaVersion != 4 || !validImportID(document.BankID) ||
 		!validImportID(document.Season) || strings.TrimSpace(document.SeasonLabel) == "" ||
 		(document.Region != "mainland" && document.Region != "international") {
 		return invalid("invalid bank metadata")
@@ -409,6 +412,7 @@ func validateImportDocument(document ImportDocument) error {
 		if !validImportID(topic.ID) || strings.TrimSpace(topic.TitleZH) == "" ||
 			strings.TrimSpace(topic.TitleEN) == "" ||
 			!validReleaseStatus(topic.ReleaseStatus, true) ||
+			!validCueCardType(topic.CueCardType) ||
 			len(topic.TagCodes) == 0 || len(topic.Questions) < 2 {
 			return invalid("invalid Part 1 topic")
 		}

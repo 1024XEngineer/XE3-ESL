@@ -72,4 +72,5 @@ import "embed"
 //go:embed 000084_ielts_answer_preparations.*.sql
 //go:embed 000085_evaluation_ielts_speaking_prompt_v5.*.sql
 //go:embed 000086_provider_qualified_model_ids.*.sql
+//go:embed 000087_ielts_part1_cue_card_types.*.sql
 var Files embed.FS

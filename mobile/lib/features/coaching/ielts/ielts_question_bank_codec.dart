@@ -27,7 +27,7 @@ IeltsQuestionBank decodeIeltsQuestionBank(Object? value) {
   final sourceCutoff = DateTime.tryParse(_string(root['source_cutoff']));
   final rawTopics = root['part1_topics'];
   final rawGroups = root['topic_groups'];
-  if (root['schema_version'] != 3 ||
+  if (root['schema_version'] != 4 ||
       seasonStart == null ||
       seasonEnd == null ||
       sourceCutoff == null ||
@@ -99,14 +99,17 @@ IeltsPart1PracticeTopic _part1Topic(Object? value) {
       'title_zh',
       'title_en',
       'release_status',
+      'cue_card_type',
       'tag_codes',
       'questions',
     },
   );
   final release = _string(object['release_status'], maximumBytes: 32);
+  final cueCardType = _string(object['cue_card_type'], maximumBytes: 16);
   final tags = _stringList(object['tag_codes']);
   final questions = _stringList(object['questions'], maximumItemBytes: 1024);
   if (!const {'new', 'carry_over', 'evergreen'}.contains(release) ||
+      !const {'person', 'place', 'thing', 'experience'}.contains(cueCardType) ||
       tags.isEmpty ||
       questions.length < 2) {
     throw const IeltsQuestionBankWireFormatException();
@@ -116,6 +119,7 @@ IeltsPart1PracticeTopic _part1Topic(Object? value) {
     titleZh: _string(object['title_zh']),
     titleEn: _string(object['title_en']),
     releaseStatus: release,
+    cueCardType: cueCardType,
     tagCodes: tags,
     questions: questions,
   );

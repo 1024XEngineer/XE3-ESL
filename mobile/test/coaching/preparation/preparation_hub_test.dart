@@ -715,6 +715,16 @@ void main() {
 
       expect(find.text('1 道题'), findsOneWidget);
       expect(find.byKey(const Key('ielts-part3-set-p23-001')), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Part 1'));
+      await tester.tap(find.widgetWithText(ChoiceChip, '地点'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 道题'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-part1-set-p1-topic-001')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1221,6 +1231,7 @@ final _ieltsBank = IeltsQuestionBank(
       titleZh: '家乡',
       titleEn: 'Hometown',
       releaseStatus: 'carry_over',
+      cueCardType: 'place',
       tagCodes: ['daily_life'],
       questions: ['Q1', 'Q2'],
     ),

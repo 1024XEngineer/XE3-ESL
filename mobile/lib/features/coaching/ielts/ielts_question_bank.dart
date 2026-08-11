@@ -51,6 +51,7 @@ final class IeltsPart1PracticeTopic {
     required this.titleZh,
     required this.titleEn,
     required this.releaseStatus,
+    required this.cueCardType,
     required this.tagCodes,
     required this.questions,
   });
@@ -59,6 +60,7 @@ final class IeltsPart1PracticeTopic {
   final String titleZh;
   final String titleEn;
   final String releaseStatus;
+  final String cueCardType;
   final List<String> tagCodes;
   final List<String> questions;
 }
