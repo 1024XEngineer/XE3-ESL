@@ -344,8 +344,12 @@ func classifyIELTSSpeakingShadowFailure(
 			Code:      "provider_schema_mismatch",
 			Retryable: false,
 		}
-	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
-		errors.Is(cause, evaluation.ErrInvalidRequest):
+	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_invalid_response",
+			Retryable: true,
+		}
+	case errors.Is(cause, evaluation.ErrInvalidRequest):
 		return IELTSSpeakingShadowFailure{
 			Code:      "provider_invalid_response",
 			Retryable: false,

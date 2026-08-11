@@ -287,6 +287,63 @@ func TestIELTSSpeakingShadowWorkerFailsSchemaMismatchWithoutRetry(
 	}
 }
 
+func TestIELTSSpeakingShadowWorkerRetriesSemanticRejectionThenCompletes(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validIELTSSpeakingShadowClaim(t)
+	repository := &ieltsShadowRuntimeRepositoryStub{
+		claim:      claim,
+		acquired:   true,
+		failStatus: IELTSSpeakingShadowRuntimePending,
+	}
+	provider := &ieltsSemanticRetryProviderStub{}
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		NewIELTSSpeakingShadowEngine(provider),
+		validIELTSSpeakingShadowRuntimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
+	}
+
+	first, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("first ProcessPending: %v", err)
+	}
+	if first.Retried != 1 || repository.failCalls != 1 ||
+		repository.failure.Code != "provider_invalid_response" ||
+		!repository.failure.Retryable || repository.completeCalls != 0 {
+		t.Fatalf(
+			"first sweep = %#v; failure = %#v; repository = %#v",
+			first,
+			repository.failure,
+			repository,
+		)
+	}
+
+	repository.claim.AttemptCount = 2
+	repository.claim.FencingToken++
+	repository.acquired = true
+	second, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("second ProcessPending: %v", err)
+	}
+	if second.Completed != 1 || provider.calls != 2 ||
+		repository.completeCalls != 1 || repository.failCalls != 1 ||
+		ValidateIELTSSpeakingShadowResult(
+			claim.Snapshot,
+			repository.result,
+		) != nil {
+		t.Fatalf(
+			"second sweep = %#v; provider calls = %d; repository = %#v",
+			second,
+			provider.calls,
+			repository,
+		)
+	}
+}
+
 func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	t *testing.T,
 ) {
@@ -307,7 +364,7 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:      claim,
 		acquired:   true,
-		failStatus: IELTSSpeakingShadowRuntimeFailed,
+		failStatus: IELTSSpeakingShadowRuntimePending,
 	}
 	worker, err := NewIELTSSpeakingShadowWorker(
 		repository,
@@ -328,7 +385,7 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 		t.Fatalf("ProcessPending: %v", err)
 	}
 	logged := output.String()
-	if sweep.Failed != 1 ||
+	if sweep.Retried != 1 || !repository.failure.Retryable ||
 		!strings.Contains(logged, `"failure_code":"provider_invalid_response"`) ||
 		!strings.Contains(logged, `"rejection_stage":"semantic_validation"`) ||
 		strings.Contains(logged, "I explain") {
@@ -357,9 +414,10 @@ func TestClassifyIELTSSpeakingShadowFailureUsesStableProviderCodes(
 			code:  "provider_schema_mismatch",
 		},
 		{
-			name:  "semantic response rejection",
-			cause: ErrInvalidIELTSSpeakingShadow,
-			code:  "provider_invalid_response",
+			name:      "semantic response rejection",
+			cause:     ErrInvalidIELTSSpeakingShadow,
+			code:      "provider_invalid_response",
+			retryable: true,
 		},
 		{
 			name:  "invalid request",
@@ -391,6 +449,24 @@ func TestClassifyIELTSSpeakingShadowFailureUsesStableProviderCodes(
 			}
 		})
 	}
+}
+
+type ieltsSemanticRetryProviderStub struct {
+	calls int
+}
+
+func (provider *ieltsSemanticRetryProviderStub) AnalyzeIELTSSpeaking(
+	_ context.Context,
+	input IELTSSpeakingShadowProviderInput,
+) (IELTSSpeakingShadowProviderResult, error) {
+	provider.calls++
+	payload := validIELTSProviderPayload(input)
+	if provider.calls == 1 {
+		payload.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID =
+			"missing-evidence-ref"
+		payload.Criteria[0].Strengths[0].Evidence[0].Quote = "I explain"
+	}
+	return ieltsProviderResult(nil, payload), nil
 }
 
 type ieltsGenerationFailureStub struct {
