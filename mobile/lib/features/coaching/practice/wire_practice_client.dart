@@ -166,6 +166,10 @@ final class WirePracticeClient
         PracticeQuestionTipClient,
         PracticeQuestionTranslationClient,
         PracticeRealtimeTranscriptionClient {
+  // Covers the server's bounded upload, durable recording write, maximum
+  // recorded-ASR timeout, and final response margin.
+  static const defaultTranscriptionTimeout = Duration(seconds: 540);
+
   factory WirePracticeClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -175,7 +179,7 @@ final class WirePracticeClient
     PracticeWireEndpoints endpoints = const PracticeWireEndpoints(),
     AuthenticatedWebSocketConnector? realtimeConnector,
     Duration jsonTimeout = const Duration(seconds: 30),
-    Duration transcriptionTimeout = const Duration(seconds: 120),
+    Duration transcriptionTimeout = defaultTranscriptionTimeout,
   }) {
     if (jsonTimeout <= Duration.zero ||
         transcriptionTimeout <= Duration.zero ||

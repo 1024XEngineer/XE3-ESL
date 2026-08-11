@@ -1355,6 +1355,10 @@ func newVoiceProductionIntegrationServer(
 			recognizer: configuration.Recognizer,
 		}
 	}
+	if configuration.PracticeRecordedRecognizer == nil {
+		configuration.PracticeRecordedRecognizer =
+			configuration.PracticeRecognizer
+	}
 	if configuration.PracticeSynthesizer == nil {
 		configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
 			synthesizer: configuration.Synthesizer,

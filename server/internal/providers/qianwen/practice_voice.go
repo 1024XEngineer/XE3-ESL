@@ -23,6 +23,23 @@ func NewPracticeVoiceRecognizer(
 	return &PracticeVoiceRecognizer{recognizer: recognizer}, nil
 }
 
+func NewPracticeRecordedVoiceRecognizer(
+	configuration ASRConfig,
+	apiKey string,
+) (*PracticeVoiceRecognizer, error) {
+	model, err := normalizeASRModel(configuration.Model)
+	if err != nil {
+		return nil, err
+	}
+	if model != "fun-asr-flash-2026-06-15" {
+		return nil, errors.New(
+			"Qianwen recorded Practice Voice requires fun-asr-flash-2026-06-15",
+		)
+	}
+	configuration.Model = model
+	return NewPracticeVoiceRecognizer(configuration, apiKey)
+}
+
 func (recognizer *PracticeVoiceRecognizer) Transcribe(
 	ctx context.Context,
 	request practicevoice.TranscriptionRequest,

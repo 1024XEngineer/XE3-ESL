@@ -19,7 +19,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const defaultReadTimeout = 15 * time.Second
+const (
+	defaultRealtimeReadTimeout = 15 * time.Second
+	defaultRecordedReadTimeout = 60 * time.Second
+)
 
 type Application interface {
 	Start(
@@ -74,17 +77,19 @@ type Application interface {
 }
 
 type Options struct {
-	AudioReadTimeout  time.Duration
-	SameQuestionRetry *practicevoice.SameQuestionRetryApplication
-	AudioAssets       AudioAssetHTTPService
+	RealtimeReadTimeout time.Duration
+	RecordedReadTimeout time.Duration
+	SameQuestionRetry   *practicevoice.SameQuestionRetryApplication
+	AudioAssets         AudioAssetHTTPService
 }
 
 type Handler struct {
-	application Application
-	retry       *practicevoice.SameQuestionRetryApplication
-	audioAssets AudioAssetHTTPService
-	readTimeout time.Duration
-	errors      *httpresponse.Renderer
+	application         Application
+	retry               *practicevoice.SameQuestionRetryApplication
+	audioAssets         AudioAssetHTTPService
+	realtimeReadTimeout time.Duration
+	recordedReadTimeout time.Duration
+	errors              *httpresponse.Renderer
 }
 
 func NewHandler(
@@ -92,21 +97,26 @@ func NewHandler(
 	options Options,
 	errorRenderer *httpresponse.Renderer,
 ) (*Handler, error) {
-	if application == nil || options.AudioReadTimeout < 0 {
+	if application == nil || options.RealtimeReadTimeout < 0 ||
+		options.RecordedReadTimeout < 0 {
 		return nil, errors.New("practice voice: HTTP dependencies are required")
 	}
-	if options.AudioReadTimeout == 0 {
-		options.AudioReadTimeout = defaultReadTimeout
+	if options.RealtimeReadTimeout == 0 {
+		options.RealtimeReadTimeout = defaultRealtimeReadTimeout
+	}
+	if options.RecordedReadTimeout == 0 {
+		options.RecordedReadTimeout = defaultRecordedReadTimeout
 	}
 	if errorRenderer == nil {
 		errorRenderer = httpresponse.NewRenderer(nil)
 	}
 	return &Handler{
-		application: application,
-		retry:       options.SameQuestionRetry,
-		audioAssets: options.AudioAssets,
-		readTimeout: options.AudioReadTimeout,
-		errors:      errorRenderer,
+		application:         application,
+		retry:               options.SameQuestionRetry,
+		audioAssets:         options.AudioAssets,
+		realtimeReadTimeout: options.RealtimeReadTimeout,
+		recordedReadTimeout: options.RecordedReadTimeout,
+		errors:              errorRenderer,
 	}, nil
 }
 
@@ -260,7 +270,7 @@ func (handler *Handler) prepareAudio(c *gin.Context) (
 		return "", nil, requestcontext.Actor{}, nil, false
 	}
 	controller := http.NewResponseController(c.Writer)
-	if err := controller.SetReadDeadline(time.Now().Add(handler.readTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+	if err := controller.SetReadDeadline(time.Now().Add(handler.recordedReadTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		handler.write(c, internalError(err))
 		return "", nil, requestcontext.Actor{}, nil, false
 	}
