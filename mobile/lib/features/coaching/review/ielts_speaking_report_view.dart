@@ -60,83 +60,22 @@ class _IeltsSpeakingSessionReportPanelState
 }
 
 class IeltsSpeakingReportPanel extends StatefulWidget {
-  const IeltsSpeakingReportPanel({
-    required this.controller,
-    this.onRepracticeQuestion,
-    super.key,
-  });
+  const IeltsSpeakingReportPanel({required this.controller, super.key});
 
   final IeltsSpeakingReportController controller;
-  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
-  onRepracticeQuestion;
 
   @override
   State<IeltsSpeakingReportPanel> createState() =>
       _IeltsSpeakingReportPanelState();
 }
 
-class IeltsSpeakingReadyReportView extends StatefulWidget {
-  const IeltsSpeakingReadyReportView({
-    required this.report,
-    this.onRepracticeQuestion,
-    super.key,
-  });
+class IeltsSpeakingReadyReportView extends StatelessWidget {
+  const IeltsSpeakingReadyReportView({required this.report, super.key});
 
   final IeltsSpeakingReport report;
-  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
-  onRepracticeQuestion;
 
   @override
-  State<IeltsSpeakingReadyReportView> createState() =>
-      _IeltsSpeakingReadyReportViewState();
-}
-
-class _IeltsSpeakingReadyReportViewState
-    extends State<IeltsSpeakingReadyReportView> {
-  var _selectedIndex = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    const parts = <IeltsSpeakingPartId>[
-      IeltsSpeakingPartId.part1,
-      IeltsSpeakingPartId.part2,
-      IeltsSpeakingPartId.part3,
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            key: const Key('ielts-speaking-report-scope-tabs'),
-            children: [
-              for (var index = 0; index < 4; index++) ...[
-                if (index > 0) const SizedBox(width: 8),
-                ChoiceChip(
-                  key: Key('ielts-speaking-report-scope-$index'),
-                  label: Text(index == 0 ? '总览' : _partLabel(parts[index - 1])),
-                  selected: _selectedIndex == index,
-                  onSelected: (_) => setState(() => _selectedIndex = index),
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: SpeakUpDesign.space16),
-        if (_selectedIndex == 0)
-          _ReadyReport(
-            report: widget.report,
-            onRepracticeQuestion: widget.onRepracticeQuestion,
-          )
-        else
-          _IeltsPartReport(
-            report: widget.report,
-            partId: parts[_selectedIndex - 1],
-            onRepracticeQuestion: widget.onRepracticeQuestion,
-          ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => _ReadyReport(report: report);
 }
 
 class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
@@ -185,7 +124,6 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
       IeltsSpeakingReportEvaluationStatus.running => const _GeneratingReport(),
       IeltsSpeakingReportEvaluationStatus.ready => IeltsSpeakingReadyReportView(
         report: envelope.report!,
-        onRepracticeQuestion: widget.onRepracticeQuestion,
       ),
       IeltsSpeakingReportEvaluationStatus.failed => const _GeneratingReport(
         message: '报告正在自动恢复，无需重新操作',
@@ -270,11 +208,9 @@ class _GeneratingReport extends StatelessWidget {
 }
 
 class _ReadyReport extends StatelessWidget {
-  const _ReadyReport({required this.report, this.onRepracticeQuestion});
+  const _ReadyReport({required this.report});
 
   final IeltsSpeakingReport report;
-  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
-  onRepracticeQuestion;
 
   @override
   Widget build(BuildContext context) {
@@ -307,11 +243,6 @@ class _ReadyReport extends StatelessWidget {
         const _ReportSectionTitle(title: '改进建议'),
         const SizedBox(height: SpeakUpDesign.space12),
         _TargetPlan(report: report),
-        const SizedBox(height: SpeakUpDesign.space24),
-        _QuestionReviews(
-          report: report,
-          onRepracticeQuestion: onRepracticeQuestion,
-        ),
       ],
     );
   }
@@ -330,29 +261,17 @@ class _ReportHeader extends StatelessWidget {
       label: 'IELTS 口语模考报告摘要',
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: SpeakUpDesign.primaryMuted,
+          color: SpeakUpDesign.surfaceMuted,
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+          border: Border.all(color: SpeakUpDesign.border),
         ),
         child: Padding(
           padding: const EdgeInsets.all(SpeakUpDesign.space20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'IELTS Speaking',
-                style: SpeakUpDesign.pageTitle.copyWith(
-                  color: SpeakUpDesign.primary,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-              Text(
-                'Test Report',
-                style: SpeakUpDesign.pageTitle.copyWith(
-                  color: const Color(0xFF2A6D7E),
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-              const SizedBox(height: SpeakUpDesign.space20),
+              const Text('本次模考', style: SpeakUpDesign.cardTitle),
+              const SizedBox(height: SpeakUpDesign.space12),
               _SummaryLine(label: 'Part 1', value: summary.part1Topic),
               const SizedBox(height: SpeakUpDesign.space8),
               _SummaryLine(label: 'Part 2&3', value: summary.part2Topic),
@@ -430,51 +349,37 @@ class _OverallScore extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final band = report.speakingOverallBand;
-    return Container(
+    return Card(
       key: Key(
         band == null
             ? 'ielts-speaking-overall-unavailable'
             : 'ielts-speaking-overall-available',
-      ),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [SpeakUpDesign.primary, Color(0xFF2A6D7E)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
       ),
       child: Padding(
         padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '口语总分',
-              style: SpeakUpDesign.cardTitle.copyWith(color: Colors.white),
-            ),
-            const SizedBox(height: SpeakUpDesign.space8),
-            Text(
-              band == null ? '暂不可用' : _bandLabel(band),
-              style: SpeakUpDesign.pageTitle.copyWith(
-                color: Colors.white,
-                fontSize: band == null ? 26 : 48,
-              ),
-            ),
-            const SizedBox(height: SpeakUpDesign.space12),
-            Container(
-              padding: const EdgeInsets.all(SpeakUpDesign.space16),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.94),
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Text('口语总分', style: SpeakUpDesign.cardTitle),
+                const SizedBox(width: SpeakUpDesign.space8),
+                Text(
+                  band == null ? '暂不可用' : _bandLabel(band),
+                  style: SpeakUpDesign.pageTitle.copyWith(
+                    color: SpeakUpDesign.ink,
+                    fontSize: band == null ? 24 : 42,
+                  ),
                 ),
-              ),
-              child: Text(
-                report.speakingOverallExplanation,
-                style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
-              ),
+                const Spacer(),
+                Text('0–9 分练习估分', style: SpeakUpDesign.meta),
+              ],
             ),
+            const SizedBox(height: SpeakUpDesign.space16),
+            const Divider(height: 1),
+            const SizedBox(height: SpeakUpDesign.space16),
+            Text(report.speakingOverallExplanation, style: SpeakUpDesign.body),
           ],
         ),
       ),
@@ -650,7 +555,7 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
   const IeltsSpeakingScoreRadar({
     required this.criteria,
     this.semanticsKey = const Key('ielts-speaking-score-radar'),
-    this.height = 300,
+    this.height = 320,
     this.profileMode = false,
     super.key,
   });
@@ -670,18 +575,61 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
       byId[IeltsSpeakingCriterionId.lexicalResource],
     ];
     final values = ordered
-        .map((item) => (item?.estimatedBand ?? 0).toDouble())
+        .map((item) => item?.estimatedBand?.toDouble())
         .toList(growable: false);
-    final semanticLabel = ordered
-        .whereType<IeltsSpeakingCriterion>()
+    return FourAxisScoreRadar(
+      axes: <FourAxisRadarAxis>[
+        FourAxisRadarAxis(label: '流利与连贯', value: values[0]),
+        FourAxisRadarAxis(label: '发音', value: values[1]),
+        FourAxisRadarAxis(label: '语法', value: values[2]),
+        FourAxisRadarAxis(label: '词汇', value: values[3]),
+      ],
+      maximum: 9,
+      semanticsKey: semanticsKey,
+      semanticsPrefix: 'IELTS 口语四维雷达图',
+      height: height,
+      emphasized: profileMode,
+    );
+  }
+}
+
+final class FourAxisRadarAxis {
+  const FourAxisRadarAxis({required this.label, required this.value});
+
+  final String label;
+  final double? value;
+}
+
+class FourAxisScoreRadar extends StatelessWidget {
+  const FourAxisScoreRadar({
+    required this.axes,
+    required this.maximum,
+    required this.semanticsKey,
+    required this.semanticsPrefix,
+    this.height = 300,
+    this.emphasized = false,
+    super.key,
+  }) : assert(axes.length == 4),
+       assert(maximum > 0);
+
+  final List<FourAxisRadarAxis> axes;
+  final double maximum;
+  final Key semanticsKey;
+  final String semanticsPrefix;
+  final double height;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final semanticLabel = axes
         .map(
-          (item) =>
-              '${_criterionChineseLabel(item.id)} ${item.estimatedBand ?? '未评分'}分',
+          (axis) =>
+              '${axis.label} ${axis.value == null ? '未评分' : _radarScoreLabel(axis.value!)}分',
         )
         .join('，');
     return Semantics(
       key: semanticsKey,
-      label: 'IELTS 口语四维雷达图，$semanticLabel',
+      label: '$semanticsPrefix，$semanticLabel',
       child: SizedBox(
         height: height,
         child: Stack(
@@ -689,113 +637,87 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
           children: [
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.all(48),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 72,
+                  vertical: 56,
+                ),
                 child: CustomPaint(
-                  painter: _RadarPainter(values, emphasized: profileMode),
+                  painter: _FourAxisRadarPainter(
+                    axes.map((axis) => axis.value).toList(growable: false),
+                    maximum: maximum,
+                    emphasized: emphasized,
+                  ),
                 ),
               ),
             ),
-            _radarLabel(
-              alignment: Alignment.topCenter,
-              label: '流利与连贯',
-              score: ordered[0]?.estimatedBand,
-            ),
-            _radarLabel(
+            _FourAxisRadarLabel(alignment: Alignment.topCenter, axis: axes[0]),
+            _FourAxisRadarLabel(
               alignment: Alignment.centerRight,
-              label: '发音',
-              score: ordered[1]?.estimatedBand,
+              axis: axes[1],
             ),
-            _radarLabel(
+            _FourAxisRadarLabel(
               alignment: Alignment.bottomCenter,
-              label: '语法',
-              score: ordered[2]?.estimatedBand,
+              axis: axes[2],
             ),
-            _radarLabel(
-              alignment: Alignment.centerLeft,
-              label: '词汇',
-              score: ordered[3]?.estimatedBand,
-            ),
+            _FourAxisRadarLabel(alignment: Alignment.centerLeft, axis: axes[3]),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _radarLabel({
-    required Alignment alignment,
-    required String label,
-    required int? score,
-  }) {
-    if (!profileMode) {
-      return _RadarLabel(alignment: alignment, label: label, score: score);
-    }
-    return _AbilityRadarLabel(alignment: alignment, label: label, score: score);
+class _FourAxisRadarLabel extends StatelessWidget {
+  const _FourAxisRadarLabel({required this.alignment, required this.axis});
+
+  final Alignment alignment;
+  final FourAxisRadarAxis axis;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = Text(
+      axis.value == null ? '--' : _radarScoreLabel(axis.value!),
+      style: SpeakUpDesign.cardTitle.copyWith(
+        color: const Color(0xFF3679F5),
+        fontSize: 22,
+        height: 1,
+      ),
+    );
+    final label = Text(
+      axis.label,
+      maxLines: 1,
+      textAlign: TextAlign.center,
+      style: SpeakUpDesign.label.copyWith(
+        color: SpeakUpDesign.ink,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    return Align(
+      alignment: alignment,
+      child: SizedBox(
+        width: 92,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [label, const SizedBox(height: 7), score],
+        ),
+      ),
+    );
   }
 }
 
-class _RadarLabel extends StatelessWidget {
-  const _RadarLabel({required this.alignment, required this.label, this.score});
+String _radarScoreLabel(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value.toStringAsFixed(1);
 
-  final Alignment alignment;
-  final String label;
-  final int? score;
-
-  @override
-  Widget build(BuildContext context) => Align(
-    alignment: alignment,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label, style: SpeakUpDesign.label),
-        Text(
-          score?.toString() ?? '--',
-          style: SpeakUpDesign.cardTitle.copyWith(color: SpeakUpDesign.primary),
-        ),
-      ],
-    ),
-  );
-}
-
-class _AbilityRadarLabel extends StatelessWidget {
-  const _AbilityRadarLabel({
-    required this.alignment,
-    required this.label,
-    this.score,
+class _FourAxisRadarPainter extends CustomPainter {
+  const _FourAxisRadarPainter(
+    this.values, {
+    required this.maximum,
+    this.emphasized = false,
   });
 
-  final Alignment alignment;
-  final String label;
-  final int? score;
-
-  @override
-  Widget build(BuildContext context) => Align(
-    alignment: alignment,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          maxLines: 1,
-          style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.secondary),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          score == null ? '--' : '${score!}.0',
-          style: SpeakUpDesign.cardTitle.copyWith(
-            color: SpeakUpDesign.ink,
-            fontSize: 20,
-            height: 1.1,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _RadarPainter extends CustomPainter {
-  const _RadarPainter(this.values, {this.emphasized = false});
-
-  final List<double> values;
+  final List<double?> values;
+  final double maximum;
   final bool emphasized;
 
   @override
@@ -803,53 +725,72 @@ class _RadarPainter extends CustomPainter {
     final center = size.center(Offset.zero);
     final radius = math.min(size.width, size.height) / 2;
     final grid = Paint()
-      ..color = SpeakUpDesign.border
+      ..color = const Color(0xFFDCE3F1)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    for (final level in [1 / 3, 2 / 3, 1.0]) {
-      canvas.drawPath(
-        _polygon(center, radius * level, const [1, 1, 1, 1]),
-        grid,
+      ..strokeWidth = 1.1;
+    final levels = <double>[1, 0.75, 0.5, 0.25];
+    for (final level in levels) {
+      final path = _polygon(center, radius, List<double>.filled(4, level));
+      canvas.drawPath(path, grid);
+    }
+    final outerPoints = _points(center, radius, const [1, 1, 1, 1]);
+    for (final point in outerPoints) {
+      canvas.drawLine(center, point, grid);
+      canvas.drawCircle(
+        point,
+        3,
+        Paint()
+          ..color = const Color(0xFFB8C5DC)
+          ..style = PaintingStyle.fill,
       );
     }
-    for (final point in _points(center, radius, const [1, 1, 1, 1])) {
-      canvas.drawLine(center, point, grid);
-    }
     final normalized = values
-        .map((value) => (value / 9).clamp(0.0, 1.0))
-        .toList();
-    final dataPath = _polygon(center, radius, normalized);
-    canvas.drawPath(
-      dataPath,
-      Paint()
-        ..color = (emphasized ? _abilityBlue : SpeakUpDesign.primary)
-            .withValues(alpha: emphasized ? 0.12 : 0.2)
-        ..style = PaintingStyle.fill,
-    );
-    canvas.drawPath(
-      dataPath,
-      Paint()
-        ..color = emphasized ? _abilityBlue : SpeakUpDesign.primary
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = emphasized ? 2.4 : 2.5,
-    );
-    if (emphasized) {
-      for (final point in _points(center, radius, normalized)) {
-        canvas.drawCircle(
-          point,
-          4.5,
-          Paint()
-            ..color = SpeakUpDesign.surface
-            ..style = PaintingStyle.fill,
-        );
-        canvas.drawCircle(
-          point,
-          2.8,
-          Paint()
-            ..color = _abilityBlue
-            ..style = PaintingStyle.fill,
-        );
+        .map(
+          (value) => value == null ? null : (value / maximum).clamp(0.0, 1.0),
+        )
+        .toList(growable: false);
+    if (normalized.every((value) => value != null)) {
+      final dataPath = _polygon(
+        center,
+        radius,
+        normalized.whereType<double>().toList(growable: false),
+      );
+      canvas.drawPath(
+        dataPath,
+        Paint()
+          ..color = const Color(
+            0xFF3679F5,
+          ).withValues(alpha: emphasized ? 0.18 : 0.14)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawPath(
+        dataPath,
+        Paint()
+          ..color = const Color(0xFF3679F5)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = emphasized ? 2.8 : 2.4,
+      );
+    }
+    for (var index = 0; index < normalized.length; index++) {
+      final scale = normalized[index];
+      if (scale == null) {
+        continue;
       }
+      final point = _point(center, radius, index, scale);
+      canvas.drawCircle(
+        point,
+        emphasized ? 4.5 : 4,
+        Paint()
+          ..color = SpeakUpDesign.surface
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        point,
+        emphasized ? 3.2 : 2.8,
+        Paint()
+          ..color = const Color(0xFF3679F5)
+          ..style = PaintingStyle.fill,
+      );
     }
   }
 
@@ -861,15 +802,26 @@ class _RadarPainter extends CustomPainter {
   }
 
   List<Offset> _points(Offset center, double radius, List<num> scales) => [
-    Offset(center.dx, center.dy - radius * scales[0]),
-    Offset(center.dx + radius * scales[1], center.dy),
-    Offset(center.dx, center.dy + radius * scales[2]),
-    Offset(center.dx - radius * scales[3], center.dy),
+    for (var index = 0; index < scales.length; index++)
+      _point(center, radius, index, scales[index]),
   ];
 
+  Offset _point(Offset center, double radius, int index, num scale) {
+    if (index < 0 || index > 3) {
+      throw ArgumentError.value(index, 'index');
+    }
+    final angle = -math.pi / 2 + (math.pi / 2 * index);
+    return Offset(
+      center.dx + math.cos(angle) * radius * scale,
+      center.dy + math.sin(angle) * radius * scale,
+    );
+  }
+
   @override
-  bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
-      oldDelegate.values != values || oldDelegate.emphasized != emphasized;
+  bool shouldRepaint(covariant _FourAxisRadarPainter oldDelegate) =>
+      oldDelegate.values != values ||
+      oldDelegate.maximum != maximum ||
+      oldDelegate.emphasized != emphasized;
 }
 
 class _EvidenceStandard extends StatelessWidget {
@@ -1047,178 +999,6 @@ class _CriterionFeedback extends StatelessWidget {
   }
 }
 
-class _IeltsPartReport extends StatelessWidget {
-  const _IeltsPartReport({
-    required this.report,
-    required this.partId,
-    this.onRepracticeQuestion,
-  });
-
-  final IeltsSpeakingReport report;
-  final IeltsSpeakingPartId partId;
-  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
-  onRepracticeQuestion;
-
-  @override
-  Widget build(BuildContext context) {
-    final part = report.partReviews.firstWhere((item) => item.id == partId);
-    final questions = report.questions
-        .where((question) => question.partId == partId)
-        .toList(growable: false);
-    final findings = <({String label, String id})>[
-      for (final id in part.strengthFindingIds) (label: '做得好', id: id),
-      for (final id in part.improvementFindingIds) (label: '可改进', id: id),
-      for (final id in part.upgradeExampleFindingIds) (label: '提升表达', id: id),
-    ];
-    return Column(
-      key: Key('ielts-speaking-report-${partId.name}'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(SpeakUpDesign.space20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      '${_partLabel(partId)} 复盘',
-                      style: SpeakUpDesign.sectionTitle,
-                    ),
-                    const Spacer(),
-                    Text('${questions.length} 题', style: SpeakUpDesign.meta),
-                  ],
-                ),
-                if (findings.isEmpty) ...[
-                  const SizedBox(height: SpeakUpDesign.space12),
-                  Text('本部分暂无可用的分段反馈。', style: SpeakUpDesign.meta),
-                ],
-                for (final item in findings) ...[
-                  const SizedBox(height: SpeakUpDesign.space16),
-                  Text(item.label, style: SpeakUpDesign.label),
-                  const SizedBox(height: SpeakUpDesign.space4),
-                  Text(
-                    report.finding(item.id)!.message,
-                    style: SpeakUpDesign.body,
-                  ),
-                  if (report.finding(item.id)!.suggestion
-                      case final suggestion?) ...[
-                    const SizedBox(height: SpeakUpDesign.space4),
-                    Text('建议：$suggestion', style: SpeakUpDesign.meta),
-                  ],
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: SpeakUpDesign.space12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(SpeakUpDesign.space20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('本段题目', style: SpeakUpDesign.cardTitle),
-                const SizedBox(height: SpeakUpDesign.space12),
-                for (var index = 0; index < questions.length; index++) ...[
-                  if (index > 0) ...[
-                    const SizedBox(height: SpeakUpDesign.space12),
-                    const Divider(height: 1),
-                    const SizedBox(height: SpeakUpDesign.space12),
-                  ],
-                  _RepracticeQuestion(
-                    question: questions[index],
-                    onPressed: onRepracticeQuestion == null
-                        ? null
-                        : () => onRepracticeQuestion!(questions[index]),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _QuestionReviews extends StatelessWidget {
-  const _QuestionReviews({required this.report, this.onRepracticeQuestion});
-
-  final IeltsSpeakingReport report;
-  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
-  onRepracticeQuestion;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      key: const Key('ielts-speaking-report-questions'),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('同题复练', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 6),
-            Text(
-              '本次问到的 ${report.questions.length} 道题，可直接选择原题重新作答。',
-              style: SpeakUpDesign.meta,
-            ),
-            const SizedBox(height: 14),
-            for (var index = 0; index < report.questions.length; index++) ...[
-              if (index > 0) ...[
-                const SizedBox(height: 14),
-                const Divider(height: 1),
-                const SizedBox(height: 14),
-              ],
-              _RepracticeQuestion(
-                question: report.questions[index],
-                onPressed: onRepracticeQuestion == null
-                    ? null
-                    : () => onRepracticeQuestion!(report.questions[index]),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RepracticeQuestion extends StatelessWidget {
-  const _RepracticeQuestion({required this.question, this.onPressed});
-
-  final IeltsSpeakingQuestionReview question;
-  final Future<bool> Function()? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: Key('ielts-speaking-question-${question.index}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${_partLabel(question.partId)} · 第 ${question.index} 题',
-          style: SpeakUpDesign.meta,
-        ),
-        const SizedBox(height: 4),
-        Text(question.questionText, style: SpeakUpDesign.label),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            key: Key('ielts-speaking-repractice-${question.index}'),
-            onPressed: onPressed,
-            icon: const Icon(Icons.mic_none_rounded, size: 18),
-            label: const Text('直接重练'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _TargetPlan extends StatelessWidget {
   const _TargetPlan({required this.report});
 
@@ -1294,15 +1074,7 @@ String _criterionEnglishLabel(IeltsSpeakingCriterionId criterion) =>
       IeltsSpeakingCriterionId.pronunciation => 'Pronunciation',
     };
 
-Color _criterionColor(IeltsSpeakingCriterionId criterion) =>
-    switch (criterion) {
-      IeltsSpeakingCriterionId.fluencyAndCoherence => const Color(0xFF7651C8),
-      IeltsSpeakingCriterionId.lexicalResource => const Color(0xFFDA633B),
-      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => const Color(
-        0xFF3E8A5B,
-      ),
-      IeltsSpeakingCriterionId.pronunciation => const Color(0xFF3478C8),
-    };
+Color _criterionColor(IeltsSpeakingCriterionId _) => SpeakUpDesign.ink;
 
 IconData _criterionIcon(IeltsSpeakingCriterionId criterion) =>
     switch (criterion) {
@@ -1324,9 +1096,3 @@ String _durationLabel(int durationMs) {
 String _bandLabel(double band) => band == band.roundToDouble()
     ? band.toInt().toString()
     : band.toStringAsFixed(1);
-
-String _partLabel(IeltsSpeakingPartId part) => switch (part) {
-  IeltsSpeakingPartId.part1 => 'Part 1',
-  IeltsSpeakingPartId.part2 => 'Part 2',
-  IeltsSpeakingPartId.part3 => 'Part 3',
-};

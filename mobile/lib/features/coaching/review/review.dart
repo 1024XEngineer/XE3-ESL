@@ -714,19 +714,20 @@ class ReviewReportDetailPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final report = item.report;
     final sectionDetail = _decodeSectionDetail(report);
+    final isIeltsSectionReport = _isIeltsSectionReport(report);
     final expectsSectionDetail =
         report.sceneType == EvaluationReportSceneType.ieltsSpeaking &&
         report.detailSchema == _ieltsSpeakingPracticeReportSchema;
     final findings = report.dimensions
         .expand((dimension) => dimension.improvements)
         .toList(growable: false);
+    final priorityFeedback = _ieltsPriorityFeedback(report);
     return Scaffold(
       key: const Key('review-detail-page'),
       appBar: AppBar(
         title: Text(
-          _isIeltsSectionReport(report)
-              ? evaluationReportTitle(report)
-              : '复盘详情',
+          isIeltsSectionReport ? evaluationReportTitle(report) : '复盘详情',
+          key: isIeltsSectionReport ? const Key('review-detail-title') : null,
         ),
         leading: IconButton(
           key: const Key('review-detail-back'),
@@ -741,9 +742,7 @@ class ReviewReportDetailPage extends StatelessWidget {
           key: const Key('review-detail-content'),
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
           children: [
-            if (sectionDetail != null)
-              _IeltsSectionDetailHeader(item: item)
-            else ...[
+            if (!isIeltsSectionReport) ...[
               _ReviewDetailHeader(item: item),
               const SizedBox(height: 12),
               _ReviewDetailSection(
@@ -757,6 +756,14 @@ class ReviewReportDetailPage extends StatelessWidget {
               const SizedBox(height: 12),
               const _ReviewStatusNotice(),
             ],
+            if (isIeltsSectionReport && report.dimensions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _IeltsSectionPerformance(dimensions: report.dimensions),
+            ],
+            if (isIeltsSectionReport && priorityFeedback != null) ...[
+              const SizedBox(height: 12),
+              _IeltsPriorityFocus(feedback: priorityFeedback),
+            ],
             if (sectionDetail != null) ...[
               const SizedBox(height: 12),
               _IeltsSectionReport(report: report, detail: sectionDetail),
@@ -768,11 +775,16 @@ class ReviewReportDetailPage extends StatelessWidget {
                 body: '专项报告的分段数据无法识别，下方仍保留本次练习的通用反馈。',
               ),
             ],
-            if (report.dimensions.isNotEmpty) ...[
+            if (!isIeltsSectionReport && report.dimensions.isNotEmpty) ...[
               const SizedBox(height: 12),
               _ReviewDimensions(dimensions: report.dimensions),
             ],
-            if (findings.isNotEmpty) ...[
+            if (isIeltsSectionReport &&
+                sectionDetail == null &&
+                findings.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _IeltsDetailedFeedback(findings: findings),
+            ] else if (!isIeltsSectionReport && findings.isNotEmpty) ...[
               const SizedBox(height: 12),
               _ReviewFindings(report: report, findings: findings),
             ],
@@ -820,36 +832,120 @@ class _ReviewDetailHeader extends StatelessWidget {
   }
 }
 
-class _IeltsSectionDetailHeader extends StatelessWidget {
-  const _IeltsSectionDetailHeader({required this.item});
+class _IeltsSectionPerformance extends StatelessWidget {
+  const _IeltsSectionPerformance({required this.dimensions});
 
-  final ReviewHistoryItem item;
+  final List<EvaluationReportDimension> dimensions;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      key: const Key('review-detail-summary'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
+    final usesPracticeScale = dimensions.every(
+      (dimension) =>
+          dimension.scale == EvaluationReportScoreScale.percentage100,
+    );
+    final byKey = {
+      for (final dimension in dimensions) dimension.key: dimension,
+    };
+    final ordered = <EvaluationReportDimension?>[
+      byKey['TASK_ACHIEVEMENT'],
+      byKey['CLARITY_COHERENCE'],
+      byKey['LANGUAGE_CONTROL'],
+      byKey['INTERACTION'],
+    ];
+    return Card(
+      key: const Key('review-detail-dimensions'),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _StatusLabel(label: _statusLabel(item.report)),
-            Text(_detailDateLabel(item.completedAt), style: SpeakUpDesign.meta),
+            Text('口语能力', style: SpeakUpDesign.sectionTitle),
+            const SizedBox(height: SpeakUpDesign.space20),
+            FourAxisScoreRadar(
+              axes: <FourAxisRadarAxis>[
+                FourAxisRadarAxis(label: '任务达成', value: ordered[0]?.score),
+                FourAxisRadarAxis(label: '清晰与连贯', value: ordered[1]?.score),
+                FourAxisRadarAxis(label: '语言运用', value: ordered[2]?.score),
+                FourAxisRadarAxis(label: '互动表现', value: ordered[3]?.score),
+              ],
+              maximum: usesPracticeScale ? 100 : 9,
+              semanticsKey: const Key('review-section-score-radar'),
+              semanticsPrefix: '专项练习四维雷达图',
+            ),
           ],
         ),
-        const SizedBox(height: 14),
-        Text(
-          item.review.title,
-          key: const Key('review-detail-title'),
-          style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
-        ),
-        const SizedBox(height: 10),
-        Text(item.report.summary, style: SpeakUpDesign.body),
-        const SizedBox(height: 18),
-        const Divider(height: 1),
-      ],
+      ),
+    );
+  }
+}
+
+typedef _IeltsPriorityFeedback = ({
+  String dimensionKey,
+  EvaluationReportFinding finding,
+});
+
+_IeltsPriorityFeedback? _ieltsPriorityFeedback(EvaluationReport report) {
+  for (final action in report.priorityActions) {
+    for (final dimension in report.dimensions) {
+      if (dimension.key != action.dimensionKey) continue;
+      for (final finding in <EvaluationReportFinding>[
+        ...dimension.improvements,
+        ...dimension.recommendedExamples,
+      ]) {
+        if (finding.id == action.findingId) {
+          return (dimensionKey: dimension.key, finding: finding);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+class _IeltsPriorityFocus extends StatelessWidget {
+  const _IeltsPriorityFocus({required this.feedback});
+
+  final _IeltsPriorityFeedback feedback;
+
+  @override
+  Widget build(BuildContext context) {
+    final finding = feedback.finding;
+    final suggestion = finding.suggestion;
+    final evidence = finding.evidence.firstOrNull?.originalExcerpt;
+    return Container(
+      key: const Key('review-detail-priority-focus'),
+      padding: const EdgeInsets.all(SpeakUpDesign.space20),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('下一步先练这个', style: SpeakUpDesign.cardTitle),
+          const SizedBox(height: SpeakUpDesign.space16),
+          Text(
+            _dimensionLabel(feedback.dimensionKey),
+            style: SpeakUpDesign.label.copyWith(color: SpeakUpDesign.secondary),
+          ),
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text(
+            finding.message,
+            style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+          ),
+          if (suggestion != null && suggestion != finding.message) ...[
+            const SizedBox(height: SpeakUpDesign.space16),
+            Text('下次这样说', style: SpeakUpDesign.label),
+            const SizedBox(height: SpeakUpDesign.space4),
+            Text(suggestion, style: SpeakUpDesign.body),
+          ],
+          if (evidence != null) ...[
+            const SizedBox(height: SpeakUpDesign.space16),
+            Text('本次回答', style: SpeakUpDesign.label),
+            const SizedBox(height: SpeakUpDesign.space4),
+            Text('“$evidence”', style: SpeakUpDesign.body),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -972,28 +1068,93 @@ class _IeltsSectionReport extends StatelessWidget {
         for (final finding in dimension.recommendedExamples)
           finding.id: finding,
     };
-    return Column(
+    return Card(
       key: const Key('ielts-section-report'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('分段复盘', style: SpeakUpDesign.sectionTitle),
-        const SizedBox(height: 6),
-        for (var index = 0; index < detail.sectionReviews.length; index++) ...[
-          if (index > 0) const Divider(height: 33),
-          _IeltsSectionCard(
-            section: detail.sectionReviews[index],
-            questions: detail.questions
-                .where(
-                  (question) =>
-                      question.partId == detail.sectionReviews[index].partId,
-                )
-                .toList(growable: false),
-            strengths: strengths,
-            improvements: improvements,
-            examples: examples,
-          ),
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(
+          horizontal: SpeakUpDesign.space20,
+          vertical: SpeakUpDesign.space4,
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          SpeakUpDesign.space20,
+          0,
+          SpeakUpDesign.space20,
+          SpeakUpDesign.space20,
+        ),
+        title: Text('详细反馈', style: SpeakUpDesign.cardTitle),
+        subtitle: Text('评分依据与本次回答', style: SpeakUpDesign.meta),
+        children: [
+          for (
+            var index = 0;
+            index < detail.sectionReviews.length;
+            index++
+          ) ...[
+            if (index > 0) const Divider(height: 33),
+            _IeltsSectionCard(
+              section: detail.sectionReviews[index],
+              questions: detail.questions
+                  .where(
+                    (question) =>
+                        question.partId == detail.sectionReviews[index].partId,
+                  )
+                  .toList(growable: false),
+              strengths: strengths,
+              improvements: improvements,
+              examples: examples,
+            ),
+          ],
         ],
-      ],
+      ),
+    );
+  }
+}
+
+class _IeltsDetailedFeedback extends StatelessWidget {
+  const _IeltsDetailedFeedback({required this.findings});
+
+  final List<EvaluationReportFinding> findings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('review-detail-feedback'),
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(
+          horizontal: SpeakUpDesign.space20,
+          vertical: SpeakUpDesign.space4,
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          SpeakUpDesign.space20,
+          0,
+          SpeakUpDesign.space20,
+          SpeakUpDesign.space20,
+        ),
+        title: Text('详细反馈', style: SpeakUpDesign.cardTitle),
+        subtitle: Text(
+          '查看全部 ${findings.length} 条建议',
+          style: SpeakUpDesign.meta,
+        ),
+        children: [
+          for (var index = 0; index < findings.length; index++) ...[
+            if (index > 0) const Divider(height: SpeakUpDesign.space24),
+            Column(
+              key: Key('review-feedback-${findings[index].id}'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(findings[index].message, style: SpeakUpDesign.body),
+                if (findings[index].suggestion case final suggestion?) ...[
+                  if (suggestion != findings[index].message) ...[
+                    const SizedBox(height: SpeakUpDesign.space8),
+                    Text('建议：$suggestion', style: SpeakUpDesign.body),
+                  ],
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1267,13 +1428,15 @@ String _statusLabel(EvaluationReport report) =>
     : '已完成';
 
 String _scoreLabel(double value, EvaluationReportScoreScale scale) {
-  final formatted = value == value.roundToDouble()
-      ? value.toInt().toString()
-      : value.toStringAsFixed(1);
+  final formatted = _scoreValueLabel(value);
   return scale == EvaluationReportScoreScale.ieltsBand
       ? '$formatted / 9'
       : '$formatted / 100';
 }
+
+String _scoreValueLabel(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value.toStringAsFixed(1);
 
 String _dimensionLabel(String key) {
   return const <String, String>{
