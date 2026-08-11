@@ -393,6 +393,14 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 		wantRetryable bool
 	}{
 		{
+			code:   "provider_invalid_json",
+			reason: ReasonPolicyViolation,
+		},
+		{
+			code:   "provider_schema_mismatch",
+			reason: ReasonPolicyViolation,
+		},
+		{
 			code:   "provider_invalid_response",
 			reason: ReasonPolicyViolation,
 		},

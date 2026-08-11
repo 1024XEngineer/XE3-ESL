@@ -191,6 +191,7 @@ func setBootstrapTextGenerationEnvironment(t *testing.T, apiKey string) {
 		"https://dashscope.aliyuncs.com/compatible-mode/v1",
 	)
 	t.Setenv("QIANWEN_MODEL", "qwen3.5-flash")
+	t.Setenv("QIANWEN_EVALUATION_MODEL", "qwen-plus")
 	t.Setenv("QIANWEN_SPEECH_FEEDBACK_MODEL", "qwen3.5-flash")
 	t.Setenv("QIANWEN_TIMEOUT", "")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
@@ -203,6 +204,7 @@ func setBootstrapQiniuTextGenerationEnvironment(t *testing.T, apiKey string) {
 	t.Setenv("TEXT_GENERATION_PROVIDER", config.TextProviderQiniu)
 	t.Setenv("QINIU_AI_BASE_URL", "https://api.qnaigc.com/v1")
 	t.Setenv("QINIU_AI_MODEL", "moonshotai/kimi-k2.6")
+	t.Setenv("QINIU_AI_EVALUATION_MODEL", "qwen3-30b-a3b-instruct-2507")
 	t.Setenv("QINIU_AI_SPEECH_FEEDBACK_MODEL", "gemini-2.5-flash")
 	t.Setenv("QINIU_AI_TIMEOUT", "")
 	t.Setenv("QINIU_AI_MAX_OUTPUT_TOKENS", "")

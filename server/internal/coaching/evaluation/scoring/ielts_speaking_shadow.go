@@ -40,6 +40,16 @@ var ErrInvalidIELTSSpeakingShadow = errors.New(
 	"evaluation: invalid IELTS Speaking shadow",
 )
 
+var errIELTSSpeakingProviderInvalidJSON = fmt.Errorf(
+	"evaluation: IELTS Speaking provider returned invalid JSON: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
+var errIELTSSpeakingProviderSchemaMismatch = fmt.Errorf(
+	"evaluation: IELTS Speaking provider response schema mismatch: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
 var ErrIELTSSpeakingAcousticsPending = errors.New(
 	"evaluation: IELTS Speaking acoustics pending",
 )
@@ -925,6 +935,12 @@ func normalizeIELTSSpeakingProviderResult(
 		)
 	}
 	var payload ieltsProviderPayload
+	if !json.Valid(generated.Payload) {
+		return IELTSSpeakingShadowResult{}, fmt.Errorf(
+			"provider JSON: %w",
+			errIELTSSpeakingProviderInvalidJSON,
+		)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(generated.Payload))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil ||
@@ -934,7 +950,7 @@ func normalizeIELTSSpeakingProviderResult(
 		len(payload.Criteria) != len(prepared.input.AssessableCriteria) {
 		return IELTSSpeakingShadowResult{}, fmt.Errorf(
 			"provider JSON shape: %w",
-			ErrInvalidIELTSSpeakingShadow,
+			errIELTSSpeakingProviderSchemaMismatch,
 		)
 	}
 	byCriterion := make(
@@ -946,12 +962,14 @@ func normalizeIELTSSpeakingProviderResult(
 		if criterion.CriterionID != expected {
 			return IELTSSpeakingShadowResult{}, fmt.Errorf(
 				"provider criterion order: %w",
-				ErrInvalidIELTSSpeakingShadow,
+				errIELTSSpeakingProviderSchemaMismatch,
 			)
 		}
 		if _, duplicate := byCriterion[criterion.CriterionID]; duplicate {
-			return IELTSSpeakingShadowResult{},
-				ErrInvalidIELTSSpeakingShadow
+			return IELTSSpeakingShadowResult{}, fmt.Errorf(
+				"provider duplicate criterion: %w",
+				errIELTSSpeakingProviderSchemaMismatch,
+			)
 		}
 		byCriterion[criterion.CriterionID] = criterion
 	}
