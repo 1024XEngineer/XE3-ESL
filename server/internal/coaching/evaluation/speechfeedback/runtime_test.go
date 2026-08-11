@@ -42,7 +42,7 @@ func TestNewWorkerConfigurationAcceptsMaximumProviderBudget(t *testing.T) {
 	_, err := NewWorkerConfiguration(
 		"qianwen",
 		"qwen-plus",
-		11*time.Minute,
+		11*time.Minute+30*time.Second,
 	)
 	if err != nil {
 		t.Fatalf("NewWorkerConfiguration: %v", err)

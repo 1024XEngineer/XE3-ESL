@@ -11,9 +11,9 @@ import (
 
 const maxSpeechFeedbackSweepLimit = 20
 
-// The lease holds two five-minute provider calls plus persistence and lease
-// margins.
-const maxSpeechFeedbackLeaseDuration = 11 * time.Minute
+// The lease holds a thirty-second audio read, two five-minute provider calls,
+// and persistence and lease margins.
+const maxSpeechFeedbackLeaseDuration = 11*time.Minute + 30*time.Second
 
 type SpeechFeedbackWorkerConfiguration struct {
 	MaxAttempts     int
@@ -219,10 +219,20 @@ func (worker *SpeechFeedbackWorker) processClaim(
 		claim.AttemptCount > worker.configuration.MaxAttempts {
 		return "", false, ErrInvalidSpeechFeedback
 	}
+	persistenceDeadline := claim.LeaseExpiresAt
+	if processingDeadline, ok := ctx.Deadline(); ok &&
+		processingDeadline.Before(persistenceDeadline) {
+		persistenceDeadline = processingDeadline
+	}
+	persistenceCtx, cancelPersistence := context.WithDeadline(
+		context.WithoutCancel(ctx),
+		persistenceDeadline,
+	)
+	defer cancelPersistence()
 	if !claim.SourceConsistent {
 		_, err := worker.repository.
 			CompleteSpeechFeedbackInsufficient(
-				ctx,
+				persistenceCtx,
 				claim,
 				[]SpeechFeedbackReasonCode{
 					SpeechFeedbackReasonEvidenceInconsistent,
@@ -249,7 +259,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 		if acousticErr == nil {
 			if err := worker.acousticRepository.
 				SaveSpeechFeedbackAcousticEvidence(
-					context.WithoutCancel(ctx),
+					persistenceCtx,
 					claim,
 					evidence,
 				); err != nil {
@@ -274,7 +284,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 	if !speechFeedbackTextHasEnoughEvidence(claim.CanonicalText) {
 		_, err := worker.repository.
 			CompleteSpeechFeedbackInsufficient(
-				ctx,
+				persistenceCtx,
 				claim,
 				[]SpeechFeedbackReasonCode{
 					SpeechFeedbackReasonTextTooShort,
@@ -293,7 +303,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 	generated, err := worker.provider.GenerateSpeechFeedback(ctx, input)
 	if err != nil {
 		status, failureErr := worker.repository.FailSpeechFeedback(
-			context.WithoutCancel(ctx),
+			persistenceCtx,
 			claim,
 			classifySpeechFeedbackFailure(err),
 			worker.configuration,
@@ -303,7 +313,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 	if generated.Provider != worker.configuration.Provider ||
 		generated.Model != worker.configuration.Model {
 		status, failureErr := worker.repository.FailSpeechFeedback(
-			context.WithoutCancel(ctx),
+			persistenceCtx,
 			claim,
 			SpeechFeedbackStableFailure{
 				ReasonCode: SpeechFeedbackFailureProviderResponseInvalid,
@@ -316,7 +326,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 	items, err := normalizeSpeechFeedbackProviderResult(input, generated)
 	if err != nil {
 		status, failureErr := worker.repository.FailSpeechFeedback(
-			context.WithoutCancel(ctx),
+			persistenceCtx,
 			claim,
 			SpeechFeedbackStableFailure{
 				ReasonCode: SpeechFeedbackFailureProviderResponseInvalid,
@@ -327,7 +337,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 		return status, false, failureErr
 	}
 	if _, err := worker.repository.CompleteSpeechFeedback(
-		context.WithoutCancel(ctx),
+		persistenceCtx,
 		claim,
 		items,
 	); err != nil {

@@ -35,10 +35,12 @@ type speechFeedbackWorker struct {
 }
 
 func deriveSpeechFeedbackExecutionBudget(
-	acousticProviderTimeout time.Duration,
+	audioReadTimeout time.Duration,
+	iseProviderTimeout time.Duration,
 	textProviderTimeout time.Duration,
 ) speechFeedbackExecutionBudget {
-	processingTimeout := acousticProviderTimeout +
+	processingTimeout := audioReadTimeout +
+		iseProviderTimeout +
 		textProviderTimeout +
 		speechFeedbackPersistenceTimeMargin
 	return speechFeedbackExecutionBudget{

@@ -106,6 +106,43 @@ func TestSpeechFeedbackWorkerKeepsChineseTextInsufficient(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackWorkerStopsPersistenceAtExpiredLease(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validSpeechFeedbackClaim()
+	claim.CanonicalText = "你好。"
+	claim.LeaseExpiresAt = time.Now().UTC().Add(-time.Second)
+	repository := &speechFeedbackRepositoryStub{claim: claim}
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		&speechFeedbackProviderStub{},
+		validSpeechFeedbackWorkerConfiguration(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.ProcessPending(context.Background(), 1); err != nil {
+		t.Fatalf("process expired lease: %v", err)
+	}
+	if len(repository.persistenceContexts) != 1 {
+		t.Fatalf(
+			"persistence context count = %d, want 1",
+			len(repository.persistenceContexts),
+		)
+	}
+	observation := repository.persistenceContexts[0]
+	if !observation.hasDeadline ||
+		!observation.deadline.Equal(claim.LeaseExpiresAt) ||
+		!errors.Is(observation.err, context.DeadlineExceeded) {
+		t.Fatalf(
+			"persistence context = %#v, want expired lease %s",
+			observation,
+			claim.LeaseExpiresAt,
+		)
+	}
+}
+
 func TestSpeechFeedbackWorkerGeneratesFeedbackForMixedEnglishText(
 	t *testing.T,
 ) {
@@ -184,6 +221,42 @@ func TestSpeechFeedbackWorkerPersistsProviderFailureNotInsufficient(
 	}
 }
 
+func TestSpeechFeedbackWorkerPersistsFailureAfterProviderCancellation(
+	t *testing.T,
+) {
+	t.Parallel()
+	processingDeadline := time.Now().UTC().Add(30 * time.Second)
+	claim := validSpeechFeedbackClaim()
+	claim.LeaseExpiresAt = processingDeadline.Add(30 * time.Second)
+	repository := &speechFeedbackRepositoryStub{claim: claim}
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		&speechFeedbackProviderStub{err: context.Canceled},
+		validSpeechFeedbackWorkerConfiguration(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(
+		context.Background(),
+		processingDeadline,
+	)
+	cancel()
+	sweep, err := worker.ProcessPending(ctx, 1)
+	if err != nil {
+		t.Fatalf("persist provider cancellation: %v", err)
+	}
+	if sweep.Retried != 1 {
+		t.Fatalf("sweep = %#v, want one retry", sweep)
+	}
+	assertSpeechFeedbackPersistenceContexts(
+		t,
+		repository.persistenceContexts,
+		processingDeadline,
+		1,
+	)
+}
+
 func TestSpeechFeedbackWorkerCompletesOnlyValidatedProviderItems(
 	t *testing.T,
 ) {
@@ -217,7 +290,12 @@ func TestSpeechFeedbackWorkerCompletesOnlyValidatedProviderItems(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweep, err := worker.ProcessPending(context.Background(), 1)
+	ctx, cancel := context.WithDeadline(
+		context.Background(),
+		claim.LeaseExpiresAt.Add(time.Minute),
+	)
+	defer cancel()
+	sweep, err := worker.ProcessPending(ctx, 1)
 	if err != nil {
 		t.Fatalf("process valid provider result: %v", err)
 	}
@@ -235,6 +313,12 @@ func TestSpeechFeedbackWorkerCompletesOnlyValidatedProviderItems(
 			sweep,
 		)
 	}
+	assertSpeechFeedbackPersistenceContexts(
+		t,
+		repository.persistenceContexts,
+		claim.LeaseExpiresAt,
+		1,
+	)
 }
 
 type speechFeedbackProviderStub struct {
@@ -258,13 +342,21 @@ type speechFeedbackRepositoryStub struct {
 	insufficientReasons []SpeechFeedbackReasonCode
 	failure             *SpeechFeedbackStableFailure
 	acousticEvidence    *SpeechFeedbackAcousticEvidence
+	persistenceContexts []speechFeedbackPersistenceContextObservation
+}
+
+type speechFeedbackPersistenceContextObservation struct {
+	deadline    time.Time
+	hasDeadline bool
+	err         error
 }
 
 func (repository *speechFeedbackRepositoryStub) SaveSpeechFeedbackAcousticEvidence(
-	_ context.Context,
+	ctx context.Context,
 	_ SpeechFeedbackClaim,
 	evidence SpeechFeedbackAcousticEvidence,
 ) error {
+	repository.observePersistenceContext(ctx)
 	repository.acousticEvidence = &evidence
 	return nil
 }
@@ -281,10 +373,11 @@ func (repository *speechFeedbackRepositoryStub) ClaimSpeechFeedback(
 }
 
 func (repository *speechFeedbackRepositoryStub) CompleteSpeechFeedback(
-	_ context.Context,
+	ctx context.Context,
 	_ SpeechFeedbackClaim,
 	items []SpeechFeedbackDraftItem,
 ) (SpeechFeedback, error) {
+	repository.observePersistenceContext(ctx)
 	repository.completedItems = append(
 		[]SpeechFeedbackDraftItem(nil),
 		items...,
@@ -293,10 +386,11 @@ func (repository *speechFeedbackRepositoryStub) CompleteSpeechFeedback(
 }
 
 func (repository *speechFeedbackRepositoryStub) CompleteSpeechFeedbackInsufficient(
-	_ context.Context,
+	ctx context.Context,
 	_ SpeechFeedbackClaim,
 	reasons []SpeechFeedbackReasonCode,
 ) (SpeechFeedback, error) {
+	repository.observePersistenceContext(ctx)
 	repository.insufficientReasons = append(
 		[]SpeechFeedbackReasonCode(nil),
 		reasons...,
@@ -305,16 +399,58 @@ func (repository *speechFeedbackRepositoryStub) CompleteSpeechFeedbackInsufficie
 }
 
 func (repository *speechFeedbackRepositoryStub) FailSpeechFeedback(
-	_ context.Context,
+	ctx context.Context,
 	_ SpeechFeedbackClaim,
 	failure SpeechFeedbackStableFailure,
 	_ SpeechFeedbackWorkerConfiguration,
 ) (SpeechFeedbackStatus, error) {
+	repository.observePersistenceContext(ctx)
 	repository.failure = &failure
 	if failure.Retryable {
 		return SpeechFeedbackQueued, nil
 	}
 	return SpeechFeedbackFailed, nil
+}
+
+func (repository *speechFeedbackRepositoryStub) observePersistenceContext(
+	ctx context.Context,
+) {
+	deadline, hasDeadline := ctx.Deadline()
+	repository.persistenceContexts = append(
+		repository.persistenceContexts,
+		speechFeedbackPersistenceContextObservation{
+			deadline:    deadline,
+			hasDeadline: hasDeadline,
+			err:         ctx.Err(),
+		},
+	)
+}
+
+func assertSpeechFeedbackPersistenceContexts(
+	t *testing.T,
+	observations []speechFeedbackPersistenceContextObservation,
+	wantDeadline time.Time,
+	wantCount int,
+) {
+	t.Helper()
+	if len(observations) != wantCount {
+		t.Fatalf(
+			"persistence context count = %d, want %d",
+			len(observations),
+			wantCount,
+		)
+	}
+	for _, observation := range observations {
+		if !observation.hasDeadline ||
+			!observation.deadline.Equal(wantDeadline) ||
+			observation.err != nil {
+			t.Fatalf(
+				"persistence context = %#v, want active deadline %s",
+				observation,
+				wantDeadline,
+			)
+		}
+	}
 }
 
 func (*speechFeedbackRepositoryStub) EnsureConfirmedConversationTurn(

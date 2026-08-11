@@ -18,21 +18,22 @@ func TestSpeechFeedbackExecutionBudgetCoversProvidersAndPersistence(
 ) {
 	t.Parallel()
 	budget := deriveSpeechFeedbackExecutionBudget(
+		speechfeedback.SpeechFeedbackAudioReadTimeout,
 		150*time.Second,
 		60*time.Second,
 	)
-	if budget.processingTimeout != 4*time.Minute {
+	if budget.processingTimeout != 4*time.Minute+30*time.Second {
 		t.Fatalf(
 			"processing timeout = %s, want %s",
 			budget.processingTimeout,
-			4*time.Minute,
+			4*time.Minute+30*time.Second,
 		)
 	}
-	if budget.leaseDuration != 4*time.Minute+30*time.Second {
+	if budget.leaseDuration != 5*time.Minute {
 		t.Fatalf(
 			"lease duration = %s, want %s",
 			budget.leaseDuration,
-			4*time.Minute+30*time.Second,
+			5*time.Minute,
 		)
 	}
 	if budget.processingTimeout >= budget.leaseDuration {
@@ -50,6 +51,7 @@ func TestSpeechFeedbackWorkerAllowsAcousticsPastLegacySweepTimeout(
 	t.Parallel()
 	const simulatedAcousticDuration = 26 * time.Second
 	budget := deriveSpeechFeedbackExecutionBudget(
+		speechfeedback.SpeechFeedbackAudioReadTimeout,
 		simulatedAcousticDuration,
 		2*time.Second,
 	)

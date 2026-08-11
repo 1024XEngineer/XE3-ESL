@@ -305,6 +305,12 @@ func TestSpeechFeedbackWorkerPersistsAcousticsForShortEnglishText(
 			sweep,
 		)
 	}
+	assertSpeechFeedbackPersistenceContexts(
+		t,
+		repository.persistenceContexts,
+		claim.LeaseExpiresAt,
+		2,
+	)
 }
 
 func TestAgentVoiceClaimUsesItsReadableMessageAudio(t *testing.T) {

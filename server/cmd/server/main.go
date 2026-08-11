@@ -330,7 +330,8 @@ func run() int {
 		}
 	}
 	var speechFeedbackAcoustics speechfeedback.SpeechFeedbackAcousticProvider
-	var speechFeedbackAcousticTimeout time.Duration
+	var speechFeedbackAudioReadTimeout time.Duration
+	var speechFeedbackISETimeout time.Duration
 	iseConfigured := config.ISEConfigured()
 	if recordingStore != nil && iseConfigured {
 		iseConfig, configurationErr := config.LoadISE()
@@ -341,7 +342,9 @@ func run() int {
 			)
 			return 1
 		}
-		speechFeedbackAcousticTimeout = iseConfig.Timeout
+		speechFeedbackAudioReadTimeout =
+			speechfeedback.SpeechFeedbackAudioReadTimeout
+		speechFeedbackISETimeout = iseConfig.Timeout
 		speechFeedbackAcoustics, err =
 			bootstrap.NewSpeechFeedbackAcousticProvider(
 				databasePool.Native(),
@@ -362,7 +365,8 @@ func run() int {
 		iseConfigured,
 	)
 	speechFeedbackBudget := deriveSpeechFeedbackExecutionBudget(
-		speechFeedbackAcousticTimeout,
+		speechFeedbackAudioReadTimeout,
+		speechFeedbackISETimeout,
 		textConfig.Timeout,
 	)
 	speechFeedbackComposition, err :=
