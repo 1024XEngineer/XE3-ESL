@@ -336,7 +336,7 @@ IdentityHttpResponse _response(Object body) =>
     IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(body));
 
 Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
-  'schema_version': 3,
+  'schema_version': 4,
   'bank_id': 'ielts-speaking-2026-season',
   'season': '2026-05-08',
   'season_label': '5–8 月题库',
@@ -366,6 +366,7 @@ Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
       'title_zh': '主题 ${index + 1}',
       'title_en': 'Topic ${index + 1}',
       'release_status': index.isEven ? 'new' : 'carry_over',
+      'cue_card_type': index.isEven ? 'thing' : 'experience',
       'tag_codes': ['daily_life'],
       'questions': ['Topic ${index + 1}-1', 'Topic ${index + 1}-2'],
     },

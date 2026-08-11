@@ -64,6 +64,7 @@ final _bank = IeltsQuestionBank(
       titleZh: '家乡',
       titleEn: 'Hometown',
       releaseStatus: 'carry_over',
+      cueCardType: 'place',
       tagCodes: ['daily_life'],
       questions: ['Where is your hometown?', 'Do you like it?'],
     ),

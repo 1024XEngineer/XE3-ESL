@@ -190,6 +190,7 @@ func loadPublishedCatalog(
 			{Code: "PART_2", Label: "Part 2"},
 			{Code: "PART_3", Label: "Part 3"},
 		},
+		TopicTags: []FilterOption{},
 		CueCardTypes: []FilterOption{
 			{Code: "person", Label: "人物"},
 			{Code: "place", Label: "地点"},
@@ -199,30 +200,7 @@ func loadPublishedCatalog(
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT tag_code, label_zh
-		FROM ielts_question_bank_tags
-		WHERE bank_id = $1
-		ORDER BY display_order
-	`, bank.BankID)
-	if err != nil {
-		return QuestionBank{}, fmt.Errorf("%w: read tags: %v", ErrQuestionBankUnavailable, err)
-	}
-	for rows.Next() {
-		var option FilterOption
-		if err := rows.Scan(&option.Code, &option.Label); err != nil {
-			rows.Close()
-			return QuestionBank{}, fmt.Errorf("%w: scan tag: %v", ErrQuestionBankUnavailable, err)
-		}
-		bank.Filters.TopicTags = append(bank.Filters.TopicTags, option)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return QuestionBank{}, fmt.Errorf("%w: iterate tags: %v", ErrQuestionBankUnavailable, err)
-	}
-	rows.Close()
-
-	rows, err = tx.Query(ctx, `
-		SELECT topic_id, title_zh, title_en, release_status
+		SELECT topic_id, title_zh, title_en, release_status, cue_card_type
 		FROM ielts_part1_topics
 		WHERE bank_id = $1
 		ORDER BY display_order
@@ -232,7 +210,13 @@ func loadPublishedCatalog(
 	}
 	for rows.Next() {
 		var topic Part1PracticeTopic
-		if err := rows.Scan(&topic.ID, &topic.TitleZH, &topic.TitleEN, &topic.ReleaseStatus); err != nil {
+		if err := rows.Scan(
+			&topic.ID,
+			&topic.TitleZH,
+			&topic.TitleEN,
+			&topic.ReleaseStatus,
+			&topic.CueCardType,
+		); err != nil {
 			rows.Close()
 			return QuestionBank{}, fmt.Errorf("%w: scan Part 1 topic: %v", ErrQuestionBankUnavailable, err)
 		}

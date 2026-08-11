@@ -23,7 +23,7 @@ func TestHTTPHandlerPublishesQuestionBankAtDedicatedRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	NewHTTPHandler(questionBankReaderStub{bank: QuestionBank{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		BankID:        "ielts-test-bank",
 		Season:        "2026-05-08",
 		Part1Topics:   make([]Part1PracticeTopic, 38),

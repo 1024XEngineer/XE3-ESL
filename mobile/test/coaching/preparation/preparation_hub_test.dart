@@ -179,9 +179,9 @@ void main() {
       expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
       expect(find.byKey(const Key('ielts-mode-full')), findsOneWidget);
       expect(find.text('模考'), findsOneWidget);
-      expect(find.text('Part 1'), findsWidgets);
-      expect(find.text('Part 2'), findsOneWidget);
-      expect(find.text('Part 3'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Part 1'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Part 2'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Part 3'), findsOneWidget);
       expect(
         find.byKey(const Key('ielts-part1-set-p1-topic-001')),
         findsOneWidget,
@@ -199,7 +199,7 @@ void main() {
     await _pumpHub(tester, controller);
     await _openModule(tester, const Key('practice-hub-exam'));
 
-    expect(find.text('3 道题'), findsOneWidget);
+    expect(find.text('2 道题'), findsOneWidget);
     expect(
       find.textContaining('Describe a skill you would like to learn'),
       findsWidgets,
@@ -686,22 +686,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps IELTS filters available in the compact catalog', (
-    tester,
-  ) async {
-    final controller = PreparationController(client: _HubFixtureClient());
-    addTearDown(controller.dispose);
-    await _pumpHub(tester, controller);
-    await _openModule(tester, const Key('practice-hub-exam'));
+  testWidgets(
+    'keeps three compact IELTS filter rows with cue card categories',
+    (tester) async {
+      final controller = PreparationController(client: _HubFixtureClient());
+      addTearDown(controller.dispose);
+      await _pumpHub(tester, controller);
+      await _openModule(tester, const Key('practice-hub-exam'));
 
-    expect(find.byKey(const Key('ielts-release-filter')), findsOneWidget);
-    expect(find.byKey(const Key('ielts-tag-filter')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-release-filter')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-tag-filter')), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '全部'), findsNWidgets(3));
+      for (final label in const ['人物', '地点', '事物', '经历']) {
+        expect(find.widgetWithText(ChoiceChip, label), findsOneWidget);
+      }
+      expect(find.widgetWithText(ChoiceChip, 'Part 1'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '本季新增'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '日常生活'), findsNothing);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '本季新增'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '事物'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('2 道题'), findsOneWidget);
-  });
+      expect(find.text('1 道题'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Part 3'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 道题'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-part3-set-p23-001')), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Part 1'));
+      await tester.tap(find.widgetWithText(ChoiceChip, '地点'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 道题'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-part1-set-p1-topic-001')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('separates workplace from life and travel scenes', (
     tester,
@@ -1193,7 +1218,12 @@ final _ieltsBank = IeltsQuestionBank(
       IeltsFilterOption(code: 'PART_3', label: 'Part 3'),
     ],
     topicTags: [IeltsFilterOption(code: 'daily_life', label: '日常生活')],
-    cueCardTypes: [IeltsFilterOption(code: 'thing', label: '事物')],
+    cueCardTypes: [
+      IeltsFilterOption(code: 'person', label: '人物'),
+      IeltsFilterOption(code: 'place', label: '地点'),
+      IeltsFilterOption(code: 'thing', label: '事物'),
+      IeltsFilterOption(code: 'experience', label: '经历'),
+    ],
   ),
   part1Topics: const [
     IeltsPart1PracticeTopic(
@@ -1201,6 +1231,7 @@ final _ieltsBank = IeltsQuestionBank(
       titleZh: '家乡',
       titleEn: 'Hometown',
       releaseStatus: 'carry_over',
+      cueCardType: 'place',
       tagCodes: ['daily_life'],
       questions: ['Q1', 'Q2'],
     ),

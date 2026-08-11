@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "bank_id": "ielts-speaking-2026-05-08-mainland",
   "season": "2026-05-08",
   "season_label": "5–8 月题库",
@@ -62,6 +62,7 @@
       "title_zh": "音乐",
       "title_en": "Music",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "culture_entertainment"
       ],
@@ -77,6 +78,7 @@
       "title_zh": "老师",
       "title_en": "Teachers",
       "release_status": "new",
+      "cue_card_type": "person",
       "tag_codes": [
         "work_study",
         "people_relationships"
@@ -95,6 +97,7 @@
       "title_zh": "社交媒体",
       "title_en": "Social media",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "technology_media"
       ],
@@ -111,6 +114,7 @@
       "title_zh": "整洁",
       "title_en": "Tidiness",
       "release_status": "new",
+      "cue_card_type": "experience",
       "tag_codes": [
         "daily_life"
       ],
@@ -126,6 +130,7 @@
       "title_zh": "网站",
       "title_en": "Websites",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "technology_media"
       ],
@@ -144,6 +149,7 @@
       "title_zh": "手表",
       "title_en": "Watch",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "daily_life",
         "technology_media"
@@ -160,6 +166,7 @@
       "title_zh": "购物",
       "title_en": "Shopping",
       "release_status": "new",
+      "cue_card_type": "experience",
       "tag_codes": [
         "daily_life"
       ],
@@ -175,6 +182,7 @@
       "title_zh": "汽车",
       "title_en": "Cars",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "technology_media",
         "travel_places"
@@ -193,6 +201,7 @@
       "title_zh": "公园与花园",
       "title_en": "Public gardens and parks",
       "release_status": "new",
+      "cue_card_type": "place",
       "tag_codes": [
         "nature_environment",
         "travel_places"
@@ -213,6 +222,7 @@
       "title_zh": "科学",
       "title_en": "Science",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "work_study",
         "technology_media"
@@ -231,6 +241,7 @@
       "title_zh": "镜子",
       "title_en": "Mirrors",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "daily_life"
       ],
@@ -246,6 +257,7 @@
       "title_zh": "外太空与星星",
       "title_en": "Outer space and stars",
       "release_status": "new",
+      "cue_card_type": "place",
       "tag_codes": [
         "nature_environment",
         "technology_media"
@@ -262,6 +274,7 @@
       "title_zh": "唱歌",
       "title_en": "Singing",
       "release_status": "new",
+      "cue_card_type": "experience",
       "tag_codes": [
         "culture_entertainment"
       ],
@@ -279,6 +292,7 @@
       "title_zh": "服装",
       "title_en": "Clothing",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "daily_life"
       ],
@@ -296,6 +310,7 @@
       "title_zh": "笑话与喜剧",
       "title_en": "Jokes & Comedies",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "culture_entertainment"
       ],
@@ -312,6 +327,7 @@
       "title_zh": "耳机",
       "title_en": "Headphones",
       "release_status": "new",
+      "cue_card_type": "thing",
       "tag_codes": [
         "technology_media",
         "culture_entertainment"
@@ -329,6 +345,7 @@
       "title_zh": "食物",
       "title_en": "Food",
       "release_status": "carry_over",
+      "cue_card_type": "thing",
       "tag_codes": [
         "daily_life"
       ],
@@ -344,6 +361,7 @@
       "title_zh": "宠物与动物",
       "title_en": "Pets and Animals",
       "release_status": "carry_over",
+      "cue_card_type": "thing",
       "tag_codes": [
         "nature_environment"
       ],
@@ -363,6 +381,7 @@
       "title_zh": "运动队",
       "title_en": "Sports team",
       "release_status": "carry_over",
+      "cue_card_type": "person",
       "tag_codes": [
         "health_sports"
       ],
@@ -378,6 +397,7 @@
       "title_zh": "兴趣爱好",
       "title_en": "Hobby",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "culture_entertainment",
         "personal_growth"
@@ -394,6 +414,7 @@
       "title_zh": "早晨时光",
       "title_en": "Morning time",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "daily_life"
       ],
@@ -410,6 +431,7 @@
       "title_zh": "礼物",
       "title_en": "Gifts",
       "release_status": "carry_over",
+      "cue_card_type": "thing",
       "tag_codes": [
         "people_relationships"
       ],
@@ -426,6 +448,7 @@
       "title_zh": "阅读",
       "title_en": "Reading",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "culture_entertainment",
         "personal_growth"
@@ -442,6 +465,7 @@
       "title_zh": "散步",
       "title_en": "Walking",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "health_sports",
         "daily_life"
@@ -459,6 +483,7 @@
       "title_zh": "打字",
       "title_en": "Typing",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "technology_media",
         "work_study"
@@ -475,6 +500,7 @@
       "title_zh": "风景",
       "title_en": "Scenery",
       "release_status": "carry_over",
+      "cue_card_type": "place",
       "tag_codes": [
         "nature_environment",
         "travel_places"
@@ -491,6 +517,7 @@
       "title_zh": "建筑",
       "title_en": "Building",
       "release_status": "carry_over",
+      "cue_card_type": "place",
       "tag_codes": [
         "travel_places"
       ],
@@ -506,6 +533,7 @@
       "title_zh": "童年活动",
       "title_en": "Childhood activities",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "personal_growth",
         "daily_life"
@@ -522,6 +550,7 @@
       "title_zh": "景色",
       "title_en": "Views",
       "release_status": "carry_over",
+      "cue_card_type": "place",
       "tag_codes": [
         "nature_environment",
         "travel_places"
@@ -538,6 +567,7 @@
       "title_zh": "人生阶段",
       "title_en": "Life stages",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "personal_growth"
       ],
@@ -555,6 +585,7 @@
       "title_zh": "空闲时间",
       "title_en": "Spare time",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "daily_life"
       ],
@@ -570,6 +601,7 @@
       "title_zh": "记忆",
       "title_en": "Memory",
       "release_status": "carry_over",
+      "cue_card_type": "experience",
       "tag_codes": [
         "personal_growth"
       ],
@@ -585,6 +617,7 @@
       "title_zh": "拥挤的地方",
       "title_en": "Crowded place",
       "release_status": "carry_over",
+      "cue_card_type": "place",
       "tag_codes": [
         "travel_places",
         "society_rules"
@@ -602,6 +635,7 @@
       "title_zh": "工作或学习",
       "title_en": "Work or studies",
       "release_status": "evergreen",
+      "cue_card_type": "experience",
       "tag_codes": [
         "work_study"
       ],
@@ -635,6 +669,7 @@
       "title_zh": "住房",
       "title_en": "Home/accommodation",
       "release_status": "evergreen",
+      "cue_card_type": "place",
       "tag_codes": [
         "daily_life",
         "travel_places"
@@ -664,6 +699,7 @@
       "title_zh": "家乡",
       "title_en": "Hometown",
       "release_status": "evergreen",
+      "cue_card_type": "place",
       "tag_codes": [
         "travel_places",
         "people_relationships"
@@ -691,6 +727,7 @@
       "title_zh": "居住区域",
       "title_en": "The area you live in",
       "release_status": "evergreen",
+      "cue_card_type": "place",
       "tag_codes": [
         "travel_places",
         "daily_life"
@@ -710,6 +747,7 @@
       "title_zh": "居住城市",
       "title_en": "The city you live in",
       "release_status": "evergreen",
+      "cue_card_type": "place",
       "tag_codes": [
         "travel_places",
         "daily_life"

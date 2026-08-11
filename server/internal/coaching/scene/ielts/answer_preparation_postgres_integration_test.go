@@ -29,7 +29,7 @@ func TestPostgresAnswerPreparationsEnforceIdentityIdempotencyVersionAndCleanup(t
 			t.Fatalf("insert identity: %v", err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-2026',3,'2026-05-08','season','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,display_order) VALUES('bank-2026','p1-topic-001','音乐','Music','new',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-2026','p1-topic-001',1,'Do you enjoy music?'),('bank-2026','p1-topic-001',2,'Do you play music?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-2026'`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-2026',4,'2026-05-08','season','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,cue_card_type,display_order) VALUES('bank-2026','p1-topic-001','音乐','Music','new','thing',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-2026','p1-topic-001',1,'Do you enjoy music?'),('bank-2026','p1-topic-001',2,'Do you play music?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-2026'`); err != nil {
 		t.Fatalf("insert question: %v", err)
 	}
 	store, _ := NewPostgresStore(pool)
@@ -116,7 +116,7 @@ func TestPostgresAnswerPreparationsEnforceIdentityIdempotencyVersionAndCleanup(t
 func TestPostgresAnswerQuestionResolverKeepsBankVersionInLocator(t *testing.T) {
 	pool := answerPreparationTestDatabase(t)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-old',3,'old','old','2026-01-01','2026-04-30','mainland',now()),('bank-new',3,'new','new','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,display_order) VALUES('bank-old','topic','旧','Old','new',1),('bank-new','topic','新','New','new',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-old','topic',1,'Old prompt?'),('bank-new','topic',1,'New prompt?'); INSERT INTO ielts_part23_groups(bank_id,topic_group_id,title_zh,release_status,cue_card_type,cue_card_prompt,cue_card_points,display_order) VALUES('bank-new','group','地点','new','place','Describe a place.','["where it is","why you like it","when you visit"]',1); INSERT INTO ielts_part3_questions(bank_id,topic_group_id,question_position,prompt) VALUES('bank-new','group',1,'Why do people like public places?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-old'; UPDATE ielts_question_bank_versions SET status='retired',retired_at=now() WHERE bank_id='bank-old'; UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-new'`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO ielts_question_bank_versions(bank_id,schema_version,season_code,season_label,season_start,season_end,region,source_cutoff) VALUES('bank-old',4,'old','old','2026-01-01','2026-04-30','mainland',now()),('bank-new',4,'new','new','2026-05-01','2026-08-31','mainland',now()); INSERT INTO ielts_part1_topics(bank_id,topic_id,title_zh,title_en,release_status,cue_card_type,display_order) VALUES('bank-old','topic','旧','Old','new','thing',1),('bank-new','topic','新','New','new','thing',1); INSERT INTO ielts_part1_questions(bank_id,topic_id,question_position,prompt) VALUES('bank-old','topic',1,'Old prompt?'),('bank-new','topic',1,'New prompt?'); INSERT INTO ielts_part23_groups(bank_id,topic_group_id,title_zh,release_status,cue_card_type,cue_card_prompt,cue_card_points,display_order) VALUES('bank-new','group','地点','new','place','Describe a place.','["where it is","why you like it","when you visit"]',1); INSERT INTO ielts_part3_questions(bank_id,topic_group_id,question_position,prompt) VALUES('bank-new','group',1,'Why do people like public places?'); UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-old'; UPDATE ielts_question_bank_versions SET status='retired',retired_at=now() WHERE bank_id='bank-old'; UPDATE ielts_question_bank_versions SET status='published',published_at=now() WHERE bank_id='bank-new'`); err != nil {
 		t.Fatalf("fixtures: %v", err)
 	}
 	store, _ := NewPostgresStore(pool)
@@ -195,7 +195,12 @@ func answerPreparationTestDatabase(t *testing.T) *pgxpool.Pool {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE")
 		admin.Close()
 	})
-	for _, name := range []string{"000002_identity_schema.up.sql", "000080_ielts_versioned_question_bank.up.sql", "000084_ielts_answer_preparations.up.sql"} {
+	for _, name := range []string{
+		"000002_identity_schema.up.sql",
+		"000080_ielts_versioned_question_bank.up.sql",
+		"000087_ielts_part1_cue_card_types.up.sql",
+		"000084_ielts_answer_preparations.up.sql",
+	} {
 		content, err := migrations.Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
