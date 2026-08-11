@@ -84,6 +84,20 @@ void main() {
     expect(find.text('分 Part 复盘'), findsNothing);
     expect(find.text('同题复练'), findsNothing);
     expect(find.textContaining('Band 0'), findsNothing);
+    for (final criterion in <String>[
+      'fluencyAndCoherence',
+      'lexicalResource',
+      'grammaticalRangeAndAccuracy',
+      'pronunciation',
+    ]) {
+      expect(
+        find.descendant(
+          of: find.byKey(Key('ielts-speaking-criterion-$criterion')),
+          matching: find.byType(Icon),
+        ),
+        findsNothing,
+      );
+    }
   });
 
   testWidgets('renders all four Bands and rounded Overall', (tester) async {
