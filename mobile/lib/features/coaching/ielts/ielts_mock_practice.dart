@@ -2012,7 +2012,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       IeltsMockPhase.part2Preparation ||
       IeltsMockPhase.part2Speaking => 'IELTS · Part 2',
       IeltsMockPhase.part3Intro || IeltsMockPhase.part3 => 'IELTS · Part 3',
-      IeltsMockPhase.complete => 'IELTS 口语报告',
+      IeltsMockPhase.complete =>
+        _mode == PracticeMode.fullMock ? 'IELTS 口语报告' : '练习完成',
       _ => 'IELTS Speaking',
     };
     return AppBar(
@@ -2021,7 +2022,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       centerTitle: true,
       leading: IconButton(
         key: const Key('ielts-mock-exit'),
-        tooltip: '退出模考',
+        tooltip:
+            phase == IeltsMockPhase.complete && _mode != PracticeMode.fullMock
+            ? '返回题单'
+            : '退出模考',
         onPressed: _exitInFlight ? null : _requestExit,
         icon: const Icon(Icons.chevron_left_rounded),
       ),
@@ -2159,14 +2163,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
               )
             : _SectionPracticeComplete(
                 mode: _mode,
+                completedAnswerCount: widget.controller.completedTurns,
                 reportStatusController: widget.reportStatusController,
                 onOpenReport: _openReadyReport,
                 onNext: () =>
                     _finishSection(IeltsPracticeCompletionAction.next),
                 onRetry: () =>
                     _finishSection(IeltsPracticeCompletionAction.retry),
-                onList: () =>
-                    _finishSection(IeltsPracticeCompletionAction.list),
               ),
     };
   }
@@ -3010,19 +3013,19 @@ class _MockExitSheet extends StatelessWidget {
 class _SectionPracticeComplete extends StatelessWidget {
   const _SectionPracticeComplete({
     required this.mode,
+    required this.completedAnswerCount,
     required this.reportStatusController,
     required this.onOpenReport,
     required this.onNext,
     required this.onRetry,
-    required this.onList,
   });
 
   final PracticeMode mode;
+  final int completedAnswerCount;
   final PracticeReportStatusController? reportStatusController;
   final Future<void> Function() onOpenReport;
   final VoidCallback onNext;
   final VoidCallback onRetry;
-  final VoidCallback onList;
 
   @override
   Widget build(BuildContext context) {
@@ -3035,44 +3038,61 @@ class _SectionPracticeComplete extends StatelessWidget {
         'Non-IELTS mode in IELTS practice.',
       ),
     };
-    return SingleChildScrollView(
-      key: Key('ielts-section-practice-complete-${mode.name}'),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _CompactCompletionHeader(
-              title: '$part 已完成',
-              message: '回答已保存，可离开本页等待复盘生成。',
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        key: Key('ielts-section-practice-complete-${mode.name}'),
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 520,
+              minHeight: math.max(0, constraints.maxHeight - 56),
             ),
-            const SizedBox(height: 20),
-            PracticeReportStatusCard(
-              controller: reportStatusController,
-              onOpenReport: onOpenReport,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _CompactCompletionHeader(
+                      title: '$part 已完成',
+                      message: '$completedAnswerCount 道回答已保存',
+                    ),
+                    const SizedBox(height: 24),
+                    PracticeReportStatusCard(
+                      controller: reportStatusController,
+                      onOpenReport: onOpenReport,
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 40),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('继续练习', style: SpeakUpDesign.cardTitle),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        key: const Key('ielts-section-next-action'),
+                        onPressed: onNext,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        child: const Text('练习下一套'),
+                      ),
+                      const SizedBox(height: 4),
+                      TextButton(
+                        key: const Key('ielts-section-retry-action'),
+                        onPressed: onRetry,
+                        child: const Text('再练本套'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            OutlinedButton(
-              key: const Key('ielts-section-next-action'),
-              onPressed: onNext,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(50),
-              ),
-              child: const Text('下一套未练习'),
-            ),
-            const SizedBox(height: 6),
-            TextButton(
-              key: const Key('ielts-section-retry-action'),
-              onPressed: onRetry,
-              child: const Text('再练本套'),
-            ),
-            TextButton(
-              key: const Key('ielts-section-list-action'),
-              onPressed: onList,
-              child: const Text('返回套题列表'),
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -54,8 +54,9 @@ class PracticeReportStatusCard extends StatelessWidget {
       return const _ReportStatusSurface(
         key: Key('ielts-completion-report-loading'),
         icon: Icons.sync_rounded,
-        title: '正在读取复盘状态',
-        message: '你可以直接返回训练，不会影响后台处理。',
+        loading: true,
+        title: '复盘生成中',
+        message: '可以先离开，生成完成后可在复盘页查看。',
       );
     }
     return switch (status.evaluationStatus) {
@@ -63,10 +64,9 @@ class PracticeReportStatusCard extends StatelessWidget {
       PracticeReportEvaluationStatus.running => _ReportStatusSurface(
         key: const Key('ielts-completion-report-generating'),
         icon: Icons.schedule_rounded,
-        title: status.evaluationStatus == PracticeReportEvaluationStatus.queued
-            ? '报告已进入队列'
-            : '报告生成中',
-        message: value.errorMessage ?? '可先返回训练，完成后可在复盘页查看。',
+        loading: true,
+        title: '复盘生成中',
+        message: value.errorMessage ?? '可以先离开，生成完成后可在复盘页查看。',
         action: value.errorMessage == null
             ? null
             : TextButton(
@@ -82,8 +82,12 @@ class PracticeReportStatusCard extends StatelessWidget {
         icon: Icons.description_outlined,
         title: status.scoreability == EvaluationReportScoreability.insufficient
             ? '复盘已生成 · 证据不足'
-            : '复盘已生成',
-        message: value.errorMessage ?? status.summary!,
+            : '专项复盘已生成',
+        message:
+            value.errorMessage ??
+            (status.scoreability == EvaluationReportScoreability.insufficient
+                ? status.summary!
+                : '查看本次表现、主要问题和下一步练习建议。'),
         action: FilledButton(
           key: const Key('ielts-completion-report-open'),
           onPressed: value.isLoadingReadyReport
@@ -93,7 +97,7 @@ class PracticeReportStatusCard extends StatelessWidget {
             value.isLoadingReadyReport
                 ? '正在打开…'
                 : value.errorMessage == null
-                ? '查看复盘'
+                ? '查看本次复盘'
                 : '重试打开',
           ),
         ),
@@ -101,7 +105,7 @@ class PracticeReportStatusCard extends StatelessWidget {
       PracticeReportEvaluationStatus.failed => _ReportStatusSurface(
         key: const Key('ielts-completion-report-failed'),
         icon: Icons.error_outline_rounded,
-        title: '报告生成失败',
+        title: '复盘生成失败',
         message:
             value.errorMessage ??
             _failureMessage(
@@ -137,6 +141,7 @@ class _ReportStatusSurface extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.loading = false,
     this.action,
     super.key,
   });
@@ -144,6 +149,7 @@ class _ReportStatusSurface extends StatelessWidget {
   final IconData icon;
   final String title;
   final String message;
+  final bool loading;
   final Widget? action;
 
   @override
@@ -160,7 +166,19 @@ class _ReportStatusSurface extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 22, color: SpeakUpDesign.ink),
+              if (loading)
+                Semantics(
+                  label: '正在生成复盘',
+                  child: const SizedBox.square(
+                    dimension: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: SpeakUpDesign.ink,
+                    ),
+                  ),
+                )
+              else
+                Icon(icon, size: 22, color: SpeakUpDesign.ink),
               const SizedBox(width: 10),
               Expanded(child: Text(title, style: SpeakUpDesign.cardTitle)),
             ],

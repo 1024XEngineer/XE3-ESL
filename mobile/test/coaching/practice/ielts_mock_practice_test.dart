@@ -1532,7 +1532,15 @@ void main() {
     await tester.pumpAndSettle();
     await _answerCurrentShortQuestion(tester, controller);
 
-    await tester.tap(find.byKey(const Key('ielts-section-list-action')));
+    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+    await tester.pump();
+
+    expect(find.text('练习完成'), findsOneWidget);
+    expect(find.text('4 道回答已保存'), findsOneWidget);
+    expect(find.text('练习下一套'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-section-list-action')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
     await tester.pumpAndSettle();
 
     final request = preparation.takeNavigationRequest();

@@ -493,7 +493,8 @@ void main() {
       find.byKey(const Key('ielts-completion-report-generating')),
       findsOneWidget,
     );
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('复盘生成中'), findsOneWidget);
 
     client.status = _status(PracticeReportEvaluationStatus.ready);
     await controller.retry();
@@ -502,7 +503,8 @@ void main() {
       find.byKey(const Key('ielts-completion-report-ready')),
       findsOneWidget,
     );
-    expect(find.text('复盘已生成'), findsOneWidget);
+    expect(find.text('专项复盘已生成'), findsOneWidget);
+    expect(find.text('查看本次复盘'), findsOneWidget);
 
     client.status = _status(
       PracticeReportEvaluationStatus.ready,
@@ -567,7 +569,8 @@ void main() {
       findsOneWidget,
     );
     await tester.tap(find.byKey(const Key('ielts-completion-report-retry')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(client.regenerationCalls, 1);
     expect(client.statusCalls, 2);
