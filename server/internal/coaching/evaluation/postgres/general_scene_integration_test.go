@@ -106,8 +106,8 @@ func TestPostgresGeneralSceneAtomicAttemptsResumeOnlyMissingDimension(
 	pool, repository, configuration, evaluationID :=
 		prepareGeneralScenePostgresEvaluation(t, snapshot)
 	provider := &atomicGeneralSceneProviderStub{
-		failOnce: scoring.GeneralSceneDimensionClarity,
-		calls:    make(map[scoring.GeneralSceneDimension]int),
+		rejectOnce: scoring.GeneralSceneDimensionClarity,
+		calls:      make(map[scoring.GeneralSceneDimension]int),
 	}
 	firstWorker, err := scoring.NewGeneralSceneWorker(
 		repository,
@@ -125,6 +125,26 @@ func TestPostgresGeneralSceneAtomicAttemptsResumeOnlyMissingDimension(
 		t.Fatalf("first sweep = %#v", firstSweep)
 	}
 	assertGeneralSceneAtomicAttemptCounts(t, pool, evaluationID, 3, 1)
+	var failedProviderRequestID *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT attempt.provider_request_id
+		FROM evaluation_general_scene_atomic_attempts AS attempt
+		JOIN evaluation_module_runs AS run
+		  ON run.id = attempt.module_run_id
+		WHERE run.evaluation_id = $1
+		  AND attempt.status = 'FAILED'
+	`, evaluationID).Scan(&failedProviderRequestID); err != nil {
+		t.Fatal(err)
+	}
+	wantFailedRequestID := "atomic-request-CLARITY_COHERENCE-1"
+	if failedProviderRequestID == nil ||
+		*failedProviderRequestID != wantFailedRequestID {
+		t.Fatalf(
+			"failed provider request id = %v, want %q",
+			failedProviderRequestID,
+			wantFailedRequestID,
+		)
+	}
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE evaluation_outbox
 		SET available_at = transaction_timestamp()
@@ -273,10 +293,11 @@ func TestPostgresGeneralSceneRejectsAtomicAggregateWithoutPersistedAtoms(
 			context.Background(),
 			claim,
 			scoring.GeneralSceneAtomicAttempt{
-				Key:          atoms[index].Key,
-				AttemptCount: claim.AttemptCount,
-				Status:       scoring.GeneralSceneAtomicAttemptReady,
-				Result:       &atoms[index],
+				Key:               atoms[index].Key,
+				AttemptCount:      claim.AttemptCount,
+				Status:            scoring.GeneralSceneAtomicAttemptReady,
+				ProviderRequestID: atoms[index].Provider.RequestID,
+				Result:            &atoms[index],
 			},
 		); err != nil {
 			t.Fatalf("persist atom %d: %v", index, err)
@@ -295,6 +316,84 @@ func TestPostgresGeneralSceneRejectsAtomicAggregateWithoutPersistedAtoms(
 		result,
 	); err != nil {
 		t.Fatalf("replay atomic completion: %v", err)
+	}
+}
+
+func TestPostgresGeneralSceneAtomicAttemptRejectsSupersededRevision(
+	t *testing.T,
+) {
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluationcore.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	pool, repository, configuration, _ :=
+		prepareGeneralScenePostgresEvaluation(t, snapshot)
+	claim, acquired, err := repository.ClaimGeneralScene(
+		context.Background(),
+		snapshot.SceneType,
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim acquired=%t error=%v", acquired, err)
+	}
+	provider := &atomicGeneralSceneProviderStub{
+		calls: make(map[scoring.GeneralSceneDimension]int),
+	}
+	atom, err := scoring.NewGeneralSceneEngine(provider).EvaluateAtomic(
+		context.Background(),
+		snapshot,
+		scoring.GeneralSceneAtomicKey{
+			Part:      scoring.IELTSPart1,
+			Dimension: scoring.GeneralSceneDimensionTaskAchievement,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO evaluation_revisions (
+			evaluation_id,
+			owner_user_id,
+			revision,
+			supersedes_revision_id,
+			channels,
+			scene_strategy_ref,
+			pipeline_version,
+			schema_version,
+			request_fingerprint
+		)
+		SELECT
+			revision.evaluation_id,
+			revision.owner_user_id,
+			2,
+			revision.id,
+			revision.channels,
+			revision.scene_strategy_ref,
+			revision.pipeline_version,
+			revision.schema_version,
+			decode(repeat('77', 32), 'hex')
+		FROM evaluation_revisions AS revision
+		WHERE revision.id = $1
+	`, claim.EvaluationRevisionID); err != nil {
+		t.Fatalf("insert later revision: %v", err)
+	}
+	err = repository.RecordGeneralSceneAtomicAttempt(
+		context.Background(),
+		claim,
+		scoring.GeneralSceneAtomicAttempt{
+			Key:               atom.Key,
+			AttemptCount:      claim.AttemptCount,
+			Status:            scoring.GeneralSceneAtomicAttemptReady,
+			ProviderRequestID: atom.Provider.RequestID,
+			Result:            &atom,
+		},
+	)
+	if postgresCode(err) != "23514" {
+		t.Fatalf("superseded revision insert error = %v", err)
 	}
 }
 
@@ -330,9 +429,10 @@ func assertGeneralSceneAtomicAttemptCounts(
 }
 
 type atomicGeneralSceneProviderStub struct {
-	mu       sync.Mutex
-	calls    map[scoring.GeneralSceneDimension]int
-	failOnce scoring.GeneralSceneDimension
+	mu         sync.Mutex
+	calls      map[scoring.GeneralSceneDimension]int
+	failOnce   scoring.GeneralSceneDimension
+	rejectOnce scoring.GeneralSceneDimension
 }
 
 func (*atomicGeneralSceneProviderStub) AnalyzeGeneralScene(
@@ -352,8 +452,21 @@ func (provider *atomicGeneralSceneProviderStub) AnalyzeGeneralSceneAtom(
 	defer provider.mu.Unlock()
 	dimension := input.AssessableDimensions[0]
 	provider.calls[dimension]++
+	requestID := fmt.Sprintf(
+		"atomic-request-%s-%d",
+		dimension,
+		provider.calls[dimension],
+	)
 	if dimension == provider.failOnce && provider.calls[dimension] == 1 {
 		return scoring.GeneralSceneProviderResult{}, context.DeadlineExceeded
+	}
+	if dimension == provider.rejectOnce && provider.calls[dimension] == 1 {
+		return scoring.GeneralSceneProviderResult{
+			Payload:   json.RawMessage(`{"schema_version":`),
+			Provider:  "qianwen",
+			Model:     "qwen-plus",
+			RequestID: requestID,
+		}, nil
 	}
 	var response *scoring.GeneralSceneResponse
 	for _, opportunity := range input.Opportunities {
@@ -385,7 +498,7 @@ func (provider *atomicGeneralSceneProviderStub) AnalyzeGeneralSceneAtom(
 	})
 	return scoring.GeneralSceneProviderResult{
 		Payload: payload, Provider: "qianwen", Model: "qwen-plus",
-		RequestID: fmt.Sprintf("atomic-request-%s-%d", dimension, provider.calls[dimension]),
+		RequestID: requestID,
 	}, err
 }
 
@@ -457,6 +570,9 @@ func prepareGeneralScenePostgresEvaluation(
 		PipelineVersion: scoring.GeneralScenePipelineVersion,
 		FullConfigHash: sha256.Sum256(
 			[]byte("general-scene-integration-config/v1"),
+		),
+		IELTSFullConfigHash: sha256.Sum256(
+			[]byte("general-scene-integration-config/ielts-atomic/v1"),
 		),
 		PromptVersion: scoring.GeneralScenePromptVersion,
 		Provider:      "qianwen",

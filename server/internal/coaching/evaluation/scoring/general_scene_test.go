@@ -356,14 +356,84 @@ func TestGeneralSceneEngineKeepsPart2AndPart3AtomicFindingsSeparate(
 	}
 }
 
+func TestGeneralSceneEnginePreservesRequestIDAcrossAtomicRejections(
+	t *testing.T,
+) {
+	t.Parallel()
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluation.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	tests := []struct {
+		name      string
+		provider  *generalSceneProviderStub
+		wantCause error
+		wantStage string
+	}{
+		{
+			name:      "invalid JSON",
+			provider:  &generalSceneProviderStub{atomicRaw: json.RawMessage(`{`)},
+			wantCause: errGeneralSceneProviderInvalidJSON,
+			wantStage: "json_decode",
+		},
+		{
+			name: "schema mismatch",
+			provider: &generalSceneProviderStub{mutateAtomic: func(
+				payload *generalSceneAtomicProviderPayload,
+			) {
+				payload.SchemaVersion = "unknown/v1"
+			}},
+			wantCause: errGeneralSceneProviderSchemaMismatch,
+			wantStage: "schema_validation",
+		},
+		{
+			name: "semantic mismatch",
+			provider: &generalSceneProviderStub{mutateAtomic: func(
+				payload *generalSceneAtomicProviderPayload,
+			) {
+				payload.Dimension.Improvements[0].Evidence[0].Quote =
+					"This quote was never spoken."
+			}},
+			wantCause: ErrInvalidGeneralSceneResult,
+			wantStage: "semantic_validation",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := NewGeneralSceneEngine(test.provider).EvaluateAtomic(
+				context.Background(),
+				snapshot,
+				GeneralSceneAtomicKey{
+					Part:      IELTSPart1,
+					Dimension: GeneralSceneDimensionTaskAchievement,
+				},
+			)
+			if !errors.Is(err, test.wantCause) ||
+				generalSceneProviderRejectionStage(err) != test.wantStage {
+				t.Fatalf("rejection error = %v", err)
+			}
+			requestID := generalSceneAtomicRequestID(result, err)
+			if requestID != "atomic-request-TASK_ACHIEVEMENT-1" {
+				t.Fatalf("request id = %q", requestID)
+			}
+		})
+	}
+}
+
 type generalSceneProviderStub struct {
-	mu          sync.Mutex
-	input       GeneralSceneProviderInput
-	calls       int
-	atomic      []GeneralSceneProviderInput
-	atomicCalls map[GeneralSceneDimension]int
-	failOnce    GeneralSceneDimension
-	mutate      func(*generalSceneProviderPayload)
+	mu           sync.Mutex
+	input        GeneralSceneProviderInput
+	calls        int
+	atomic       []GeneralSceneProviderInput
+	atomicCalls  map[GeneralSceneDimension]int
+	failOnce     GeneralSceneDimension
+	mutate       func(*generalSceneProviderPayload)
+	mutateAtomic func(*generalSceneAtomicProviderPayload)
+	atomicRaw    json.RawMessage
 }
 
 func (provider *generalSceneProviderStub) AnalyzeGeneralScene(
@@ -406,9 +476,15 @@ func (provider *generalSceneProviderStub) AnalyzeGeneralSceneAtom(
 		return GeneralSceneProviderResult{}, fmt.Errorf("atomic provider timeout: %w", context.DeadlineExceeded)
 	}
 	payload := validGeneralSceneAtomicProviderPayload(input)
+	if provider.mutateAtomic != nil {
+		provider.mutateAtomic(&payload)
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return GeneralSceneProviderResult{}, err
+	}
+	if provider.atomicRaw != nil {
+		encoded = slices.Clone(provider.atomicRaw)
 	}
 	return GeneralSceneProviderResult{
 		Payload:   encoded,

@@ -181,24 +181,28 @@ const (
 )
 
 type GeneralSceneAtomicAttempt struct {
-	Key          GeneralSceneAtomicKey
-	AttemptCount int
-	Status       GeneralSceneAtomicAttemptStatus
-	Result       *GeneralSceneAtomicResult
-	Failure      *GeneralSceneFailure
+	Key               GeneralSceneAtomicKey
+	AttemptCount      int
+	Status            GeneralSceneAtomicAttemptStatus
+	ProviderRequestID string
+	Result            *GeneralSceneAtomicResult
+	Failure           *GeneralSceneFailure
 }
 
 func ValidateGeneralSceneAtomicAttempt(
 	snapshot evidence.EvidenceSnapshot,
 	attempt GeneralSceneAtomicAttempt,
 ) error {
-	if attempt.AttemptCount < 1 || !attempt.Key.Valid() {
+	if attempt.AttemptCount < 1 || !attempt.Key.Valid() ||
+		(attempt.ProviderRequestID != "" &&
+			!validProviderIdentifier(attempt.ProviderRequestID)) {
 		return evaluation.ErrInvalidRequest
 	}
 	switch attempt.Status {
 	case GeneralSceneAtomicAttemptReady:
 		if attempt.Result == nil || attempt.Failure != nil ||
 			attempt.Result.Key != attempt.Key ||
+			attempt.ProviderRequestID != attempt.Result.Provider.RequestID ||
 			ValidateGeneralSceneAtomicResult(snapshot, *attempt.Result) != nil {
 			return evaluation.ErrInvalidRequest
 		}
@@ -328,12 +332,52 @@ func (engine *GeneralSceneEngine) EvaluateAtomic(
 		generated,
 	)
 	if err != nil {
-		return GeneralSceneAtomicResult{}, err
+		return GeneralSceneAtomicResult{}, generalSceneAtomicErrorWithRequestID(
+			generated.RequestID,
+			err,
+		)
 	}
 	if err := ValidateGeneralSceneAtomicResult(snapshot, result); err != nil {
-		return GeneralSceneAtomicResult{}, err
+		return result, generalSceneAtomicErrorWithRequestID(
+			generated.RequestID,
+			err,
+		)
 	}
 	return result, nil
+}
+
+type generalSceneAtomicProviderError struct {
+	requestID string
+	cause     error
+}
+
+func (failure *generalSceneAtomicProviderError) Error() string {
+	return failure.cause.Error()
+}
+
+func (failure *generalSceneAtomicProviderError) Unwrap() error {
+	return failure.cause
+}
+
+func generalSceneAtomicErrorWithRequestID(requestID string, cause error) error {
+	if !validProviderIdentifier(requestID) {
+		return cause
+	}
+	return &generalSceneAtomicProviderError{requestID: requestID, cause: cause}
+}
+
+func generalSceneAtomicRequestID(
+	result GeneralSceneAtomicResult,
+	cause error,
+) string {
+	if validProviderIdentifier(result.Provider.RequestID) {
+		return result.Provider.RequestID
+	}
+	var providerError *generalSceneAtomicProviderError
+	if errors.As(cause, &providerError) {
+		return providerError.requestID
+	}
+	return ""
 }
 
 type preparedGeneralScene struct {

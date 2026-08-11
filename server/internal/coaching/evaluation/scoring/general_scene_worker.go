@@ -20,19 +20,34 @@ var generalSceneTypes = [...]evaluation.SceneType{
 }
 
 type GeneralSceneRuntimeConfiguration struct {
-	MaxAttempts     int
-	LeaseDuration   time.Duration
-	StrategyRef     string
-	PipelineVersion string
-	FullConfigHash  [sha256.Size]byte
-	PromptVersion   string
-	Provider        string
-	Model           string
+	MaxAttempts         int
+	LeaseDuration       time.Duration
+	StrategyRef         string
+	PipelineVersion     string
+	FullConfigHash      [sha256.Size]byte
+	IELTSFullConfigHash [sha256.Size]byte
+	PromptVersion       string
+	Provider            string
+	Model               string
 }
 
 func (configuration GeneralSceneRuntimeConfiguration) Valid() bool {
 	spec, ok := generalSceneDurableJobSpec(evaluation.SceneIELTSSpeaking)
-	return ok && durableConfigurationFromGeneralScene(configuration).valid(spec)
+	return ok && durableConfigurationFromGeneralScene(configuration).valid(spec) &&
+		nonZeroDigest(configuration.IELTSFullConfigHash)
+}
+
+func (configuration GeneralSceneRuntimeConfiguration) ForScene(
+	sceneType evaluation.SceneType,
+) (GeneralSceneRuntimeConfiguration, bool) {
+	if !configuration.Valid() || !generalSceneTypeSupported(sceneType) {
+		return GeneralSceneRuntimeConfiguration{}, false
+	}
+	result := configuration
+	if sceneType == evaluation.SceneIELTSSpeaking {
+		result.FullConfigHash = configuration.IELTSFullConfigHash
+	}
+	return result, true
 }
 
 type GeneralSceneClaim struct {
@@ -181,10 +196,14 @@ func (worker *GeneralSceneWorker) claimNext(
 	for offset := range len(generalSceneTypes) {
 		index := (worker.nextScene + offset) % len(generalSceneTypes)
 		sceneType := generalSceneTypes[index]
+		configuration, ok := worker.configuration.ForScene(sceneType)
+		if !ok {
+			return GeneralSceneClaim{}, false, evaluation.ErrInvalidRequest
+		}
 		claim, acquired, err := worker.repository.ClaimGeneralScene(
 			ctx,
 			sceneType,
-			worker.configuration,
+			configuration,
 		)
 		if err != nil {
 			return GeneralSceneClaim{}, false, err
@@ -300,8 +319,9 @@ func (worker *GeneralSceneWorker) processIELTSAtomicClaim(
 			outcome.err = ErrInvalidGeneralSceneResult
 		}
 		attempt := GeneralSceneAtomicAttempt{
-			Key:          outcome.key,
-			AttemptCount: claim.AttemptCount,
+			Key:               outcome.key,
+			AttemptCount:      claim.AttemptCount,
+			ProviderRequestID: generalSceneAtomicRequestID(outcome.result, outcome.err),
 		}
 		if outcome.err == nil {
 			attempt.Status = GeneralSceneAtomicAttemptReady
@@ -376,11 +396,15 @@ func (worker *GeneralSceneWorker) recordFailure(
 			rejectionStage,
 		)
 	}
+	configuration, ok := worker.configuration.ForScene(claim.SceneType)
+	if !ok {
+		return "", evaluation.ErrInvalidRequest
+	}
 	status, err := worker.repository.FailGeneralScene(
 		ctx,
 		claim,
 		failure,
-		worker.configuration,
+		configuration,
 	)
 	if err != nil {
 		return "", err
@@ -411,10 +435,11 @@ func generalSceneClaimMatchesRuntime(
 	claim GeneralSceneClaim,
 	configuration GeneralSceneRuntimeConfiguration,
 ) bool {
+	effective, valid := configuration.ForScene(claim.SceneType)
 	spec, ok := generalSceneDurableJobSpec(claim.SceneType)
-	return ok && durableSceneJobConfigurationMatchesClaim(
+	return valid && ok && durableSceneJobConfigurationMatchesClaim(
 		durableClaimFromGeneralScene(claim),
-		durableConfigurationFromGeneralScene(configuration),
+		durableConfigurationFromGeneralScene(effective),
 		spec,
 	)
 }

@@ -120,6 +120,19 @@ func TestGeneralSceneWorkerResumesOnlyMissingIELTSAtoms(t *testing.T) {
 		len(repository.readyAtoms) != 3 || len(repository.atomicAttempts) != 4 {
 		t.Fatalf("first sweep=%#v repository=%#v", firstSweep, repository)
 	}
+	failedAttempts := 0
+	for _, attempt := range repository.atomicAttempts {
+		if attempt.Status != GeneralSceneAtomicAttemptFailed {
+			continue
+		}
+		failedAttempts++
+		if attempt.ProviderRequestID != "" {
+			t.Fatalf("transport failure request id = %q", attempt.ProviderRequestID)
+		}
+	}
+	if failedAttempts != 1 {
+		t.Fatalf("failed attempts = %d, want 1", failedAttempts)
+	}
 
 	secondWorker, err := NewGeneralSceneWorker(
 		repository,
@@ -181,14 +194,15 @@ func TestGeneralSceneProviderRejectionStageIsStableAndContentFree(t *testing.T) 
 
 func generalSceneRuntimeConfigurationFixture() GeneralSceneRuntimeConfiguration {
 	return GeneralSceneRuntimeConfiguration{
-		MaxAttempts:     3,
-		LeaseDuration:   time.Minute,
-		StrategyRef:     GeneralSceneStrategyRef,
-		PipelineVersion: GeneralScenePipelineVersion,
-		FullConfigHash:  [32]byte{1},
-		PromptVersion:   GeneralScenePromptVersion,
-		Provider:        "qianwen",
-		Model:           "qwen-plus",
+		MaxAttempts:         3,
+		LeaseDuration:       time.Minute,
+		StrategyRef:         GeneralSceneStrategyRef,
+		PipelineVersion:     GeneralScenePipelineVersion,
+		FullConfigHash:      [32]byte{1},
+		IELTSFullConfigHash: [32]byte{2},
+		PromptVersion:       GeneralScenePromptVersion,
+		Provider:            "qianwen",
+		Model:               "qwen-plus",
 	}
 }
 
@@ -196,6 +210,10 @@ func generalSceneClaimFixture(
 	snapshot evidence.EvidenceSnapshot,
 	configuration GeneralSceneRuntimeConfiguration,
 ) GeneralSceneClaim {
+	effective, ok := configuration.ForScene(snapshot.SceneType)
+	if !ok {
+		panic("invalid general Scene runtime configuration fixture")
+	}
 	return GeneralSceneClaim{
 		OutboxID:             "20000000-0000-4000-8000-000000000001",
 		ModuleRunID:          "20000000-0000-4000-8000-000000000002",
@@ -209,7 +227,7 @@ func generalSceneClaimFixture(
 		AttemptCount:         1,
 		FencingToken:         1,
 		LeaseExpiresAt:       time.Now().UTC().Add(time.Minute),
-		FullConfigHash:       configuration.FullConfigHash,
+		FullConfigHash:       effective.FullConfigHash,
 		PromptVersion:        configuration.PromptVersion,
 		Provider:             configuration.Provider,
 		Model:                configuration.Model,

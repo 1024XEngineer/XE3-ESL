@@ -138,7 +138,6 @@ CREATE TABLE evaluation_general_scene_atomic_attempts (
             (status = 'FAILED'
              AND failure_code ~ '^[a-z][a-z0-9_.:-]{0,127}$'
              AND failure_retryable IS NOT NULL
-             AND provider_request_id IS NULL
              AND result_payload IS NULL)
         ),
     CONSTRAINT evaluation_general_scene_atomic_attempts_payload_safety_check
@@ -183,6 +182,13 @@ BEGIN
         run.model
       INTO bound_record
       FROM evaluation_module_runs AS run
+      JOIN evaluation_ledgers AS ledger
+        ON ledger.id = run.evaluation_id
+       AND ledger.owner_user_id = run.owner_user_id
+      JOIN evaluation_revisions AS revision
+        ON revision.id = run.evaluation_revision_id
+       AND revision.evaluation_id = run.evaluation_id
+       AND revision.owner_user_id = run.owner_user_id
       JOIN evaluation_outbox AS outbox
         ON outbox.id = run.outbox_id
        AND outbox.evaluation_id = run.evaluation_id
@@ -213,6 +219,13 @@ BEGIN
        AND outbox.lease_expires_at > clock_timestamp()
        AND state.evaluation_status = 'RUNNING'
        AND snapshot.scene_type = 'IELTS_SPEAKING'
+       AND NOT EXISTS (
+           SELECT 1
+           FROM evaluation_revisions AS later
+           WHERE later.evaluation_id = run.evaluation_id
+             AND later.owner_user_id = run.owner_user_id
+             AND later.revision > revision.revision
+       )
        AND EXISTS (
            SELECT 1
            FROM jsonb_array_elements(
@@ -227,7 +240,7 @@ BEGIN
            FROM evaluation_deletion_fences AS fence
            WHERE fence.owner_user_id = run.owner_user_id
        )
-     FOR SHARE OF run, outbox, state, snapshot, owner;
+     FOR SHARE OF ledger, revision, run, outbox, state, snapshot, owner;
 
     IF NOT FOUND
        OR (

@@ -99,6 +99,7 @@ func TestGeneralSceneAtomicAttemptMigrationIsBoundAndImmutable(t *testing.T) {
 		"general-scene-evaluation-atomic-prompt/v1",
 		"evaluation_assert_general_scene_atomic_attempt_binding",
 		"evaluation_general_scene_atomic_attempts_immutable",
+		"later.revision > revision.revision",
 		"where status = 'ready'",
 	} {
 		if !strings.Contains(upSQL, required) {

@@ -248,10 +248,7 @@ func generalRuntimeConfiguration(
 	configuration Configuration,
 ) (GeneralSceneRuntimeConfiguration, error) {
 	promptContractHash := sha256.Sum256([]byte(GeneralSceneSystemContract))
-	atomicPromptContractHash := sha256.Sum256(
-		[]byte(GeneralSceneAtomicSystemContract),
-	)
-	manifest := struct {
+	legacyManifest := struct {
 		SchemaVersion         string `json:"schema_version"`
 		StrategyRef           string `json:"strategy_ref"`
 		PipelineVersion       string `json:"pipeline_version"`
@@ -260,11 +257,6 @@ func generalRuntimeConfiguration(
 		ProviderSchemaVersion string `json:"provider_schema_version"`
 		GateVersion           string `json:"gate_version"`
 		AggregationVersion    string `json:"aggregation_version"`
-		AtomicPromptVersion   string `json:"atomic_prompt_version"`
-		AtomicPromptHash      string `json:"atomic_prompt_contract_hash"`
-		AtomicProviderSchema  string `json:"atomic_provider_schema_version"`
-		AtomicResultSchema    string `json:"atomic_result_schema_version"`
-		AtomicAggregation     string `json:"atomic_aggregation_version"`
 		CalibrationVersion    string `json:"calibration_version"`
 		Provider              string `json:"provider"`
 		Model                 string `json:"model"`
@@ -278,31 +270,52 @@ func generalRuntimeConfiguration(
 		ProviderSchemaVersion: GeneralSceneProviderSchemaVersion,
 		GateVersion:           GeneralSceneGateVersion,
 		AggregationVersion:    GeneralSceneAggregationVersion,
-		AtomicPromptVersion:   GeneralSceneAtomicPromptVersion,
+		CalibrationVersion:    GeneralSceneCalibrationVersion,
+		Provider:              configuration.provider,
+		Model:                 configuration.model,
+		MaxOutputTokens:       configuration.maxOutputTokens,
+	}
+	legacyEncoded, err := json.Marshal(legacyManifest)
+	if err != nil {
+		return GeneralSceneRuntimeConfiguration{}, err
+	}
+	legacyHash := sha256.Sum256(legacyEncoded)
+	atomicPromptContractHash := sha256.Sum256(
+		[]byte(GeneralSceneAtomicSystemContract),
+	)
+	atomicManifest := struct {
+		SchemaVersion        string `json:"schema_version"`
+		LegacyConfigHash     string `json:"legacy_config_hash"`
+		AtomicPromptVersion  string `json:"atomic_prompt_version"`
+		AtomicPromptHash     string `json:"atomic_prompt_contract_hash"`
+		AtomicProviderSchema string `json:"atomic_provider_schema_version"`
+		AtomicResultSchema   string `json:"atomic_result_schema_version"`
+		AtomicAggregation    string `json:"atomic_aggregation_version"`
+	}{
+		SchemaVersion:       evaluation.SchemaVersion,
+		LegacyConfigHash:    "sha256:" + hex.EncodeToString(legacyHash[:]),
+		AtomicPromptVersion: GeneralSceneAtomicPromptVersion,
 		AtomicPromptHash: "sha256:" + hex.EncodeToString(
 			atomicPromptContractHash[:],
 		),
 		AtomicProviderSchema: GeneralSceneAtomicProviderSchemaVersion,
 		AtomicResultSchema:   GeneralSceneAtomicResultSchemaVersion,
 		AtomicAggregation:    GeneralSceneAtomicAggregationVersion,
-		CalibrationVersion:   GeneralSceneCalibrationVersion,
-		Provider:             configuration.provider,
-		Model:                configuration.model,
-		MaxOutputTokens:      configuration.maxOutputTokens,
 	}
-	encoded, err := json.Marshal(manifest)
+	atomicEncoded, err := json.Marshal(atomicManifest)
 	if err != nil {
 		return GeneralSceneRuntimeConfiguration{}, err
 	}
 	result := GeneralSceneRuntimeConfiguration{
-		MaxAttempts:     configuration.maxAttempts,
-		LeaseDuration:   configuration.leaseDuration,
-		StrategyRef:     GeneralSceneStrategyRef,
-		PipelineVersion: GeneralScenePipelineVersion,
-		FullConfigHash:  sha256.Sum256(encoded),
-		PromptVersion:   GeneralScenePromptVersion,
-		Provider:        configuration.provider,
-		Model:           configuration.model,
+		MaxAttempts:         configuration.maxAttempts,
+		LeaseDuration:       configuration.leaseDuration,
+		StrategyRef:         GeneralSceneStrategyRef,
+		PipelineVersion:     GeneralScenePipelineVersion,
+		FullConfigHash:      legacyHash,
+		IELTSFullConfigHash: sha256.Sum256(atomicEncoded),
+		PromptVersion:       GeneralScenePromptVersion,
+		Provider:            configuration.provider,
+		Model:               configuration.model,
 	}
 	if !result.Valid() {
 		return GeneralSceneRuntimeConfiguration{}, evaluation.ErrInvalidRequest

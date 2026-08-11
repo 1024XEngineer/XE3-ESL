@@ -97,13 +97,14 @@ func (repository *PostgresRepository) ClaimGeneralScene(
 	configuration scoring.GeneralSceneRuntimeConfiguration,
 ) (scoring.GeneralSceneClaim, bool, error) {
 	spec, ok := generalSceneDurableJobSpec(sceneType)
-	if !ok {
+	effective, valid := configuration.ForScene(sceneType)
+	if !ok || !valid {
 		return scoring.GeneralSceneClaim{}, false, evaluation.ErrInvalidRequest
 	}
 	claim, acquired, err := repository.claimDurableSceneJob(
 		ctx,
 		spec,
-		durableConfigurationFromGeneralScene(configuration),
+		durableConfigurationFromGeneralScene(effective),
 	)
 	return generalSceneClaimFromDurable(claim), acquired, err
 }
@@ -208,13 +209,15 @@ func (repository *PostgresRepository) RecordGeneralSceneAtomicAttempt(
 		failureCode       any
 		failureRetryable  any
 	)
+	if attempt.ProviderRequestID != "" {
+		providerRequestID = attempt.ProviderRequestID
+	}
 	if attempt.Result != nil {
 		encoded, err := json.Marshal(attempt.Result)
 		if err != nil {
 			return evaluation.ErrInvalidRequest
 		}
 		payload = encoded
-		providerRequestID = attempt.Result.Provider.RequestID
 	} else {
 		failureCode = attempt.Failure.Code
 		failureRetryable = attempt.Failure.Retryable
@@ -341,7 +344,8 @@ func (repository *PostgresRepository) FailGeneralScene(
 	configuration scoring.GeneralSceneRuntimeConfiguration,
 ) (scoring.GeneralSceneRuntimeStatus, error) {
 	spec, ok := generalSceneDurableJobSpec(claim.SceneType)
-	if !ok {
+	effective, valid := configuration.ForScene(claim.SceneType)
+	if !ok || !valid {
 		return "", evaluation.ErrInvalidRequest
 	}
 	status, err := repository.failDurableSceneJob(
@@ -349,7 +353,7 @@ func (repository *PostgresRepository) FailGeneralScene(
 		spec,
 		durableClaimFromGeneralScene(claim),
 		durableSceneJobFailure(failure),
-		durableConfigurationFromGeneralScene(configuration),
+		durableConfigurationFromGeneralScene(effective),
 	)
 	return scoring.GeneralSceneRuntimeStatus(status), err
 }
