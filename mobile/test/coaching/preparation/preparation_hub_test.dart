@@ -441,6 +441,143 @@ void main() {
     expect(client.generateCalls, 0);
   });
 
+  testWidgets('collapses and expands a long IELTS answer', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const longAnswer =
+        'I definitely lean towards happy music because it instantly boosts my '
+        'mood and energy levels. For instance, whenever I’m commuting to work, '
+        'I listen to upbeat pop songs to start my day on a positive note. It '
+        'just feels more motivating than melancholic tunes.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part3,
+          title: 'Tall buildings',
+          subtitle: 'Describe a tall building',
+          questions: const ['Are there many tall buildings in your country?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_3',
+              sourceId: 'buildings',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: _AnswerPreparationClient(
+            existingAnswer: longAnswer,
+          ),
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('ielts-answer-body'))).maxLines,
+      6,
+    );
+    expect(find.text('查看完整答案'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ielts-answer-expand-body')));
+    await tester.pump();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('ielts-answer-body'))).maxLines,
+      isNull,
+    );
+    expect(find.text('收起答案'), findsOneWidget);
+  });
+
+  testWidgets('keeps IELTS answer actions usable at 320px and 3x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Do you prefer sad or happy music?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: _AnswerPreparationClient(
+            existingAnswer: 'I prefer happy music because it lifts my mood.',
+            existingPersonalPoints: const ['I listen on my commute.'],
+          ),
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final key in const [
+      Key('ielts-speak-answer-1'),
+      Key('ielts-polish-answer-1'),
+    ]) {
+      final action = find.byKey(key);
+      await tester.ensureVisible(action);
+      await tester.pumpAndSettle();
+      expect(action.hitTestable(), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('offers answer expansion using the rendered text scale', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    const scaledAnswer =
+        'I enjoy music because it helps me relax after work and gives me '
+        'something positive to focus on during my commute.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part3,
+          title: 'Music',
+          subtitle: 'Part 3',
+          questions: const ['Why is music important?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_3',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: _AnswerPreparationClient(
+            existingAnswer: scaledAnswer,
+          ),
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('查看完整答案'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows answer preparation for Part 3 questions', (tester) async {
     final client = _AnswerPreparationClient();
     await tester.pumpWidget(
@@ -841,9 +978,13 @@ final class _DetailPromptSpeaker implements PracticePromptSpeaker {
 }
 
 final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
-  _AnswerPreparationClient({this.existingAnswer});
+  _AnswerPreparationClient({
+    this.existingAnswer,
+    this.existingPersonalPoints = const [],
+  });
 
   final String? existingAnswer;
+  final List<String> existingPersonalPoints;
   List<String> _personalPoints = const [];
   int createCalls = 0;
   int generateCalls = 0;
@@ -861,7 +1002,7 @@ final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
       return IeltsAnswerPreparation(
         id: 'ielts_answer_00000000000000000000000000000000',
         question: question,
-        personalPoints: const [],
+        personalPoints: existingPersonalPoints,
         targetBand: targetBand,
         status: IeltsAnswerPreparationStatus.ready,
         version: 3,
