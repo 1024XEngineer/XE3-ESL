@@ -52,6 +52,34 @@ void main() {
     expect(recorder.discarded, 1);
   });
 
+  test('recorded mode bypasses realtime on a dual-capable recorder', () async {
+    final client = _RealtimePracticeClient();
+    final recorder = _StreamingPracticeRecorder();
+    final controller = PracticeController(
+      client: client,
+      recorder: recorder,
+      clientIdFactory: (scope) => '$scope-recorded-001',
+    );
+    addTearDown(controller.dispose);
+    await _restore(controller);
+
+    await controller.startRecording(useRealtimeTranscription: false);
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(recorder.legacyStarts, 1);
+    expect(recorder.streamingStarts, 0);
+
+    await controller.stopRecording();
+
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+    expect(client.legacyTranscriptions, 1);
+    expect(recorder.streamingStarts, 0);
+    expect(recorder.discarded, 1);
+  });
+
   test(
     'realtime failure is explicit and never falls back to WAV upload',
     () async {

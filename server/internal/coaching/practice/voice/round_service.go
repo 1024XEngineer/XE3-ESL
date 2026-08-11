@@ -183,24 +183,27 @@ type TemporaryAudioVault interface {
 }
 
 type VoiceRoundService struct {
-	store       VoiceRoundStore
-	vault       TemporaryAudioVault
-	recognizer  SpeechRecognizer
-	synthesizer SpeechSynthesizer
-	recordings  VoiceRecordingLifecycle
-	now         func() time.Time
+	store              VoiceRoundStore
+	vault              TemporaryAudioVault
+	recognizer         SpeechRecognizer
+	recordedRecognizer SpeechRecognizer
+	synthesizer        SpeechSynthesizer
+	recordings         VoiceRecordingLifecycle
+	now                func() time.Time
 }
 
 func NewVoiceRoundService(
 	store VoiceRoundStore,
 	vault TemporaryAudioVault,
 	recognizer SpeechRecognizer,
+	recordedRecognizer SpeechRecognizer,
 	synthesizer SpeechSynthesizer,
 ) (*VoiceRoundService, error) {
 	return NewVoiceRoundServiceWithRecordings(
 		store,
 		vault,
 		recognizer,
+		recordedRecognizer,
 		synthesizer,
 		nil,
 	)
@@ -210,10 +213,12 @@ func NewVoiceRoundServiceWithRecordings(
 	store VoiceRoundStore,
 	vault TemporaryAudioVault,
 	recognizer SpeechRecognizer,
+	recordedRecognizer SpeechRecognizer,
 	synthesizer SpeechSynthesizer,
 	recordings VoiceRecordingLifecycle,
 ) (*VoiceRoundService, error) {
-	if store == nil || vault == nil || recognizer == nil || synthesizer == nil {
+	if store == nil || vault == nil || recognizer == nil ||
+		recordedRecognizer == nil || synthesizer == nil {
 		return nil, errors.New("practice voice: round dependencies are required")
 	}
 	if recordings != nil {
@@ -224,12 +229,13 @@ func NewVoiceRoundServiceWithRecordings(
 		}
 	}
 	return &VoiceRoundService{
-		store:       store,
-		vault:       vault,
-		recognizer:  recognizer,
-		synthesizer: synthesizer,
-		recordings:  recordings,
-		now:         time.Now,
+		store:              store,
+		vault:              vault,
+		recognizer:         recognizer,
+		recordedRecognizer: recordedRecognizer,
+		synthesizer:        synthesizer,
+		recordings:         recordings,
+		now:                time.Now,
 	}, nil
 }
 
@@ -492,7 +498,7 @@ func (service *VoiceRoundService) transcribe(
 
 	startedAt := service.now()
 	request := TranscriptionRequest{Audio: source}
-	result, err := service.recognizer.Transcribe(ctx, request)
+	result, err := service.recordedRecognizer.Transcribe(ctx, request)
 	if err != nil {
 		if saveErr := service.failTranscription(
 			ctx,

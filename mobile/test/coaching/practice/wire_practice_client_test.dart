@@ -16,6 +16,13 @@ import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 void main() {
+  test('recorded transcription allows the server processing margin', () {
+    expect(
+      WirePracticeClient.defaultTranscriptionTimeout,
+      const Duration(seconds: 540),
+    );
+  });
+
   test('decodes the frozen IELTS assignment from voice state', () async {
     final transport = _Transport([
       _Step(

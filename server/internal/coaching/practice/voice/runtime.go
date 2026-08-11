@@ -36,6 +36,7 @@ type RuntimeConfiguration struct {
 	Repository         RuntimeRepository
 	TemporaryAudio     TemporaryAudioVault
 	Recognizer         SpeechRecognizer
+	RecordedRecognizer SpeechRecognizer
 	Synthesizer        SpeechSynthesizer
 	QuestionGenerator  QuestionGenerator
 	QuestionTranslator sharedtranslation.Translator
@@ -55,6 +56,7 @@ func NewRuntimeApplications(
 	if configuration.Repository == nil ||
 		configuration.TemporaryAudio == nil ||
 		configuration.Recognizer == nil ||
+		configuration.RecordedRecognizer == nil ||
 		configuration.Synthesizer == nil ||
 		configuration.QuestionGenerator == nil ||
 		configuration.ASRLease <= 0 {
@@ -79,6 +81,7 @@ func NewRuntimeApplications(
 		roundStore,
 		configuration.TemporaryAudio,
 		configuration.Recognizer,
+		configuration.RecordedRecognizer,
 		configuration.Synthesizer,
 		configuration.Recordings,
 	)

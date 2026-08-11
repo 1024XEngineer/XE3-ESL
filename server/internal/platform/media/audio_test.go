@@ -70,6 +70,33 @@ func TestCaptureTemporaryAudioValidatesAndRemovesPCMWAV(t *testing.T) {
 	}
 }
 
+func TestCaptureTemporaryAudioAcceptsRecordingStopMargin(t *testing.T) {
+	t.Parallel()
+
+	for _, duration := range []time.Duration{
+		120 * time.Second,
+		120*time.Second + 500*time.Millisecond,
+		MaxAudioDuration,
+	} {
+		duration := duration
+		t.Run(duration.String(), func(t *testing.T) {
+			t.Parallel()
+			audio, err := CaptureTemporaryAudio(
+				t.TempDir(),
+				ContentTypeWAV,
+				bytes.NewReader(testWAV(t, duration)),
+			)
+			if err != nil {
+				t.Fatalf("capture %s audio: %v", duration, err)
+			}
+			defer audio.Close()
+			if audio.Duration() != duration {
+				t.Fatalf("duration = %s, want %s", audio.Duration(), duration)
+			}
+		})
+	}
+}
+
 func TestCaptureTemporaryAudioRejectsUntrustedInputAndCleansUp(t *testing.T) {
 	t.Parallel()
 

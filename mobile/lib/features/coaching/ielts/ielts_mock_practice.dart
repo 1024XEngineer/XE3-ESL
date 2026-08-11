@@ -170,30 +170,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         : widget.ieltsController?.selectionForSession(sessionId);
   }
 
-  bool get _part2TurnConfirmed {
-    if (_mode != PracticeMode.fullMock && _mode != PracticeMode.part2) {
-      return true;
-    }
-    if (_part2ResponseAlreadyConfirmed) {
-      return true;
-    }
-    final questionId = _part2QuestionId;
-    if (questionId != null &&
-        widget.controller.currentQuestion?.id != questionId) {
-      return true;
-    }
-    final state = widget.controller.recordingState;
-    final submissionActive =
-        state == PracticeRecordingState.starting ||
-        state == PracticeRecordingState.recording ||
-        state == PracticeRecordingState.transcribing ||
-        state == PracticeRecordingState.awaitingConfirmation ||
-        state == PracticeRecordingState.submitting;
-    return (_progress?.phase == IeltsMockPhase.part3Intro ||
-            _progress?.phase == IeltsMockPhase.part3) &&
-        !submissionActive &&
-        !widget.controller.hasPendingPracticeAudio;
-  }
+  bool get _part2TurnConfirmed => _part2ResponseAlreadyConfirmed;
 
   bool get _part2ResponseAlreadyConfirmed {
     final part2 = _assignment.part(IeltsSpeakingPart.part2);
@@ -611,23 +588,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           clearSpeakingDeadline: true,
         );
       }
-      if (value.phase == IeltsMockPhase.part3) {
-        return value.copyWith(
-          phase: IeltsMockPhase.part3,
-          clearPreparationDeadline: true,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        );
-      }
-      if (value.phase == IeltsMockPhase.part3Intro) {
-        return value.copyWith(
-          phase: IeltsMockPhase.part3Intro,
-          clearPreparationDeadline: true,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        );
-      }
       if (completed >= _partEnd(IeltsSpeakingPart.part2)) {
+        if (value.phase == IeltsMockPhase.part3 ||
+            value.phase == IeltsMockPhase.part3Intro) {
+          return value.copyWith(
+            phase: value.phase,
+            clearPreparationDeadline: true,
+            clearSpeakingStartedAt: true,
+            clearSpeakingDeadline: true,
+          );
+        }
         return value.copyWith(
           phase: IeltsMockPhase.part2Complete,
           clearPreparationDeadline: true,
@@ -640,7 +610,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation => value.phase,
         IeltsMockPhase.part2Speaking ||
-        IeltsMockPhase.part2Complete => IeltsMockPhase.part2Speaking,
+        IeltsMockPhase.part2Complete ||
+        IeltsMockPhase.part3Intro ||
+        IeltsMockPhase.part3 => IeltsMockPhase.part2Speaking,
         _ => IeltsMockPhase.part2Intro,
       };
       return value.copyWith(phase: phase);
@@ -652,15 +624,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         clearSpeakingDeadline: true,
       );
     }
-    if (value.phase == IeltsMockPhase.part3 ||
-        value.phase == IeltsMockPhase.part3Intro) {
-      return value.copyWith(
-        phase: IeltsMockPhase.part3,
-        clearPreparationDeadline: true,
-        clearSpeakingStartedAt: true,
-        clearSpeakingDeadline: true,
-      );
-    }
     if (completed >= _partEnd(IeltsSpeakingPart.part2)) {
       final phase = switch (value.phase) {
         IeltsMockPhase.part3 => IeltsMockPhase.part3,
@@ -669,6 +632,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       };
       return value.copyWith(
         phase: phase,
+        clearPreparationDeadline: true,
+        clearSpeakingStartedAt: true,
+        clearSpeakingDeadline: true,
+      );
+    }
+    if (value.phase == IeltsMockPhase.part3 ||
+        value.phase == IeltsMockPhase.part3Intro) {
+      return value.copyWith(
+        phase: IeltsMockPhase.part2Speaking,
         clearPreparationDeadline: true,
         clearSpeakingStartedAt: true,
         clearSpeakingDeadline: true,
@@ -1366,7 +1338,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (!_sameProgress(progress, speaking)) {
       await _setProgress(speaking);
     }
-    await widget.controller.startRecording(limit: const Duration(seconds: 120));
+    await widget.controller.startRecording(
+      limit: const Duration(seconds: 120),
+      useRealtimeTranscription: false,
+    );
     if (!mounted) {
       return;
     }
@@ -1379,18 +1354,41 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
   }
 
-  Future<void> _handlePart2SpeakingAction() async {
-    if (widget.controller.recordingState == PracticeRecordingState.idle) {
-      if (widget.controller.hasPendingPracticeAudio) {
-        await widget.controller.discardPendingPracticeAudio();
-        if (widget.controller.hasPendingPracticeAudio) {
-          return;
-        }
-      }
-      await _startPart2Speaking(restart: true);
+  Future<void> _retryPart2Transcription() async {
+    if (widget.controller.recordingState != PracticeRecordingState.idle ||
+        !widget.controller.hasPendingPracticeAudio) {
       return;
     }
-    await _finishPart2Speaking();
+    _part2TranscriptionRetryTimer?.cancel();
+    _part2TranscriptionRetryTimer = null;
+    await widget.controller.retryPracticeTranscription();
+  }
+
+  void _retryPart2Confirmation() {
+    if (widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation ||
+        widget.controller.errorMessage == null) {
+      return;
+    }
+    _confirmPendingTranscript();
+  }
+
+  Future<void> _rerecordPart2() async {
+    final state = widget.controller.recordingState;
+    if (state == PracticeRecordingState.awaitingConfirmation) {
+      widget.controller.rerecord();
+    } else if (state != PracticeRecordingState.idle) {
+      return;
+    }
+    _part2TranscriptionRetryTimer?.cancel();
+    _part2TranscriptionRetryTimer = null;
+    if (widget.controller.hasPendingPracticeAudio) {
+      await widget.controller.discardPendingPracticeAudio();
+      if (widget.controller.hasPendingPracticeAudio) {
+        return;
+      }
+    }
+    await _startPart2Speaking(restart: true);
   }
 
   void _schedulePart2TranscriptionRetry() {
@@ -2074,9 +2072,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         notesController: _notesController,
         notes: progress.notes,
         recordingState: widget.controller.recordingState,
+        hasPendingAudio: widget.controller.hasPendingPracticeAudio,
         busy: _startingPart2Recording,
         errorMessage: null,
         onPressed: _startPart2Speaking,
+        onRetryTranscription: _retryPart2Transcription,
+        onRetryConfirmation: _retryPart2Confirmation,
+        onRerecord: _rerecordPart2,
       ),
       IeltsMockPhase.part2Speaking => _Part2LongTurn(
         speaking: true,
@@ -2085,6 +2087,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         notesController: _notesController,
         notes: progress.notes,
         recordingState: widget.controller.recordingState,
+        hasPendingAudio: widget.controller.hasPendingPracticeAudio,
         busy:
             _finishingPart2Recording ||
             widget.controller.recordingState ==
@@ -2094,8 +2097,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         errorMessage:
             _answerLanguageError ??
             widget.controller.errorMessage ??
-            (_part2RetryNeeded ? '录音识别失败，请重新录音。' : null),
-        onPressed: _handlePart2SpeakingAction,
+            (_part2RetryNeeded
+                ? widget.controller.hasPendingPracticeAudio
+                      ? '录音识别失败，录音已保留。'
+                      : '上次录音未能保存，请重新录音。'
+                : null),
+        onPressed: _finishPart2Speaking,
+        onRetryTranscription: _retryPart2Transcription,
+        onRetryConfirmation: _retryPart2Confirmation,
+        onRerecord: _rerecordPart2,
       ),
       IeltsMockPhase.part2Complete => _Part2Transition(
         key: const Key('ielts-mock-part-2-transition'),
@@ -2105,11 +2115,19 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             _answerLanguageError ??
             widget.controller.errorMessage ??
             (_part2RetryNeeded && !_part2BackgroundProcessing
-                ? 'Part 2 录音暂时无法识别，请重新提交。'
+                ? 'Part 2 录音暂时无法识别，录音已保留。'
                 : null),
         onContinue: _continueFromPart2,
         onReturn: () => _requestExit(fromCompletion: true),
-        onRetry: _handlePart2SpeakingAction,
+        retryingConfirmation:
+            widget.controller.recordingState ==
+            PracticeRecordingState.awaitingConfirmation,
+        onRetry:
+            widget.controller.recordingState ==
+                PracticeRecordingState.awaitingConfirmation
+            ? _retryPart2Confirmation
+            : _retryPart2Transcription,
+        onRerecord: _rerecordPart2,
       ),
       IeltsMockPhase.part3Intro => _Part3Intro(
         topicTitle: _currentTopicTitle(),
@@ -3068,7 +3086,9 @@ class _Part2Transition extends StatelessWidget {
     required this.errorMessage,
     required this.onContinue,
     required this.onReturn,
+    required this.retryingConfirmation,
     required this.onRetry,
+    required this.onRerecord,
     super.key,
   });
 
@@ -3077,7 +3097,9 @@ class _Part2Transition extends StatelessWidget {
   final String? errorMessage;
   final VoidCallback onContinue;
   final VoidCallback onReturn;
+  final bool retryingConfirmation;
   final VoidCallback onRetry;
+  final VoidCallback onRerecord;
 
   @override
   Widget build(BuildContext context) {
@@ -3116,32 +3138,50 @@ class _Part2Transition extends StatelessWidget {
                     ? errorMessage!
                     : ready
                     ? '作答已经保存。请选择继续 Part 3，或返回训练。'
-                    : '录音已安全提交，转写和评分将在后台继续，不会阻塞进入 Part 3。',
+                    : '录音已保存，正在完成识别；成功后即可进入 Part 3。',
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
               const SizedBox(height: 28),
               if (failed)
-                FilledButton(
-                  key: const Key('ielts-part2-retry-submission'),
-                  onPressed: onRetry,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('重新提交录音'),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton(
+                      key: Key(
+                        retryingConfirmation
+                            ? 'ielts-part2-retry-confirmation'
+                            : 'ielts-part2-retry-transcription',
+                      ),
+                      onPressed: onRetry,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(54),
+                        backgroundColor: SpeakUpDesign.ink,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: Text(retryingConfirmation ? '重试提交' : '重试识别'),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      key: const Key('ielts-part2-rerecord'),
+                      onPressed: onRerecord,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                      child: const Text('重新录音'),
+                    ),
+                  ],
                 )
               else
                 FilledButton(
                   key: const Key('ielts-part2-continue-part3'),
-                  onPressed: onContinue,
+                  onPressed: ready ? onContinue : null,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
                     backgroundColor: SpeakUpDesign.ink,
                     foregroundColor: Colors.white,
                   ),
-                  child: const Text('继续 Part 3 →'),
+                  child: Text(ready ? '继续 Part 3 →' : '正在识别…'),
                 ),
               const SizedBox(height: 12),
               OutlinedButton(
@@ -3339,9 +3379,13 @@ class _Part2LongTurn extends StatelessWidget {
     required this.notesController,
     required this.notes,
     required this.recordingState,
+    required this.hasPendingAudio,
     required this.busy,
     required this.errorMessage,
     required this.onPressed,
+    required this.onRetryTranscription,
+    required this.onRetryConfirmation,
+    required this.onRerecord,
   });
 
   final bool speaking;
@@ -3350,9 +3394,13 @@ class _Part2LongTurn extends StatelessWidget {
   final TextEditingController notesController;
   final String notes;
   final PracticeRecordingState recordingState;
+  final bool hasPendingAudio;
   final bool busy;
   final String? errorMessage;
   final VoidCallback onPressed;
+  final VoidCallback onRetryTranscription;
+  final VoidCallback onRetryConfirmation;
+  final VoidCallback onRerecord;
 
   @override
   Widget build(BuildContext context) {
@@ -3397,19 +3445,55 @@ class _Part2LongTurn extends StatelessWidget {
                       style: const TextStyle(color: SpeakUpDesign.error),
                     ),
                   ],
-                  if (recordingState == PracticeRecordingState.idle &&
+                  if ((recordingState == PracticeRecordingState.idle ||
+                          recordingState ==
+                              PracticeRecordingState.awaitingConfirmation) &&
                       errorMessage != null) ...[
                     const SizedBox(height: 20),
                     FilledButton(
-                      key: const Key('ielts-mock-finish-speaking'),
-                      onPressed: busy ? null : onPressed,
+                      key: Key(
+                        recordingState ==
+                                PracticeRecordingState.awaitingConfirmation
+                            ? 'ielts-part2-retry-confirmation'
+                            : hasPendingAudio
+                            ? 'ielts-part2-retry-transcription'
+                            : 'ielts-part2-rerecord',
+                      ),
+                      onPressed: busy
+                          ? null
+                          : recordingState ==
+                                PracticeRecordingState.awaitingConfirmation
+                          ? onRetryConfirmation
+                          : hasPendingAudio
+                          ? onRetryTranscription
+                          : onRerecord,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
                         backgroundColor: SpeakUpDesign.ink,
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('重新录音 →'),
+                      child: Text(
+                        recordingState ==
+                                PracticeRecordingState.awaitingConfirmation
+                            ? '重试提交'
+                            : hasPendingAudio
+                            ? '重试识别'
+                            : '重新录音 →',
+                      ),
                     ),
+                    if (hasPendingAudio ||
+                        recordingState ==
+                            PracticeRecordingState.awaitingConfirmation) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        key: const Key('ielts-part2-rerecord'),
+                        onPressed: busy ? null : onRerecord,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        child: const Text('重新录音'),
+                      ),
+                    ],
                   ],
                 ],
               ),

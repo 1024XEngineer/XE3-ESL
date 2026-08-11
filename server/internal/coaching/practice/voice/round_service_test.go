@@ -19,7 +19,8 @@ import (
 func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
-	recognizer := &voiceTestRecognizer{}
+	realtimeRecognizer := &streamingVoiceTestRecognizer{}
+	recordedRecognizer := &voiceTestRecognizer{}
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
@@ -39,7 +40,8 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		store,
 		vault,
-		recognizer,
+		realtimeRecognizer,
+		recordedRecognizer,
 		&voiceTestSynthesizer{},
 	)
 	if err != nil {
@@ -100,8 +102,14 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(replayedTurn, turn) {
 		t.Fatalf("confirmation replay = %#v, %v", replayedTurn, err)
 	}
-	if recognizer.calls != 1 || store.nextTurn != 1 {
-		t.Fatalf("calls: ASR=%d turns=%d", recognizer.calls, store.nextTurn)
+	if recordedRecognizer.calls != 1 || realtimeRecognizer.streamCalls != 0 ||
+		realtimeRecognizer.transcribeCalls != 0 || store.nextTurn != 1 {
+		t.Fatalf(
+			"calls: recorded=%d realtime=%#v turns=%d",
+			recordedRecognizer.calls,
+			realtimeRecognizer,
+			store.nextTurn,
+		)
 	}
 }
 
@@ -111,6 +119,7 @@ func TestVoiceRoundStreamsProviderSnapshotsAndPersistsFinalCandidate(
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
 	recognizer := &streamingVoiceTestRecognizer{}
+	recordedRecognizer := &voiceTestRecognizer{}
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
@@ -127,6 +136,7 @@ func TestVoiceRoundStreamsProviderSnapshotsAndPersistsFinalCandidate(
 		store,
 		vault,
 		recognizer,
+		recordedRecognizer,
 		&voiceTestSynthesizer{},
 	)
 	if err != nil {
@@ -185,7 +195,8 @@ func TestVoiceRoundStreamsProviderSnapshotsAndPersistsFinalCandidate(
 	candidate := result.candidate
 	if candidate.Transcript != "A complete streaming answer." ||
 		candidate.ProviderRequestID != "asr-stream-request" ||
-		recognizer.streamCalls != 1 || recognizer.transcribeCalls != 0 {
+		recognizer.streamCalls != 1 || recognizer.transcribeCalls != 0 ||
+		recordedRecognizer.calls != 0 {
 		t.Fatalf("candidate = %#v, recognizer = %#v", candidate, recognizer)
 	}
 	wantUpdates := []TranscriptionUpdate{
@@ -234,6 +245,7 @@ func TestVoiceRoundStreamingRequiresStreamingRecognizer(t *testing.T) {
 		store,
 		vault,
 		&voiceTestRecognizer{},
+		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{},
 	)
 	if err != nil {
@@ -280,6 +292,7 @@ func TestVoiceRoundTextAnswerUsesDurableCandidateWithoutASR(t *testing.T) {
 	service, err := NewVoiceRoundServiceWithRecordings(
 		store,
 		vault,
+		recognizer,
 		recognizer,
 		&voiceTestSynthesizer{},
 		recordings,
@@ -355,6 +368,7 @@ func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
 		service, serviceErr := NewVoiceRoundServiceWithRecordings(
 			store,
 			vault,
+			&voiceTestRecognizer{},
 			&voiceTestRecognizer{},
 			&voiceTestSynthesizer{},
 			recordings,
@@ -439,6 +453,7 @@ func TestVoiceRoundRejectsInvalidAtomicRecordingProjection(
 	service, err := NewVoiceRoundServiceWithRecordings(
 		store,
 		vault,
+		&voiceTestRecognizer{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{},
 		recordings,
@@ -527,10 +542,12 @@ func TestVoiceRoundFailureAndForeignActorStayVoiceScoped(t *testing.T) {
 		"safe-request",
 		context.DeadlineExceeded,
 	)
+	recognizer := &voiceTestRecognizer{err: providerError}
 	service, err := NewVoiceRoundService(
 		store,
 		vault,
-		&voiceTestRecognizer{err: providerError},
+		recognizer,
+		recognizer,
 		&voiceTestSynthesizer{},
 	)
 	if err != nil {
@@ -574,6 +591,35 @@ func TestVoiceRoundFailureAndForeignActorStayVoiceScoped(t *testing.T) {
 		t.Fatalf("provider retry attempts = %#v", store.attempts)
 	}
 
+	recognizer.err = nil
+	command.Audio = bytes.NewReader(voiceTestWAV())
+	candidate, err := service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command,
+	)
+	if err != nil || candidate.ID == "" {
+		t.Fatalf("provider recovery = %#v, %v", candidate, err)
+	}
+	command.Audio = bytes.NewReader(voiceTestWAV())
+	replayed, err := service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command,
+	)
+	if err != nil || replayed.ID != candidate.ID || recognizer.calls != 3 ||
+		len(store.candidates) != 1 {
+		t.Fatalf(
+			"provider recovery replay = %#v, %v, calls=%d candidates=%d",
+			replayed,
+			err,
+			recognizer.calls,
+			len(store.candidates),
+		)
+	}
+
 	command.Audio = bytes.NewReader(voiceTestWAV())
 	_, err = service.Transcribe(
 		context.Background(),
@@ -603,6 +649,7 @@ func TestVoiceRoundCapacityFailsBeforeReservationAndProvider(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		store,
 		voiceCapacityVault{},
+		recognizer,
 		recognizer,
 		&voiceTestSynthesizer{},
 	)
@@ -670,13 +717,15 @@ func TestVoiceRoundPersistsProviderOutcomeAfterCallerCancellation(t *testing.T) 
 			}
 			t.Cleanup(func() { _ = vault.Close() })
 			ctx, cancel := context.WithCancel(context.Background())
+			recognizer := &cancelingVoiceRecognizer{
+				cancel: cancel,
+				err:    test.providerErr,
+			}
 			service, err := NewVoiceRoundService(
 				store,
 				vault,
-				&cancelingVoiceRecognizer{
-					cancel: cancel,
-					err:    test.providerErr,
-				},
+				recognizer,
+				recognizer,
 				&voiceTestSynthesizer{},
 			)
 			if err != nil {
@@ -745,6 +794,7 @@ func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 		store,
 		vault,
 		recognizer,
+		recognizer,
 		&voiceTestSynthesizer{},
 	)
 	if err != nil {
@@ -805,6 +855,7 @@ func TestVoiceRoundConcurrentConfirmationCreatesOneVoiceTurn(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		store,
 		vault,
+		&voiceTestRecognizer{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{},
 	)
@@ -873,6 +924,7 @@ func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
 		newVoiceTestStore(),
 		voiceNoopVault{},
 		&voiceTestRecognizer{},
+		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{err: NewProviderError(
 			ProviderOperationSynthesis,
 			ProviderErrorUnavailable,
@@ -902,6 +954,7 @@ func TestVoiceRoundTTSGenericFailureUsesSynthesisAuditOperation(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		newVoiceTestStore(),
 		voiceNoopVault{},
+		&voiceTestRecognizer{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{err: errors.New("private provider detail")},
 	)
@@ -934,6 +987,7 @@ func TestVoiceRoundClosesInvalidTTSProviderAudio(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		newVoiceTestStore(),
 		voiceNoopVault{},
+		&voiceTestRecognizer{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{result: SynthesisResult{
 			// Missing the required request/provider/model/audio identifiers.

@@ -127,7 +127,10 @@ jobs:
           QIANWEN_EMBEDDING_DIMENSIONS: "1024"
           SPEECH_RECOGNITION_PROVIDER: qianwen
           QIANWEN_ASR_BASE_URL: https://dashscope.aliyuncs.com/api/v1
-          QIANWEN_ASR_MODEL: fun-asr-flash-2026-06-15
+          QIANWEN_ASR_MODEL: fun-asr-realtime
+          QIANWEN_ASR_TIMEOUT: 150s
+          QIANWEN_ASR_RECORDED_MODEL: fun-asr-flash-2026-06-15
+          QIANWEN_ASR_RECORDED_TIMEOUT: 150s
           SPEECH_SYNTHESIS_PROVIDER: qianwen
           QIANWEN_TTS_BASE_URL: https://dashscope.aliyuncs.com/api/v1
           QIANWEN_TTS_MODEL: qwen-audio-3.0-tts-flash

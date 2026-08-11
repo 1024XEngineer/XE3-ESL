@@ -28,7 +28,11 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout                = 5 * time.Second
+	voiceAudioUploadLease          = 2 * time.Minute
+	voiceASRFinalizationTimeMargin = 15 * time.Second
+)
 
 func main() {
 	os.Exit(run())
@@ -109,6 +113,12 @@ func run() int {
 	practiceRecognizer, err := bootstrap.NewPracticeSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("Practice speech recognition startup failed")
+		return 1
+	}
+	practiceRecordedRecognizer, err :=
+		bootstrap.NewPracticeRecordedSpeechRecognizer(asrConfig)
+	if err != nil {
+		logger.Error("recorded Practice speech recognition startup failed")
 		return 1
 	}
 	practiceSynthesizer, err := bootstrap.NewPracticeSpeechSynthesizer(ttsConfig)
@@ -393,23 +403,25 @@ func run() int {
 			},
 			agentImageConfig,
 			bootstrap.VoiceConfiguration{
-				Recognizer:             recognizer,
-				Synthesizer:            synthesizer,
-				AssistantSpeech:        synthesizer,
-				PracticeRecognizer:     practiceRecognizer,
-				PracticeSynthesizer:    practiceSynthesizer,
-				QuestionGenerator:      practiceQuestions,
-				QuestionTranslator:     modelProviders.Translation,
-				AnswerTipGenerator:     practiceAnswerTips,
-				TemporaryAudio:         audioVault,
-				ObjectStore:            recordingStore,
-				AgentVoiceInputEnabled: storageConfig.Enabled,
-				ScratchDirectory:       ttsConfig.TempDirectory,
-				ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
-				AudioStagedTTL:         24 * time.Hour,
-				AudioUploadLease:       2 * time.Minute,
-				ASRLease:               asrConfig.Timeout + 15*time.Second,
-				AudioReadTimeout:       temporaryAudioConfig.ReadTimeout,
+				Recognizer:                 recognizer,
+				Synthesizer:                synthesizer,
+				AssistantSpeech:            synthesizer,
+				PracticeRecognizer:         practiceRecognizer,
+				PracticeRecordedRecognizer: practiceRecordedRecognizer,
+				PracticeSynthesizer:        practiceSynthesizer,
+				QuestionGenerator:          practiceQuestions,
+				QuestionTranslator:         modelProviders.Translation,
+				AnswerTipGenerator:         practiceAnswerTips,
+				TemporaryAudio:             audioVault,
+				ObjectStore:                recordingStore,
+				AgentVoiceInputEnabled:     storageConfig.Enabled,
+				ScratchDirectory:           ttsConfig.TempDirectory,
+				ObjectReadAllowedHosts:     agentVoiceObjectReadHosts,
+				AudioStagedTTL:             24 * time.Hour,
+				AudioUploadLease:           voiceAudioUploadLease,
+				ASRLease:                   voiceASRLease(asrConfig),
+				AudioReadTimeout:           temporaryAudioConfig.ReadTimeout,
+				RecordedAudioReadTimeout:   temporaryAudioConfig.RecordedReadTimeout,
 				ReviewHistoryCursorKey: []byte(
 					reviewHistoryConfig.CursorSigningKey.Reveal(),
 				),
@@ -792,4 +804,11 @@ func run() int {
 	}
 
 	return exitCode
+}
+
+func voiceASRLease(configuration config.SpeechRecognitionConfig) time.Duration {
+	return voiceAudioUploadLease + max(
+		configuration.Timeout,
+		configuration.RecordedTimeout,
+	) + voiceASRFinalizationTimeMargin
 }

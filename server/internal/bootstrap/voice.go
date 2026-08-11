@@ -22,25 +22,27 @@ import (
 // composition root. Agent Voice and Practice Voice intentionally use their own
 // ports even when both are backed by the same provider.
 type VoiceConfiguration struct {
-	Recognizer                agentvoice.StreamingSpeechRecognizer
-	Synthesizer               agentvoice.SpeechSynthesizer
-	AssistantSpeech           agentconversation.AssistantSpeechSynthesizer
-	PracticeRecognizer        practicevoice.SpeechRecognizer
-	PracticeSynthesizer       practicevoice.SpeechSynthesizer
-	QuestionGenerator         practicevoice.QuestionGenerator
-	QuestionTranslator        sharedtranslation.Translator
-	AnswerTipGenerator        practicevoice.AnswerTipGenerator
-	TemporaryAudio            practicevoice.TemporaryAudioVault
-	ObjectStore               objectstore.Store
-	AgentVoiceInputEnabled    bool
-	ScratchDirectory          string
-	ObjectReadAllowedHosts    []string
-	AudioStagedTTL            time.Duration
-	AudioUploadLease          time.Duration
-	ASRLease                  time.Duration
-	AudioReadTimeout          time.Duration
-	ReviewHistoryCursorKey    []byte
-	SpeechFeedbackCoordinator *speechfeedback.SpeechFeedbackCoordinator
+	Recognizer                 agentvoice.StreamingSpeechRecognizer
+	Synthesizer                agentvoice.SpeechSynthesizer
+	AssistantSpeech            agentconversation.AssistantSpeechSynthesizer
+	PracticeRecognizer         practicevoice.SpeechRecognizer
+	PracticeRecordedRecognizer practicevoice.SpeechRecognizer
+	PracticeSynthesizer        practicevoice.SpeechSynthesizer
+	QuestionGenerator          practicevoice.QuestionGenerator
+	QuestionTranslator         sharedtranslation.Translator
+	AnswerTipGenerator         practicevoice.AnswerTipGenerator
+	TemporaryAudio             practicevoice.TemporaryAudioVault
+	ObjectStore                objectstore.Store
+	AgentVoiceInputEnabled     bool
+	ScratchDirectory           string
+	ObjectReadAllowedHosts     []string
+	AudioStagedTTL             time.Duration
+	AudioUploadLease           time.Duration
+	ASRLease                   time.Duration
+	AudioReadTimeout           time.Duration
+	RecordedAudioReadTimeout   time.Duration
+	ReviewHistoryCursorKey     []byte
+	SpeechFeedbackCoordinator  *speechfeedback.SpeechFeedbackCoordinator
 }
 
 type AgentSpeechSynthesizer interface {
@@ -109,6 +111,26 @@ func NewPracticeSpeechRecognizer(
 			BaseURL: configuration.BaseURL,
 			Model:   configuration.Model,
 			Timeout: configuration.Timeout,
+		},
+		configuration.APIKey.Reveal(),
+	)
+}
+
+// NewPracticeRecordedSpeechRecognizer selects the synchronous Practice Voice
+// ASR adapter used only after a complete recording has been uploaded.
+func NewPracticeRecordedSpeechRecognizer(
+	configuration config.SpeechRecognitionConfig,
+) (practicevoice.SpeechRecognizer, error) {
+	if configuration.Provider != config.SpeechProviderQianwen {
+		return nil, errors.New(
+			"bootstrap: recorded Practice speech recognition provider is not registered",
+		)
+	}
+	return qianwen.NewPracticeRecordedVoiceRecognizer(
+		qianwen.ASRConfig{
+			BaseURL: configuration.BaseURL,
+			Model:   configuration.RecordedModel,
+			Timeout: configuration.RecordedTimeout,
 		},
 		configuration.APIKey.Reveal(),
 	)
@@ -185,6 +207,7 @@ func buildProductionVoiceApplication(
 ) {
 	if database == nil ||
 		configuration.PracticeRecognizer == nil ||
+		configuration.PracticeRecordedRecognizer == nil ||
 		configuration.PracticeSynthesizer == nil ||
 		configuration.QuestionGenerator == nil ||
 		configuration.TemporaryAudio == nil ||
@@ -239,6 +262,7 @@ func buildProductionVoiceApplication(
 				Repository:         repository,
 				TemporaryAudio:     configuration.TemporaryAudio,
 				Recognizer:         configuration.PracticeRecognizer,
+				RecordedRecognizer: configuration.PracticeRecordedRecognizer,
 				Synthesizer:        configuration.PracticeSynthesizer,
 				QuestionGenerator:  configuration.QuestionGenerator,
 				QuestionTranslator: configuration.QuestionTranslator,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
@@ -153,6 +154,33 @@ func TestPracticeVoiceStreamingRejectsNonRealtimeModel(t *testing.T) {
 	)
 	if !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("non-realtime model error = %v", err)
+	}
+}
+
+func TestPracticeRecordedVoiceRecognizerRequiresFlashModel(t *testing.T) {
+	recorded, err := NewPracticeRecordedVoiceRecognizer(
+		ASRConfig{
+			BaseURL: "https://dashscope.aliyuncs.com/api/v1",
+			Model:   "fun-asr-flash-2026-06-15",
+			Timeout: time.Second,
+		},
+		"test-key",
+	)
+	if err != nil || recorded == nil || recorded.recognizer == nil ||
+		recorded.recognizer.model != "fun-asr-flash-2026-06-15" {
+		t.Fatalf("recorded recognizer = %#v, %v", recorded, err)
+	}
+
+	_, err = NewPracticeRecordedVoiceRecognizer(
+		ASRConfig{
+			BaseURL: "https://dashscope.aliyuncs.com/api/v1",
+			Model:   "fun-asr-realtime",
+			Timeout: time.Second,
+		},
+		"test-key",
+	)
+	if err == nil {
+		t.Fatal("recorded recognizer accepted realtime model")
 	}
 }
 

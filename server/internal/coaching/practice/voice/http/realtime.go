@@ -70,7 +70,7 @@ func (handler *Handler) transcribeCandidateRealtime(c *gin.Context) {
 	defer connection.Close()
 	connection.SetReadLimit(platformmedia.MaxAudioBytes)
 	if err := connection.SetReadDeadline(
-		time.Now().Add(handler.readTimeout),
+		time.Now().Add(handler.realtimeReadTimeout),
 	); err != nil {
 		return
 	}
@@ -110,7 +110,7 @@ func (handler *Handler) transcribeCandidateRealtime(c *gin.Context) {
 	streamErr := streamPracticeRealtimePCM(
 		connection,
 		writer,
-		handler.readTimeout,
+		handler.realtimeReadTimeout,
 	)
 	if streamErr != nil {
 		cancel()

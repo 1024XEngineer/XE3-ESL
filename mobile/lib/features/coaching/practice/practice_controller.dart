@@ -869,7 +869,7 @@ final class PracticeController extends ChangeNotifier
       context.request = request;
       _recordingState = PracticeRecordingState.starting;
       notifyListeners();
-      final operation = _startRecorder(fence, _recordingLimit);
+      final operation = _startRecorder(fence, _recordingLimit, true);
       _recorderStartFuture = operation;
       await operation.whenComplete(() {
         if (identical(_recorderStartFuture, operation)) {
@@ -925,7 +925,10 @@ final class PracticeController extends ChangeNotifier
     return current;
   }
 
-  Future<void> startRecording({Duration? limit}) {
+  Future<void> startRecording({
+    Duration? limit,
+    bool useRealtimeTranscription = true,
+  }) {
     if (!hasActivePractice ||
         isBusy ||
         _pendingPracticeAudio != null ||
@@ -959,6 +962,7 @@ final class PracticeController extends ChangeNotifier
         questionId: _currentQuestion?.id,
       ),
       recordingLimit,
+      useRealtimeTranscription,
     );
     _recorderStartFuture = operation;
     return operation.whenComplete(() {
@@ -971,6 +975,7 @@ final class PracticeController extends ChangeNotifier
   Future<void> _startRecorder(
     _PracticeOperationFence fence,
     Duration recordingLimit,
+    bool useRealtimeTranscription,
   ) async {
     try {
       await stopPracticeAudio();
@@ -978,7 +983,9 @@ final class PracticeController extends ChangeNotifier
           _recordingState != PracticeRecordingState.starting) {
         return;
       }
-      final realtimePractice = client is PracticeRealtimeTranscriptionClient
+      final realtimePractice =
+          useRealtimeTranscription &&
+              client is PracticeRealtimeTranscriptionClient
           ? client as PracticeRealtimeTranscriptionClient
           : null;
       final streamingRecorder = recorder is PracticeStreamingRecorder

@@ -211,6 +211,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 	configuration.PracticeRecognizer = practiceVoiceRecognizerAdapter{
 		recognizer: configuration.Recognizer,
 	}
+	configuration.PracticeRecordedRecognizer = configuration.PracticeRecognizer
 	configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
 		synthesizer: configuration.Synthesizer,
 	}
@@ -334,6 +335,7 @@ func TestAgentEphemeralTranscriptionRegistersWithoutObjectStorage(t *testing.T) 
 	configuration.PracticeRecognizer = practiceVoiceRecognizerAdapter{
 		recognizer: configuration.Recognizer,
 	}
+	configuration.PracticeRecordedRecognizer = configuration.PracticeRecognizer
 	configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
 		synthesizer: configuration.Synthesizer,
 	}

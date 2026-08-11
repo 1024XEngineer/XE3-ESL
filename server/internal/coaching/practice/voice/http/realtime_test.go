@@ -19,6 +19,25 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func TestPracticeVoiceHTTPUsesSeparateReadTimeouts(t *testing.T) {
+	handler, err := NewHandler(
+		&practiceRealtimeHTTPApplication{},
+		Options{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	if handler.realtimeReadTimeout != 15*time.Second ||
+		handler.recordedReadTimeout != 60*time.Second {
+		t.Fatalf(
+			"read timeouts = realtime %s, recorded %s",
+			handler.realtimeReadTimeout,
+			handler.recordedReadTimeout,
+		)
+	}
+}
+
 func TestPracticeRealtimeVoiceInputStreamsBeforeFinishAndPersistsCandidate(
 	t *testing.T,
 ) {
