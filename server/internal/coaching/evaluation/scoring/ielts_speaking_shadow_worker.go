@@ -274,13 +274,13 @@ func (worker *IELTSSpeakingShadowWorker) recordFailure(
 	cause error,
 ) (IELTSSpeakingShadowRuntimeStatus, error) {
 	failure := classifyIELTSSpeakingShadowFailure(cause)
-	if failure.Code == "provider_invalid_json" ||
-		failure.Code == "provider_schema_mismatch" ||
-		failure.Code == "provider_invalid_response" {
+	if rejectionStage := ieltsProviderRejectionStage(cause); rejectionStage != "" {
 		slog.Warn(
 			"IELTS Speaking provider response rejected",
 			"failure_code",
 			failure.Code,
+			"rejection_stage",
+			rejectionStage,
 		)
 	}
 	status, err := worker.repository.FailIELTSSpeakingShadow(
@@ -297,6 +297,21 @@ func (worker *IELTSSpeakingShadowWorker) recordFailure(
 		return "", evaluation.ErrInvalidRequest
 	}
 	return status, nil
+}
+
+func ieltsProviderRejectionStage(cause error) string {
+	switch {
+	case errors.Is(cause, errIELTSSpeakingProviderInvalidJSON):
+		return "json_decode"
+	case errors.Is(cause, errIELTSSpeakingProviderSchemaMismatch):
+		return "schema_validation"
+	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow):
+		return "semantic_validation"
+	case errors.Is(cause, evaluation.ErrInvalidRequest):
+		return "request_validation"
+	default:
+		return ""
+	}
 }
 
 func ieltsClaimMatchesRuntime(

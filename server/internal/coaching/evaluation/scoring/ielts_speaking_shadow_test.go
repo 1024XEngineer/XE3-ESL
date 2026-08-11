@@ -143,6 +143,35 @@ func TestIELTSSpeakingShadowRejectsChineseOnlySessionAsUnscoreable(
 	}
 }
 
+func TestIELTSSpeakingShadowRejectsRepeatedShortAnswersAsUnscoreable(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingSnapshotWithTranscript(
+		t,
+		"Yes, yes. 666 这是中文。",
+	)
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if provider.calls != 0 ||
+		result.Scoreability != IELTSSpeakingScoreabilityInsufficient ||
+		result.Gate != IELTSSpeakingGateBlocked ||
+		result.Provider != nil ||
+		!slices.Equal(result.ReasonCodes, []IELTSSpeakingReasonCode{
+			IELTSReasonInsufficientEvidence,
+		}) {
+		t.Fatalf("result = %#v; provider calls = %d", result, provider.calls)
+	}
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
+	}
+}
+
 func TestIELTSSpeakingShadowDoesNotCallProviderWithoutEveryFrozenAnswer(
 	t *testing.T,
 ) {
