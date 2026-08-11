@@ -8,22 +8,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 )
 
 const (
-	GeneralSceneStrategyRef           = "general-scene-evaluation/v1"
-	GeneralScenePipelineVersion       = "evaluation-pipeline/v1"
-	GeneralSceneSchemaVersion         = "general-scene-evaluation/v1"
-	GeneralSceneProviderSchemaVersion = "general-scene-evaluation-provider/v1"
-	GeneralScenePromptVersion         = "general-scene-evaluation-prompt/v1"
+	GeneralSceneStrategyRef                 = "general-scene-evaluation/v1"
+	GeneralScenePipelineVersion             = "evaluation-pipeline/v1"
+	GeneralSceneSchemaVersion               = "general-scene-evaluation/v1"
+	GeneralSceneProviderSchemaVersion       = "general-scene-evaluation-provider/v1"
+	GeneralScenePromptVersion               = "general-scene-evaluation-prompt/v1"
+	GeneralSceneAtomicProviderSchemaVersion = "general-scene-evaluation-atomic-provider/v1"
+	GeneralSceneAtomicPromptVersion         = "general-scene-evaluation-atomic-prompt/v1"
+	GeneralSceneAtomicResultSchemaVersion   = "general-scene-evaluation-atomic-result/v1"
 
 	generalSceneMinimumWords            = 3
 	generalSceneMaximumPayload          = 64 * 1024
@@ -121,6 +125,13 @@ type GeneralSceneProvider interface {
 	) (GeneralSceneProviderResult, error)
 }
 
+type GeneralSceneAtomicProvider interface {
+	AnalyzeGeneralSceneAtom(
+		context.Context,
+		GeneralSceneProviderInput,
+	) (GeneralSceneProviderResult, error)
+}
+
 type GeneralSceneProviderResult struct {
 	Payload   json.RawMessage
 	Provider  string
@@ -131,6 +142,7 @@ type GeneralSceneProviderResult struct {
 type GeneralSceneProviderInput struct {
 	SchemaVersion        string                    `json:"schema_version"`
 	PromptVersion        string                    `json:"prompt_version"`
+	EvaluationSection    IELTSPart                 `json:"evaluation_section,omitempty"`
 	SceneType            evaluation.SceneType      `json:"scene_type"`
 	PracticeExperience   string                    `json:"practice_experience"`
 	SceneCategory        string                    `json:"scene_category"`
@@ -141,6 +153,64 @@ type GeneralSceneProviderInput struct {
 	PracticeObjectives   []GeneralSceneObjective   `json:"practice_objectives"`
 	AssessableDimensions []GeneralSceneDimension   `json:"assessable_dimensions"`
 	Opportunities        []GeneralSceneOpportunity `json:"opportunities"`
+}
+
+type GeneralSceneAtomicKey struct {
+	Part      IELTSPart             `json:"part_id"`
+	Dimension GeneralSceneDimension `json:"dimension_id"`
+}
+
+func (key GeneralSceneAtomicKey) Valid() bool {
+	return slices.Contains(ieltsPartOrder[:], key.Part) &&
+		slices.Contains(generalSceneDimensionOrder[:], key.Dimension)
+}
+
+type GeneralSceneAtomicResult struct {
+	SchemaVersion string                      `json:"schema_version"`
+	SnapshotID    string                      `json:"snapshot_id"`
+	Key           GeneralSceneAtomicKey       `json:"key"`
+	Dimension     GeneralSceneDimensionResult `json:"dimension"`
+	Provider      GeneralSceneProviderLineage `json:"provider_lineage"`
+}
+
+type GeneralSceneAtomicAttemptStatus string
+
+const (
+	GeneralSceneAtomicAttemptReady  GeneralSceneAtomicAttemptStatus = "READY"
+	GeneralSceneAtomicAttemptFailed GeneralSceneAtomicAttemptStatus = "FAILED"
+)
+
+type GeneralSceneAtomicAttempt struct {
+	Key          GeneralSceneAtomicKey
+	AttemptCount int
+	Status       GeneralSceneAtomicAttemptStatus
+	Result       *GeneralSceneAtomicResult
+	Failure      *GeneralSceneFailure
+}
+
+func ValidateGeneralSceneAtomicAttempt(
+	snapshot evidence.EvidenceSnapshot,
+	attempt GeneralSceneAtomicAttempt,
+) error {
+	if attempt.AttemptCount < 1 || !attempt.Key.Valid() {
+		return evaluation.ErrInvalidRequest
+	}
+	switch attempt.Status {
+	case GeneralSceneAtomicAttemptReady:
+		if attempt.Result == nil || attempt.Failure != nil ||
+			attempt.Result.Key != attempt.Key ||
+			ValidateGeneralSceneAtomicResult(snapshot, *attempt.Result) != nil {
+			return evaluation.ErrInvalidRequest
+		}
+	case GeneralSceneAtomicAttemptFailed:
+		if attempt.Result != nil || attempt.Failure == nil ||
+			!attempt.Failure.Valid() {
+			return evaluation.ErrInvalidRequest
+		}
+	default:
+		return evaluation.ErrInvalidRequest
+	}
+	return nil
 }
 
 type GeneralSceneObjective struct {
@@ -186,11 +256,16 @@ type GeneralSceneProviderLineage struct {
 }
 
 type GeneralSceneEngine struct {
-	provider GeneralSceneProvider
+	provider       GeneralSceneProvider
+	atomicProvider GeneralSceneAtomicProvider
 }
 
 func NewGeneralSceneEngine(provider GeneralSceneProvider) *GeneralSceneEngine {
-	return &GeneralSceneEngine{provider: provider}
+	atomicProvider, _ := provider.(GeneralSceneAtomicProvider)
+	return &GeneralSceneEngine{
+		provider:       provider,
+		atomicProvider: atomicProvider,
+	}
 }
 
 func (engine *GeneralSceneEngine) Evaluate(
@@ -222,6 +297,45 @@ func (engine *GeneralSceneEngine) Evaluate(
 	return result, nil
 }
 
+func (engine *GeneralSceneEngine) EvaluateAtomic(
+	ctx context.Context,
+	snapshot evidence.EvidenceSnapshot,
+	key GeneralSceneAtomicKey,
+) (GeneralSceneAtomicResult, error) {
+	if engine == nil || engine.atomicProvider == nil || ctx == nil || !key.Valid() {
+		return GeneralSceneAtomicResult{}, evaluation.ErrInvalidRequest
+	}
+	prepared, err := prepareGeneralScene(snapshot)
+	if err != nil || snapshot.SceneType != evaluation.SceneIELTSSpeaking ||
+		prepared.result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional ||
+		!generalSceneAtomicKeyExpected(prepared, key) {
+		return GeneralSceneAtomicResult{}, evaluation.ErrInvalidRequest
+	}
+	atomicPrepared, err := prepareGeneralSceneAtomicInput(prepared, key)
+	if err != nil {
+		return GeneralSceneAtomicResult{}, err
+	}
+	generated, err := engine.atomicProvider.AnalyzeGeneralSceneAtom(
+		ctx,
+		atomicPrepared.input,
+	)
+	if err != nil {
+		return GeneralSceneAtomicResult{}, err
+	}
+	result, err := normalizeGeneralSceneAtomicProviderResult(
+		atomicPrepared,
+		key,
+		generated,
+	)
+	if err != nil {
+		return GeneralSceneAtomicResult{}, err
+	}
+	if err := ValidateGeneralSceneAtomicResult(snapshot, result); err != nil {
+		return GeneralSceneAtomicResult{}, err
+	}
+	return result, nil
+}
+
 type preparedGeneralScene struct {
 	input                GeneralSceneProviderInput
 	result               GeneralSceneResult
@@ -229,6 +343,7 @@ type preparedGeneralScene struct {
 	refsByID             map[string]evidence.Ref
 	allowedRefs          map[string]struct{}
 	findingSectionsByRef map[string]IELTSPart
+	opportunitySections  []IELTSPart
 	coverage             float64
 	confidence           float64
 }
@@ -343,6 +458,7 @@ func prepareGeneralScene(
 		refsByID:             refsByID,
 		allowedRefs:          allowedRefs,
 		findingSectionsByRef: findingSectionsByRef,
+		opportunitySections:  findingSections,
 		coverage:             coverage,
 		confidence:           confidence,
 	}, nil
@@ -379,6 +495,98 @@ func generalSceneFindingSections(
 		return nil, evaluation.ErrInvalidRequest
 	}
 	return sections, nil
+}
+
+func generalSceneAtomicPlan(
+	snapshot evidence.EvidenceSnapshot,
+) ([]GeneralSceneAtomicKey, *GeneralSceneResult, error) {
+	prepared, err := prepareGeneralScene(snapshot)
+	if err != nil || snapshot.SceneType != evaluation.SceneIELTSSpeaking {
+		return nil, nil, evaluation.ErrInvalidRequest
+	}
+	if prepared.result.ScoreabilityStatus == GeneralSceneScoreabilityInsufficient {
+		result := prepared.result
+		return []GeneralSceneAtomicKey{}, &result, nil
+	}
+	parts := make([]IELTSPart, 0, len(ieltsPartOrder))
+	seen := make(map[IELTSPart]struct{}, len(ieltsPartOrder))
+	for index, opportunity := range prepared.input.Opportunities {
+		if opportunity.Response == nil {
+			continue
+		}
+		part := prepared.opportunitySections[index]
+		if _, exists := seen[part]; exists {
+			continue
+		}
+		seen[part] = struct{}{}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return nil, nil, evaluation.ErrInvalidRequest
+	}
+	keys := make(
+		[]GeneralSceneAtomicKey,
+		0,
+		len(parts)*len(generalSceneDimensionOrder),
+	)
+	for _, part := range parts {
+		for _, dimension := range generalSceneDimensionOrder {
+			keys = append(keys, GeneralSceneAtomicKey{
+				Part: part, Dimension: dimension,
+			})
+		}
+	}
+	return keys, nil, nil
+}
+
+func generalSceneAtomicKeyExpected(
+	prepared preparedGeneralScene,
+	key GeneralSceneAtomicKey,
+) bool {
+	if !key.Valid() {
+		return false
+	}
+	for index, opportunity := range prepared.input.Opportunities {
+		if opportunity.Response != nil &&
+			prepared.opportunitySections[index] == key.Part {
+			return true
+		}
+	}
+	return false
+}
+
+func prepareGeneralSceneAtomicInput(
+	prepared preparedGeneralScene,
+	key GeneralSceneAtomicKey,
+) (preparedGeneralScene, error) {
+	if !generalSceneAtomicKeyExpected(prepared, key) {
+		return preparedGeneralScene{}, evaluation.ErrInvalidRequest
+	}
+	opportunities := make([]GeneralSceneOpportunity, 0)
+	sections := make([]IELTSPart, 0)
+	allowedRefs := make(map[string]struct{})
+	sectionByRef := make(map[string]IELTSPart)
+	for index, opportunity := range prepared.input.Opportunities {
+		if prepared.opportunitySections[index] != key.Part {
+			continue
+		}
+		opportunities = append(opportunities, opportunity)
+		sections = append(sections, key.Part)
+		if opportunity.Response != nil {
+			refID := opportunity.Response.EvidenceRefID
+			allowedRefs[refID] = struct{}{}
+			sectionByRef[refID] = key.Part
+		}
+	}
+	prepared.input.SchemaVersion = GeneralSceneAtomicProviderSchemaVersion
+	prepared.input.PromptVersion = GeneralSceneAtomicPromptVersion
+	prepared.input.EvaluationSection = key.Part
+	prepared.input.AssessableDimensions = []GeneralSceneDimension{key.Dimension}
+	prepared.input.Opportunities = opportunities
+	prepared.allowedRefs = allowedRefs
+	prepared.findingSectionsByRef = sectionByRef
+	prepared.opportunitySections = sections
+	return prepared, nil
 }
 
 func generalSceneTypeSupported(sceneType evaluation.SceneType) bool {
@@ -426,6 +634,11 @@ func insufficientGeneralSceneDimension(
 type generalSceneProviderPayload struct {
 	SchemaVersion string                          `json:"schema_version"`
 	Dimensions    []generalSceneProviderDimension `json:"dimensions"`
+}
+
+type generalSceneAtomicProviderPayload struct {
+	SchemaVersion string                        `json:"schema_version"`
+	Dimension     generalSceneProviderDimension `json:"dimension"`
 }
 
 type generalSceneProviderDimension struct {
@@ -597,6 +810,63 @@ func normalizeGeneralSceneProviderResult(
 	}
 	result.PriorityActions = generalScenePriorityActions(result.Dimensions)
 	return result, nil
+}
+
+func normalizeGeneralSceneAtomicProviderResult(
+	prepared preparedGeneralScene,
+	key GeneralSceneAtomicKey,
+	generated GeneralSceneProviderResult,
+) (GeneralSceneAtomicResult, error) {
+	if len(generated.Payload) == 0 ||
+		len(generated.Payload) > generalSceneMaximumPayload ||
+		!validProviderIdentifier(generated.Provider) ||
+		!validModelIdentifier(generated.Model) ||
+		!validProviderIdentifier(generated.RequestID) {
+		return GeneralSceneAtomicResult{}, fmt.Errorf(
+			"provider envelope: %w",
+			ErrInvalidGeneralSceneResult,
+		)
+	}
+	if !json.Valid(generated.Payload) {
+		return GeneralSceneAtomicResult{}, fmt.Errorf(
+			"provider JSON: %w",
+			errGeneralSceneProviderInvalidJSON,
+		)
+	}
+	var payload generalSceneAtomicProviderPayload
+	decoder := json.NewDecoder(bytes.NewReader(generated.Payload))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil ||
+		payload.SchemaVersion != GeneralSceneAtomicProviderSchemaVersion ||
+		payload.Dimension.DimensionID != key.Dimension ||
+		len(payload.Dimension.Strengths) > 1 ||
+		len(payload.Dimension.Improvements) > 1 ||
+		len(payload.Dimension.Examples) > 1 {
+		return GeneralSceneAtomicResult{}, fmt.Errorf(
+			"provider JSON shape: %w",
+			errGeneralSceneProviderSchemaMismatch,
+		)
+	}
+	dimension, err := normalizeGeneralSceneDimension(
+		prepared,
+		payload.Dimension,
+	)
+	if err != nil {
+		return GeneralSceneAtomicResult{}, err
+	}
+	return GeneralSceneAtomicResult{
+		SchemaVersion: GeneralSceneAtomicResultSchemaVersion,
+		SnapshotID:    prepared.result.SnapshotID,
+		Key:           key,
+		Dimension:     dimension,
+		Provider: GeneralSceneProviderLineage{
+			Provider:       generated.Provider,
+			Model:          generated.Model,
+			RequestID:      generated.RequestID,
+			PromptVersion:  GeneralSceneAtomicPromptVersion,
+			ResponseSchema: GeneralSceneAtomicProviderSchemaVersion,
+		},
+	}, nil
 }
 
 func normalizeGeneralSceneDimension(
@@ -802,6 +1072,156 @@ func generalScenePriorityActions(
 	return actions
 }
 
+func ValidateGeneralSceneAtomicResult(
+	snapshot evidence.EvidenceSnapshot,
+	result GeneralSceneAtomicResult,
+) error {
+	prepared, err := prepareGeneralScene(snapshot)
+	if err != nil || snapshot.SceneType != evaluation.SceneIELTSSpeaking ||
+		result.SchemaVersion != GeneralSceneAtomicResultSchemaVersion ||
+		result.SnapshotID != snapshot.ID || !result.Key.Valid() ||
+		!generalSceneAtomicKeyExpected(prepared, result.Key) ||
+		result.Dimension.Key != string(result.Key.Dimension) ||
+		result.Dimension.Score == nil ||
+		*result.Dimension.Score < 0 || *result.Dimension.Score > 100 ||
+		math.IsNaN(*result.Dimension.Score) ||
+		math.IsInf(*result.Dimension.Score, 0) ||
+		result.Dimension.Scale != GeneralSceneScalePercentage100 ||
+		!sameRatio(result.Dimension.Coverage, prepared.coverage) ||
+		!sameRatio(result.Dimension.Confidence, prepared.confidence) ||
+		!slices.Equal(
+			result.Dimension.ReasonCodes,
+			[]string{"ASR_CONFIDENCE_UNAVAILABLE"},
+		) || len(result.Dimension.Strengths)+len(result.Dimension.Improvements) == 0 ||
+		len(result.Dimension.Strengths) > 1 ||
+		len(result.Dimension.Improvements) > 1 ||
+		len(result.Dimension.Examples) > 1 ||
+		!validGeneralSceneAtomicLineage(&result.Provider) ||
+		!validateGeneralSceneDimensionFindings(
+			prepared,
+			result.Key.Dimension,
+			result.Dimension,
+			make(map[string]struct{}),
+		) || !generalSceneAtomicDimensionBelongsToPart(prepared, result) {
+		return ErrInvalidGeneralSceneResult
+	}
+	return nil
+}
+
+func generalSceneAtomicDimensionBelongsToPart(
+	prepared preparedGeneralScene,
+	result GeneralSceneAtomicResult,
+) bool {
+	for _, collection := range [][]GeneralSceneFinding{
+		result.Dimension.Strengths,
+		result.Dimension.Improvements,
+		result.Dimension.Examples,
+	} {
+		for _, finding := range collection {
+			for _, item := range finding.Evidence {
+				if prepared.findingSectionsByRef[item.EvidenceRefID] != result.Key.Part {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func AggregateGeneralSceneAtoms(
+	snapshot evidence.EvidenceSnapshot,
+	atoms []GeneralSceneAtomicResult,
+) (GeneralSceneResult, error) {
+	prepared, err := prepareGeneralScene(snapshot)
+	if err != nil || snapshot.SceneType != evaluation.SceneIELTSSpeaking ||
+		prepared.result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional {
+		return GeneralSceneResult{}, evaluation.ErrInvalidRequest
+	}
+	expected, insufficient, err := generalSceneAtomicPlan(snapshot)
+	if err != nil || insufficient != nil || len(atoms) != len(expected) {
+		return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+	}
+	byKey := make(map[GeneralSceneAtomicKey]GeneralSceneAtomicResult, len(atoms))
+	for _, atom := range atoms {
+		if ValidateGeneralSceneAtomicResult(snapshot, atom) != nil {
+			return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+		}
+		if _, duplicate := byKey[atom.Key]; duplicate {
+			return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+		}
+		byKey[atom.Key] = atom
+	}
+	first := byKey[expected[0]]
+	result := prepared.result
+	result.Provider = &GeneralSceneProviderLineage{
+		Provider:       first.Provider.Provider,
+		Model:          first.Provider.Model,
+		PromptVersion:  GeneralSceneAtomicPromptVersion,
+		ResponseSchema: GeneralSceneAtomicProviderSchemaVersion,
+	}
+	for _, dimensionID := range generalSceneDimensionOrder {
+		var score float64
+		count := 0
+		refSet := make(map[string]struct{})
+		dimension := GeneralSceneDimensionResult{
+			Key:          string(dimensionID),
+			Scale:        GeneralSceneScalePercentage100,
+			Coverage:     prepared.coverage,
+			Confidence:   prepared.confidence,
+			ReasonCodes:  []string{"ASR_CONFIDENCE_UNAVAILABLE"},
+			EvidenceRefs: []string{},
+			Strengths:    []GeneralSceneFinding{},
+			Improvements: []GeneralSceneFinding{},
+			Examples:     []GeneralSceneFinding{},
+		}
+		for _, key := range expected {
+			if key.Dimension != dimensionID {
+				continue
+			}
+			atom, exists := byKey[key]
+			if !exists || atom.Provider.Provider != first.Provider.Provider ||
+				atom.Provider.Model != first.Provider.Model {
+				return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+			}
+			score += *atom.Dimension.Score
+			count++
+			dimension.Strengths = append(
+				dimension.Strengths,
+				atom.Dimension.Strengths...,
+			)
+			dimension.Improvements = append(
+				dimension.Improvements,
+				atom.Dimension.Improvements...,
+			)
+			dimension.Examples = append(
+				dimension.Examples,
+				atom.Dimension.Examples...,
+			)
+			for _, refID := range atom.Dimension.EvidenceRefs {
+				refSet[refID] = struct{}{}
+			}
+		}
+		if count == 0 ||
+			len(dimension.Strengths) > generalSceneMaximumNormalizedFindings ||
+			len(dimension.Improvements) > generalSceneMaximumNormalizedFindings ||
+			len(dimension.Examples) > generalSceneMaximumNormalizedFindings {
+			return GeneralSceneResult{}, ErrInvalidGeneralSceneResult
+		}
+		score /= float64(count)
+		dimension.Score = &score
+		for refID := range refSet {
+			dimension.EvidenceRefs = append(dimension.EvidenceRefs, refID)
+		}
+		slices.Sort(dimension.EvidenceRefs)
+		result.Dimensions = append(result.Dimensions, dimension)
+	}
+	result.PriorityActions = generalScenePriorityActions(result.Dimensions)
+	if err := ValidateGeneralSceneResult(snapshot, result); err != nil {
+		return GeneralSceneResult{}, err
+	}
+	return result, nil
+}
+
 func ValidateGeneralSceneResult(
 	snapshot evidence.EvidenceSnapshot,
 	result GeneralSceneResult,
@@ -827,7 +1247,7 @@ func ValidateGeneralSceneResult(
 			return ErrInvalidGeneralSceneResult
 		}
 	} else if result.ScoreabilityStatus != GeneralSceneScoreabilityProvisional ||
-		!validGeneralSceneLineage(result.Provider) {
+		!validGeneralSceneLineage(result.SceneType, result.Provider) {
 		return ErrInvalidGeneralSceneResult
 	}
 	seenFindings := make(map[string]struct{})
@@ -968,12 +1388,27 @@ func validResolvedGeneralSceneEvidence(
 	return utf8.ValidString(excerpt) && evidence.OriginalExcerpt == excerpt
 }
 
-func validGeneralSceneLineage(lineage *GeneralSceneProviderLineage) bool {
+func validGeneralSceneLineage(
+	sceneType evaluation.SceneType,
+	lineage *GeneralSceneProviderLineage,
+) bool {
+	return lineage != nil && validProviderIdentifier(lineage.Provider) &&
+		validModelIdentifier(lineage.Model) &&
+		((validProviderIdentifier(lineage.RequestID) &&
+			lineage.PromptVersion == GeneralScenePromptVersion &&
+			lineage.ResponseSchema == GeneralSceneProviderSchemaVersion) ||
+			(sceneType == evaluation.SceneIELTSSpeaking &&
+				lineage.RequestID == "" &&
+				lineage.PromptVersion == GeneralSceneAtomicPromptVersion &&
+				lineage.ResponseSchema == GeneralSceneAtomicProviderSchemaVersion))
+}
+
+func validGeneralSceneAtomicLineage(lineage *GeneralSceneProviderLineage) bool {
 	return lineage != nil && validProviderIdentifier(lineage.Provider) &&
 		validModelIdentifier(lineage.Model) &&
 		validProviderIdentifier(lineage.RequestID) &&
-		lineage.PromptVersion == GeneralScenePromptVersion &&
-		lineage.ResponseSchema == GeneralSceneProviderSchemaVersion
+		lineage.PromptVersion == GeneralSceneAtomicPromptVersion &&
+		lineage.ResponseSchema == GeneralSceneAtomicProviderSchemaVersion
 }
 
 func generalSceneConfidence(coverage float64) float64 {

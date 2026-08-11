@@ -3,6 +3,7 @@ package report
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -14,9 +15,23 @@ import (
 func TestProjectIELTSSpeakingPracticeReportSeparatesPart2AndPart3(t *testing.T) {
 	t.Parallel()
 	snapshot := ieltsPracticeReportTestSnapshot(t, "PART_2")
-	result, err := scoring.NewGeneralSceneEngine(
-		&ieltsPracticeReportProvider{},
-	).Evaluate(context.Background(), snapshot)
+	provider := &ieltsPracticeReportProvider{}
+	engine := scoring.NewGeneralSceneEngine(provider)
+	atoms := make([]scoring.GeneralSceneAtomicResult, 0, 8)
+	for _, part := range []scoring.IELTSPart{scoring.IELTSPart2, scoring.IELTSPart3} {
+		for _, dimension := range scoring.GeneralSceneDimensions() {
+			atom, err := engine.EvaluateAtomic(
+				context.Background(),
+				snapshot,
+				scoring.GeneralSceneAtomicKey{Part: part, Dimension: dimension},
+			)
+			if err != nil {
+				t.Fatalf("evaluate IELTS practice atom: %v", err)
+			}
+			atoms = append(atoms, atom)
+		}
+	}
+	result, err := scoring.AggregateGeneralSceneAtoms(snapshot, atoms)
 	if err != nil {
 		t.Fatalf("evaluate IELTS practice fixture: %v", err)
 	}
@@ -55,7 +70,7 @@ func TestProjectIELTSSpeakingPracticeReportSeparatesPart2AndPart3(t *testing.T) 
 		len(part2.StrengthFindingIDs) != len(result.Dimensions) ||
 		len(part2.ImprovementFindingIDs) != len(result.Dimensions) ||
 		len(part2.UpgradeExampleFindingIDs) != len(result.Dimensions) ||
-		len(part3.StrengthFindingIDs) != 0 ||
+		len(part3.StrengthFindingIDs) != len(result.Dimensions) ||
 		len(part3.ImprovementFindingIDs) != len(result.Dimensions) ||
 		len(part3.UpgradeExampleFindingIDs) != len(result.Dimensions) {
 		t.Fatalf("section reviews = %#v", detail.SectionReviews)
@@ -168,6 +183,58 @@ func (*ieltsPracticeReportProvider) AnalyzeGeneralScene(
 	}
 	return scoring.GeneralSceneProviderResult{
 		Payload: raw, Provider: "provider", Model: "model", RequestID: "request-1",
+	}, nil
+}
+
+func (*ieltsPracticeReportProvider) AnalyzeGeneralSceneAtom(
+	_ context.Context,
+	input scoring.GeneralSceneProviderInput,
+) (scoring.GeneralSceneProviderResult, error) {
+	var response *scoring.GeneralSceneResponse
+	for _, opportunity := range input.Opportunities {
+		if opportunity.Response != nil {
+			response = opportunity.Response
+			break
+		}
+	}
+	if response == nil || len(input.AssessableDimensions) != 1 {
+		return scoring.GeneralSceneProviderResult{}, errors.New("missing atomic response")
+	}
+	dimension := input.AssessableDimensions[0]
+	anchor := generalSceneReportProviderAnchor{
+		EvidenceRefID: response.EvidenceRefID,
+		Quote:         response.Transcript,
+		Occurrence:    1,
+	}
+	payload := struct {
+		SchemaVersion string                              `json:"schema_version"`
+		Dimension     generalSceneReportProviderDimension `json:"dimension"`
+	}{
+		SchemaVersion: scoring.GeneralSceneAtomicProviderSchemaVersion,
+		Dimension: generalSceneReportProviderDimension{
+			DimensionID: dimension,
+			Score:       70,
+			Strengths: []generalSceneReportProviderFinding{{
+				TemplateID: string(dimension) + ":STRENGTH:v1",
+				Evidence:   []generalSceneReportProviderAnchor{anchor},
+			}},
+			Improvements: []generalSceneReportProviderFinding{{
+				TemplateID: string(dimension) + ":IMPROVEMENT:v1",
+				Evidence:   []generalSceneReportProviderAnchor{anchor},
+			}},
+			Examples: []generalSceneReportProviderFinding{{
+				TemplateID: string(dimension) + ":RECOMMENDED_EXAMPLE:v1",
+				Evidence:   []generalSceneReportProviderAnchor{anchor},
+			}},
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return scoring.GeneralSceneProviderResult{}, err
+	}
+	return scoring.GeneralSceneProviderResult{
+		Payload: encoded, Provider: "qianwen", Model: "qwen-plus",
+		RequestID: "atomic-" + string(input.EvaluationSection) + "-" + string(dimension),
 	}, nil
 }
 

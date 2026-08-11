@@ -248,6 +248,9 @@ func generalRuntimeConfiguration(
 	configuration Configuration,
 ) (GeneralSceneRuntimeConfiguration, error) {
 	promptContractHash := sha256.Sum256([]byte(GeneralSceneSystemContract))
+	atomicPromptContractHash := sha256.Sum256(
+		[]byte(GeneralSceneAtomicSystemContract),
+	)
 	manifest := struct {
 		SchemaVersion         string `json:"schema_version"`
 		StrategyRef           string `json:"strategy_ref"`
@@ -257,6 +260,11 @@ func generalRuntimeConfiguration(
 		ProviderSchemaVersion string `json:"provider_schema_version"`
 		GateVersion           string `json:"gate_version"`
 		AggregationVersion    string `json:"aggregation_version"`
+		AtomicPromptVersion   string `json:"atomic_prompt_version"`
+		AtomicPromptHash      string `json:"atomic_prompt_contract_hash"`
+		AtomicProviderSchema  string `json:"atomic_provider_schema_version"`
+		AtomicResultSchema    string `json:"atomic_result_schema_version"`
+		AtomicAggregation     string `json:"atomic_aggregation_version"`
 		CalibrationVersion    string `json:"calibration_version"`
 		Provider              string `json:"provider"`
 		Model                 string `json:"model"`
@@ -270,10 +278,17 @@ func generalRuntimeConfiguration(
 		ProviderSchemaVersion: GeneralSceneProviderSchemaVersion,
 		GateVersion:           GeneralSceneGateVersion,
 		AggregationVersion:    GeneralSceneAggregationVersion,
-		CalibrationVersion:    GeneralSceneCalibrationVersion,
-		Provider:              configuration.provider,
-		Model:                 configuration.model,
-		MaxOutputTokens:       configuration.maxOutputTokens,
+		AtomicPromptVersion:   GeneralSceneAtomicPromptVersion,
+		AtomicPromptHash: "sha256:" + hex.EncodeToString(
+			atomicPromptContractHash[:],
+		),
+		AtomicProviderSchema: GeneralSceneAtomicProviderSchemaVersion,
+		AtomicResultSchema:   GeneralSceneAtomicResultSchemaVersion,
+		AtomicAggregation:    GeneralSceneAtomicAggregationVersion,
+		CalibrationVersion:   GeneralSceneCalibrationVersion,
+		Provider:             configuration.provider,
+		Model:                configuration.model,
+		MaxOutputTokens:      configuration.maxOutputTokens,
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {

@@ -298,6 +298,20 @@ func generalSceneTestSnapshot(
 	payload.PracticeContext.PracticeMode = string(mode)
 	payload.PracticeContext.PracticeOption.Mode = string(mode)
 	payload.PracticeContext.EvaluationPolicyRef = "general.scene.evaluation.v1"
+	if experience == scene.PracticeExperienceIELTSSpeaking {
+		payload.PracticeContext.EvaluationPolicyRef =
+			scoring.IELTSSpeakingPracticeEvaluationPolicyRef
+		payload.PracticeContext.IELTSAssignment = &evidence.IELTSAssignment{
+			BankID: "ielts-bank-1",
+			Season: "2026-05",
+			Mode:   string(mode),
+			Parts: []evidence.IELTSAssignmentPart{{
+				Part:           string(mode),
+				SourceID:       "part-1-set-1",
+				TurnBlueprints: slices.Clone(payload.PracticeContext.TaskBlueprints),
+			}},
+		}
+	}
 	payload.PracticeContext.Scene.ID = "scene-general-1"
 	return postgresTestSnapshot(t, payload, sceneType)
 }

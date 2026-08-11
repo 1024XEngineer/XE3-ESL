@@ -3,6 +3,11 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,15 +92,308 @@ func TestPostgresInsufficientGeneralSceneDoesNotChangeLearningProfile(
 	assertGeneralSceneProjectionCounts(t, pool, claim.OwnerUserID, 1, 0, 0)
 }
 
+func TestPostgresGeneralSceneAtomicAttemptsResumeOnlyMissingDimension(
+	t *testing.T,
+) {
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluationcore.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	pool, repository, configuration, evaluationID :=
+		prepareGeneralScenePostgresEvaluation(t, snapshot)
+	provider := &atomicGeneralSceneProviderStub{
+		failOnce: scoring.GeneralSceneDimensionClarity,
+		calls:    make(map[scoring.GeneralSceneDimension]int),
+	}
+	firstWorker, err := scoring.NewGeneralSceneWorker(
+		repository,
+		scoring.NewGeneralSceneEngine(provider),
+		configuration,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSweep, err := firstWorker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstSweep != (scoring.GeneralSceneSweepResult{Claimed: 1, Retried: 1}) {
+		t.Fatalf("first sweep = %#v", firstSweep)
+	}
+	assertGeneralSceneAtomicAttemptCounts(t, pool, evaluationID, 3, 1)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE evaluation_outbox
+		SET available_at = transaction_timestamp()
+		WHERE evaluation_id = $1
+		  AND delivery_status = 'PENDING'
+	`, evaluationID); err != nil {
+		t.Fatal(err)
+	}
+	secondWorker, err := scoring.NewGeneralSceneWorker(
+		repository,
+		scoring.NewGeneralSceneEngine(provider),
+		configuration,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSweep, err := secondWorker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondSweep != (scoring.GeneralSceneSweepResult{Claimed: 1, Completed: 1}) {
+		t.Fatalf("second sweep = %#v", secondSweep)
+	}
+	assertGeneralSceneAtomicAttemptCounts(t, pool, evaluationID, 4, 1)
+	var aggregateProviderRequestID *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT result.provider_request_id
+		FROM evaluation_general_scene_results AS result
+		JOIN evaluation_module_runs AS run
+		  ON run.id = result.module_run_id
+		WHERE run.evaluation_id = $1
+	`, evaluationID).Scan(&aggregateProviderRequestID); err != nil {
+		t.Fatal(err)
+	}
+	if aggregateProviderRequestID != nil {
+		t.Fatalf(
+			"aggregate provider request id = %q, want NULL",
+			*aggregateProviderRequestID,
+		)
+	}
+	var persistedAtomicRequestIDs int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(DISTINCT attempt.provider_request_id)
+		FROM evaluation_general_scene_atomic_attempts AS attempt
+		JOIN evaluation_module_runs AS run
+		  ON run.id = attempt.module_run_id
+		WHERE run.evaluation_id = $1
+		  AND attempt.status = 'READY'
+	`, evaluationID).Scan(&persistedAtomicRequestIDs); err != nil {
+		t.Fatal(err)
+	}
+	if persistedAtomicRequestIDs != len(scoring.GeneralSceneDimensions()) {
+		t.Fatalf(
+			"persisted atomic request ids = %d, want %d",
+			persistedAtomicRequestIDs,
+			len(scoring.GeneralSceneDimensions()),
+		)
+	}
+	provider.mu.Lock()
+	for _, dimension := range scoring.GeneralSceneDimensions() {
+		want := 1
+		if dimension == scoring.GeneralSceneDimensionClarity {
+			want = 2
+		}
+		if provider.calls[dimension] != want {
+			t.Fatalf(
+				"dimension %s calls=%d want=%d",
+				dimension,
+				provider.calls[dimension],
+				want,
+			)
+		}
+	}
+	provider.mu.Unlock()
+	assertGeneralSceneProjectionCounts(t, pool, testOwnerA, 1, 4, 4)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE identity_users
+		SET account_status = 'deleting'
+		WHERE id = $1
+	`, testOwnerA); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewPostgresDeletionRepository(pool).DeleteUserData(
+		context.Background(),
+		evaluationcore.DeleteUserDataCommand{
+			OwnerUserID:        testOwnerA,
+			DeletionGeneration: 1,
+		},
+	); err != nil {
+		t.Fatalf("delete atomic general Scene data: %v", err)
+	}
+	assertGeneralSceneAtomicAttemptCounts(t, pool, evaluationID, 0, 0)
+	assertGeneralSceneProjectionCounts(t, pool, testOwnerA, 0, 0, 0)
+}
+
+func TestPostgresGeneralSceneRejectsAtomicAggregateWithoutPersistedAtoms(
+	t *testing.T,
+) {
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluationcore.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	_, repository, configuration, _ :=
+		prepareGeneralScenePostgresEvaluation(t, snapshot)
+	claim, acquired, err := repository.ClaimGeneralScene(
+		context.Background(),
+		snapshot.SceneType,
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim acquired=%t error=%v", acquired, err)
+	}
+	provider := &atomicGeneralSceneProviderStub{
+		calls: make(map[scoring.GeneralSceneDimension]int),
+	}
+	engine := scoring.NewGeneralSceneEngine(provider)
+	atoms := make([]scoring.GeneralSceneAtomicResult, 0, 4)
+	for _, dimension := range scoring.GeneralSceneDimensions() {
+		atom, evaluateErr := engine.EvaluateAtomic(
+			context.Background(),
+			snapshot,
+			scoring.GeneralSceneAtomicKey{
+				Part:      scoring.IELTSPart1,
+				Dimension: dimension,
+			},
+		)
+		if evaluateErr != nil {
+			t.Fatal(evaluateErr)
+		}
+		atoms = append(atoms, atom)
+	}
+	result, err := scoring.AggregateGeneralSceneAtoms(snapshot, atoms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repository.CompleteGeneralScene(context.Background(), claim, result)
+	if !errors.Is(err, evaluationcore.ErrInvalidRequest) {
+		t.Fatalf("complete without persisted atoms error = %v", err)
+	}
+	for index := range atoms {
+		if err := repository.RecordGeneralSceneAtomicAttempt(
+			context.Background(),
+			claim,
+			scoring.GeneralSceneAtomicAttempt{
+				Key:          atoms[index].Key,
+				AttemptCount: claim.AttemptCount,
+				Status:       scoring.GeneralSceneAtomicAttemptReady,
+				Result:       &atoms[index],
+			},
+		); err != nil {
+			t.Fatalf("persist atom %d: %v", index, err)
+		}
+	}
+	if err := repository.CompleteGeneralScene(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("complete with persisted atoms: %v", err)
+	}
+	if err := repository.CompleteGeneralScene(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("replay atomic completion: %v", err)
+	}
+}
+
+func assertGeneralSceneAtomicAttemptCounts(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	evaluationID string,
+	wantReady int,
+	wantFailed int,
+) {
+	t.Helper()
+	var ready, failed int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			count(*) FILTER (WHERE attempt.status = 'READY'),
+			count(*) FILTER (WHERE attempt.status = 'FAILED')
+		FROM evaluation_general_scene_atomic_attempts AS attempt
+		JOIN evaluation_module_runs AS run
+		  ON run.id = attempt.module_run_id
+		WHERE run.evaluation_id = $1
+	`, evaluationID).Scan(&ready, &failed); err != nil {
+		t.Fatal(err)
+	}
+	if ready != wantReady || failed != wantFailed {
+		t.Fatalf(
+			"atomic attempts ready/failed=%d/%d want=%d/%d",
+			ready,
+			failed,
+			wantReady,
+			wantFailed,
+		)
+	}
+}
+
+type atomicGeneralSceneProviderStub struct {
+	mu       sync.Mutex
+	calls    map[scoring.GeneralSceneDimension]int
+	failOnce scoring.GeneralSceneDimension
+}
+
+func (*atomicGeneralSceneProviderStub) AnalyzeGeneralScene(
+	context.Context,
+	scoring.GeneralSceneProviderInput,
+) (scoring.GeneralSceneProviderResult, error) {
+	return scoring.GeneralSceneProviderResult{}, fmt.Errorf(
+		"legacy general Scene provider must not be called",
+	)
+}
+
+func (provider *atomicGeneralSceneProviderStub) AnalyzeGeneralSceneAtom(
+	_ context.Context,
+	input scoring.GeneralSceneProviderInput,
+) (scoring.GeneralSceneProviderResult, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	dimension := input.AssessableDimensions[0]
+	provider.calls[dimension]++
+	if dimension == provider.failOnce && provider.calls[dimension] == 1 {
+		return scoring.GeneralSceneProviderResult{}, context.DeadlineExceeded
+	}
+	var response *scoring.GeneralSceneResponse
+	for _, opportunity := range input.Opportunities {
+		if opportunity.Response != nil {
+			response = opportunity.Response
+			break
+		}
+	}
+	if response == nil {
+		return scoring.GeneralSceneProviderResult{}, fmt.Errorf("missing response")
+	}
+	dimensionIndex := slices.Index(scoring.GeneralSceneDimensions(), dimension)
+	payload, err := json.Marshal(map[string]any{
+		"schema_version": scoring.GeneralSceneAtomicProviderSchemaVersion,
+		"dimension": map[string]any{
+			"dimension_id": dimension,
+			"score":        60 + dimensionIndex*10,
+			"strengths":    []any{},
+			"improvements": []any{map[string]any{
+				"template_id": string(dimension) + ":IMPROVEMENT:v1",
+				"evidence": []any{map[string]any{
+					"evidence_ref_id": response.EvidenceRefID,
+					"quote":           response.Transcript,
+					"occurrence":      1,
+				}},
+			}},
+			"recommended_examples": []any{},
+		},
+	})
+	return scoring.GeneralSceneProviderResult{
+		Payload: payload, Provider: "qianwen", Model: "qwen-plus",
+		RequestID: fmt.Sprintf("atomic-request-%s-%d", dimension, provider.calls[dimension]),
+	}, err
+}
+
 func prepareGeneralScenePostgresRuntime(
 	t *testing.T,
 	transcript string,
 ) (*pgxpool.Pool, *PostgresRepository, scoring.GeneralSceneClaim) {
 	t.Helper()
-	pool := evaluationDatabase(t)
-	insertEvaluationUsers(t, pool, testOwnerA)
-	repository := NewPostgresRepository(pool)
-	evidenceRepository := evidence.NewPostgresRepository(pool)
 	snapshot := generalSceneTestSnapshot(
 		t,
 		evaluationcore.SceneOverseasWorkplace,
@@ -104,6 +402,33 @@ func prepareGeneralScenePostgresRuntime(
 		scene.PracticeModeFullSimulation,
 		transcript,
 	)
+	pool, repository, configuration, evaluationID :=
+		prepareGeneralScenePostgresEvaluation(t, snapshot)
+	claim, acquired, err := repository.ClaimGeneralScene(
+		context.Background(),
+		snapshot.SceneType,
+		configuration,
+	)
+	if err != nil || !acquired || claim.EvaluationID != evaluationID {
+		t.Fatalf("claim general Scene acquired=%t claim=%#v error=%v", acquired, claim, err)
+	}
+	return pool, repository, claim
+}
+
+func prepareGeneralScenePostgresEvaluation(
+	t *testing.T,
+	snapshot evidence.EvidenceSnapshot,
+) (
+	*pgxpool.Pool,
+	*PostgresRepository,
+	scoring.GeneralSceneRuntimeConfiguration,
+	string,
+) {
+	t.Helper()
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	repository := NewPostgresRepository(pool)
+	evidenceRepository := evidence.NewPostgresRepository(pool)
 	persistEvidenceSnapshotFixture(t, pool, snapshot)
 	created, replayed, err := evaluationcore.NewService(
 		repository,
@@ -116,7 +441,7 @@ func prepareGeneralScenePostgresRuntime(
 			InputSnapshotID:   snapshot.ID,
 			InputRevision:     snapshot.InputRevision,
 			Scope:             evaluationcore.ScopeSession,
-			SceneType:         evaluationcore.SceneOverseasWorkplace,
+			SceneType:         snapshot.SceneType,
 			Channels:          []evaluationcore.Channel{evaluationcore.ChannelScene},
 			SceneStrategyRef:  scoring.GeneralSceneStrategyRef,
 			PipelineVersion:   scoring.GeneralScenePipelineVersion,
@@ -137,15 +462,7 @@ func prepareGeneralScenePostgresRuntime(
 		Provider:      "qianwen",
 		Model:         "qwen-plus",
 	}
-	claim, acquired, err := repository.ClaimGeneralScene(
-		context.Background(),
-		evaluationcore.SceneOverseasWorkplace,
-		configuration,
-	)
-	if err != nil || !acquired || claim.EvaluationID != created.ID {
-		t.Fatalf("claim general Scene acquired=%t claim=%#v error=%v", acquired, claim, err)
-	}
-	return pool, repository, claim
+	return pool, repository, configuration, created.ID
 }
 
 func assertGeneralSceneProjectionCounts(

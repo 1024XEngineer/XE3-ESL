@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
@@ -224,16 +226,152 @@ func TestGeneralSceneEngineChunksCombinedEvidenceWithoutDroppingAnchors(
 	}
 }
 
+func TestGeneralSceneEngineEvaluatesIELTSPracticeByPartAndDimension(
+	t *testing.T,
+) {
+	t.Parallel()
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluation.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	provider := &generalSceneProviderStub{}
+	engine := NewGeneralSceneEngine(provider)
+	keys, insufficient, err := generalSceneAtomicPlan(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insufficient != nil || len(keys) != len(generalSceneDimensionOrder) {
+		t.Fatalf("keys=%#v insufficient=%#v", keys, insufficient)
+	}
+	atoms := make([]GeneralSceneAtomicResult, len(keys))
+	for index, key := range keys {
+		atoms[index], err = engine.EvaluateAtomic(
+			context.Background(),
+			snapshot,
+			key,
+		)
+		if err != nil {
+			t.Fatalf("evaluate atom %#v: %v", key, err)
+		}
+	}
+	result, err := AggregateGeneralSceneAtoms(snapshot, atoms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Provider == nil ||
+		result.Provider.Provider != "qianwen" ||
+		result.Provider.Model != "qwen-plus" ||
+		result.Provider.RequestID != "" ||
+		result.Provider.PromptVersion != GeneralSceneAtomicPromptVersion ||
+		result.Provider.ResponseSchema != GeneralSceneAtomicProviderSchemaVersion {
+		t.Fatalf("aggregate provider lineage = %#v", result.Provider)
+	}
+	forged := result
+	forgedProvider := *result.Provider
+	forgedProvider.RequestID = atoms[0].Provider.RequestID
+	forged.Provider = &forgedProvider
+	if ValidateGeneralSceneResult(snapshot, forged) == nil {
+		t.Fatal("aggregate accepted a single atom request id")
+	}
+	inputs := provider.atomicInputs()
+	if provider.calls != 0 || len(inputs) != len(generalSceneDimensionOrder) ||
+		len(result.Dimensions) != len(generalSceneDimensionOrder) {
+		t.Fatalf("provider=%#v result=%#v", provider, result)
+	}
+	for index, input := range inputs {
+		if input.EvaluationSection != IELTSPart1 ||
+			!slices.Equal(
+				input.AssessableDimensions,
+				[]GeneralSceneDimension{generalSceneDimensionOrder[index]},
+			) || len(input.Opportunities) != 1 {
+			t.Fatalf("atomic input %d = %#v", index, input)
+		}
+	}
+}
+
+func TestGeneralSceneEngineKeepsPart2AndPart3AtomicFindingsSeparate(
+	t *testing.T,
+) {
+	t.Parallel()
+	snapshot := generalScenePart23TestSnapshot(t)
+	provider := &generalSceneProviderStub{}
+	engine := NewGeneralSceneEngine(provider)
+	keys, insufficient, err := generalSceneAtomicPlan(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insufficient != nil || len(keys) != 2*len(generalSceneDimensionOrder) {
+		t.Fatalf("keys=%#v insufficient=%#v", keys, insufficient)
+	}
+	atoms := make([]GeneralSceneAtomicResult, len(keys))
+	for index, key := range keys {
+		atoms[index], err = engine.EvaluateAtomic(
+			context.Background(),
+			snapshot,
+			key,
+		)
+		if err != nil {
+			t.Fatalf("evaluate atom %#v: %v", key, err)
+		}
+	}
+	result, err := AggregateGeneralSceneAtoms(snapshot, atoms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reversed := slices.Clone(atoms)
+	slices.Reverse(reversed)
+	reordered, err := AggregateGeneralSceneAtoms(snapshot, reversed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(result)
+	reorderedEncoded, _ := json.Marshal(reordered)
+	if !slices.Equal(encoded, reorderedEncoded) {
+		t.Fatalf("aggregation changed with atom order")
+	}
+	for _, dimension := range result.Dimensions {
+		if len(dimension.Improvements) != 2 ||
+			dimension.Improvements[0].Evidence[0].EvidenceRefID ==
+				dimension.Improvements[1].Evidence[0].EvidenceRefID {
+			t.Fatalf("cross-Part dimension = %#v", dimension)
+		}
+	}
+	inputs := provider.atomicInputs()
+	if len(inputs) != len(keys) {
+		t.Fatalf("atomic inputs = %d, want %d", len(inputs), len(keys))
+	}
+	for index, input := range inputs {
+		wantOpportunities := ieltsTestPart2QuestionCount
+		if input.EvaluationSection == IELTSPart3 {
+			wantOpportunities = ieltsTestQuestionCount -
+				ieltsTestPart1QuestionCount - ieltsTestPart2QuestionCount
+		}
+		if len(input.Opportunities) != wantOpportunities {
+			t.Fatalf("atomic input %d = %#v", index, input)
+		}
+	}
+}
+
 type generalSceneProviderStub struct {
-	input  GeneralSceneProviderInput
-	calls  int
-	mutate func(*generalSceneProviderPayload)
+	mu          sync.Mutex
+	input       GeneralSceneProviderInput
+	calls       int
+	atomic      []GeneralSceneProviderInput
+	atomicCalls map[GeneralSceneDimension]int
+	failOnce    GeneralSceneDimension
+	mutate      func(*generalSceneProviderPayload)
 }
 
 func (provider *generalSceneProviderStub) AnalyzeGeneralScene(
 	_ context.Context,
 	input GeneralSceneProviderInput,
 ) (GeneralSceneProviderResult, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
 	provider.input = input
 	provider.calls++
 	payload := validGeneralSceneProviderPayload(input)
@@ -250,6 +388,50 @@ func (provider *generalSceneProviderStub) AnalyzeGeneralScene(
 		Model:     "qwen-plus",
 		RequestID: "provider-request-1",
 	}, nil
+}
+
+func (provider *generalSceneProviderStub) AnalyzeGeneralSceneAtom(
+	_ context.Context,
+	input GeneralSceneProviderInput,
+) (GeneralSceneProviderResult, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	provider.atomic = append(provider.atomic, input)
+	dimension := input.AssessableDimensions[0]
+	if provider.atomicCalls == nil {
+		provider.atomicCalls = make(map[GeneralSceneDimension]int)
+	}
+	provider.atomicCalls[dimension]++
+	if dimension == provider.failOnce && provider.atomicCalls[dimension] == 1 {
+		return GeneralSceneProviderResult{}, fmt.Errorf("atomic provider timeout: %w", context.DeadlineExceeded)
+	}
+	payload := validGeneralSceneAtomicProviderPayload(input)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return GeneralSceneProviderResult{}, err
+	}
+	return GeneralSceneProviderResult{
+		Payload:   encoded,
+		Provider:  "qianwen",
+		Model:     "qwen-plus",
+		RequestID: fmt.Sprintf("atomic-request-%s-%d", dimension, provider.atomicCalls[dimension]),
+	}, nil
+}
+
+func (provider *generalSceneProviderStub) atomicInputs() []GeneralSceneProviderInput {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return slices.Clone(provider.atomic)
+}
+
+func validGeneralSceneAtomicProviderPayload(
+	input GeneralSceneProviderInput,
+) generalSceneAtomicProviderPayload {
+	payload := validGeneralSceneProviderPayload(input)
+	return generalSceneAtomicProviderPayload{
+		SchemaVersion: GeneralSceneAtomicProviderSchemaVersion,
+		Dimension:     payload.Dimensions[0],
+	}
 }
 
 func validGeneralSceneProviderPayload(
@@ -420,4 +602,40 @@ func generalSceneTestSnapshot(
 		t.Fatal("general Scene evidence.EvidenceSnapshot fixture is invalid")
 	}
 	return snapshot
+}
+
+func generalScenePart23TestSnapshot(t *testing.T) evidence.EvidenceSnapshot {
+	t.Helper()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	var payload evidence.SnapshotPayload
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	start := ieltsTestPart1QuestionCount
+	payload.PracticeContext.PracticeMode = string(scene.PracticeModePart2)
+	payload.PracticeContext.PracticeOption = evidence.PracticeOption{
+		ID:   "option_ielts_speaking_part_2",
+		Mode: string(scene.PracticeModePart2),
+	}
+	payload.PracticeContext.EvaluationPolicyRef =
+		IELTSSpeakingPracticeEvaluationPolicyRef
+	payload.PracticeContext.TaskBlueprints = slices.Clone(
+		payload.PracticeContext.TaskBlueprints[start:],
+	)
+	payload.PracticeContext.IELTSAssignment.Mode = string(scene.PracticeModePart2)
+	payload.PracticeContext.IELTSAssignment.Parts = slices.Clone(
+		payload.PracticeContext.IELTSAssignment.Parts[1:],
+	)
+	payload.OpportunityManifest = slices.Clone(payload.OpportunityManifest[start:])
+	payload.ConfirmedTurns = slices.Clone(payload.ConfirmedTurns[start:])
+	payload.EvidenceRefs = slices.Clone(payload.EvidenceRefs[start:])
+	payload.ProviderLineage.ASR = slices.Clone(payload.ProviderLineage.ASR[start:])
+	payload.VersionManifest.TurnEvidence = slices.Clone(
+		payload.VersionManifest.TurnEvidence[start:],
+	)
+	for index := range payload.OpportunityManifest {
+		payload.OpportunityManifest[index].Sequence = index + 1
+		payload.ConfirmedTurns[index].Sequence = index + 1
+	}
+	return rebuildIELTSSpeakingSnapshot(t, payload)
 }

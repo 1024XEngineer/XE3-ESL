@@ -85,6 +85,15 @@ type GeneralSceneRuntimeRepository interface {
 		evaluation.SceneType,
 		GeneralSceneRuntimeConfiguration,
 	) (GeneralSceneClaim, bool, error)
+	LoadGeneralSceneAtomicResults(
+		context.Context,
+		GeneralSceneClaim,
+	) ([]GeneralSceneAtomicResult, error)
+	RecordGeneralSceneAtomicAttempt(
+		context.Context,
+		GeneralSceneClaim,
+		GeneralSceneAtomicAttempt,
+	) error
 	CompleteGeneralScene(
 		context.Context,
 		GeneralSceneClaim,
@@ -198,6 +207,9 @@ func (worker *GeneralSceneWorker) processClaim(
 	) {
 		return "", evaluation.ErrInvalidRequest
 	}
+	if claim.SceneType == evaluation.SceneIELTSSpeaking {
+		return worker.processIELTSAtomicClaim(ctx, claim)
+	}
 	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
 	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
@@ -208,6 +220,139 @@ func (worker *GeneralSceneWorker) processClaim(
 		return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
 	}
 	if err := ValidateGeneralSceneResult(claim.Snapshot, result); err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if err := worker.repository.CompleteGeneralScene(ctx, claim, result); err != nil {
+		return "", err
+	}
+	return GeneralSceneRuntimeReady, nil
+}
+
+func (worker *GeneralSceneWorker) processIELTSAtomicClaim(
+	ctx context.Context,
+	claim GeneralSceneClaim,
+) (GeneralSceneRuntimeStatus, error) {
+	keys, insufficient, err := generalSceneAtomicPlan(claim.Snapshot)
+	if err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if insufficient != nil {
+		if err := worker.repository.CompleteGeneralScene(
+			ctx,
+			claim,
+			*insufficient,
+		); err != nil {
+			return "", err
+		}
+		return GeneralSceneRuntimeReady, nil
+	}
+	stored, err := worker.repository.LoadGeneralSceneAtomicResults(ctx, claim)
+	if err != nil {
+		return "", err
+	}
+	ready := make(map[GeneralSceneAtomicKey]GeneralSceneAtomicResult, len(stored))
+	expected := make(map[GeneralSceneAtomicKey]struct{}, len(keys))
+	for _, key := range keys {
+		expected[key] = struct{}{}
+	}
+	for _, atom := range stored {
+		if _, exists := expected[atom.Key]; !exists ||
+			ValidateGeneralSceneAtomicResult(claim.Snapshot, atom) != nil ||
+			atom.Provider.Provider != claim.Provider ||
+			atom.Provider.Model != claim.Model {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		if _, duplicate := ready[atom.Key]; duplicate {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		ready[atom.Key] = atom
+	}
+	missing := make([]GeneralSceneAtomicKey, 0, len(keys)-len(ready))
+	for _, key := range keys {
+		if _, exists := ready[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+	type atomicOutcome struct {
+		key    GeneralSceneAtomicKey
+		result GeneralSceneAtomicResult
+		err    error
+	}
+	outcomes := make(chan atomicOutcome, len(missing))
+	for _, key := range missing {
+		key := key
+		go func() {
+			result, evaluateErr := worker.engine.EvaluateAtomic(
+				ctx,
+				claim.Snapshot,
+				key,
+			)
+			outcomes <- atomicOutcome{key: key, result: result, err: evaluateErr}
+		}()
+	}
+	failures := make(map[GeneralSceneAtomicKey]error)
+	var recordErr error
+	for range missing {
+		outcome := <-outcomes
+		if outcome.err == nil &&
+			(outcome.result.Provider.Provider != claim.Provider ||
+				outcome.result.Provider.Model != claim.Model) {
+			outcome.err = ErrInvalidGeneralSceneResult
+		}
+		attempt := GeneralSceneAtomicAttempt{
+			Key:          outcome.key,
+			AttemptCount: claim.AttemptCount,
+		}
+		if outcome.err == nil {
+			attempt.Status = GeneralSceneAtomicAttemptReady
+			attempt.Result = &outcome.result
+		} else {
+			failure := classifyGeneralSceneFailure(outcome.err)
+			attempt.Status = GeneralSceneAtomicAttemptFailed
+			attempt.Failure = &failure
+			failures[outcome.key] = outcome.err
+		}
+		if err := worker.repository.RecordGeneralSceneAtomicAttempt(
+			ctx,
+			claim,
+			attempt,
+		); err != nil && recordErr == nil {
+			recordErr = err
+		}
+		if outcome.err == nil {
+			ready[outcome.key] = outcome.result
+		}
+	}
+	if recordErr != nil {
+		return "", recordErr
+	}
+	if len(failures) > 0 {
+		var first error
+		for _, key := range keys {
+			cause, exists := failures[key]
+			if !exists {
+				continue
+			}
+			if first == nil {
+				first = cause
+			}
+			if !classifyGeneralSceneFailure(cause).Retryable {
+				first = cause
+				break
+			}
+		}
+		return worker.recordFailure(ctx, claim, first)
+	}
+	atoms := make([]GeneralSceneAtomicResult, len(keys))
+	for index, key := range keys {
+		atom, exists := ready[key]
+		if !exists {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		atoms[index] = atom
+	}
+	result, err := AggregateGeneralSceneAtoms(claim.Snapshot, atoms)
+	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
 	}
 	if err := worker.repository.CompleteGeneralScene(ctx, claim, result); err != nil {
