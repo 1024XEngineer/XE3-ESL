@@ -142,12 +142,17 @@ func planIELTSTestDatabase(t *testing.T) *pgxpool.Pool {
 		}
 		admin.Close()
 	})
-	migration, err := migrations.Files.ReadFile("000080_ielts_versioned_question_bank.up.sql")
-	if err != nil {
-		t.Fatalf("read IELTS question bank migration: %v", err)
-	}
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatalf("apply IELTS question bank migration: %v", err)
+	for _, name := range []string{
+		"000080_ielts_versioned_question_bank.up.sql",
+		"000087_ielts_part1_cue_card_types.up.sql",
+	} {
+		migration, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read IELTS question bank migration %s: %v", name, err)
+		}
+		if _, err := pool.Exec(ctx, string(migration)); err != nil {
+			t.Fatalf("apply IELTS question bank migration %s: %v", name, err)
+		}
 	}
 	return pool
 }

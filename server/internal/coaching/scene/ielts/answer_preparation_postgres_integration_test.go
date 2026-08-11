@@ -195,7 +195,12 @@ func answerPreparationTestDatabase(t *testing.T) *pgxpool.Pool {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+identifier+" CASCADE")
 		admin.Close()
 	})
-	for _, name := range []string{"000002_identity_schema.up.sql", "000080_ielts_versioned_question_bank.up.sql", "000084_ielts_answer_preparations.up.sql"} {
+	for _, name := range []string{
+		"000002_identity_schema.up.sql",
+		"000080_ielts_versioned_question_bank.up.sql",
+		"000087_ielts_part1_cue_card_types.up.sql",
+		"000084_ielts_answer_preparations.up.sql",
+	} {
 		content, err := migrations.Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
