@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
@@ -19,6 +20,7 @@ type ieltsSpeakingAcousticProjection struct {
 	AudioAssetID      string
 	AudioAssetVersion int64
 	AudioChecksum     string
+	CompletedAt       time.Time
 	Assessment        SpeechFeedbackAcousticAssessment
 }
 
@@ -47,8 +49,10 @@ func (source *ieltsSpeakingAcousticSource) ReadIELTSSpeakingAcoustics(
 	ctx context.Context,
 	ownerUserID string,
 	requests []scoring.IELTSSpeakingAcousticRequest,
+	completedBy time.Time,
 ) (scoring.IELTSSpeakingAcousticRead, error) {
-	if source == nil || source.feedback == nil || ctx == nil {
+	if source == nil || source.feedback == nil || ctx == nil ||
+		completedBy.IsZero() {
 		return scoring.IELTSSpeakingAcousticRead{}, evaluation.ErrInvalidRequest
 	}
 	result := scoring.IELTSSpeakingAcousticRead{
@@ -96,6 +100,13 @@ func (source *ieltsSpeakingAcousticSource) ReadIELTSSpeakingAcoustics(
 				"evaluation speech feedback: unsupported feedback status",
 			)
 		}
+		if projection.CompletedAt.IsZero() {
+			return scoring.IELTSSpeakingAcousticRead{},
+				ErrInvalidSpeechFeedback
+		}
+		if projection.CompletedAt.After(completedBy) {
+			continue
+		}
 		assessment := projection.Assessment
 		if assessment.Pronunciation != SpeechFeedbackAssessed ||
 			assessment.AcousticFluency != SpeechFeedbackAssessed {
@@ -137,6 +148,7 @@ func (r *PostgresRepository) ReadIELTSSpeakingAcousticProjection(
 	}
 	var projection ieltsSpeakingAcousticProjection
 	var (
+		completedAt   sql.NullTime
 		accuracy      sql.NullFloat64
 		fluency       sql.NullFloat64
 		integrity     sql.NullFloat64
@@ -149,6 +161,7 @@ func (r *PostgresRepository) ReadIELTSSpeakingAcousticProjection(
 	err := r.pool.QueryRow(ctx, `
 		SELECT
 			feedback.feedback_status,
+			feedback.completed_at,
 			snapshot.input_revision,
 			snapshot.audio_asset_id,
 			snapshot.audio_asset_version,
@@ -173,6 +186,7 @@ func (r *PostgresRepository) ReadIELTSSpeakingAcousticProjection(
 		  AND snapshot.turn_id = $2
 	`, ownerUserID, turnID).Scan(
 		&projection.FeedbackStatus,
+		&completedAt,
 		&projection.EvidenceVersion,
 		&projection.AudioAssetID,
 		&projection.AudioAssetVersion,
@@ -194,6 +208,9 @@ func (r *PostgresRepository) ReadIELTSSpeakingAcousticProjection(
 			"read IELTS Speaking acoustic projection: %w",
 			err,
 		)
+	}
+	if completedAt.Valid {
+		projection.CompletedAt = completedAt.Time
 	}
 	if provider.Valid {
 		projection.Assessment = SpeechFeedbackAcousticAssessment{

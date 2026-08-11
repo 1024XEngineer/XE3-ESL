@@ -106,6 +106,45 @@ func TestIELTSAcousticSnapshotFreezerDeadlineIsImmutableAgainstLateResult(
 	}
 }
 
+func TestIELTSAcousticSnapshotFreezerUsesRevisionCutoffAfterLateFirstSweep(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := ieltsAcousticSnapshotClaimForTest(t)
+	repository := &ieltsAcousticSnapshotRepositoryStub{claim: claim}
+	source := &ieltsAcousticSnapshotSourceStub{}
+	freezer, err := NewIELTSAcousticSnapshotFreezer(
+		repository,
+		source,
+		IELTSAcousticSnapshotWaitDurationV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedCutoff := claim.RevisionCreatedAt.Add(
+		IELTSAcousticSnapshotWaitDurationV1,
+	).UTC()
+	freezer.now = func() time.Time {
+		return expectedCutoff.Add(5 * time.Second)
+	}
+	sweep, err := freezer.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sweep != (IELTSAcousticSnapshotSweepResult{
+		Inspected: 1,
+		Frozen:    1,
+	}) || !source.completedBy.Equal(expectedCutoff) ||
+		repository.stored.Resolution != IELTSAcousticSnapshotTextOnly {
+		t.Fatalf(
+			"sweep=%#v completedBy=%v repository=%#v",
+			sweep,
+			source.completedBy,
+			repository,
+		)
+	}
+}
+
 func TestIELTSAcousticSnapshotFreezerFreezesTerminalBeforeDeadline(
 	t *testing.T,
 ) {
@@ -415,16 +454,19 @@ func (stub *ieltsAcousticSnapshotRepositoryStub) FailIELTSAcousticSnapshot(
 }
 
 type ieltsAcousticSnapshotSourceStub struct {
-	read  IELTSSpeakingAcousticRead
-	calls int
+	read        IELTSSpeakingAcousticRead
+	completedBy time.Time
+	calls       int
 }
 
 func (stub *ieltsAcousticSnapshotSourceStub) ReadIELTSSpeakingAcoustics(
-	context.Context,
-	string,
-	[]IELTSSpeakingAcousticRequest,
+	_ context.Context,
+	_ string,
+	_ []IELTSSpeakingAcousticRequest,
+	completedBy time.Time,
 ) (IELTSSpeakingAcousticRead, error) {
 	stub.calls++
+	stub.completedBy = completedBy
 	return stub.read, nil
 }
 
@@ -499,6 +541,7 @@ func (stub *ieltsAcousticSnapshotQueueSourceStub) ReadIELTSSpeakingAcoustics(
 	context.Context,
 	string,
 	[]IELTSSpeakingAcousticRequest,
+	time.Time,
 ) (IELTSSpeakingAcousticRead, error) {
 	if stub.calls >= len(stub.errors) && stub.calls >= len(stub.reads) {
 		return IELTSSpeakingAcousticRead{}, evaluation.ErrInvalidRequest

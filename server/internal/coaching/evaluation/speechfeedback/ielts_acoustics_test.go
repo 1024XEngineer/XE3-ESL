@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
@@ -21,12 +22,14 @@ func TestNewIELTSSpeakingAcousticSourceRejectsNilReader(t *testing.T) {
 
 func TestIELTSSpeakingAcousticSourceReturnsVersionBoundAssessment(t *testing.T) {
 	request := ieltsAcousticRequestFixture()
+	completedAt := time.Now().UTC()
 	accuracy := 74.0
 	fluency := 68.0
 	reader := &ieltsSpeakingFeedbackReaderStub{
 		projections: map[string]ieltsSpeakingAcousticProjection{
 			request.TurnID: {
 				FeedbackStatus:    SpeechFeedbackReady,
+				CompletedAt:       completedAt,
 				EvidenceVersion:   request.EvidenceVersion,
 				AudioAssetID:      request.AudioAssetID,
 				AudioAssetVersion: int64(request.AudioAssetVersion),
@@ -50,6 +53,7 @@ func TestIELTSSpeakingAcousticSourceReturnsVersionBoundAssessment(t *testing.T) 
 		context.Background(),
 		"10000000-0000-4000-8000-000000000001",
 		[]scoring.IELTSSpeakingAcousticRequest{request},
+		completedAt,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +89,7 @@ func TestIELTSSpeakingAcousticSourceReportsPendingWithoutPartialShortcut(
 		context.Background(),
 		"10000000-0000-4000-8000-000000000001",
 		[]scoring.IELTSSpeakingAcousticRequest{request},
+		time.Now().Add(time.Minute),
 	)
 	if err != nil || len(read.Values) != 0 ||
 		len(read.PendingTurnIDs) != 1 ||
@@ -93,10 +98,54 @@ func TestIELTSSpeakingAcousticSourceReportsPendingWithoutPartialShortcut(
 	}
 }
 
+func TestIELTSSpeakingAcousticSourceExcludesAssessmentCompletedAfterCutoff(
+	t *testing.T,
+) {
+	request := ieltsAcousticRequestFixture()
+	cutoff := time.Now().UTC()
+	accuracy := 74.0
+	fluency := 68.0
+	source, err := NewIELTSSpeakingAcousticSource(
+		&ieltsSpeakingFeedbackReaderStub{
+			projections: map[string]ieltsSpeakingAcousticProjection{
+				request.TurnID: {
+					FeedbackStatus:    SpeechFeedbackReady,
+					CompletedAt:       cutoff.Add(time.Millisecond),
+					EvidenceVersion:   request.EvidenceVersion,
+					AudioAssetID:      request.AudioAssetID,
+					AudioAssetVersion: int64(request.AudioAssetVersion),
+					AudioChecksum:     request.AudioChecksumSHA256,
+					Assessment: SpeechFeedbackAcousticAssessment{
+						Pronunciation:   SpeechFeedbackAssessed,
+						AcousticFluency: SpeechFeedbackAssessed,
+						AccuracyScore:   &accuracy,
+						FluencyScore:    &fluency,
+						Provider:        "xfyun_ise",
+						ProviderSession: "late-provider-session",
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := source.ReadIELTSSpeakingAcoustics(
+		context.Background(),
+		"10000000-0000-4000-8000-000000000001",
+		[]scoring.IELTSSpeakingAcousticRequest{request},
+		cutoff,
+	)
+	if err != nil || len(read.Values) != 0 || len(read.PendingTurnIDs) != 0 {
+		t.Fatalf("read=%#v err=%v", read, err)
+	}
+}
+
 func TestIELTSSpeakingAcousticSourceRejectsStaleAudioProjection(t *testing.T) {
 	request := ieltsAcousticRequestFixture()
 	base := ieltsSpeakingAcousticProjection{
 		FeedbackStatus:    SpeechFeedbackReady,
+		CompletedAt:       time.Now().UTC(),
 		EvidenceVersion:   request.EvidenceVersion,
 		AudioAssetID:      request.AudioAssetID,
 		AudioAssetVersion: int64(request.AudioAssetVersion),
@@ -134,6 +183,7 @@ func TestIELTSSpeakingAcousticSourceRejectsStaleAudioProjection(t *testing.T) {
 				context.Background(),
 				"10000000-0000-4000-8000-000000000001",
 				[]scoring.IELTSSpeakingAcousticRequest{request},
+				time.Now().Add(time.Minute),
 			)
 			if !errors.Is(err, scoring.ErrIELTSAcousticEvidenceInvalid) ||
 				!errors.Is(err, evaluation.ErrInvalidRequest) {

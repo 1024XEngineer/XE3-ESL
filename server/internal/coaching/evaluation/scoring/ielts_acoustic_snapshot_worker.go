@@ -72,6 +72,7 @@ type IELTSSpeakingAcousticSource interface {
 		context.Context,
 		string,
 		[]IELTSSpeakingAcousticRequest,
+		time.Time,
 	) (IELTSSpeakingAcousticRead, error)
 }
 
@@ -161,10 +162,12 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 			}
 			return sweep, err
 		}
+		cutoff := claim.RevisionCreatedAt.Add(freezer.waitDuration).UTC()
 		read, err := freezer.source.ReadIELTSSpeakingAcoustics(
 			ctx,
 			claim.OwnerUserID,
 			requests,
+			cutoff,
 		)
 		if err != nil {
 			if errors.Is(err, ErrIELTSAcousticEvidenceInvalid) {
@@ -186,9 +189,7 @@ func (freezer *IELTSAcousticSnapshotFreezer) ProcessPending(
 			}
 			continue
 		}
-		deadlineReached := !freezer.now().UTC().Before(
-			claim.RevisionCreatedAt.Add(freezer.waitDuration),
-		)
+		deadlineReached := !freezer.now().UTC().Before(cutoff)
 		draft, err := BuildIELTSAcousticSnapshot(
 			claim.EvaluationID,
 			claim.Snapshot,

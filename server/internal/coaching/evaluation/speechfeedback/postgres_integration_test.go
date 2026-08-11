@@ -237,6 +237,7 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 		context.Background(),
 		ownerID,
 		[]scoring.IELTSSpeakingAcousticRequest{acousticRequest},
+		time.Now().Add(time.Minute),
 	)
 	if err != nil || len(read.PendingTurnIDs) != 1 ||
 		read.PendingTurnIDs[0] != turnID {
@@ -247,6 +248,7 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 		context.Background(),
 		ownerID,
 		[]scoring.IELTSSpeakingAcousticRequest{acousticRequest},
+		time.Now().Add(time.Minute),
 	); !errors.Is(err, evaluation.ErrInvalidRequest) {
 		t.Fatalf("stale acoustic projection error=%v", err)
 	}
