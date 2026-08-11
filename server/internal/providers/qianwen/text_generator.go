@@ -396,12 +396,13 @@ func (generator *textClient) providerRequest(
 	request protocol.TextRequest,
 	internalToProvider map[string]string,
 ) (chatCompletionRequest, error) {
+	maxTokens := generator.maxOutputTokens
 	payload := chatCompletionRequest{
 		Model:     generator.model,
 		Messages:  make([]chatMessage, 0, len(request.Messages)),
 		Tools:     make([]chatTool, 0, len(request.Tools)),
 		Stream:    false,
-		MaxTokens: generator.maxOutputTokens,
+		MaxTokens: &maxTokens,
 	}
 	switch generator.provider {
 	case providerName:
@@ -418,6 +419,18 @@ func (generator *textClient) providerRequest(
 		payload.ResponseFormat = &chatResponseFormat{
 			Type: string(protocol.TextResponseFormatJSON),
 		}
+	} else if request.ResponseFormat == protocol.TextResponseFormatJSONSchema {
+		payload.ResponseFormat = &chatResponseFormat{
+			Type: string(protocol.TextResponseFormatJSONSchema),
+			JSONSchema: &chatJSONSchema{
+				Name:   request.ResponseSchema.Name,
+				Strict: request.ResponseSchema.Strict,
+				Schema: request.ResponseSchema.Schema,
+			},
+		}
+		// DashScope's strict structured-output contract owns the completion
+		// shape and explicitly recommends omitting the legacy token field.
+		payload.MaxTokens = nil
 	}
 	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
 	if err != nil {
@@ -471,7 +484,7 @@ type chatCompletionRequest struct {
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
-	MaxTokens int `json:"max_tokens"`
+	MaxTokens *int `json:"max_tokens,omitempty"`
 }
 
 type chatThinking struct {
@@ -483,7 +496,14 @@ type chatStreamOptions struct {
 }
 
 type chatResponseFormat struct {
-	Type string `json:"type"`
+	Type       string          `json:"type"`
+	JSONSchema *chatJSONSchema `json:"json_schema,omitempty"`
+}
+
+type chatJSONSchema struct {
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema map[string]any `json:"schema"`
 }
 
 type chatMessage struct {

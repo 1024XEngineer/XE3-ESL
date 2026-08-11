@@ -203,10 +203,13 @@ func (generator *EvaluationScoringGenerator) Generate(
 			"qianwen: Evaluation scoring output contract is unsupported",
 		)
 	}
-	structuredIELTS := generator.generator.provider == qiniuProviderName &&
-		request.OutputContract ==
-			scoring.TextGenerationOutputIELTSSpeakingCriterionV3
-	if structuredIELTS {
+	ieltsCriterion := request.OutputContract ==
+		scoring.TextGenerationOutputIELTSSpeakingCriterionV3
+	qiniuStructuredIELTS := generator.generator.provider == qiniuProviderName &&
+		ieltsCriterion
+	qianwenStructuredIELTS := generator.generator.provider == providerName &&
+		ieltsCriterion
+	if qiniuStructuredIELTS {
 		providerRequest.ResponseFormat = protocol.TextResponseFormatDefault
 		providerRequest.Tools = []protocol.ToolDefinition{{
 			Name: ieltsSpeakingCriterionToolName,
@@ -220,13 +223,22 @@ func (generator *EvaluationScoringGenerator) Generate(
 			Mode: protocol.ToolChoiceSpecific,
 			Name: ieltsSpeakingCriterionToolName,
 		}
+	} else if qianwenStructuredIELTS {
+		providerRequest.ResponseFormat = protocol.TextResponseFormatJSONSchema
+		providerRequest.ResponseSchema = &protocol.JSONSchemaDefinition{
+			Name:   "ielts_speaking_criterion_v3",
+			Strict: true,
+			Schema: ieltsSpeakingCriterionToolSchema(
+				request.OutputCriterion,
+			),
+		}
 	}
 	result, err := generator.generator.Generate(ctx, providerRequest)
 	if err != nil {
 		return scoring.TextGenerationResult{}, err
 	}
 	content := result.Content
-	if structuredIELTS {
+	if qiniuStructuredIELTS {
 		if strings.TrimSpace(result.Content) != "" ||
 			result.FinishReason != "tool_calls" ||
 			len(result.ToolCalls) != 1 ||
@@ -237,6 +249,15 @@ func (generator *EvaluationScoringGenerator) Generate(
 			)
 		}
 		content = string(result.ToolCalls[0].Arguments)
+	} else if qianwenStructuredIELTS &&
+		(result.FinishReason != "stop" || !json.Valid([]byte(content))) {
+		return scoring.TextGenerationResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
+			0,
+			"",
+			result.ID,
+			errors.New("qianwen: IELTS criterion violated JSON Schema output"),
+		)
 	}
 	return scoring.TextGenerationResult{
 		RequestID: result.ID,

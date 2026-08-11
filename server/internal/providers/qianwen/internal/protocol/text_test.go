@@ -50,6 +50,38 @@ func TestValidateTextRequest(t *testing.T) {
 	}
 }
 
+func TestValidateTextRequestSupportsStrictJSONSchema(t *testing.T) {
+	t.Parallel()
+	request := TextRequest{
+		Messages:       []TextMessage{{Role: TextRoleUser, Content: "Return JSON."}},
+		ResponseFormat: TextResponseFormatJSONSchema,
+		ResponseSchema: &JSONSchemaDefinition{
+			Name:   "evaluation_result_v1",
+			Strict: true,
+			Schema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"result"},
+				"properties": map[string]any{
+					"result": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+	if err := ValidateTextRequest(request); err != nil {
+		t.Fatalf("strict JSON Schema request rejected: %v", err)
+	}
+	request.ResponseSchema.Strict = false
+	if err := ValidateTextRequest(request); err == nil {
+		t.Fatal("non-strict JSON Schema request accepted")
+	}
+	request.ResponseSchema.Strict = true
+	request.Tools = []ToolDefinition{validToolDefinition()}
+	if err := ValidateTextRequest(request); err == nil {
+		t.Fatal("JSON Schema request with tools accepted")
+	}
+}
+
 func TestValidateTextRequestSupportsMultimodalUserContent(t *testing.T) {
 	t.Parallel()
 

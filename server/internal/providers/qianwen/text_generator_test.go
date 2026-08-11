@@ -71,7 +71,7 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	}
 	if received.Model != "qwen3.5-flash" ||
 		received.Stream ||
-		received.MaxTokens != 512 ||
+		received.MaxTokens == nil || *received.MaxTokens != 512 ||
 		len(received.Messages) != len(request.Messages) {
 		t.Fatalf("unexpected request payload: %#v", received)
 	}
