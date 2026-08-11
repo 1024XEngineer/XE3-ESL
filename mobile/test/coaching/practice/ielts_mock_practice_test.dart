@@ -22,10 +22,14 @@ import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/practice_report_status.dart';
+import 'package:speakup/features/coaching/review/practice_report_status_client.dart';
+import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
 
 void main() {
   testWidgets('Part 1 keeps Tips visible while recording', (tester) async {
@@ -1253,8 +1257,14 @@ void main() {
         find.byKey(const Key('ielts-section-completion-sheet')),
         findsNothing,
       );
-      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
-      expect(find.text('Answer 4'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('ielts-completion-report-unavailable')),
+        findsOneWidget,
+      );
       expect(reportClient.started.isCompleted, isFalse);
       expect(reportController.practiceSessionId, isNull);
     },
@@ -1581,10 +1591,61 @@ void main() {
         find.byKey(const Key('ielts-section-completion-sheet')),
         findsNothing,
       );
-      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
-      expect(find.text('Answer 1'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part3')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('ielts-completion-report-unavailable')),
+        findsOneWidget,
+      );
     },
   );
+
+  testWidgets('finishing a section starts the report status load immediately', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    final reportClient = _PracticeReportStatusClient();
+    final reportController = PracticeReportStatusController(
+      client: reportClient,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(reportController.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part3,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          reportStatusController: reportController,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-part3-start')));
+    await tester.pump();
+
+    await _answerCurrentShortQuestion(tester, controller);
+    await tester.pump();
+
+    expect(reportClient.statusCalls, 1);
+    expect(reportClient.practiceSessionIds, <String>[_sessionId]);
+    expect(reportController.practiceSessionId, _sessionId);
+  });
 
   testWidgets('full mock completes after a single original Part 3 question', (
     tester,
@@ -1792,6 +1853,36 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   Future<IeltsQuestionBank> getQuestionBank() {
     throw UnimplementedError();
   }
+}
+
+final class _PracticeReportStatusClient implements PracticeReportStatusClient {
+  int statusCalls = 0;
+  final List<String> practiceSessionIds = <String>[];
+
+  @override
+  Future<PracticeReportStatus> getStatus(String practiceSessionId) async {
+    statusCalls++;
+    practiceSessionIds.add(practiceSessionId);
+    return PracticeReportStatus(
+      practiceSessionId: practiceSessionId,
+      practiceMode: PracticeMode.part3,
+      reportScope: PracticeReportScope.part3,
+      availableSections: const <IeltsSpeakingPartId>[IeltsSpeakingPartId.part3],
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      evaluationStatus: PracticeReportEvaluationStatus.running,
+      statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
+      evaluationId: '7b000001-0000-4000-8000-000000000001',
+      evaluationRevisionId: 'a1000001-0000-4000-8000-000000000001',
+      revision: 1,
+    );
+  }
+
+  @override
+  Future<EvaluationReport> getReadyReport(PracticeReportRef reportRef) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 final class _IeltsPracticeClient
