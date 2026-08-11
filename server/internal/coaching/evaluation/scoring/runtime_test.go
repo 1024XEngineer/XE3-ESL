@@ -24,6 +24,9 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	if firstInterview != secondInterview || !firstInterview.Valid() {
 		t.Fatalf("interview runtime configuration is unstable: %#v %#v", firstInterview, secondInterview)
 	}
+	if firstInterview.MaxAttempts != runtimeMaxAttempts {
+		t.Fatalf("interview max attempts = %d", firstInterview.MaxAttempts)
+	}
 
 	firstIELTS, err := ieltsRuntimeConfiguration(configuration)
 	if err != nil {
@@ -36,7 +39,7 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	if firstIELTS != secondIELTS || !firstIELTS.Valid() {
 		t.Fatalf("IELTS runtime configuration is unstable: %#v %#v", firstIELTS, secondIELTS)
 	}
-	if firstIELTS.MaxAttempts != runtimeMaxAttempts {
+	if firstIELTS.MaxAttempts != 10 {
 		t.Fatalf("IELTS max attempts = %d", firstIELTS.MaxAttempts)
 	}
 
@@ -50,6 +53,28 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	}
 	if firstGeneral != secondGeneral || !firstGeneral.Valid() {
 		t.Fatalf("general runtime configuration is unstable: %#v %#v", firstGeneral, secondGeneral)
+	}
+	if firstGeneral.MaxAttempts != runtimeMaxAttempts {
+		t.Fatalf("general max attempts = %d", firstGeneral.MaxAttempts)
+	}
+}
+
+func TestIELTSAcousticWaitBudgetPreservesProviderAttempts(t *testing.T) {
+	t.Parallel()
+	configuration, err := NewConfiguration("qiniu", "qwen-plus", 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ielts, err := ieltsRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitAttempts := ieltsAcousticWaitAttemptLimit(ielts.MaxAttempts)
+	if waitAttempts != 7 {
+		t.Fatalf("IELTS acoustic wait attempts = %d", waitAttempts)
+	}
+	if providerAttempts := ielts.MaxAttempts - waitAttempts; providerAttempts < ieltsProviderAttemptReserve {
+		t.Fatalf("IELTS provider attempts = %d", providerAttempts)
 	}
 }
 

@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	runtimeLeaseDuration = 60 * time.Second
-	runtimeRetryDelay    = 5 * time.Second
-	runtimeMaxAttempts   = 3
+	runtimeLeaseDuration    = 60 * time.Second
+	runtimeRetryDelay       = 5 * time.Second
+	runtimeMaxAttempts      = 3
+	ieltsRuntimeMaxAttempts = 10
 )
 
 type Configuration struct {
@@ -412,7 +413,7 @@ func ieltsRuntimeConfiguration(
 		return IELTSSpeakingShadowRuntimeConfiguration{}, err
 	}
 	result := IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     configuration.maxAttempts,
+		MaxAttempts:     ieltsRuntimeMaxAttempts,
 		LeaseDuration:   configuration.leaseDuration,
 		StrategyRef:     IELTSSpeakingShadowStrategyRef,
 		PipelineVersion: IELTSSpeakingShadowPipelineVersion,

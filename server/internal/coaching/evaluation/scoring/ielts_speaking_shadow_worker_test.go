@@ -141,6 +141,7 @@ func TestIELTSSpeakingShadowWorkerRetriesPendingAcoustics(
 ) {
 	t.Parallel()
 	claim := validIELTSSpeakingShadowClaim(t)
+	claim.AttemptCount = 7
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:      claim,
 		acquired:   true,
@@ -170,12 +171,51 @@ func TestIELTSSpeakingShadowWorkerRetriesPendingAcoustics(
 	}
 }
 
+func TestIELTSSpeakingShadowWorkerUsesReadyAcousticsWithinWaitBudget(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validIELTSSpeakingShadowClaim(t)
+	claim.AttemptCount = 7
+	repository := &ieltsShadowRuntimeRepositoryStub{
+		claim:    claim,
+		acquired: true,
+	}
+	provider := &ieltsProviderStub{}
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		NewIELTSSpeakingShadowEngineWithAcoustics(
+			provider,
+			&ieltsAcousticSourceStub{},
+		),
+		validIELTSSpeakingShadowRuntimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
+	}
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	if sweep.Completed != 1 || provider.calls != 1 ||
+		repository.completeCalls != 1 || repository.failCalls != 0 ||
+		len(provider.input.AssessableCriteria) != 4 ||
+		repository.result.Criteria[3].EstimatedBand == nil {
+		t.Fatalf(
+			"sweep = %#v; provider calls = %d; repository = %#v",
+			sweep,
+			provider.calls,
+			repository,
+		)
+	}
+}
+
 func TestIELTSSpeakingShadowWorkerFallsBackAfterAcousticWaitExhaustion(
 	t *testing.T,
 ) {
 	t.Parallel()
 	claim := validIELTSSpeakingShadowClaim(t)
-	claim.AttemptCount = 3
+	claim.AttemptCount = 8
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:    claim,
 		acquired: true,
@@ -204,45 +244,54 @@ func TestIELTSSpeakingShadowWorkerFallsBackAfterAcousticWaitExhaustion(
 	}
 }
 
-func TestIELTSSpeakingShadowWorkerReservesProviderRetryAfterAcousticWait(
+func TestIELTSSpeakingShadowWorkerReservesProviderAttemptsAfterAcousticWait(
 	t *testing.T,
 ) {
 	t.Parallel()
-	claim := validIELTSSpeakingShadowClaim(t)
-	claim.AttemptCount = 2
-	repository := &ieltsShadowRuntimeRepositoryStub{
-		claim:      claim,
-		acquired:   true,
-		failStatus: IELTSSpeakingShadowRuntimePending,
-	}
-	provider := &ieltsProviderStub{err: context.DeadlineExceeded}
-	worker, err := NewIELTSSpeakingShadowWorker(
-		repository,
-		NewIELTSSpeakingShadowEngineWithAcoustics(
-			provider,
-			&ieltsAcousticSourceStub{
-				err: ErrIELTSSpeakingAcousticsPending,
-			},
-		),
-		validIELTSSpeakingShadowRuntimeConfiguration(),
-	)
-	if err != nil {
-		t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
-	}
-	sweep, err := worker.ProcessPending(context.Background(), 1)
-	if err != nil {
-		t.Fatalf("ProcessPending: %v", err)
-	}
-	if sweep.Retried != 1 || provider.calls != 1 ||
-		repository.failCalls != 1 ||
-		repository.failure.Code != "provider_timeout" ||
-		!repository.failure.Retryable {
-		t.Fatalf(
-			"sweep = %#v; provider calls = %d; failure = %#v",
-			sweep,
-			provider.calls,
-			repository.failure,
+	for attempt := 8; attempt <= 10; attempt++ {
+		failStatus := IELTSSpeakingShadowRuntimePending
+		wantRetried, wantFailed := 1, 0
+		if attempt == 10 {
+			failStatus = IELTSSpeakingShadowRuntimeFailed
+			wantRetried, wantFailed = 0, 1
+		}
+		claim := validIELTSSpeakingShadowClaim(t)
+		claim.AttemptCount = attempt
+		repository := &ieltsShadowRuntimeRepositoryStub{
+			claim:      claim,
+			acquired:   true,
+			failStatus: failStatus,
+		}
+		provider := &ieltsProviderStub{err: context.DeadlineExceeded}
+		worker, err := NewIELTSSpeakingShadowWorker(
+			repository,
+			NewIELTSSpeakingShadowEngineWithAcoustics(
+				provider,
+				&ieltsAcousticSourceStub{
+					err: ErrIELTSSpeakingAcousticsPending,
+				},
+			),
+			validIELTSSpeakingShadowRuntimeConfiguration(),
 		)
+		if err != nil {
+			t.Fatalf("NewIELTSSpeakingShadowWorker: %v", err)
+		}
+		sweep, err := worker.ProcessPending(context.Background(), 1)
+		if err != nil {
+			t.Fatalf("ProcessPending: %v", err)
+		}
+		if sweep.Retried != wantRetried || sweep.Failed != wantFailed ||
+			provider.calls != 1 || repository.failCalls != 1 ||
+			repository.failure.Code != "provider_timeout" ||
+			!repository.failure.Retryable {
+			t.Fatalf(
+				"attempt = %d; sweep = %#v; provider calls = %d; failure = %#v",
+				attempt,
+				sweep,
+				provider.calls,
+				repository.failure,
+			)
+		}
 	}
 }
 
@@ -412,7 +461,7 @@ func (failure ieltsGenerationFailureStub) Retryable() bool {
 
 func validIELTSSpeakingShadowRuntimeConfiguration() IELTSSpeakingShadowRuntimeConfiguration {
 	return IELTSSpeakingShadowRuntimeConfiguration{
-		MaxAttempts:     3,
+		MaxAttempts:     10,
 		LeaseDuration:   time.Minute,
 		StrategyRef:     IELTSSpeakingShadowStrategyRef,
 		PipelineVersion: IELTSSpeakingShadowPipelineVersion,
