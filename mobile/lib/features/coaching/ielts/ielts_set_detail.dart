@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
-import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
+import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -15,12 +17,13 @@ class IeltsSetDetailPage extends StatefulWidget {
     required this.questions,
     required this.onStart,
     this.cueCard,
-    this.promptSpeaker,
+    this.speechClient,
+    this.audioPlayer,
     this.answerPreparationClient,
     this.cueCardQuestionReference,
     this.questionReferences = const <IeltsAnswerQuestionReference>[],
     super.key,
-  });
+  }) : assert((speechClient == null) == (audioPlayer == null));
 
   final PracticeMode mode;
   final String title;
@@ -28,7 +31,8 @@ class IeltsSetDetailPage extends StatefulWidget {
   final List<String> questions;
   final IeltsCueCard? cueCard;
   final VoidCallback? onStart;
-  final PracticePromptSpeaker? promptSpeaker;
+  final IeltsSpeechClient? speechClient;
+  final PracticeAudioPlayer? audioPlayer;
   final IeltsAnswerPreparationClient? answerPreparationClient;
   final IeltsAnswerQuestionReference? cueCardQuestionReference;
   final List<IeltsAnswerQuestionReference> questionReferences;
@@ -38,8 +42,7 @@ class IeltsSetDetailPage extends StatefulWidget {
 }
 
 class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
-  late final PracticePromptSpeaker _promptSpeaker;
-  late final bool _ownsPromptSpeaker;
+  StreamSubscription<void>? _speechCompletion;
   int? _speakingQuestionIndex;
   int? _speakingAnswerIndex;
   int? _expandedQuestionIndex;
@@ -66,8 +69,15 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   @override
   void initState() {
     super.initState();
-    _ownsPromptSpeaker = widget.promptSpeaker == null;
-    _promptSpeaker = widget.promptSpeaker ?? SystemPracticePromptSpeaker();
+    _speechCompletion = widget.audioPlayer?.onComplete.listen((_) {
+      if (mounted &&
+          (_speakingQuestionIndex != null || _speakingAnswerIndex != null)) {
+        setState(() {
+          _speakingQuestionIndex = null;
+          _speakingAnswerIndex = null;
+        });
+      }
+    });
     if (_canPrepareQuestionAnswers) {
       _expandedQuestionIndex = 0;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -120,79 +130,75 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   @override
   void dispose() {
     _speechRequest++;
-    if (_ownsPromptSpeaker) {
-      unawaited(_promptSpeaker.dispose());
-    } else {
-      unawaited(_promptSpeaker.stop());
-    }
+    unawaited(_speechCompletion?.cancel());
+    unawaited(widget.audioPlayer?.stop());
     super.dispose();
   }
 
   Future<void> _toggleQuestionSpeech(int index) async {
-    final request = ++_speechRequest;
-    final wasSpeaking = _speakingQuestionIndex == index;
-
-    try {
-      await _promptSpeaker.stop();
-      if (!mounted || request != _speechRequest) {
-        return;
-      }
-      if (wasSpeaking) {
-        setState(() {
-          _speakingQuestionIndex = null;
-          _speechError = null;
-        });
-        return;
-      }
-
-      setState(() {
-        _speakingQuestionIndex = index;
-        _speakingAnswerIndex = null;
-        _speechError = null;
-      });
-      await _promptSpeaker.speak(widget.questions[index]);
-      if (mounted && request == _speechRequest) {
-        setState(() => _speakingQuestionIndex = null);
-      }
-    } catch (_) {
-      if (mounted && request == _speechRequest) {
-        setState(() {
-          _speakingQuestionIndex = null;
-          _speechError = '题目朗读失败，请稍后重试。';
-        });
-      }
-    }
+    final reference = widget.questionReferences[index];
+    await _toggleSpeech(
+      questionIndex: index,
+      load: () => widget.speechClient!.loadQuestion(reference),
+      failureMessage: '题目朗读失败，请稍后重试。',
+    );
   }
 
-  Future<void> _toggleAnswerSpeech(int index, String text) async {
+  Future<void> _toggleAnswerSpeech(
+    int index,
+    IeltsAnswerPreparation preparation,
+  ) async {
+    await _toggleSpeech(
+      answerIndex: index,
+      load: () => widget.speechClient!.loadAnswer(preparation.id),
+      failureMessage: '答案朗读失败，请稍后重试。',
+    );
+  }
+
+  Future<void> _toggleSpeech({
+    int? questionIndex,
+    int? answerIndex,
+    required Future<Uint8List> Function() load,
+    required String failureMessage,
+  }) async {
     final request = ++_speechRequest;
-    final wasSpeaking = _speakingAnswerIndex == index;
+    final wasSpeaking = questionIndex != null
+        ? _speakingQuestionIndex == questionIndex
+        : _speakingAnswerIndex == answerIndex;
+
     try {
-      await _promptSpeaker.stop();
+      await widget.audioPlayer!.stop();
       if (!mounted || request != _speechRequest) {
         return;
       }
       if (wasSpeaking) {
         setState(() {
-          _speakingAnswerIndex = null;
+          _speakingQuestionIndex = null;
           _speechError = null;
         });
         return;
       }
+
       setState(() {
-        _speakingQuestionIndex = null;
-        _speakingAnswerIndex = index;
+        _speakingQuestionIndex = questionIndex;
+        _speakingAnswerIndex = answerIndex;
         _speechError = null;
       });
-      await _promptSpeaker.speak(text);
-      if (mounted && request == _speechRequest) {
-        setState(() => _speakingAnswerIndex = null);
+      final bytes = await load();
+      try {
+        if (!mounted || request != _speechRequest) {
+          return;
+        }
+        await widget.audioPlayer!.playWav(bytes);
+      } finally {
+        bytes.fillRange(0, bytes.length, 0);
       }
     } catch (_) {
       if (mounted && request == _speechRequest) {
         setState(() {
+          _speakingQuestionIndex = null;
           _speakingAnswerIndex = null;
-          _speechError = '答案朗读失败，请稍后重试。';
+          _speechError = failureMessage;
         });
       }
     }
@@ -408,12 +414,12 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                               0,
                               widget.cueCardQuestionReference!,
                             ),
-                            onSpeak: _preparations[0]?.speechText == null
+                            onSpeak:
+                                widget.speechClient == null ||
+                                    _preparations[0]?.speechText == null
                                 ? null
-                                : () => _toggleAnswerSpeech(
-                                    0,
-                                    _preparations[0]!.speechText!,
-                                  ),
+                                : () =>
+                                      _toggleAnswerSpeech(0, _preparations[0]!),
                           ),
                       ],
                       if (widget.questions.isNotEmpty)
@@ -436,7 +442,11 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                           index: index + 1,
                           question: widget.questions[index],
                           speaking: _speakingQuestionIndex == index,
-                          onSpeak: () => _toggleQuestionSpeech(index),
+                          onSpeak:
+                              widget.speechClient == null ||
+                                  index >= widget.questionReferences.length
+                              ? null
+                              : () => _toggleQuestionSpeech(index),
                           expanded: _expandedQuestionIndex == index,
                           onToggle: _canPrepareQuestionAnswers
                               ? () {
@@ -478,11 +488,13 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                               index,
                               widget.questionReferences[index],
                             ),
-                            onSpeak: _preparations[index]?.speechText == null
+                            onSpeak:
+                                widget.speechClient == null ||
+                                    _preparations[index]?.speechText == null
                                 ? null
                                 : () => _toggleAnswerSpeech(
                                     index,
-                                    _preparations[index]!.speechText!,
+                                    _preparations[index]!,
                                   ),
                           ),
                       ],
@@ -685,7 +697,7 @@ class _QuestionRow extends StatelessWidget {
   final int index;
   final String question;
   final bool speaking;
-  final VoidCallback onSpeak;
+  final VoidCallback? onSpeak;
   final bool expanded;
   final VoidCallback? onToggle;
 

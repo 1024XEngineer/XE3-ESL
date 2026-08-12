@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
@@ -14,7 +15,8 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart'
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
-import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
+import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 
 void main() {
   testWidgets('shows exactly the four product-level practice entries', (
@@ -329,10 +331,11 @@ void main() {
     expect(selectedSet, const IeltsPracticeSelection(topicGroupId: 'p23-001'));
   });
 
-  testWidgets('reads an IELTS question with the configured system speaker', (
+  testWidgets('plays an IELTS question with the server speech client', (
     tester,
   ) async {
-    final speaker = _DetailPromptSpeaker();
+    final speech = _DetailSpeechClient();
+    final player = _DetailAudioPlayer();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -341,8 +344,23 @@ void main() {
           title: '音乐',
           subtitle: 'Music',
           questions: const ['Do you enjoy music?', 'Do you sing?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 2,
+            ),
+          ],
           onStart: () {},
-          promptSpeaker: speaker,
+          speechClient: speech,
+          audioPlayer: player,
         ),
       ),
     );
@@ -352,12 +370,51 @@ void main() {
     );
     await tester.pump();
 
-    expect(speaker.spoken, ['Do you enjoy music?']);
-    expect(speaker.stopCalls, 1);
+    expect(speech.questions.single.questionPosition, 1);
+    expect(player.played.single, orderedEquals(speech.audio));
+    expect(player.stopCalls, 1);
     expect(
       find.byKey(const Key('ielts-set-detail-speech-error')),
       findsNothing,
     );
+  });
+
+  testWidgets('plays a ready IELTS answer by its owned resource id', (
+    tester,
+  ) async {
+    final speech = _DetailSpeechClient();
+    final player = _DetailAudioPlayer();
+    final answers = _AnswerPreparationClient(existingAnswer: 'Saved answer.');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSetDetailPage(
+          mode: PracticeMode.part1,
+          title: '音乐',
+          subtitle: 'Music',
+          questions: const ['Do you enjoy music?'],
+          questionReferences: const [
+            IeltsAnswerQuestionReference(
+              bankId: 'bank-1',
+              part: 'PART_1',
+              sourceId: 'music',
+              questionPosition: 1,
+            ),
+          ],
+          answerPreparationClient: answers,
+          speechClient: speech,
+          audioPlayer: player,
+          onStart: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ielts-speak-answer-1')));
+    await tester.pump();
+
+    expect(speech.answers, ['ielts_answer_00000000000000000000000000000000']);
+    expect(player.played.single, orderedEquals(speech.audio));
   });
 
   testWidgets('shows an example and polishes it from the experience drawer', (
@@ -984,14 +1041,35 @@ Future<void> _showModule(WidgetTester tester, Key key) async {
   expect(entry, findsOneWidget);
 }
 
-final class _DetailPromptSpeaker implements PracticePromptSpeaker {
-  final List<String> spoken = <String>[];
+final class _DetailSpeechClient implements IeltsSpeechClient {
+  final audio = Uint8List.fromList([1, 2, 3]);
+  final List<IeltsAnswerQuestionReference> questions = [];
+  final List<String> answers = [];
+
+  @override
+  Future<Uint8List> loadQuestion(IeltsAnswerQuestionReference question) async {
+    questions.add(question);
+    return Uint8List.fromList(audio);
+  }
+
+  @override
+  Future<Uint8List> loadAnswer(String answerPreparationId) async {
+    answers.add(answerPreparationId);
+    return Uint8List.fromList(audio);
+  }
+}
+
+final class _DetailAudioPlayer implements PracticeAudioPlayer {
+  final _completions = StreamController<void>.broadcast();
+  final List<Uint8List> played = [];
   int stopCalls = 0;
 
   @override
-  Future<void> speak(String text) async {
-    spoken.add(text);
-  }
+  Stream<void> get onComplete => _completions.stream;
+
+  @override
+  Future<void> playWav(Uint8List bytes) async =>
+      played.add(Uint8List.fromList(bytes));
 
   @override
   Future<void> stop() async {
@@ -999,7 +1077,10 @@ final class _DetailPromptSpeaker implements PracticePromptSpeaker {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() => _completions.close();
 }
 
 final class _AnswerPreparationClient implements IeltsAnswerPreparationClient {
