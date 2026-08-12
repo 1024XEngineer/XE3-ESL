@@ -980,10 +980,11 @@ _IeltsPriorityFeedback? _ieltsPriorityFeedback(
 ) {
   final needsTrustedEvidence =
       report.detailSchema == _ieltsSpeakingPracticeReportSchema;
-  final questionByTurnId = <String, IeltsPracticeReportQuestion>{
-    for (final question in sectionDetail?.questions ?? const [])
-      if (question.responseTurnId case final turnId?) turnId: question,
-  };
+  final questionByTurnId = <String, IeltsPracticeReportQuestion>{};
+  for (final question in sectionDetail?.questions ?? const []) {
+    final turnId = question.responseTurnId;
+    if (turnId != null) questionByTurnId[turnId] = question;
+  }
   for (final action in report.priorityActions) {
     for (final dimension in report.dimensions) {
       if (dimension.key != action.dimensionKey) continue;
