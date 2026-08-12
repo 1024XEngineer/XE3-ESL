@@ -1462,6 +1462,47 @@ for (const [name, value] of Object.entries(ieltsSpeakingReportFixture)) {
   );
   assertIeltsSpeakingReportSemantics(value);
 }
+const ieltsReportWithFourPartFindings = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+ieltsReportWithFourPartFindings.report.part_reviews[0]
+  .improvement_finding_ids = Array.from(
+  { length: 4 },
+  (_, index) => `ielts_part_finding_${index}`,
+);
+assertValid(
+  'IELTS Speaking Part with four aggregated findings',
+  'IeltsSpeakingReportEnvelope',
+  ieltsReportWithFourPartFindings,
+);
+
+const ieltsReportWithThirtySevenPartFindings = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+ieltsReportWithThirtySevenPartFindings.report.part_reviews[0]
+  .improvement_finding_ids = Array.from(
+  { length: 37 },
+  (_, index) => `ielts_part_finding_${index}`,
+);
+assertSchemaRejected(
+  'IELTS Speaking Part with 37 aggregated findings',
+  'IeltsSpeakingReportEnvelope',
+  ieltsReportWithThirtySevenPartFindings,
+);
+
+const ieltsReportWithFourQuestionCriterionFindings = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+ieltsReportWithFourQuestionCriterionFindings.report.questions[0]
+  .criterion_findings[0].strength_finding_ids = Array.from(
+  { length: 4 },
+  (_, index) => `ielts_question_finding_${index}`,
+);
+assertSchemaRejected(
+  'IELTS Speaking question criterion with four findings',
+  'IeltsSpeakingReportEnvelope',
+  ieltsReportWithFourQuestionCriterionFindings,
+);
 const digitLeadingIeltsReport = structuredClone(
   ieltsSpeakingReportFixture.ready,
 );

@@ -2453,11 +2453,11 @@ components:
           items:
             $ref: '#/components/schemas/StableIdentifier'
         strength_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
         improvement_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
         upgrade_example_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
     IeltsSpeakingQuestionReview:
       type: object
       additionalProperties: false
@@ -2646,6 +2646,12 @@ components:
     IeltsSpeakingFindingIds:
       type: array
       maxItems: 3
+      uniqueItems: true
+      items:
+        $ref: '#/components/schemas/StableIdentifier'
+    IeltsSpeakingPartFindingIds:
+      type: array
+      maxItems: 36
       uniqueItems: true
       items:
         $ref: '#/components/schemas/StableIdentifier'

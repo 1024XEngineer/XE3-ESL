@@ -788,15 +788,15 @@ IeltsSpeakingPartReview _partReview(
     ),
     strengthFindingIds: _uniqueIdentifiers(
       root['strength_finding_ids'],
-      maximumItems: 3,
+      maximumItems: _maximumPartFindingRefs,
     ),
     improvementFindingIds: _uniqueIdentifiers(
       root['improvement_finding_ids'],
-      maximumItems: 3,
+      maximumItems: _maximumPartFindingRefs,
     ),
     upgradeExampleFindingIds: _uniqueIdentifiers(
       root['upgrade_example_finding_ids'],
-      maximumItems: 3,
+      maximumItems: _maximumPartFindingRefs,
     ),
   );
 }
@@ -1058,6 +1058,8 @@ const _criterionOrder = <IeltsSpeakingCriterionId>[
   IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy,
   IeltsSpeakingCriterionId.pronunciation,
 ];
+
+const _maximumPartFindingRefs = 36;
 
 const _partOrder = <IeltsSpeakingPartId>[
   IeltsSpeakingPartId.part1,
