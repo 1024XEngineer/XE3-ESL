@@ -24,6 +24,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/practice_report_status.dart';
 import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
 import 'package:speakup/features/coaching/review/practice_report_status_view.dart';
 import 'package:speakup/features/coaching/review/review.dart';
@@ -155,6 +156,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   int _observedCompletedTurns = 0;
   bool _preserveCompletedConversation = false;
   bool _showCompletionSheet = false;
+  bool _readyReportNavigationScheduled = false;
+  bool _openingReadyReport = false;
+  bool _part1ReadyReviewOpened = false;
 
   IeltsPracticeSelection? get _selection {
     final sessionId = widget.controller.practiceSessionId;
@@ -240,6 +244,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _observedMessageCount = widget.controller.practiceMessages.length;
     _observedCompletedTurns = widget.controller.completedTurns;
     widget.controller.addListener(_handleControllerState);
+    widget.reportStatusController?.addListener(_handleReportStatusState);
     widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     _notesController.addListener(_saveNotes);
     _syncSpeechFeedbackSources();
@@ -261,6 +266,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _observedCompletedTurns = widget.controller.completedTurns;
       _preserveCompletedConversation = false;
       _showCompletionSheet = false;
+      _readyReportNavigationScheduled = false;
+      _openingReadyReport = false;
+      _part1ReadyReviewOpened = false;
       _questionNarrationGeneration++;
       _autoNarratedQuestionId = null;
       _autoNarratedQuestionText = null;
@@ -284,11 +292,19 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _syncSpeechFeedbackSources();
     }
     if (oldWidget.reportStatusController != widget.reportStatusController) {
+      oldWidget.reportStatusController?.removeListener(
+        _handleReportStatusState,
+      );
       final sessionId = oldWidget.reportStatusController?.practiceSessionId;
       if (sessionId != null) {
         oldWidget.reportStatusController?.cancel(sessionId);
       }
+      widget.reportStatusController?.addListener(_handleReportStatusState);
+      _readyReportNavigationScheduled = false;
+      _openingReadyReport = false;
+      _part1ReadyReviewOpened = false;
       _syncCompletionReport();
+      _handleReportStatusState();
     }
   }
 
@@ -296,6 +312,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   void dispose() {
     _disposing = true;
     widget.controller.removeListener(_handleControllerState);
+    widget.reportStatusController?.removeListener(_handleReportStatusState);
     widget.speechFeedbackController?.removeListener(_handleSpeechFeedbackState);
     _removeSpeechFeedbackSources(widget.speechFeedbackController);
     unawaited(widget.controller.cancelRecording());
@@ -962,6 +979,28 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     unawaited(reportController.load(sessionId));
+  }
+
+  void _handleReportStatusState() {
+    final reportController = widget.reportStatusController;
+    if (!mounted ||
+        _disposing ||
+        widget.controller.practiceMode != PracticeMode.part1 ||
+        _progress?.phase != IeltsMockPhase.complete ||
+        reportController?.status?.evaluationStatus !=
+            PracticeReportEvaluationStatus.ready ||
+        _readyReportNavigationScheduled ||
+        _openingReadyReport ||
+        _part1ReadyReviewOpened) {
+      return;
+    }
+    _readyReportNavigationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _readyReportNavigationScheduled = false;
+      if (mounted && !_disposing) {
+        unawaited(_openReadyReport());
+      }
+    });
   }
 
   void _syncTicker() {
@@ -1731,43 +1770,58 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   Future<void> _openReadyReport() async {
+    if (_openingReadyReport) return;
     final statusController = widget.reportStatusController;
     final sessionId = widget.controller.practiceSessionId;
-    if (statusController == null || sessionId == null) return;
-    final report = await statusController.loadReadyReport();
-    if (!mounted || report == null) return;
-    if (_mode == PracticeMode.fullMock) {
-      try {
-        final detail = decodeIeltsSpeakingReportDetail(report.detail);
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => _CompletedReportPage(
-              title: evaluationReportTitle(report),
-              child: IeltsSpeakingReadyReportView(report: detail),
+    final mode = widget.controller.practiceMode;
+    if (statusController == null || sessionId == null || mode == null) return;
+    _openingReadyReport = true;
+    try {
+      final report = await statusController.loadReadyReport();
+      if (!mounted || report == null) return;
+      if (mode == PracticeMode.fullMock) {
+        try {
+          final detail = decodeIeltsSpeakingReportDetail(report.detail);
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => _CompletedReportPage(
+                title: evaluationReportTitle(report),
+                child: IeltsSpeakingReadyReportView(report: detail),
+              ),
             ),
-          ),
-        );
-      } on IeltsSpeakingReportDecodeException {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(const SnackBar(content: Text('报告内容暂时无法识别，请稍后重试。')));
+          );
+        } on IeltsSpeakingReportDecodeException {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(content: Text('报告内容暂时无法识别，请稍后重试。')),
+              );
+          }
         }
+        return;
       }
-      return;
+      final item = ReviewHistoryItem(
+        review: presentEvaluationReport(report),
+        report: report,
+        practiceSessionId: report.practiceSessionId,
+        createdAt: report.createdAt,
+        completedAt: report.createdAt,
+      );
+      if (mode == PracticeMode.part1) {
+        _part1ReadyReviewOpened = true;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ReviewReportDetailPage(item: item),
+        ),
+      );
+      if (mounted && widget.controller.practiceMode == PracticeMode.part1) {
+        await _finishSection(IeltsPracticeCompletionAction.list);
+      }
+    } finally {
+      _openingReadyReport = false;
     }
-    final item = ReviewHistoryItem(
-      review: presentEvaluationReport(report),
-      report: report,
-      practiceSessionId: report.practiceSessionId,
-      createdAt: report.createdAt,
-      completedAt: report.createdAt,
-    );
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => ReviewReportDetailPage(item: item),
-      ),
-    );
   }
 
   void _leaveCompletedPractice() {
