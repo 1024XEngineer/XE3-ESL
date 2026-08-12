@@ -1586,7 +1586,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     await widget.controller.startRecording(
       limit: const Duration(seconds: 120),
-      useRealtimeTranscription: false,
+      fallbackToRecordedTranscription: true,
     );
     if (!mounted) {
       return;

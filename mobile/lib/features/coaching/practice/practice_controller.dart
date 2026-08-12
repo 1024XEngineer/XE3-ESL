@@ -76,6 +76,7 @@ final class PracticeController extends ChangeNotifier
   TranscriptionCandidate? _candidate;
   String _liveTranscript = '';
   Future<_RealtimePracticeCandidateResult>? _realtimeCandidate;
+  bool _fallbackRealtimeToRecordedTranscription = false;
   _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
@@ -949,6 +950,7 @@ final class PracticeController extends ChangeNotifier
   Future<void> startRecording({
     Duration? limit,
     bool useRealtimeTranscription = true,
+    bool fallbackToRecordedTranscription = false,
   }) {
     if (!hasActivePractice ||
         isBusy ||
@@ -970,6 +972,8 @@ final class PracticeController extends ChangeNotifier
     _candidate = null;
     _liveTranscript = '';
     _realtimeCandidate = null;
+    _fallbackRealtimeToRecordedTranscription =
+        useRealtimeTranscription && fallbackToRecordedTranscription;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
@@ -1149,6 +1153,7 @@ final class PracticeController extends ChangeNotifier
     }
     _practiceGeneration++;
     _realtimeCandidate = null;
+    _fallbackRealtimeToRecordedTranscription = false;
     _liveTranscript = '';
     final speechFeedbackRetry = _speechFeedbackRetry;
     _cancelRecordingLimit();
@@ -1179,6 +1184,7 @@ final class PracticeController extends ChangeNotifier
   }) async {
     RecordedPracticeAudio? audio;
     final realtime = _realtimeCandidate;
+    final fallbackToRecorded = _fallbackRealtimeToRecordedTranscription;
     final usedRealtime =
         realtime != null && recorder is PracticeStreamingRecorder;
     _recordingState = PracticeRecordingState.transcribing;
@@ -1203,19 +1209,38 @@ final class PracticeController extends ChangeNotifier
         if (identical(_realtimeCandidate, realtime)) {
           _realtimeCandidate = null;
         }
-        if (result.error case final error?) {
-          throw error;
-        }
         final candidate = result.candidate;
-        if (candidate == null) {
-          throw StateError(
-            'Realtime Practice stream ended without a Candidate.',
+        final realtimeError =
+            result.error ??
+            (candidate == null
+                ? StateError(
+                    'Realtime Practice stream ended without a Candidate.',
+                  )
+                : null);
+        if (realtimeError != null) {
+          if (!fallbackToRecorded) {
+            throw realtimeError;
+          }
+          final pending = _PendingPracticeAudio(
+            audio: audio,
+            sessionId: sessionId,
+            questionId: question.id,
+            clientTurnId: clientTurnId,
           );
+          _liveTranscript = '';
+          _pendingPracticeAudio = pending;
+          audio = null;
+          await _transcribePendingPracticeAudio(
+            practice: practice,
+            pending: pending,
+            fence: fence,
+          );
+          return;
         }
         if (!_isOperationCurrent(fence)) {
           return;
         }
-        _validateCandidate(candidate, sessionId, question.id);
+        _validateCandidate(candidate!, sessionId, question.id);
         _candidate = candidate;
         _activeConfirmationId = null;
         _activeTextAnswer = null;
@@ -1247,6 +1272,9 @@ final class PracticeController extends ChangeNotifier
     } finally {
       if (identical(_realtimeCandidate, realtime)) {
         _realtimeCandidate = null;
+      }
+      if (_isOperationCurrent(fence)) {
+        _fallbackRealtimeToRecordedTranscription = false;
       }
       if (audio != null) {
         try {
@@ -1298,6 +1326,9 @@ final class PracticeController extends ChangeNotifier
             _recordingState != PracticeRecordingState.recording)) {
       return;
     }
+    if (_fallbackRealtimeToRecordedTranscription) {
+      return;
+    }
     final recovery = _recoverFromRealtimeFailure(
       fence: fence,
       realtime: realtime,
@@ -1324,6 +1355,7 @@ final class PracticeController extends ChangeNotifier
     }
     _cancelRecordingLimit();
     _realtimeCandidate = null;
+    _fallbackRealtimeToRecordedTranscription = false;
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;

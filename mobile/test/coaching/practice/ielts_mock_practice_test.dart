@@ -1589,9 +1589,7 @@ void main() {
     },
   );
 
-  testWidgets('Part 2 records locally while Part 3 keeps realtime ASR', (
-    tester,
-  ) async {
+  testWidgets('Part 2 and Part 3 both use realtime ASR', (tester) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8);
     final recorder = _DualModeRecorder();
     final controller = PracticeController(client: practice, recorder: recorder);
@@ -1616,9 +1614,9 @@ void main() {
     await tester.pump();
 
     expect(controller.recordingState, PracticeRecordingState.recording);
-    expect(recorder.recordedStarts, 1);
-    expect(recorder.streamingStarts, 0);
-    expect(practice.realtimeTranscriptions, 0);
+    expect(recorder.recordedStarts, 0);
+    expect(recorder.streamingStarts, 1);
+    expect(practice.realtimeTranscriptions, 1);
 
     await controller.finishRecordingGesture();
     for (
@@ -1650,9 +1648,9 @@ void main() {
     }
 
     expect(controller.recordingState, PracticeRecordingState.recording);
-    expect(recorder.recordedStarts, 1);
-    expect(recorder.streamingStarts, 1);
-    expect(practice.realtimeTranscriptions, 1);
+    expect(recorder.recordedStarts, 0);
+    expect(recorder.streamingStarts, 2);
+    expect(practice.realtimeTranscriptions, 2);
   });
 
   testWidgets('Part 2 confirmation failure retries with one idempotency key', (
