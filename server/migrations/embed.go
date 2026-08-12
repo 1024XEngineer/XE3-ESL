@@ -74,4 +74,5 @@ import "embed"
 //go:embed 000086_provider_qualified_model_ids.*.sql
 //go:embed 000087_ielts_part1_cue_card_types.*.sql
 //go:embed 000088_evaluation_ielts_acoustic_snapshot.*.sql
+//go:embed 000089_evaluation_general_scene_atomic_attempts.*.sql
 var Files embed.FS

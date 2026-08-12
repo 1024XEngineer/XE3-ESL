@@ -145,6 +145,21 @@ func (provider *generalSceneTextProvider) AnalyzeGeneralScene(
 	ctx context.Context,
 	input GeneralSceneProviderInput,
 ) (GeneralSceneProviderResult, error) {
+	return provider.generate(ctx, input, GeneralSceneSystemContract)
+}
+
+func (provider *generalSceneTextProvider) AnalyzeGeneralSceneAtom(
+	ctx context.Context,
+	input GeneralSceneProviderInput,
+) (GeneralSceneProviderResult, error) {
+	return provider.generate(ctx, input, GeneralSceneAtomicSystemContract)
+}
+
+func (provider *generalSceneTextProvider) generate(
+	ctx context.Context,
+	input GeneralSceneProviderInput,
+	systemPrompt string,
+) (GeneralSceneProviderResult, error) {
 	if provider == nil || provider.generator == nil || ctx == nil {
 		return GeneralSceneProviderResult{},
 			evaluation.ErrInvalidRequest
@@ -158,7 +173,7 @@ func (provider *generalSceneTextProvider) AnalyzeGeneralScene(
 	generated, err := provider.generator.Generate(
 		generationContext,
 		TextGenerationRequest{
-			SystemPrompt: GeneralSceneSystemContract,
+			SystemPrompt: systemPrompt,
 			UserPrompt:   string(evidenceJSON),
 		},
 	)
@@ -174,3 +189,4 @@ func (provider *generalSceneTextProvider) AnalyzeGeneralScene(
 }
 
 var _ GeneralSceneProvider = (*generalSceneTextProvider)(nil)
+var _ GeneralSceneAtomicProvider = (*generalSceneTextProvider)(nil)

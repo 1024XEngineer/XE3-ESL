@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -19,19 +20,34 @@ var generalSceneTypes = [...]evaluation.SceneType{
 }
 
 type GeneralSceneRuntimeConfiguration struct {
-	MaxAttempts     int
-	LeaseDuration   time.Duration
-	StrategyRef     string
-	PipelineVersion string
-	FullConfigHash  [sha256.Size]byte
-	PromptVersion   string
-	Provider        string
-	Model           string
+	MaxAttempts         int
+	LeaseDuration       time.Duration
+	StrategyRef         string
+	PipelineVersion     string
+	FullConfigHash      [sha256.Size]byte
+	IELTSFullConfigHash [sha256.Size]byte
+	PromptVersion       string
+	Provider            string
+	Model               string
 }
 
 func (configuration GeneralSceneRuntimeConfiguration) Valid() bool {
 	spec, ok := generalSceneDurableJobSpec(evaluation.SceneIELTSSpeaking)
-	return ok && durableConfigurationFromGeneralScene(configuration).valid(spec)
+	return ok && durableConfigurationFromGeneralScene(configuration).valid(spec) &&
+		nonZeroDigest(configuration.IELTSFullConfigHash)
+}
+
+func (configuration GeneralSceneRuntimeConfiguration) ForScene(
+	sceneType evaluation.SceneType,
+) (GeneralSceneRuntimeConfiguration, bool) {
+	if !configuration.Valid() || !generalSceneTypeSupported(sceneType) {
+		return GeneralSceneRuntimeConfiguration{}, false
+	}
+	result := configuration
+	if sceneType == evaluation.SceneIELTSSpeaking {
+		result.FullConfigHash = configuration.IELTSFullConfigHash
+	}
+	return result, true
 }
 
 type GeneralSceneClaim struct {
@@ -84,6 +100,15 @@ type GeneralSceneRuntimeRepository interface {
 		evaluation.SceneType,
 		GeneralSceneRuntimeConfiguration,
 	) (GeneralSceneClaim, bool, error)
+	LoadGeneralSceneAtomicResults(
+		context.Context,
+		GeneralSceneClaim,
+	) ([]GeneralSceneAtomicResult, error)
+	RecordGeneralSceneAtomicAttempt(
+		context.Context,
+		GeneralSceneClaim,
+		GeneralSceneAtomicAttempt,
+	) error
 	CompleteGeneralScene(
 		context.Context,
 		GeneralSceneClaim,
@@ -171,10 +196,14 @@ func (worker *GeneralSceneWorker) claimNext(
 	for offset := range len(generalSceneTypes) {
 		index := (worker.nextScene + offset) % len(generalSceneTypes)
 		sceneType := generalSceneTypes[index]
+		configuration, ok := worker.configuration.ForScene(sceneType)
+		if !ok {
+			return GeneralSceneClaim{}, false, evaluation.ErrInvalidRequest
+		}
 		claim, acquired, err := worker.repository.ClaimGeneralScene(
 			ctx,
 			sceneType,
-			worker.configuration,
+			configuration,
 		)
 		if err != nil {
 			return GeneralSceneClaim{}, false, err
@@ -197,6 +226,9 @@ func (worker *GeneralSceneWorker) processClaim(
 	) {
 		return "", evaluation.ErrInvalidRequest
 	}
+	if claim.SceneType == evaluation.SceneIELTSSpeaking {
+		return worker.processIELTSAtomicClaim(ctx, claim)
+	}
 	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
 	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
@@ -215,16 +247,164 @@ func (worker *GeneralSceneWorker) processClaim(
 	return GeneralSceneRuntimeReady, nil
 }
 
+func (worker *GeneralSceneWorker) processIELTSAtomicClaim(
+	ctx context.Context,
+	claim GeneralSceneClaim,
+) (GeneralSceneRuntimeStatus, error) {
+	keys, insufficient, err := generalSceneAtomicPlan(claim.Snapshot)
+	if err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if insufficient != nil {
+		if err := worker.repository.CompleteGeneralScene(
+			ctx,
+			claim,
+			*insufficient,
+		); err != nil {
+			return "", err
+		}
+		return GeneralSceneRuntimeReady, nil
+	}
+	stored, err := worker.repository.LoadGeneralSceneAtomicResults(ctx, claim)
+	if err != nil {
+		return "", err
+	}
+	ready := make(map[GeneralSceneAtomicKey]GeneralSceneAtomicResult, len(stored))
+	expected := make(map[GeneralSceneAtomicKey]struct{}, len(keys))
+	for _, key := range keys {
+		expected[key] = struct{}{}
+	}
+	for _, atom := range stored {
+		if _, exists := expected[atom.Key]; !exists ||
+			ValidateGeneralSceneAtomicResult(claim.Snapshot, atom) != nil ||
+			atom.Provider.Provider != claim.Provider ||
+			atom.Provider.Model != claim.Model {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		if _, duplicate := ready[atom.Key]; duplicate {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		ready[atom.Key] = atom
+	}
+	missing := make([]GeneralSceneAtomicKey, 0, len(keys)-len(ready))
+	for _, key := range keys {
+		if _, exists := ready[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+	type atomicOutcome struct {
+		key    GeneralSceneAtomicKey
+		result GeneralSceneAtomicResult
+		err    error
+	}
+	outcomes := make(chan atomicOutcome, len(missing))
+	for _, key := range missing {
+		key := key
+		go func() {
+			result, evaluateErr := worker.engine.EvaluateAtomic(
+				ctx,
+				claim.Snapshot,
+				key,
+			)
+			outcomes <- atomicOutcome{key: key, result: result, err: evaluateErr}
+		}()
+	}
+	failures := make(map[GeneralSceneAtomicKey]error)
+	var recordErr error
+	for range missing {
+		outcome := <-outcomes
+		if outcome.err == nil &&
+			(outcome.result.Provider.Provider != claim.Provider ||
+				outcome.result.Provider.Model != claim.Model) {
+			outcome.err = ErrInvalidGeneralSceneResult
+		}
+		attempt := GeneralSceneAtomicAttempt{
+			Key:               outcome.key,
+			AttemptCount:      claim.AttemptCount,
+			ProviderRequestID: generalSceneAtomicRequestID(outcome.result, outcome.err),
+		}
+		if outcome.err == nil {
+			attempt.Status = GeneralSceneAtomicAttemptReady
+			attempt.Result = &outcome.result
+		} else {
+			failure := classifyGeneralSceneFailure(outcome.err)
+			attempt.Status = GeneralSceneAtomicAttemptFailed
+			attempt.Failure = &failure
+			failures[outcome.key] = outcome.err
+		}
+		if err := worker.repository.RecordGeneralSceneAtomicAttempt(
+			ctx,
+			claim,
+			attempt,
+		); err != nil && recordErr == nil {
+			recordErr = err
+		}
+		if outcome.err == nil {
+			ready[outcome.key] = outcome.result
+		}
+	}
+	if recordErr != nil {
+		return "", recordErr
+	}
+	if len(failures) > 0 {
+		var first error
+		for _, key := range keys {
+			cause, exists := failures[key]
+			if !exists {
+				continue
+			}
+			if first == nil {
+				first = cause
+			}
+			if !classifyGeneralSceneFailure(cause).Retryable {
+				first = cause
+				break
+			}
+		}
+		return worker.recordFailure(ctx, claim, first)
+	}
+	atoms := make([]GeneralSceneAtomicResult, len(keys))
+	for index, key := range keys {
+		atom, exists := ready[key]
+		if !exists {
+			return worker.recordFailure(ctx, claim, ErrInvalidGeneralSceneResult)
+		}
+		atoms[index] = atom
+	}
+	result, err := AggregateGeneralSceneAtoms(claim.Snapshot, atoms)
+	if err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if err := worker.repository.CompleteGeneralScene(ctx, claim, result); err != nil {
+		return "", err
+	}
+	return GeneralSceneRuntimeReady, nil
+}
+
 func (worker *GeneralSceneWorker) recordFailure(
 	ctx context.Context,
 	claim GeneralSceneClaim,
 	cause error,
 ) (GeneralSceneRuntimeStatus, error) {
+	failure := classifyGeneralSceneFailure(cause)
+	if rejectionStage := generalSceneProviderRejectionStage(cause); rejectionStage != "" {
+		slog.Warn(
+			"general Scene provider response rejected",
+			"failure_code",
+			failure.Code,
+			"rejection_stage",
+			rejectionStage,
+		)
+	}
+	configuration, ok := worker.configuration.ForScene(claim.SceneType)
+	if !ok {
+		return "", evaluation.ErrInvalidRequest
+	}
 	status, err := worker.repository.FailGeneralScene(
 		ctx,
 		claim,
-		classifyGeneralSceneFailure(cause),
-		worker.configuration,
+		failure,
+		configuration,
 	)
 	if err != nil {
 		return "", err
@@ -236,14 +416,30 @@ func (worker *GeneralSceneWorker) recordFailure(
 	return status, nil
 }
 
+func generalSceneProviderRejectionStage(cause error) string {
+	switch {
+	case errors.Is(cause, errGeneralSceneProviderInvalidJSON):
+		return "json_decode"
+	case errors.Is(cause, errGeneralSceneProviderSchemaMismatch):
+		return "schema_validation"
+	case errors.Is(cause, ErrInvalidGeneralSceneResult):
+		return "semantic_validation"
+	case errors.Is(cause, evaluation.ErrInvalidRequest):
+		return "request_validation"
+	default:
+		return ""
+	}
+}
+
 func generalSceneClaimMatchesRuntime(
 	claim GeneralSceneClaim,
 	configuration GeneralSceneRuntimeConfiguration,
 ) bool {
+	effective, valid := configuration.ForScene(claim.SceneType)
 	spec, ok := generalSceneDurableJobSpec(claim.SceneType)
-	return ok && durableSceneJobConfigurationMatchesClaim(
+	return valid && ok && durableSceneJobConfigurationMatchesClaim(
 		durableClaimFromGeneralScene(claim),
-		durableConfigurationFromGeneralScene(configuration),
+		durableConfigurationFromGeneralScene(effective),
 		spec,
 	)
 }

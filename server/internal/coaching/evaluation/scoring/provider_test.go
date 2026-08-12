@@ -273,6 +273,50 @@ func TestGeneralSceneTextProviderUsesEvaluationContract(t *testing.T) {
 	}
 }
 
+func TestGeneralSceneTextProviderUsesAtomicIELTSContract(t *testing.T) {
+	t.Parallel()
+	generator := &evaluationTextGenerator{result: TextGenerationResult{
+		RequestID: "request-general-atomic-1",
+		Provider:  "qianwen",
+		Model:     "qwen-plus",
+		Content: `{"schema_version":"general-scene-evaluation-atomic-provider/v1",` +
+			`"dimension":{"dimension_id":"TASK_ACHIEVEMENT","score":70,` +
+			`"strengths":[],"improvements":[],"recommended_examples":[]}}`,
+	}}
+	provider, err := NewGeneralSceneProvider(generator, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	atomic, ok := provider.(GeneralSceneAtomicProvider)
+	if !ok {
+		t.Fatal("general Scene provider does not implement atomic IELTS evaluation")
+	}
+	result, err := atomic.AnalyzeGeneralSceneAtom(
+		context.Background(),
+		GeneralSceneProviderInput{
+			SchemaVersion:        GeneralSceneAtomicProviderSchemaVersion,
+			PromptVersion:        GeneralSceneAtomicPromptVersion,
+			EvaluationSection:    IELTSPart1,
+			SceneType:            evaluation.SceneIELTSSpeaking,
+			PracticeExperience:   "IELTS_SPEAKING",
+			SceneCategory:        "IELTS_SPEAKING",
+			PracticeMode:         "PART_1",
+			AssessableDimensions: []GeneralSceneDimension{GeneralSceneDimensionTaskAchievement},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequestID != generator.result.RequestID || len(generator.requests) != 1 {
+		t.Fatalf("result=%#v requests=%#v", result, generator.requests)
+	}
+	request := generator.requests[0]
+	if request.SystemPrompt != GeneralSceneAtomicSystemContract ||
+		request.UserPrompt == "" {
+		t.Fatalf("request = %#v", request)
+	}
+}
+
 type evaluationTextGenerator struct {
 	result   TextGenerationResult
 	err      error
