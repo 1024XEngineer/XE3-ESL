@@ -137,6 +137,32 @@ func (r *PostgresRepository) GetCurrentSessionReportState(
 	if err != nil {
 		return report.SessionReportReadState{}, err
 	}
+	// Specialty reports created before the IELTS band migration used the
+	// general-scene strategy. Prefer the new IELTS evaluation, but keep those
+	// immutable READY reports readable when no IELTS evaluation exists.
+	if len(evaluationIDs) == 0 && mode != practice.PracticeModeFullMock {
+		legacySpec, legacyOK := generalSceneDurableJobSpec(
+			evaluation.SceneIELTSSpeaking,
+		)
+		if !legacyOK {
+			return report.SessionReportReadState{},
+				report.ErrSessionReportConfigurationConflict
+		}
+		evaluationIDs, err = findSessionReportEvaluationIDs(
+			ctx,
+			tx,
+			ownerUserID,
+			practiceSessionID,
+			legacySpec.strategyRef,
+			legacySpec.pipelineVersion,
+		)
+		if err != nil {
+			return report.SessionReportReadState{}, err
+		}
+		if len(evaluationIDs) > 0 {
+			spec = legacySpec
+		}
+	}
 	switch len(evaluationIDs) {
 	case 0:
 		switch handoffStatus {

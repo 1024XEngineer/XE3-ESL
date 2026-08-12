@@ -510,6 +510,7 @@ func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
 	tests := []struct {
 		name         string
 		detailSchema string
+		legacy       bool
 		wantError    error
 	}{
 		{
@@ -519,6 +520,7 @@ func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
 		{
 			name:         "legacy general scene report",
 			detailSchema: legacyIELTSSpeakingPracticeReportSchemaVersion,
+			legacy:       true,
 		},
 		{
 			name:         "unknown report",
@@ -533,6 +535,12 @@ func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
 			ownerUserID, state := readyPart1SessionReportState(
 				test.detailSchema,
 			)
+			if test.legacy {
+				state.Evaluation.Revision.SceneStrategyRef =
+					scoring.GeneralSceneStrategyRef
+				state.Evaluation.Revision.PipelineVersion =
+					scoring.GeneralScenePipelineVersion
+			}
 			resource, err := sessionReportResource(
 				"session_ielts_001",
 				ownerUserID,

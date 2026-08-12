@@ -12,6 +12,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,6 +59,53 @@ func TestPostgresSessionReportReadsReadyFullMockAndIsOwnerScoped(
 		value.PracticeSessionID,
 	); !errors.Is(err, evaluationcore.ErrNotFound) {
 		t.Fatalf("cross-owner Session report error = %v", err)
+	}
+}
+
+func TestPostgresSessionReportReadsLegacyPart1GeneralSceneReport(
+	t *testing.T,
+) {
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluationcore.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I read every evening because it helps me relax.",
+	)
+	pool, repository, configuration, evaluationID :=
+		prepareGeneralScenePostgresEvaluation(t, snapshot)
+	installIELTSSessionReportAuthorityFixture(t, pool, snapshot)
+	worker, err := scoring.NewGeneralSceneWorker(
+		repository,
+		scoring.NewGeneralSceneEngine(&atomicGeneralSceneProviderStub{
+			calls: make(map[scoring.GeneralSceneDimension]int),
+		}),
+		configuration,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil || sweep.Completed != 1 {
+		t.Fatalf("legacy general Scene sweep=%#v err=%v", sweep, err)
+	}
+
+	state, err := repository.GetCurrentSessionReportState(
+		context.Background(),
+		testOwnerA,
+		snapshot.PracticeSessionID,
+	)
+	if err != nil || state.PracticeMode != string(practice.PracticeModePart1) ||
+		state.Status != evaluationcore.StatusReady ||
+		state.Evaluation == nil || state.Evaluation.ID != evaluationID ||
+		state.Evaluation.Revision.SceneStrategyRef !=
+			scoring.GeneralSceneStrategyRef ||
+		state.FormalReport == nil || !state.FormalReport.Valid() ||
+		state.FormalReport.Report.DetailSchema != scoring.GeneralSceneSchemaVersion ||
+		len(state.AvailableSections) != 1 ||
+		state.AvailableSections[0] != "PART_1" {
+		t.Fatalf("legacy Part 1 Session report state=%#v err=%v", state, err)
 	}
 }
 
@@ -140,8 +188,12 @@ func installIELTSSessionReportAuthorityFixture(
 	}
 	practiceContext := payload.PracticeContext
 	assignment := practiceContext.IELTSAssignment
+	mode := practice.PracticeMode(practiceContext.PracticeMode)
 	if assignment == nil ||
-		practiceContext.PracticeMode != string(practice.PracticeModeFullMock) ||
+		(mode != practice.PracticeModePart1 &&
+			mode != practice.PracticeModePart2 &&
+			mode != practice.PracticeModePart3 &&
+			mode != practice.PracticeModeFullMock) ||
 		len(payload.ConfirmedTurns) == 0 {
 		t.Fatalf("unsupported IELTS Session report fixture: %#v", payload)
 	}
@@ -184,18 +236,19 @@ func installIELTSSessionReportAuthorityFixture(
 			TurnBlueprints: append([]string(nil), part.TurnBlueprints...),
 		}
 	}
+	turnPolicyRef, sessionPolicyRef, evaluationPolicyRef :=
+		ieltsSessionReportFixturePolicies(t, mode)
 	option := practice.PracticeOption{
 		ID:                       practiceContext.PracticeOption.ID,
 		SceneID:                  sceneID,
-		Mode:                     practice.PracticeModeFullMock,
-		DisplayName:              "IELTS full mock",
+		Mode:                     mode,
+		DisplayName:              "IELTS " + string(mode),
 		SuggestedDurationSeconds: practiceContext.TaskContext.SuggestedDurationSeconds,
-		TurnPolicyRef:            practice.IELTSSpeakingFullMockTurnPolicy,
-		SessionPolicyRef:         practice.IELTSSpeakingFullMockSessionPolicy,
-		EvaluationPolicyRef:      scoring.IELTSSpeakingFullMockEvaluationPolicyRef,
+		TurnPolicyRef:            turnPolicyRef,
+		SessionPolicyRef:         sessionPolicyRef,
+		EvaluationPolicyRef:      evaluationPolicyRef,
 	}
 	options := []practice.PracticeOption{
-		option,
 		{
 			ID: "session-report-part-1", SceneID: sceneID,
 			Mode: practice.PracticeModePart1, DisplayName: "IELTS Part 1",
@@ -220,6 +273,14 @@ func installIELTSSessionReportAuthorityFixture(
 			SessionPolicyRef:         practice.IELTSSpeakingPart3SessionPolicy,
 			EvaluationPolicyRef:      scoring.IELTSSpeakingPracticeEvaluationPolicyRef,
 		},
+	}
+	for index := range options {
+		if options[index].Mode == mode {
+			options[index] = option
+		}
+	}
+	if mode == practice.PracticeModeFullMock {
+		options = append(options, option)
 	}
 	role := practice.RoleDefinition{
 		ID:                 roleID,
@@ -290,7 +351,7 @@ func installIELTSSessionReportAuthorityFixture(
 		PlanRevision:   practiceContext.PlanRevision,
 		Experience:     practice.PracticeExperienceIELTSSpeaking,
 		Category:       practice.SceneCategory("IELTS_SPEAKING"),
-		PracticeMode:   practice.PracticeModeFullMock,
+		PracticeMode:   mode,
 		SceneSelection: selection,
 		Preparation: practice.PreparationSnapshot{
 			ID:                 practiceContext.Preparation.SnapshotID,
@@ -430,13 +491,13 @@ func installIELTSSessionReportAuthorityFixture(
 			evaluation_policy_ref, end_reason, plan_revision
 		) VALUES (
 			$1, $2, $3, 'completed', $4, $5, $6, $6, $6, $7,
-			$8, 'IELTS_SPEAKING', 'IELTS_SPEAKING', 'FULL_MOCK',
-			$9, 'COMPLETED', $10
+			$8, 'IELTS_SPEAKING', 'IELTS_SPEAKING', $9,
+			$10, 'COMPLETED', $11
 		)
 	`, snapshot.OwnerUserID, snapshot.PracticeSessionID, planID,
 		practiceContext.SessionVersion, len(payload.ConfirmedTurns),
 		authorityAt, completedAt, practiceContext.SessionSnapshotID,
-		scoring.IELTSSpeakingFullMockEvaluationPolicyRef,
+		mode, evaluationPolicyRef,
 		practiceContext.PlanRevision); err != nil {
 		t.Fatalf("insert Practice Session fixture: %v", err)
 	}
@@ -445,9 +506,9 @@ func installIELTSSessionReportAuthorityFixture(
 			owner_user_id, session_id, practice_mode, target_ids,
 			participants, turn_limit, created_at, snapshot_id,
 			snapshot_document
-		) VALUES ($1, $2, 'FULL_MOCK', '[]'::jsonb, $3, $4, $5, $6, $7)
+		) VALUES ($1, $2, $3, '[]'::jsonb, $4, $5, $6, $7, $8)
 	`, snapshot.OwnerUserID, snapshot.PracticeSessionID,
-		participantsDocument, len(payload.OpportunityManifest), authorityAt,
+		mode, participantsDocument, len(payload.OpportunityManifest), authorityAt,
 		practiceContext.SessionSnapshotID, snapshotDocument); err != nil {
 		t.Fatalf("insert Practice Session Snapshot fixture: %v", err)
 	}
@@ -480,6 +541,34 @@ func installIELTSSessionReportAuthorityFixture(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit IELTS Session report authority fixture: %v", err)
+	}
+}
+
+func ieltsSessionReportFixturePolicies(
+	t *testing.T,
+	mode practice.PracticeMode,
+) (string, string, string) {
+	t.Helper()
+	switch mode {
+	case practice.PracticeModePart1:
+		return practice.IELTSSpeakingPart1TurnPolicy,
+			practice.IELTSSpeakingPart1SessionPolicy,
+			scoring.IELTSSpeakingPracticeEvaluationPolicyRef
+	case practice.PracticeModePart2:
+		return practice.IELTSSpeakingPart2TurnPolicy,
+			practice.IELTSSpeakingPart2SessionPolicy,
+			scoring.IELTSSpeakingPracticeEvaluationPolicyRef
+	case practice.PracticeModePart3:
+		return practice.IELTSSpeakingPart3TurnPolicy,
+			practice.IELTSSpeakingPart3SessionPolicy,
+			scoring.IELTSSpeakingPracticeEvaluationPolicyRef
+	case practice.PracticeModeFullMock:
+		return practice.IELTSSpeakingFullMockTurnPolicy,
+			practice.IELTSSpeakingFullMockSessionPolicy,
+			scoring.IELTSSpeakingFullMockEvaluationPolicyRef
+	default:
+		t.Fatalf("unsupported IELTS fixture mode %q", mode)
+		return "", "", ""
 	}
 }
 
