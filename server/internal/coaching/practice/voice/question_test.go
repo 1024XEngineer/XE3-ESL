@@ -97,6 +97,41 @@ func TestInterviewQuestionsUseBoundedUntrustedPreparationMaterial(t *testing.T) 
 	}
 }
 
+func TestInterviewQuestionsAllowUserControlledTurnsPastBlueprints(t *testing.T) {
+	t.Parallel()
+	session := Session{
+		PracticeExperience:      string(practice.PracticeExperienceInterview),
+		SceneCategory:           "INTERVIEW_PROFESSIONAL",
+		PracticeMode:            string(practice.PracticeModeFullSimulation),
+		TurnLimit:               0,
+		CompletionMode:          practice.CompletionModeUserControlled,
+		MaxFollowUpsPerQuestion: 3,
+		EffectiveTurns:          65,
+		PreviousQuestion:        "What trade-off did you make?",
+		PreviousUserResponse:    "I chose consistency over delivery speed.",
+		Prompt: practice.ScenePrompt{
+			PublicSceneBrief: "A backend engineering interview.",
+			PracticeGoal:     "Assess role readiness in English.",
+			UserRole:         "Candidate",
+			AIRole:           "Interviewer",
+			PersonaSummary:   "Evidence seeking.",
+			FocusAreas:       []string{"system design"},
+			TurnBlueprints:   []string{"Ask for an introduction.", "Probe impact."},
+		},
+	}
+
+	request, err := interviewQuestionGenerationRequest(session, 66, true)
+	if err != nil {
+		t.Fatalf("interviewQuestionGenerationRequest() error = %v", err)
+	}
+	if !strings.Contains(request.UserPrompt, "Completed primary interview questions: 65") ||
+		!strings.Contains(request.UserPrompt, "learner chooses to finish") ||
+		!strings.Contains(request.UserPrompt, "Probe impact.") ||
+		strings.Contains(request.UserPrompt, "of 0") {
+		t.Fatalf("user-controlled interview prompt = %q", request.UserPrompt)
+	}
+}
+
 func TestInterviewQuestionContextProjectsFrozenJobAndResume(t *testing.T) {
 	t.Parallel()
 	snapshot := practice.SessionSnapshot{

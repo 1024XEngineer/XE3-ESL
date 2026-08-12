@@ -448,6 +448,19 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      find.byKey(
+        Key(
+          'practice-assistant-translate-${practiceController.currentQuestion!.id}',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('scenario-turn-progress')), findsNothing);
+    final completeButton = tester.widget<TextButton>(
+      find.byKey(const Key('scenario-complete-practice')),
+    );
+    expect(completeButton.onPressed, isNull);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
 
@@ -572,7 +585,8 @@ Future<PracticeController> _interviewPracticeController() async {
     capabilities: testPracticeCapabilities,
     sessionVersion: 1,
     completedTurns: 0,
-    turnLimit: 3,
+    turnLimit: 0,
+    completionMode: PracticeCompletionMode.userControlled,
     sessionCompleted: false,
     currentQuestion: const PracticeQuestion(
       id: 'question-interview-avatar-1',
@@ -616,7 +630,8 @@ SceneDefinition _dailyTravelScene(String id) => testScene(
   ),
 );
 
-final class _SnapshotPracticeClient implements PracticeClient {
+final class _SnapshotPracticeClient
+    implements PracticeClient, PracticeQuestionTranslationClient {
   _SnapshotPracticeClient(this.snapshot);
 
   final PracticeSessionSnapshot snapshot;
@@ -671,6 +686,15 @@ final class _SnapshotPracticeClient implements PracticeClient {
   ) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<PracticeQuestionTranslation> translateQuestion({
+    required String questionId,
+  }) async => PracticeQuestionTranslation(
+    questionId: questionId,
+    targetLanguage: 'zh-CN',
+    content: '这是当前问题的中文翻译。',
+  );
 }
 
 final class _QuestionMediaClient implements PracticeMediaClient {
