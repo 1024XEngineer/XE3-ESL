@@ -204,15 +204,15 @@ func ProjectIELTSFormalReport(
 			projected.Score = &value
 		}
 		report.Dimensions[index] = projected
-		for _, finding := range criterion.Improvements {
-			if len(report.PriorityActions) == 3 {
-				break
-			}
-			report.PriorityActions = append(report.PriorityActions, ReportPriorityAction{
-				DimensionKey: string(criterion.CriterionID),
-				FindingID:    finding.ID,
-			})
-		}
+	}
+	for _, action := range projectIELTSSpeakingPriorityActions(result.Criteria) {
+		report.PriorityActions = append(
+			report.PriorityActions,
+			ReportPriorityAction{
+				DimensionKey: string(action.CriterionID),
+				FindingID:    action.FindingID,
+			},
+		)
 	}
 	report.Detail, err = json.Marshal(detail)
 	if err != nil || !report.Valid() {

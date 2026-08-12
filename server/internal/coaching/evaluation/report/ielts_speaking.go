@@ -3,8 +3,11 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
@@ -127,6 +130,7 @@ func ProjectIELTSSpeakingReport(
 	for _, turn := range payload.ConfirmedTurns {
 		turnsByID[turn.TurnID] = turn
 	}
+	evidenceLocations := ieltsEvidenceLocations(result.QuestionResults)
 
 	report := IELTSSpeakingReport{
 		SchemaVersion:      IELTSSpeakingReportSchemaVersion,
@@ -161,20 +165,13 @@ func ProjectIELTSSpeakingReport(
 	}
 	for index, criterion := range result.Criteria {
 		report.Criteria[index] =
-			projectIELTSSpeakingReportCriterion(criterion)
-		for _, finding := range criterion.Improvements {
-			if len(report.PriorityActions) == 3 {
-				break
-			}
-			report.PriorityActions = append(
-				report.PriorityActions,
-				IELTSSpeakingReportPriorityRef{
-					CriterionID: criterion.CriterionID,
-					FindingID:   finding.ID,
-				},
+			projectIELTSSpeakingReportCriterion(
+				criterion,
+				evidenceLocations,
 			)
-		}
 	}
+	report.PriorityActions =
+		projectIELTSSpeakingPriorityActions(result.Criteria)
 	if overall, available := projectIELTSSpeakingOverall(report.Criteria); available {
 		report.SpeakingOverall = overall
 	}
@@ -239,12 +236,16 @@ func projectIELTSSpeakingOverall(
 	return IELTSSpeakingReportOverall{
 		Status:        IELTSSpeakingOverallAvailable,
 		EstimatedBand: &band,
-		Explanation:   "口语总分按四项练习估分等权平均，并四舍五入到最近的 0.5 分。",
+		Explanation: ieltsSpeakingOverallExplanation(
+			band,
+			criteria,
+		),
 	}, true
 }
 
 func projectIELTSSpeakingReportCriterion(
 	source scoring.IELTSSpeakingShadowCriterionResult,
+	locations map[string]ieltsEvidenceLocation,
 ) IELTSSpeakingReportCriterion {
 	var estimatedBand *int
 	if source.EstimatedBand != nil {
@@ -252,12 +253,15 @@ func projectIELTSSpeakingReportCriterion(
 		estimatedBand = &value
 	}
 	return IELTSSpeakingReportCriterion{
-		CriterionID:     source.CriterionID,
-		Scoreability:    source.Scoreability,
-		Gate:            source.Gate,
-		EstimatedBand:   estimatedBand,
-		BandDescriptor:  source.BandDescriptor,
-		Explanation:     ieltsCriterionExplanation(source),
+		CriterionID:    source.CriterionID,
+		Scoreability:   source.Scoreability,
+		Gate:           source.Gate,
+		EstimatedBand:  estimatedBand,
+		BandDescriptor: source.BandDescriptor,
+		Explanation: ieltsCriterionExplanation(
+			source,
+			locations,
+		),
 		Coverage:        source.Coverage,
 		Confidence:      source.Confidence,
 		ReasonCodes:     slices.Clone(source.ReasonCodes),
@@ -301,6 +305,7 @@ func projectIELTSSpeakingTestSummary(
 
 func ieltsCriterionExplanation(
 	criterion scoring.IELTSSpeakingShadowCriterionResult,
+	locations map[string]ieltsEvidenceLocation,
 ) string {
 	if criterion.Scoreability == scoring.IELTSSpeakingScoreabilityInsufficient {
 		if criterion.CriterionID == scoring.IELTSCriterionPR {
@@ -308,10 +313,189 @@ func ieltsCriterionExplanation(
 		}
 		return "本次可确认的回答证据不足，因此不展示该维度分数。"
 	}
-	if criterion.BandDescriptor != "" {
-		return criterion.BandDescriptor
+	parts := []string{ieltsCriterionBandSummary(criterion)}
+	if len(criterion.Strengths) > 0 {
+		parts = append(parts, ieltsCriterionFindingSentence(
+			criterion.CriterionID,
+			criterion.Strengths[0],
+			locations,
+			true,
+		))
 	}
-	switch criterion.CriterionID {
+	if len(criterion.Improvements) > 0 {
+		parts = append(parts, ieltsCriterionFindingSentence(
+			criterion.CriterionID,
+			criterion.Improvements[0],
+			locations,
+			false,
+		))
+	}
+	if criterion.EstimatedBand == nil {
+		parts = append(parts, "由于缺少完整的时序声学证据，本次只能对观点展开与衔接作定性反馈，暂不展示该维度分数。")
+	} else {
+		parts = append(parts, fmt.Sprintf(
+			"综合这些已核验表现，本维度练习估分为 %d 分。",
+			*criterion.EstimatedBand,
+		))
+	}
+	return truncateIELTSReportText(
+		strings.Join(nonEmptyIELTSReportParts(parts), " "),
+		reportMaximumTextBytes,
+	)
+}
+
+type ieltsEvidenceLocation struct {
+	part    scoring.IELTSPart
+	ordinal int
+}
+
+func ieltsEvidenceLocations(
+	questions []scoring.IELTSSpeakingShadowQuestionResult,
+) map[string]ieltsEvidenceLocation {
+	result := make(map[string]ieltsEvidenceLocation)
+	partOrdinals := make(map[scoring.IELTSPart]int, len(ieltsPartOrder))
+	for _, question := range questions {
+		partOrdinals[question.PartID]++
+		location := ieltsEvidenceLocation{
+			part:    question.PartID,
+			ordinal: partOrdinals[question.PartID],
+		}
+		for _, refID := range question.EvidenceRefIDs {
+			result[refID] = location
+		}
+	}
+	return result
+}
+
+func ieltsEvidenceLocationLabel(location ieltsEvidenceLocation) string {
+	switch location.part {
+	case scoring.IELTSPart1:
+		return fmt.Sprintf("Part 1 第 %d 题", location.ordinal)
+	case scoring.IELTSPart2:
+		if location.ordinal == 1 {
+			return "Part 2"
+		}
+		return fmt.Sprintf("Part 2 第 %d 题", location.ordinal)
+	case scoring.IELTSPart3:
+		return fmt.Sprintf("Part 3 第 %d 题", location.ordinal)
+	default:
+		return "本次回答"
+	}
+}
+
+func ieltsCriterionFindingSentence(
+	criterion scoring.IELTSCriterion,
+	finding scoring.IELTSSpeakingShadowFinding,
+	locations map[string]ieltsEvidenceLocation,
+	strength bool,
+) string {
+	if len(finding.Evidence) == 0 {
+		return ""
+	}
+	evidence := finding.Evidence[0]
+	where := "本次回答中"
+	if location, exists := locations[evidence.EvidenceRefID]; exists {
+		where = "在" + ieltsEvidenceLocationLabel(location)
+	}
+	quote := truncateIELTSReportText(evidence.OriginalExcerpt, 240)
+	message := truncateIELTSReportText(finding.Message, 300)
+	if criterion == scoring.IELTSCriterionPR {
+		if strength {
+			return fmt.Sprintf(
+				"%s，对应原句“%s”的整轮录音为整体可理解度提供了正向声学证据。",
+				where,
+				quote,
+			)
+		}
+		result := fmt.Sprintf(
+			"%s，对应原句“%s”的整轮录音显示整体清晰度或稳定性仍可提升。",
+			where,
+			quote,
+		)
+		result += "建议：选取完整句子进行两轮跟读和录音对比，复听时只检查整句是否容易听清、整体表达是否稳定。"
+		return result
+	}
+	if strength {
+		return fmt.Sprintf(
+			"%s，原句“%s”是本维度的一项优势证据：%s",
+			where,
+			quote,
+			message,
+		)
+	}
+	result := fmt.Sprintf(
+		"%s，原句“%s”需要优先关注：%s",
+		where,
+		quote,
+		message,
+	)
+	if finding.Suggestion != "" {
+		result += " 建议：" +
+			truncateIELTSReportText(finding.Suggestion, 420)
+	}
+	return result
+}
+
+func ieltsCriterionBandSummary(
+	criterion scoring.IELTSSpeakingShadowCriterionResult,
+) string {
+	if criterion.EstimatedBand == nil {
+		if criterion.CriterionID == scoring.IELTSCriterionFC {
+			return "从已确认的回答看，考生能够表达主要观点；本次重点观察回答是否围绕问题展开，以及观点之间是否容易跟随。"
+		}
+		return ieltsCriterionDefaultSummary(criterion.CriterionID)
+	}
+	band := *criterion.EstimatedBand
+	summaries := map[scoring.IELTSCriterion][]string{
+		scoring.IELTSCriterionFC: {
+			"能够表达部分基本意思，但观点展开与衔接还不稳定，听者需要较多推断。",
+			"能够围绕熟悉话题给出基本回答，但展开常较短，连接或自我修正会影响连贯性。",
+			"能够较清楚地回答并展开主要观点，整体容易跟随；较长回答中的衔接、重复或停顿控制仍不稳定。",
+			"能够较自然地延展观点并保持逻辑联系，偶尔的重复或犹豫通常不妨碍交流。",
+			"能够流畅、连贯且有层次地发展观点，衔接自然，听者几乎无需额外推断。",
+		},
+		scoring.IELTSCriterionLR: {
+			"能够使用基础词汇表达部分意思，但范围和准确性会限制信息传达。",
+			"具备熟悉话题所需的常用词汇，但重复、模糊选词或不自然搭配会影响精确度。",
+			"词汇范围足以讨论常见话题并表达主要意思，较复杂内容中的选词、搭配和改述仍有不稳定之处。",
+			"能够较灵活、准确地选择词汇并进行改述，少量不恰当用词通常不妨碍理解。",
+			"能够广泛、自然且精确地使用词汇和搭配，并根据话题灵活调整表达。",
+		},
+		scoring.IELTSCriterionGRA: {
+			"能够构成部分基础句，但语法错误和句子控制会明显限制意思表达。",
+			"能够使用简单句并尝试复杂结构，但准确性不稳定，错误有时会增加理解负担。",
+			"能够混合使用简单句和部分复杂句，主要意思清楚；复杂结构、时态或句子完整性仍会出现偏差。",
+			"能够使用多样句式并较好控制复杂结构，多数句子准确，少量错误通常不影响交流。",
+			"能够灵活运用丰富句式并持续保持较高准确性，复杂表达自然且清楚。",
+		},
+		scoring.IELTSCriterionPR: {
+			"部分内容可以听懂，但整体清晰度与语流稳定性会给理解带来明显负担。",
+			"多数基本内容可以听懂，但整句清晰度不够稳定，需要听者适应。",
+			"整体发音清楚、主要意思容易听懂；较长表达中的清晰度与语流稳定性仍可提升。",
+			"整体容易听懂，语流较自然，偶尔的清晰度波动通常不影响交流。",
+			"发音持续清晰自然，整体语流控制成熟，听者几乎不需要额外适应。",
+		},
+	}
+	values, exists := summaries[criterion.CriterionID]
+	if !exists {
+		return ""
+	}
+	index := 0
+	switch {
+	case band >= 8:
+		index = 4
+	case band >= 7:
+		index = 3
+	case band >= 6:
+		index = 2
+	case band >= 5:
+		index = 1
+	}
+	return values[index]
+}
+
+func ieltsCriterionDefaultSummary(criterion scoring.IELTSCriterion) string {
+	switch criterion {
 	case scoring.IELTSCriterionFC:
 		return "根据已确认回答评估观点衔接与话题展开；缺少完整时序证据时只提供定性反馈。"
 	case scoring.IELTSCriterionLR:
@@ -319,10 +503,286 @@ func ieltsCriterionExplanation(
 	case scoring.IELTSCriterionGRA:
 		return "根据已确认回答评估句式范围、复杂结构控制和语法准确性。"
 	case scoring.IELTSCriterionPR:
-		return "根据录音声学证据评估可理解度、音段、重音、节奏与语调。"
+		return "根据整轮录音的声学证据评估整体可理解度、清晰度与语流稳定性。"
 	default:
 		return ""
 	}
+}
+
+func ieltsSpeakingOverallExplanation(
+	band float64,
+	criteria []IELTSSpeakingReportCriterion,
+) string {
+	intro := "你能够表达部分基本信息，但回答的完整度、语言准确性和清晰度仍会明显影响交流。"
+	switch {
+	case band >= 8:
+		intro = "你能够流畅、清晰且准确地讨论熟悉和抽象话题，语言运用自然，交流几乎不受影响。"
+	case band >= 7:
+		intro = "你能够自然地展开观点并保持连贯交流，词汇和句式运用较灵活；少量犹豫或错误通常不影响理解。"
+	case band >= 6:
+		intro = "你能够清楚回答问题并表达主要观点，交流大多可以顺利进行；回答变长或内容更复杂时，连贯性、准确性或清晰度仍会波动。"
+	case band >= 5:
+		intro = "你能够就熟悉话题表达主要意思，听者通常可以理解；但回答变长或内容更复杂时，观点展开和语言控制还不够稳定。"
+	case band < 4.5:
+		intro = "你能够传达部分基本信息，但回答的完整度、语言准确性和清晰度仍会明显影响交流。"
+	}
+	intro = fmt.Sprintf("本次口语练习估分为 %s 分。%s", formatIELTSBand(band), intro)
+	if len(criteria) == 0 {
+		return intro
+	}
+	minimum := 10
+	maximum := 0
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil {
+			continue
+		}
+		if *criterion.EstimatedBand < minimum {
+			minimum = *criterion.EstimatedBand
+		}
+		if *criterion.EstimatedBand > maximum {
+			maximum = *criterion.EstimatedBand
+		}
+	}
+	if maximum == 0 || minimum == 10 {
+		return intro
+	}
+	if maximum == minimum {
+		return truncateIELTSReportText(
+			fmt.Sprintf(
+				"%s 四项均为 %d 分，当前表现较为均衡，没有明显的单项优势或短板。下一步建议进行完整回答训练：每次连续回答 60 秒，并依次检查观点是否展开、用词是否准确、句式是否完整、表达是否容易听懂。",
+				intro,
+				maximum,
+			),
+			reportMaximumTextBytes,
+		)
+	}
+	highNames := []string{}
+	lowNames := []string{}
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil {
+			continue
+		}
+		if *criterion.EstimatedBand == maximum {
+			highNames = append(
+				highNames,
+				ieltsCriterionName(criterion.CriterionID),
+			)
+		}
+		if *criterion.EstimatedBand == minimum {
+			lowNames = append(
+				lowNames,
+				ieltsCriterionName(criterion.CriterionID),
+			)
+		}
+	}
+	result := intro
+	if len(highNames) == 1 {
+		result += fmt.Sprintf(
+			" 当前优势是%s（%d 分）：%s",
+			strings.Join(highNames, "、"),
+			maximum,
+			ieltsOverallCriterionMeaning(criteria, maximum),
+		)
+	} else {
+		result += fmt.Sprintf(
+			" 当前相对优势是%s（%d 分），这些维度共同支撑了你的整体表现。",
+			strings.Join(highNames, "、"),
+			maximum,
+		)
+	}
+	if len(lowNames) == 1 {
+		result += fmt.Sprintf(
+			" 首要提升的是%s（%d 分）：%s",
+			strings.Join(lowNames, "、"),
+			minimum,
+			ieltsOverallCriterionMeaning(criteria, minimum),
+		)
+	} else {
+		result += fmt.Sprintf(
+			" 优先提升的是%s（%d 分），需要结合下方反馈逐项练习。",
+			strings.Join(lowNames, "、"),
+			minimum,
+		)
+	}
+	result += " 下一步先做：" + ieltsOverallNextStep(criteria, minimum)
+	return truncateIELTSReportText(result, reportMaximumTextBytes)
+}
+
+func formatIELTSBand(band float64) string {
+	if band == float64(int(band)) {
+		return fmt.Sprintf("%d", int(band))
+	}
+	return fmt.Sprintf("%.1f", band)
+}
+
+func ieltsOverallCriterionMeaning(
+	criteria []IELTSSpeakingReportCriterion,
+	band int,
+) string {
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil || *criterion.EstimatedBand != band {
+			continue
+		}
+		switch criterion.CriterionID {
+		case scoring.IELTSCriterionFC:
+			if band >= 6 {
+				return "主要观点通常容易跟随，较长回答中的衔接和展开仍可更稳定。"
+			}
+			return "你能给出基本回答，但停顿、重复或重新起句会打断观点推进。"
+		case scoring.IELTSCriterionLR:
+			if band >= 6 {
+				return "现有词汇能支撑话题表达，复杂内容中的选词和改述仍可更准确。"
+			}
+			return "常用词汇可以传达基本意思，但重复、模糊选词或搭配不自然会降低表达的准确度。"
+		case scoring.IELTSCriterionGRA:
+			if band >= 6 {
+				return "你能使用简单句和部分复杂句表达主要意思，较复杂结构的稳定性仍可提升。"
+			}
+			return "你能够使用基础句式，但语法错误或句子不完整有时会让意思变得不够清楚。"
+		case scoring.IELTSCriterionPR:
+			if band >= 6 {
+				return "整体发音较清楚，主要意思容易听懂，较长表达中的清晰度仍可更稳定。"
+			}
+			return "多数基本内容可以听懂，但整句清晰度和语流稳定性仍需要加强。"
+		}
+	}
+	return ""
+}
+
+func ieltsOverallNextStep(
+	criteria []IELTSSpeakingReportCriterion,
+	minimum int,
+) string {
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil || *criterion.EstimatedBand != minimum {
+			continue
+		}
+		switch criterion.CriterionID {
+		case scoring.IELTSCriterionFC:
+			return "用“观点—原因—例子”结构完成 60 秒连续作答；录音复听时标出停顿、重复和重新起句的位置，再完整重答一次。"
+		case scoring.IELTSCriterionLR:
+			return "围绕一个高频话题准备 5 组常用搭配和 2 种改述方式，并在 60 秒回答中实际使用，避免只背单词。"
+		case scoring.IELTSCriterionGRA:
+			return "选取本次回答中的 3 个基础句，分别加入原因、条件或对比信息，改写后朗读并检查句子是否完整准确。"
+		case scoring.IELTSCriterionPR:
+			return "选取一段完整回答做两轮跟读和录音对比，复听时只检查整句是否容易听清、节奏是否稳定。"
+		}
+	}
+	return "结合下方各维度的原句和练法，先完成一轮针对性练习。"
+}
+
+func ieltsCriterionName(criterion scoring.IELTSCriterion) string {
+	switch criterion {
+	case scoring.IELTSCriterionFC:
+		return "流利性与连贯性"
+	case scoring.IELTSCriterionLR:
+		return "词汇丰富度"
+	case scoring.IELTSCriterionGRA:
+		return "语法多样性及准确性"
+	case scoring.IELTSCriterionPR:
+		return "发音"
+	default:
+		return string(criterion)
+	}
+}
+
+func projectIELTSSpeakingPriorityActions(
+	criteria []scoring.IELTSSpeakingShadowCriterionResult,
+) []IELTSSpeakingReportPriorityRef {
+	ordered := slices.Clone(criteria)
+	slices.SortStableFunc(
+		ordered,
+		func(left, right scoring.IELTSSpeakingShadowCriterionResult) int {
+			leftBand := 10
+			rightBand := 10
+			if left.EstimatedBand != nil {
+				leftBand = *left.EstimatedBand
+			}
+			if right.EstimatedBand != nil {
+				rightBand = *right.EstimatedBand
+			}
+			return leftBand - rightBand
+		},
+	)
+	result := make([]IELTSSpeakingReportPriorityRef, 0, 3)
+	seen := make(map[string]struct{})
+	appendFinding := func(
+		criterion scoring.IELTSSpeakingShadowCriterionResult,
+		finding scoring.IELTSSpeakingShadowFinding,
+	) {
+		if len(result) == 3 {
+			return
+		}
+		content := finding.Suggestion
+		if content == "" {
+			content = finding.Message
+		}
+		key := ieltsPriorityActionKey(content)
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		result = append(result, IELTSSpeakingReportPriorityRef{
+			CriterionID: criterion.CriterionID,
+			FindingID:   finding.ID,
+		})
+	}
+	for _, criterion := range ordered {
+		if len(criterion.Improvements) > 0 {
+			appendFinding(criterion, criterion.Improvements[0])
+		}
+	}
+	for _, criterion := range ordered {
+		for index := 1; index < len(criterion.Improvements); index++ {
+			finding := criterion.Improvements[index]
+			appendFinding(criterion, finding)
+		}
+	}
+	return result
+}
+
+func ieltsPriorityActionKey(content string) string {
+	const providerAdjustmentMarker = "结合本次原句，还可以这样调整："
+	if index := strings.LastIndex(
+		content,
+		providerAdjustmentMarker,
+	); index >= 0 {
+		content = content[index+len(providerAdjustmentMarker):]
+	}
+	return strings.ToLower(strings.Join(strings.Fields(content), " "))
+}
+
+func nonEmptyIELTSReportParts(parts []string) []string {
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			result = append(result, strings.TrimSpace(part))
+		}
+	}
+	return result
+}
+
+func truncateIELTSReportText(value string, maximumBytes int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= maximumBytes {
+		return value
+	}
+	if maximumBytes < len("…") {
+		return ""
+	}
+	if maximumBytes == len("…") {
+		return "…"
+	}
+	limit := maximumBytes - len("…")
+	cut := 0
+	for index, current := range value {
+		end := index + utf8.RuneLen(current)
+		if end > limit {
+			break
+		}
+		cut = end
+	}
+	return strings.TrimSpace(value[:cut]) + "…"
 }
 
 func cloneIELTSFindings(
@@ -438,7 +898,6 @@ func (report IELTSSpeakingReport) Valid() bool {
 		!validIELTSSpeakingTestSummary(report.TestSummary) ||
 		len(report.Criteria) != len(ieltsCriterionOrder) ||
 		!validIELTSSpeakingOverall(report.SpeakingOverall, report.Criteria) ||
-		report.SpeakingOverall.Explanation == "" ||
 		len(report.PartReviews) != len(ieltsPartOrder) ||
 		len(report.Questions) != report.TestSummary.QuestionCount ||
 		!validIELTSReportQuestionSequence(report.Questions) ||
@@ -570,7 +1029,10 @@ func validIELTSSpeakingOverall(
 	overall IELTSSpeakingReportOverall,
 	criteria []IELTSSpeakingReportCriterion,
 ) bool {
-	if overall.Explanation == "" {
+	if !validReportText(
+		overall.Explanation,
+		reportMaximumTextBytes,
+	) {
 		return false
 	}
 	expected, available := projectIELTSSpeakingOverall(criteria)
@@ -614,7 +1076,10 @@ func validIELTSReportCriterion(
 		criterion.Scoreability,
 		criterion.Gate,
 	) ||
-		criterion.Explanation == "" ||
+		!validReportText(
+			criterion.Explanation,
+			reportMaximumTextBytes,
+		) ||
 		criterion.Coverage < 0 || criterion.Coverage > 1 ||
 		criterion.Confidence != 0 ||
 		criterion.ReasonCodes == nil ||
