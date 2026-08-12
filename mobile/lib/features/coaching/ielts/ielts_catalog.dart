@@ -5,6 +5,8 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
+import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -15,8 +17,10 @@ class IeltsCatalog extends StatefulWidget {
     required this.scenes,
     required this.onSelectionPressed,
     required this.onRetry,
+    this.speechClient,
+    this.audioPlayer,
     super.key,
-  });
+  }) : assert((speechClient == null) == (audioPlayer == null));
 
   final IeltsPreparationController controller;
   final List<SceneDefinition> scenes;
@@ -27,6 +31,8 @@ class IeltsCatalog extends StatefulWidget {
   )
   onSelectionPressed;
   final Future<void> Function() onRetry;
+  final IeltsSpeechClient? speechClient;
+  final PracticeAudioPlayer? audioPlayer;
 
   @override
   State<IeltsCatalog> createState() => _IeltsCatalogState();
@@ -263,6 +269,8 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
               ? const <String>[]
               : item.questions,
           cueCard: item.cueCard,
+          speechClient: widget.speechClient,
+          audioPlayer: widget.audioPlayer,
           answerPreparationClient: widget.controller.answerPreparationClient,
           cueCardQuestionReference: item.mode == PracticeMode.part2
               ? IeltsAnswerQuestionReference(

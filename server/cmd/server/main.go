@@ -242,6 +242,20 @@ func run() int {
 		logger.Error("IELTS answer preparation HTTP startup failed")
 		return 1
 	}
+	ieltsSpeechService, err := ielts.NewSpeechService(
+		ieltsQuestionBank,
+		ieltsAnswerService,
+		ieltsSpeechSynthesizer{practice: practiceSynthesizer},
+	)
+	if err != nil {
+		logger.Error("IELTS speech startup failed")
+		return 1
+	}
+	ieltsSpeechHTTP, err := ielts.NewSpeechHTTPHandler(ieltsSpeechService)
+	if err != nil {
+		logger.Error("IELTS speech HTTP startup failed")
+		return 1
+	}
 
 	resumeComposition, err := buildResumeComposition(
 		ctx,
@@ -503,6 +517,7 @@ func run() int {
 	protectedRegistrars := []bootstrap.ProtectedRouteRegistrar{
 		avatarHTTP,
 		ieltsAnswerHTTP,
+		ieltsSpeechHTTP,
 		evaluationComposition.HTTPHandler(),
 		speechFeedbackComposition.HTTPHandler(),
 		speechFeedbackComposition.RetryHTTPHandler(),

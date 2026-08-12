@@ -103,12 +103,16 @@ paths:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
   /v1/ielts-speaking/question-bank:
     $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1question-bank
+  /v1/ielts-speaking/question-banks/{bank_id}/{part}/{source_id}/questions/{question_position}/speech:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1question-banks~1{bank_id}~1{part}~1{source_id}~1questions~1{question_position}~1speech
   /v1/ielts-speaking/answer-preparations:
     $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations
   /v1/ielts-speaking/answer-preparations/{answer_preparation_id}:
     $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations~1{answer_preparation_id}
   /v1/ielts-speaking/answer-preparations/{answer_preparation_id}/generations:
     $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations~1{answer_preparation_id}~1generations
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}/speech:
+    $ref: ./modules/ielts.yaml#/paths/~1v1~1ielts-speaking~1answer-preparations~1{answer_preparation_id}~1speech
   /v1/goals:
     $ref: ./modules/goal.yaml#/paths/~1v1~1goals
   /v1/goals/{goal_id}:

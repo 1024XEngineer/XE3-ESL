@@ -295,6 +295,10 @@ private final class AgentPCMStreamPlayer {
       finishResult = nil
       result(nil)
     }
+    try? AVAudioSession.sharedInstance().setActive(
+      false,
+      options: .notifyOthersOnDeactivation
+    )
   }
 
   private enum PlayerError: Error {

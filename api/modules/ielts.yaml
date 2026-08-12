@@ -17,6 +17,27 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/ielts-speaking/question-banks/{bank_id}/{part}/{source_id}/questions/{question_position}/speech:
+    get:
+      tags: [IELTS Speaking]
+      summary: Synthesize a published IELTS question on demand
+      description: Resolves the prompt from its stable question-bank reference and returns ephemeral WAV bytes. Arbitrary text is never accepted.
+      operationId: getIeltsQuestionSpeech
+      parameters:
+        - {name: bank_id, in: path, required: true, schema: {$ref: '#/components/schemas/ResourceId'}}
+        - {name: part, in: path, required: true, schema: {type: string, enum: [PART_1, PART_2, PART_3]}}
+        - {name: source_id, in: path, required: true, schema: {$ref: '#/components/schemas/ResourceId'}}
+        - {name: question_position, in: path, required: true, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: Synthesized question audio.
+          content:
+            audio/wav:
+              schema: {type: string, format: binary}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
   /v1/ielts-speaking/answer-preparations:
     post:
       tags: [IELTS Speaking]
@@ -101,6 +122,24 @@ paths:
         '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
         '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
         '502': {description: Generation failed; response is the persisted failed resource and a fresh idempotency key may retry., content: {application/json: {schema: {$ref: '#/components/schemas/IeltsAnswerPreparation'}}}}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+  /v1/ielts-speaking/answer-preparations/{answer_preparation_id}/speech:
+    parameters:
+      - {$ref: '#/components/parameters/AnswerPreparationId'}
+    get:
+      tags: [IELTS Speaking]
+      summary: Synthesize an actor-owned IELTS answer on demand
+      description: Returns ephemeral WAV bytes for the ready preparation's speech text. The authenticated actor must own the resource.
+      operationId: getIeltsAnswerPreparationSpeech
+      responses:
+        '200':
+          description: Synthesized answer audio.
+          content:
+            audio/wav:
+              schema: {type: string, format: binary}
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
         default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
 components:
   parameters:

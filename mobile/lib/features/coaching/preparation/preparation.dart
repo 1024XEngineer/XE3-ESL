@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
+import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
@@ -702,6 +703,12 @@ class _PreparationPageState extends State<PreparationPage> {
           IeltsCatalog(
             controller: ielts!,
             scenes: scenes,
+            speechClient: widget.practiceController?.mediaClient == null
+                ? null
+                : WireIeltsSpeechClient(
+                    widget.practiceController!.mediaClient!,
+                  ),
+            audioPlayer: widget.practiceController?.audioPlayer,
             onRetry: ielts.retryLoad,
             onSelectionPressed: (scene, mode, selection) => unawaited(
               _startSceneDirectly(
