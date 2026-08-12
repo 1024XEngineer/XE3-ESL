@@ -1474,18 +1474,17 @@ void main() {
 
       await tester.tap(find.byKey(const Key('ielts-section-review-action')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
+        find.byKey(const Key('part1-review-loading-page')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsNothing,
-      );
-      expect(find.text('复盘生成中，完成后将自动打开。'), findsOneWidget);
+      expect(find.text('Part 1 专项复盘'), findsOneWidget);
+      expect(find.text('正在生成你的专项复盘'), findsOneWidget);
       expect(reportClient.started.isCompleted, isFalse);
       expect(reportController.practiceSessionId, isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
@@ -1591,19 +1590,21 @@ void main() {
         find.byKey(const Key('ielts-section-completion-sheet')),
         findsOneWidget,
       );
-      expect(find.text('复盘生成中…'), findsOneWidget);
+      expect(find.text('查看复盘报告'), findsOneWidget);
       await tester.tap(find.byKey(const Key('ielts-section-review-action')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
+        find.byKey(const Key('part1-review-loading-page')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsNothing,
+        find.byKey(const Key('part1-review-loading-animation')),
+        findsOneWidget,
       );
-      expect(find.text('复盘生成中，完成后将自动打开。'), findsOneWidget);
+      expect(find.text('正在生成你的专项复盘'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
@@ -1648,7 +1649,7 @@ void main() {
         find.byKey(const Key('ielts-section-completion-sheet')),
         findsOneWidget,
       );
-      expect(find.text('复盘生成中…'), findsOneWidget);
+      expect(find.text('查看复盘报告'), findsOneWidget);
       expect(
         find.byKey(const Key('ielts-section-practice-complete-part1')),
         findsNothing,
@@ -1697,15 +1698,22 @@ void main() {
       find.byKey(const Key('ielts-section-completion-sheet')),
       findsOneWidget,
     );
-    expect(find.text('复盘暂不可用'), findsOneWidget);
+    expect(find.text('查看复盘报告'), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-section-practice-complete-part1')),
       findsNothing,
     );
+    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const Key('part1-review-loading-page')), findsOneWidget);
+    expect(find.text('复盘暂时没有生成'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets(
-    'Part 1 ready report opens directly and returns to the section list',
+    'Part 1 ready report opens after tapping and returns to the section list',
     (tester) async {
       final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
       final controller = PracticeController(
@@ -1766,6 +1774,16 @@ void main() {
       await tester.pumpAndSettle();
 
       await _answerCurrentShortQuestion(tester, controller);
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('查看复盘报告'), findsOneWidget);
+      expect(reportClient.readyReportCalls, 0);
+
+      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
@@ -1786,7 +1804,7 @@ void main() {
     },
   );
 
-  testWidgets('Part 1 ready transition opens without another screen frame', (
+  testWidgets('Part 1 review replaces loading with the ready report in place', (
     tester,
   ) async {
     final statusGate = Completer<void>();
@@ -1826,10 +1844,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(reportClient.readyReportCalls, 0);
 
+    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('part1-review-loading-page')), findsOneWidget);
+    expect(find.text('正在生成你的专项复盘'), findsOneWidget);
+
     statusGate.complete();
-    await tester.idle();
+    await tester.pumpAndSettle();
 
     expect(reportClient.readyReportCalls, 1);
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('the full-mock PracticeOption opens the three-part flow', (

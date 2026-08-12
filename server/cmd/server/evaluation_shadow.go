@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	evaluationShadowInterval     = 5 * time.Second
+	evaluationShadowInterval     = 1 * time.Second
 	evaluationShadowSweepTimeout = 60 * time.Second
 	evaluationShadowClaimLimit   = 2
 )
