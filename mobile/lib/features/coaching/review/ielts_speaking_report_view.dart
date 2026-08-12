@@ -426,11 +426,13 @@ class IeltsSpeakingAbilityProfile extends StatelessWidget {
   const IeltsSpeakingAbilityProfile({
     required this.report,
     required this.loading,
+    this.completedAt,
     super.key,
   });
 
   final IeltsSpeakingReport? report;
   final bool loading;
+  final DateTime? completedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -463,7 +465,7 @@ class IeltsSpeakingAbilityProfile extends StatelessWidget {
               ),
             if (value != null) ...[
               const SizedBox(height: SpeakUpDesign.space12),
-              _AbilitySummary(report: value),
+              _AbilitySummary(report: value, completedAt: completedAt),
             ],
           ],
         ),
@@ -473,9 +475,10 @@ class IeltsSpeakingAbilityProfile extends StatelessWidget {
 }
 
 class _AbilitySummary extends StatelessWidget {
-  const _AbilitySummary({required this.report});
+  const _AbilitySummary({required this.report, required this.completedAt});
 
   final IeltsSpeakingReport report;
+  final DateTime? completedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -493,33 +496,42 @@ class _AbilitySummary extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text('综合得分', style: SpeakUpDesign.meta),
-          const SizedBox(width: SpeakUpDesign.space8),
-          Text(
-            band?.toStringAsFixed(1) ?? '--',
-            key: const Key('review-ability-overall-band'),
-            style: SpeakUpDesign.sectionTitle.copyWith(
-              color: _abilityBlue,
-              fontSize: 28,
-              height: 1,
-            ),
-          ),
-          const SizedBox(width: SpeakUpDesign.space12),
-          Container(width: 1, height: 28, color: SpeakUpDesign.border),
-          const SizedBox(width: SpeakUpDesign.space12),
           Expanded(
-            child: Text(
-              report.speakingOverallExplanation,
-              key: const Key('review-ability-summary-text'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: SpeakUpDesign.meta,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('当前综合水平', style: SpeakUpDesign.meta),
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text(
+                  band?.toStringAsFixed(1) ?? '--',
+                  key: const Key('review-ability-overall-band'),
+                  style: SpeakUpDesign.sectionTitle.copyWith(
+                    color: _abilityBlue,
+                    fontSize: 28,
+                    height: 1,
+                  ),
+                ),
+              ],
             ),
           ),
+          if (completedAt case final value?)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('最近更新', style: SpeakUpDesign.meta),
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text(_abilityDate(value), style: SpeakUpDesign.label),
+              ],
+            ),
         ],
       ),
     );
   }
+}
+
+String _abilityDate(DateTime value) {
+  final local = value.toLocal();
+  return '${local.month} 月 ${local.day} 日';
 }
 
 class _AbilityEmptyState extends StatelessWidget {
@@ -535,7 +547,7 @@ class _AbilityEmptyState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            loading ? '正在读取能力数据' : '完成一次 IELTS 口语完整模考',
+            loading ? '正在读取能力数据' : '完成至少一次完整口语模拟',
             textAlign: TextAlign.center,
             style: SpeakUpDesign.cardTitle,
           ),

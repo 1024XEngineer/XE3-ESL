@@ -48,32 +48,25 @@ class _ResumeSummaryCardState extends State<ResumeSummaryCard> {
                 builder: (_) => ResumePage(controller: widget.controller),
               ),
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(SpeakUpDesign.space16),
-              child: Row(
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: SpeakUpDesign.space16,
+                vertical: SpeakUpDesign.space4,
+              ),
+              leading: const Icon(Icons.description_rounded),
+              title: const Text('我的简历', style: SpeakUpDesign.cardTitle),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const _ResumeIcon(),
-                  const SizedBox(width: SpeakUpDesign.space16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '我的简历',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: SpeakUpDesign.space4),
-                        Text(
-                          widget.controller.isLoading && items.isEmpty
-                              ? '正在读取简历…'
-                              : items.isEmpty
-                              ? '上传 PDF，让面试准备更贴合你的经历'
-                              : '${items.length}/3 份 · $ready 份已解析',
-                        ),
-                      ],
-                    ),
+                  Text(
+                    widget.controller.isLoading && items.isEmpty
+                        ? '读取中'
+                        : items.isEmpty
+                        ? '未上传'
+                        : '${items.length}/3 份 · $ready 份已解析',
+                    style: SpeakUpDesign.meta,
                   ),
-                  const SizedBox(width: SpeakUpDesign.space8),
+                  const SizedBox(width: SpeakUpDesign.space4),
                   const Icon(
                     Icons.chevron_right_rounded,
                     color: SpeakUpDesign.secondary,

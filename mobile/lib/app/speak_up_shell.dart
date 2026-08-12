@@ -176,7 +176,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
-      if (index == 2) {
+      if (index == 2 ||
+          (index == 3 &&
+              (widget.reviewHistoryController?.items.isEmpty ?? false))) {
         _refreshReviewIndexes();
       }
       return;
@@ -219,7 +221,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     unawaited(widget.practiceController.stopPracticeAudio());
-    if (index == 2) {
+    if (index == 2 ||
+        (index == 3 &&
+            (widget.reviewHistoryController?.items.isEmpty ?? false))) {
       _refreshReviewIndexes();
     }
     setState(() => _selectedIndex = index);
@@ -470,7 +474,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
-        resumeController: widget.resumeController,
+        reviewHistoryController: widget.reviewHistoryController,
       ),
     ];
 
@@ -765,7 +769,7 @@ class _ProfilePage extends StatelessWidget {
     required this.profileSaving,
     required this.onSaveDisplayName,
     required this.onLogout,
-    required this.resumeController,
+    required this.reviewHistoryController,
   });
 
   final bool showBackButton;
@@ -775,7 +779,7 @@ class _ProfilePage extends StatelessWidget {
   final bool profileSaving;
   final Future<String?> Function(String)? onSaveDisplayName;
   final VoidCallback? onLogout;
-  final ResumeController? resumeController;
+  final ReviewHistoryController? reviewHistoryController;
 
   @override
   Widget build(BuildContext context) {
@@ -827,13 +831,25 @@ class _ProfilePage extends StatelessWidget {
                 subtitle: Text(user?.email ?? '尚未连接正式账号'),
                 trailing: user == null
                     ? null
-                    : IconButton(
-                        key: const Key('profile-edit-display-name'),
-                        tooltip: '编辑昵称',
-                        onPressed: profileSaving || onSaveDisplayName == null
-                            ? null
-                            : () => _editDisplayName(context),
-                        icon: const Icon(Icons.edit_rounded),
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            key: const Key('profile-edit-display-name'),
+                            tooltip: '编辑昵称',
+                            onPressed:
+                                profileSaving || onSaveDisplayName == null
+                                ? null
+                                : () => _editDisplayName(context),
+                            icon: const Icon(Icons.edit_rounded),
+                          ),
+                          IconButton(
+                            key: const Key('profile-logout-button'),
+                            tooltip: '退出登录',
+                            onPressed: onLogout,
+                            icon: const Icon(Icons.logout_rounded),
+                          ),
+                        ],
                       ),
               ),
             ),
@@ -845,15 +861,8 @@ class _ProfilePage extends StatelessWidget {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space16),
-            if (resumeController != null) ...[
-              ResumeSummaryCard(controller: resumeController!),
-              const SizedBox(height: SpeakUpDesign.space16),
-            ],
-            OutlinedButton.icon(
-              key: const Key('profile-logout-button'),
-              onPressed: onLogout,
-              icon: const Icon(Icons.logout_rounded),
-              label: Text(user == null ? '预览模式不可退出' : '退出登录'),
+            CurrentIeltsAbilityProfile(
+              historyController: reviewHistoryController,
             ),
           ],
         ),

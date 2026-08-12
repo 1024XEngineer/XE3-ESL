@@ -349,6 +349,34 @@ void main() {
       expect(fullMockClient.calls, 1);
     },
   );
+
+  testWidgets('current ability profile uses the latest embedded full mock', (
+    tester,
+  ) async {
+    final item = _item(
+      practiceMode: 'FULL_MOCK',
+      detailSchema: 'ielts-speaking-report/v1',
+    );
+    final history = ReviewHistoryController(client: _HistoryClient(item));
+    addTearDown(history.dispose);
+    await history.refresh();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CurrentIeltsAbilityProfile(historyController: history),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('review-ability-overall-band')),
+      findsOneWidget,
+    );
+    expect(find.text('6.5'), findsOneWidget);
+    expect(find.text('8 月 11 日'), findsOneWidget);
+  });
 }
 
 ReviewHistoryItem _item({
