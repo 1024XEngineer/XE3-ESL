@@ -1477,16 +1477,13 @@ void main() {
 
       expect(
         find.byKey(const Key('ielts-section-completion-sheet')),
-        findsNothing,
+        findsOneWidget,
       );
       expect(
         find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(
-        find.byKey(const Key('ielts-completion-report-unavailable')),
-        findsOneWidget,
-      );
+      expect(find.text('复盘生成中，完成后将自动打开。'), findsOneWidget);
       expect(reportClient.started.isCompleted, isFalse);
       expect(reportController.practiceSessionId, isNull);
     },
@@ -1542,15 +1539,7 @@ void main() {
     await tester.pumpAndSettle();
     await _answerCurrentShortQuestion(tester, controller);
 
-    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-    await tester.pump();
-
-    expect(find.text('练习完成'), findsOneWidget);
-    expect(find.text('4 道回答已保存'), findsOneWidget);
-    expect(find.text('练习下一套'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-section-list-action')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.tap(find.byKey(const Key('ielts-section-list-action')));
     await tester.pumpAndSettle();
 
     final request = preparation.takeNavigationRequest();
@@ -1666,6 +1655,54 @@ void main() {
       );
     },
   );
+
+  testWidgets('Part 1 report failure never falls back to the completion page', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    final reportController = PracticeReportStatusController(
+      client: _Part1ReportStatusClient(
+        evaluationStatus: PracticeReportEvaluationStatus.failed,
+      ),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(reportController.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          reportStatusController: reportController,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('复盘暂不可用'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-section-practice-complete-part1')),
+      findsNothing,
+    );
+  });
 
   testWidgets(
     'Part 1 ready report opens directly and returns to the section list',

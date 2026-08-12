@@ -1745,17 +1745,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   bool _keepsPart1CompletionInConversation(IeltsMockProgress progress) {
-    final reportController = widget.reportStatusController;
-    if (_mode != PracticeMode.part1 ||
-        progress.phase != IeltsMockPhase.complete ||
-        reportController == null) {
-      return false;
-    }
-    final reportStatus = reportController.status?.evaluationStatus;
-    return reportStatus == PracticeReportEvaluationStatus.queued ||
-        reportStatus == PracticeReportEvaluationStatus.running ||
-        reportStatus == PracticeReportEvaluationStatus.ready ||
-        reportStatus == null && reportController.errorMessage == null;
+    return _mode == PracticeMode.part1 &&
+        progress.phase == IeltsMockPhase.complete;
   }
 
   String get _completionTitle => switch (_mode) {
@@ -1794,15 +1785,20 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         unawaited(_openReadyReport());
         return;
       }
-      if (reportController != null &&
-          (reportStatus == null ||
-              reportStatus == PracticeReportEvaluationStatus.queued ||
-              reportStatus == PracticeReportEvaluationStatus.running)) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(const SnackBar(content: Text('复盘生成中，完成后将自动打开。')));
-        return;
+      if (reportStatus == PracticeReportEvaluationStatus.queued ||
+          reportStatus == PracticeReportEvaluationStatus.running ||
+          reportStatus == null && reportController?.errorMessage == null) {
+        _showPart1ReportMessage('复盘生成中，完成后将自动打开。');
+      } else if (reportController?.canRetry == true) {
+        unawaited(reportController!.retry());
+        _showPart1ReportMessage('正在重新获取复盘状态…');
+      } else if (reportStatus == PracticeReportEvaluationStatus.failed ||
+          reportController?.errorMessage != null) {
+        _showPart1ReportMessage('复盘暂时无法生成，请稍后到复盘页查看。');
+      } else {
+        _showPart1ReportMessage('复盘生成中，完成后将自动打开。');
       }
+      return;
     }
     setState(() {
       _showCompletionSheet = false;
@@ -1818,9 +1814,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     if (reportStatus == PracticeReportEvaluationStatus.failed ||
         reportController?.errorMessage != null && reportStatus == null) {
-      return '查看生成状态';
+      return reportController?.canRetry == true ? '重试复盘状态' : '复盘暂不可用';
     }
     return '复盘生成中…';
+  }
+
+  void _showPart1ReportMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _openReadyReport() async {
