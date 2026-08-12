@@ -30,6 +30,7 @@ class ScenarioPracticePage extends StatefulWidget {
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
+    this.questionSpeaker,
     this.onPracticeCompleted,
     this.speechFeedbackController,
     this.replayLoading = false,
@@ -45,6 +46,7 @@ class ScenarioPracticePage extends StatefulWidget {
   final ScenarioAsyncAction? onBeforeStartRecording;
   final ScenarioAsyncAction? onBeforeSubmitText;
   final ScenarioAsyncAction? onReplayQuestion;
+  final PracticePromptSpeaker? questionSpeaker;
   final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
@@ -71,8 +73,12 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   final Map<String, String> _questionTranslations = <String, String>{};
   bool _feedbackRebuildScheduled = false;
   bool _completionInFlight = false;
+  PracticePromptSpeaker? _ownedQuestionSpeaker;
   PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
+  String? _playingQuestionId;
+  String? _questionNarrationErrorId;
+  int _questionNarrationGeneration = 0;
 
   @override
   void initState() {
@@ -109,6 +115,16 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       oldWidget.practiceController.removeListener(_handleControllerState);
       _observedMessageCount = widget.practiceController.practiceMessages.length;
       _visibleTipQuestionId = null;
+      _questionTranslations.clear();
+      _questionNarrationGeneration++;
+      _playingQuestionId = null;
+      _questionNarrationErrorId = null;
+      unawaited(oldWidget.practiceController.stopPracticeAudio(notify: false));
+      final previousSpeaker =
+          oldWidget.questionSpeaker ?? _ownedQuestionSpeaker;
+      if (previousSpeaker != null) {
+        unawaited(_stopSpeakerSafely(previousSpeaker));
+      }
       widget.practiceController.addListener(_handleControllerState);
       _syncRecordingTimer();
     }
@@ -125,6 +141,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _textController.dispose();
     _textFocusNode.dispose();
     unawaited(widget.practiceController.stopPracticeAudio(notify: false));
+    if (widget.questionSpeaker case final speaker?) {
+      unawaited(_stopSpeakerSafely(speaker));
+    } else if (_ownedQuestionSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     if (_ownedTipSpeaker case final speaker?) {
       unawaited(speaker.dispose());
     }
@@ -147,6 +168,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     if (tip == null || _visibleTipQuestionId != tip.questionId) {
       return;
     }
+    await _stopQuestionNarration();
     final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
     await speaker.speak(tip.content);
   }
@@ -169,8 +191,106 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _beforeStartRecording() async {
     await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
     await _runBoundedUserTurnAction(widget.onBeforeStartRecording);
   }
+
+  Future<void> _playQuestion(PracticeMessage message) async {
+    final controller = widget.practiceController;
+    final currentQuestion = controller.currentQuestion;
+    final current = currentQuestion?.id == message.id;
+
+    if (_playingQuestionId == message.id) {
+      await _stopQuestionNarration();
+      return;
+    }
+
+    await _stopQuestionTipSpeech();
+
+    if (current && widget.onReplayQuestion != null) {
+      _questionNarrationGeneration++;
+      await _stopQuestionSpeakerSafely();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _questionNarrationErrorId = null);
+      try {
+        await widget.onReplayQuestion!();
+      } on Object {
+        if (mounted) {
+          setState(() => _questionNarrationErrorId = message.id);
+        }
+      }
+      return;
+    }
+
+    if (current && controller.canPlayQuestionAudio) {
+      _questionNarrationGeneration++;
+      await _stopQuestionSpeakerSafely();
+      if (mounted) {
+        setState(() => _questionNarrationErrorId = null);
+      }
+      await controller.toggleQuestionAudio();
+      return;
+    }
+
+    await _stopQuestionNarration();
+    final generation = ++_questionNarrationGeneration;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _playingQuestionId = message.id;
+      _questionNarrationErrorId = null;
+    });
+    try {
+      await _questionSpeaker.speak(message.text);
+    } on Object {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _questionNarrationErrorId = message.id);
+      }
+    } finally {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _playingQuestionId = null);
+      }
+    }
+  }
+
+  Future<void> _stopQuestionNarration() async {
+    _questionNarrationGeneration++;
+    if (widget.replayPlaying && widget.onReplayQuestion != null) {
+      try {
+        await widget.onReplayQuestion!();
+      } on Object {
+        // Avatar playback is best-effort and must not block user input.
+      }
+    }
+    await widget.practiceController.stopPracticeAudio();
+    await _stopQuestionSpeakerSafely();
+    if (mounted && _playingQuestionId != null) {
+      setState(() => _playingQuestionId = null);
+    }
+  }
+
+  Future<void> _stopQuestionSpeakerSafely() async {
+    final speaker = widget.questionSpeaker ?? _ownedQuestionSpeaker;
+    if (speaker == null) {
+      return;
+    }
+    await _stopSpeakerSafely(speaker);
+  }
+
+  Future<void> _stopSpeakerSafely(PracticePromptSpeaker speaker) async {
+    try {
+      await speaker.stop();
+    } on Object {
+      // Recording and navigation remain usable when platform TTS degrades.
+    }
+  }
+
+  PracticePromptSpeaker get _questionSpeaker =>
+      widget.questionSpeaker ??
+      (_ownedQuestionSpeaker ??= SystemPracticePromptSpeaker());
 
   void _handleControllerState() {
     if (!mounted) {
@@ -295,6 +415,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     if (!mounted || _completionInFlight) {
       return;
     }
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
+    if (!mounted) {
+      return;
+    }
     final callback = widget.onPracticeCompleted;
     if (callback == null) {
       await Navigator.of(context).maybePop();
@@ -360,6 +485,8 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   }
 
   Future<void> _submitText() async {
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
     await _runBoundedUserTurnAction(widget.onBeforeSubmitText);
     if (!mounted) {
       return;
@@ -408,6 +535,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _requestExit() async {
     if (!mounted || _exitInFlight || _exitApproved) {
+      return;
+    }
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
+    if (!mounted) {
       return;
     }
     final route = ModalRoute.of(context);
@@ -488,10 +620,12 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                     recordingSeconds: _recordingSeconds,
                     previewMode: widget.previewMode,
                     onBeforeStartRecording: _beforeStartRecording,
-                    onReplayQuestion: widget.onReplayQuestion,
                     speechFeedbackController: widget.speechFeedbackController,
                     replayLoading: widget.replayLoading,
                     replayPlaying: widget.replayPlaying,
+                    playingQuestionId: _playingQuestionId,
+                    narrationErrorQuestionId: _questionNarrationErrorId,
+                    onPlayQuestion: _playQuestion,
                     onToggleTextMode: _toggleTextMode,
                     onSubmitText: _submitText,
                     onTranslateQuestion:
@@ -524,10 +658,12 @@ class _ConversationPanel extends StatelessWidget {
     required this.recordingSeconds,
     required this.previewMode,
     required this.onBeforeStartRecording,
-    required this.onReplayQuestion,
     required this.speechFeedbackController,
     required this.replayLoading,
     required this.replayPlaying,
+    required this.playingQuestionId,
+    required this.narrationErrorQuestionId,
+    required this.onPlayQuestion,
     required this.onToggleTextMode,
     required this.onSubmitText,
     required this.onTranslateQuestion,
@@ -547,10 +683,12 @@ class _ConversationPanel extends StatelessWidget {
   final int recordingSeconds;
   final bool previewMode;
   final ScenarioAsyncAction? onBeforeStartRecording;
-  final ScenarioAsyncAction? onReplayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
   final bool replayPlaying;
+  final String? playingQuestionId;
+  final String? narrationErrorQuestionId;
+  final Future<void> Function(PracticeMessage message) onPlayQuestion;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
   final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
@@ -570,10 +708,6 @@ class _ConversationPanel extends StatelessWidget {
         children: [
           _ConversationHeader(
             controller: controller,
-            onShowTip: onShowTip,
-            onReplayQuestion: onReplayQuestion,
-            replayLoading: replayLoading,
-            replayPlaying: replayPlaying,
             onCompleteRequested: onCompleteRequested,
           ),
           Expanded(
@@ -592,6 +726,34 @@ class _ConversationPanel extends StatelessWidget {
                     itemBuilder: (context, index) {
                       if (index < messages.length) {
                         final message = messages[index];
+                        final assistant =
+                            message.role == PracticeMessageRole.assistant;
+                        final currentQuestion =
+                            assistant && message.id == controller.questionId;
+                        final playing =
+                            playingQuestionId == message.id ||
+                            (currentQuestion &&
+                                (replayPlaying ||
+                                    controller.isQuestionAudioPlaying));
+                        final playbackLoading =
+                            currentQuestion &&
+                            (replayLoading ||
+                                controller.isQuestionAudioLoading);
+                        final tipsAvailable =
+                            currentQuestion &&
+                            (controller
+                                    .practiceCapabilities
+                                    ?.questionTipsAllowed ??
+                                false);
+                        final tip = controller.questionTip;
+                        final showTip =
+                            assistant &&
+                            tip != null &&
+                            tip.questionId == message.id &&
+                            tip.questionId == visibleTipQuestionId;
+                        final tipError = currentQuestion
+                            ? controller.questionTipErrorMessage
+                            : null;
                         final projection = _feedbackProjection(message);
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -600,11 +762,59 @@ class _ConversationPanel extends StatelessWidget {
                               message: message,
                               feedbackProjection: projection,
                               messageTextVisible: true,
-                              onTranslate:
-                                  message.role == PracticeMessageRole.assistant
+                              onTranslate: assistant
                                   ? onTranslateQuestion
                                   : null,
+                              actions: assistant
+                                  ? _ScenarioQuestionActions(
+                                      messageId: message.id,
+                                      playing: playing,
+                                      playbackLoading: playbackLoading,
+                                      playbackFailed:
+                                          narrationErrorQuestionId ==
+                                          message.id,
+                                      playbackEnabled:
+                                          !playbackLoading &&
+                                          _canTriggerScenarioReplay(controller),
+                                      tipsAvailable: tipsAvailable,
+                                      tipLoading:
+                                          currentQuestion &&
+                                          controller.isQuestionTipLoading,
+                                      tipEnabled:
+                                          currentQuestion &&
+                                          controller.canRequestQuestionTip,
+                                      onPlay: () =>
+                                          unawaited(onPlayQuestion(message)),
+                                      onShowTip: onShowTip,
+                                    )
+                                  : null,
                             ),
+                            if (showTip)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: QuestionTipCard(
+                                  content: tip.content,
+                                  onClose: onHideTip,
+                                  onSpeak: onSpeakTip,
+                                ),
+                              ),
+                            if (assistant && tipError != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  4,
+                                  12,
+                                  0,
+                                ),
+                                child: Text(
+                                  tipError,
+                                  key: const Key('scenario-question-tip-error'),
+                                  style: const TextStyle(
+                                    color: SpeakUpDesign.error,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
                           ],
                         );
                       }
@@ -629,26 +839,6 @@ class _ConversationPanel extends StatelessWidget {
                     },
                   ),
           ),
-          if (controller.questionTip case final tip?
-              when tip.questionId == visibleTipQuestionId)
-            QuestionTipCard(
-              content: tip.content,
-              onClose: onHideTip,
-              onSpeak: onSpeakTip,
-            ),
-          if (controller.questionTipErrorMessage case final message?)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                message,
-                key: const Key('scenario-question-tip-error'),
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: SpeakUpDesign.error,
-                  fontSize: 12,
-                ),
-              ),
-            ),
           _ScenarioComposer(
             controller: controller,
             textController: textController,
@@ -684,18 +874,10 @@ class _ConversationPanel extends StatelessWidget {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.controller,
-    required this.onShowTip,
-    required this.onReplayQuestion,
-    required this.replayLoading,
-    required this.replayPlaying,
     required this.onCompleteRequested,
   });
 
   final PracticeController controller;
-  final VoidCallback onShowTip;
-  final ScenarioAsyncAction? onReplayQuestion;
-  final bool replayLoading;
-  final bool replayPlaying;
   final VoidCallback onCompleteRequested;
 
   @override
@@ -733,66 +915,98 @@ class _ConversationHeader extends StatelessWidget {
                 style: SpeakUpDesign.meta,
               ),
             ),
-          if (controller.practiceCapabilities?.questionTipsAllowed ??
-              false) ...[
-            const SizedBox(width: 8),
-            TextButton.icon(
-              key: const Key('scenario-question-tip'),
-              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.primary,
-                backgroundColor: SpeakUpDesign.primaryMuted,
-                minimumSize: const Size(0, 34),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-              icon: controller.isQuestionTipLoading
-                  ? const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.lightbulb_outline_rounded, size: 18),
-              label: Text(controller.isQuestionTipLoading ? '生成中' : 'Tips'),
-            ),
-          ],
-          if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
-            const SizedBox(width: 6),
-            IconButton(
-              key: const Key('scenario-replay-question'),
-              tooltip:
-                  (onReplayQuestion != null
-                      ? replayPlaying
-                      : controller.isQuestionAudioPlaying)
-                  ? '停止播放'
-                  : '重听对方',
-              onPressed: onReplayQuestion != null
-                  ? replayLoading || !_canTriggerScenarioReplay(controller)
-                        ? null
-                        : () => unawaited(onReplayQuestion!())
-                  : controller.canUsePracticeAudio
-                  ? controller.toggleQuestionAudio
-                  : null,
-              visualDensity: VisualDensity.compact,
-              icon:
-                  (onReplayQuestion != null
-                      ? replayLoading
-                      : controller.isQuestionAudioLoading)
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      (onReplayQuestion != null
-                              ? replayPlaying
-                              : controller.isQuestionAudioPlaying)
-                          ? Icons.stop_circle_outlined
-                          : Icons.volume_up_outlined,
-                    ),
-            ),
-          ],
         ],
       ),
+    );
+  }
+}
+
+class _ScenarioQuestionActions extends StatelessWidget {
+  const _ScenarioQuestionActions({
+    required this.messageId,
+    required this.playing,
+    required this.playbackLoading,
+    required this.playbackFailed,
+    required this.playbackEnabled,
+    required this.tipsAvailable,
+    required this.tipLoading,
+    required this.tipEnabled,
+    required this.onPlay,
+    required this.onShowTip,
+  });
+
+  final String messageId;
+  final bool playing;
+  final bool playbackLoading;
+  final bool playbackFailed;
+  final bool playbackEnabled;
+  final bool tipsAvailable;
+  final bool tipLoading;
+  final bool tipEnabled;
+  final VoidCallback onPlay;
+  final VoidCallback onShowTip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 0,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        TextButton.icon(
+          key: ValueKey('scenario-question-voice-$messageId'),
+          onPressed: playbackEnabled ? onPlay : null,
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.primary,
+            backgroundColor: SpeakUpDesign.surfaceMuted,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          icon: playbackLoading
+              ? const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+                  size: 17,
+                ),
+          label: Text(
+            playing
+                ? '停止朗读'
+                : playbackFailed
+                ? '重试朗读'
+                : '朗读',
+          ),
+        ),
+        if (tipsAvailable)
+          TextButton.icon(
+            key: ValueKey('scenario-question-tip-$messageId'),
+            onPressed: tipEnabled ? onShowTip : null,
+            style: TextButton.styleFrom(
+              foregroundColor: SpeakUpDesign.primary,
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            icon: tipLoading
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.lightbulb_outline_rounded, size: 17),
+            label: Text(tipLoading ? '生成中' : 'Tips'),
+          ),
+      ],
     );
   }
 }

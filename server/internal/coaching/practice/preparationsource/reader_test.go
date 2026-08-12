@@ -182,9 +182,11 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			MaxFollowUpsPerQuestion:  1,
 			EarlyCompletionRule: preparation.
 				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
-			RetryAllowed:          true,
-			AvatarAllowed:         true,
-			SpeechFeedbackAllowed: true,
+			RetryAllowed:               true,
+			QuestionTranslationAllowed: true,
+			QuestionTipsAllowed:        true,
+			AvatarAllowed:              true,
+			SpeechFeedbackAllowed:      true,
 		},
 		PracticeObjectives: []preparation.PracticeObjective{{
 			ID: "clarity", Description: "Speak clearly.",
