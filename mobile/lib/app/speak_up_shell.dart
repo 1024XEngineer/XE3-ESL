@@ -475,6 +475,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
+        resumeController: widget.resumeController,
       ),
     ];
 
@@ -770,6 +771,7 @@ class _ProfilePage extends StatelessWidget {
     required this.onSaveDisplayName,
     required this.onLogout,
     required this.reviewHistoryController,
+    required this.resumeController,
   });
 
   final bool showBackButton;
@@ -780,6 +782,7 @@ class _ProfilePage extends StatelessWidget {
   final Future<String?> Function(String)? onSaveDisplayName;
   final VoidCallback? onLogout;
   final ReviewHistoryController? reviewHistoryController;
+  final ResumeController? resumeController;
 
   @override
   Widget build(BuildContext context) {
@@ -864,6 +867,10 @@ class _ProfilePage extends StatelessWidget {
             CurrentIeltsAbilityProfile(
               historyController: reviewHistoryController,
             ),
+            if (resumeController != null) ...[
+              const SizedBox(height: SpeakUpDesign.space16),
+              ResumeSummaryCard(controller: resumeController!),
+            ],
           ],
         ),
       ),

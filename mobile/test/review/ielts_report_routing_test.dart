@@ -39,8 +39,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('review-history-entry')));
-    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -324,9 +322,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(fullMockClient.calls, 1);
-      await tester.tap(find.byKey(const Key('review-history-entry')));
-      await tester.pumpAndSettle();
+      expect(fullMockClient.calls, 0);
       await tester.tap(
         find.byKey(Key('review-history-select-${item.review.id}')),
       );
@@ -346,7 +342,7 @@ void main() {
         find.byKey(const Key('ielts-speaking-report-generating')),
         findsNothing,
       );
-      expect(fullMockClient.calls, 1);
+      expect(fullMockClient.calls, 0);
     },
   );
 
