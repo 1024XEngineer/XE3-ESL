@@ -101,6 +101,37 @@ void main() {
     expect(voiceKeys, hasLength(1));
   });
 
+  test('creation during plan load merges the eventual server list', () async {
+    final listPlans = Completer<List<PracticePlanSummary>>();
+    final client = _FakeJobPreparationClient(listPlansCompleter: listPlans);
+    final controller = _controller(client);
+    addTearDown(controller.dispose);
+    controller.updateInput(_input);
+
+    final loading = controller.loadInterviewPlans();
+    await _flush();
+    expect(controller.plansLoading, isTrue);
+
+    await controller.analyze();
+    await controller.confirm();
+    expect(await controller.createPreview(), isTrue);
+    final createdPlanId = controller.plan!.id;
+    expect(controller.interviewPlans.map((plan) => plan.id), <String>[
+      createdPlanId,
+    ]);
+    expect(controller.plansLoading, isTrue);
+
+    listPlans.complete(<PracticePlanSummary>[_planSummary('existing-plan')]);
+    await loading;
+
+    expect(controller.plansLoading, isFalse);
+    expect(controller.plansLoaded, isTrue);
+    expect(controller.interviewPlans.map((plan) => plan.id), <String>[
+      createdPlanId,
+      'existing-plan',
+    ]);
+  });
+
   test('double start creates exactly one Session', () async {
     final session = Completer<PreparationPracticeBootstrap>();
     final client = _FakeJobPreparationClient(sessionCompleter: session);
@@ -889,6 +920,7 @@ Future<void> _flush() async {
 final class _FakeJobPreparationClient implements JobPreparationClient {
   _FakeJobPreparationClient({
     this.analysisCompleter,
+    this.listPlansCompleter,
     this.sessionCompleter,
     this.sessionResult,
     this.failFirstCreate = false,
@@ -900,6 +932,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
            restoredTarget ?? _target(JobTargetStage.awaitingConfirmation);
 
   final Completer<JobTarget>? analysisCompleter;
+  final Completer<List<PracticePlanSummary>>? listPlansCompleter;
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final PreparationPracticeBootstrap? sessionResult;
   final bool failFirstCreate;
@@ -1053,7 +1086,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   @override
   Future<List<PracticePlanSummary>> listPlans({
     required PracticeExperience experience,
-  }) async => const <PracticePlanSummary>[];
+  }) async => listPlansCompleter?.future ?? const <PracticePlanSummary>[];
 
   @override
   Future<void> deletePlan(String planId) async {}
@@ -1144,6 +1177,25 @@ JobTarget _target(
         : null,
     createdAt: now,
     updatedAt: now,
+  );
+}
+
+PracticePlanSummary _planSummary(String id) {
+  return PracticePlanSummary(
+    id: id,
+    revision: 1,
+    status: PracticePlanStatus.ready,
+    experience: PracticeExperience.interview,
+    sceneName: 'Existing interview',
+    practiceScope: 'Technical depth',
+    jobTitle: 'Existing role',
+    practiceObjectives: const <String>['Explain trade-offs'],
+    resumeUsed: false,
+    suggestedDurationSeconds: 900,
+    minEffectiveTurns: 1,
+    maxEffectiveTurns: 3,
+    createdAt: _now,
+    updatedAt: _now,
   );
 }
 

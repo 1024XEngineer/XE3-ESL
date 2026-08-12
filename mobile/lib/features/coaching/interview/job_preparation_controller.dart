@@ -134,6 +134,9 @@ final class JobPreparationController extends ChangeNotifier {
     _plansLoading = true;
     _plansErrorMessage = null;
     final requestEpoch = ++_planListEpoch;
+    final plansAtRequestStart = <String, PracticePlanSummary>{
+      for (final plan in _interviewPlans) plan.id: plan,
+    };
     notifyListeners();
     try {
       final plans = await client.listPlans(
@@ -142,7 +145,16 @@ final class JobPreparationController extends ChangeNotifier {
       if (_disposed || requestEpoch != _planListEpoch) {
         return;
       }
-      _interviewPlans = plans;
+      final localUpserts = <PracticePlanSummary>[
+        for (final plan in _interviewPlans)
+          if (!identical(plansAtRequestStart[plan.id], plan)) plan,
+      ];
+      final localUpsertIds = localUpserts.map((plan) => plan.id).toSet();
+      _interviewPlans = <PracticePlanSummary>[
+        ...localUpserts,
+        for (final plan in plans)
+          if (!localUpsertIds.contains(plan.id)) plan,
+      ];
       _plansLoaded = true;
     } on Object {
       if (!_disposed && requestEpoch == _planListEpoch) {
@@ -923,9 +935,9 @@ final class JobPreparationController extends ChangeNotifier {
       for (final existing in _interviewPlans)
         if (existing.id != summary.id) existing,
     ];
-    _planListEpoch++;
-    _plansLoading = false;
-    _plansLoaded = true;
+    if (!_plansLoading) {
+      _plansLoaded = true;
+    }
     _plansErrorMessage = null;
   }
 
