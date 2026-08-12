@@ -17,7 +17,6 @@ import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart'
 import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
-import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
@@ -121,8 +120,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   Timer? _recordingTicker;
   int _recordingSeconds = 0;
   Timer? _part2TranscriptionRetryTimer;
-  Timer? _bufferedPart3RecordingLimitTimer;
-  Future<void>? _bufferedPart3StartFuture;
   DateTime _now = DateTime.now().toUtc();
   bool _loading = true;
   bool _disposing = false;
@@ -143,10 +140,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _introNarrated = false;
   String? _narrationError;
   String? _answerLanguageError;
-  PracticeRecordingState _bufferedPart3RecordingState =
-      PracticeRecordingState.idle;
-  RecordedPracticeAudio? _bufferedPart3Audio;
-  bool _flushingBufferedPart3Audio = false;
   final Map<String, String> _questionTranslations = <String, String>{};
   PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
@@ -178,7 +171,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         widget.controller.completedTurns >= _partEnd(IeltsSpeakingPart.part2);
   }
 
-  bool get _part2BackgroundProcessing {
+  bool get _part2Processing {
     final state = widget.controller.recordingState;
     final submissionActive =
         state == PracticeRecordingState.starting ||
@@ -236,166 +229,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   int get _part3Total =>
       _assignment.part(IeltsSpeakingPart.part3)?.turnBlueprints.length ?? 0;
-
-  bool get _usesBufferedPart3Recorder =>
-      _progress?.phase == IeltsMockPhase.part3 &&
-      (!_part2TurnConfirmed ||
-          _bufferedPart3RecordingState != PracticeRecordingState.idle ||
-          _bufferedPart3Audio != null);
-
-  Future<void> _startBufferedPart3Recording() {
-    final existing = _bufferedPart3StartFuture;
-    if (existing != null) {
-      return existing;
-    }
-    final operation = _startBufferedPart3RecordingOperation();
-    _bufferedPart3StartFuture = operation;
-    return operation.whenComplete(() {
-      if (identical(_bufferedPart3StartFuture, operation)) {
-        _bufferedPart3StartFuture = null;
-      }
-    });
-  }
-
-  Future<void> _startBufferedPart3RecordingOperation() async {
-    if (!_usesBufferedPart3Recorder ||
-        _bufferedPart3RecordingState != PracticeRecordingState.idle ||
-        _bufferedPart3Audio != null) {
-      return;
-    }
-    setState(() {
-      _answerLanguageError = null;
-      _bufferedPart3RecordingState = PracticeRecordingState.starting;
-    });
-    await widget.controller.waitForPracticeRecorderRelease();
-    if (!mounted || _progress?.phase != IeltsMockPhase.part3) {
-      return;
-    }
-    if (_part2TurnConfirmed) {
-      setState(() {
-        _bufferedPart3RecordingState = PracticeRecordingState.idle;
-      });
-      await _startShortRecording();
-      return;
-    }
-    await _stopQuestionTipSpeech();
-    await _stopQuestionNarration();
-    final beforeUserTurn = widget.onBeforeUserTurn;
-    if (beforeUserTurn != null) {
-      await beforeUserTurn();
-    }
-    if (!mounted || _progress?.phase != IeltsMockPhase.part3) {
-      return;
-    }
-    try {
-      await widget.controller.recorder.start();
-      if (!mounted || _progress?.phase != IeltsMockPhase.part3) {
-        await widget.controller.recorder.discardCurrent();
-        return;
-      }
-      _bufferedPart3RecordingLimitTimer?.cancel();
-      _bufferedPart3RecordingLimitTimer = Timer(
-        const Duration(seconds: 120),
-        () => unawaited(_stopBufferedPart3Recording()),
-      );
-      setState(() {
-        _bufferedPart3RecordingState = PracticeRecordingState.recording;
-      });
-      _syncRecordingTimer();
-    } on Object {
-      if (mounted) {
-        setState(() {
-          _bufferedPart3RecordingState = PracticeRecordingState.idle;
-          _answerLanguageError = '暂时无法开始录音，请重新尝试。';
-        });
-        _syncRecordingTimer();
-      }
-    }
-  }
-
-  Future<void> _stopBufferedPart3Recording() async {
-    final start = _bufferedPart3StartFuture;
-    if (start != null) {
-      await start;
-    }
-    if (!mounted ||
-        _bufferedPart3RecordingState != PracticeRecordingState.recording) {
-      return;
-    }
-    _bufferedPart3RecordingLimitTimer?.cancel();
-    _bufferedPart3RecordingLimitTimer = null;
-    setState(() {
-      _bufferedPart3RecordingState = PracticeRecordingState.transcribing;
-    });
-    _syncRecordingTimer();
-    try {
-      final audio = await widget.controller.recorder.stop();
-      if (!mounted) {
-        await widget.controller.recorder.discard(audio);
-        return;
-      }
-      _bufferedPart3Audio = audio;
-      _flushBufferedPart3Audio();
-    } on Object {
-      if (mounted) {
-        setState(() {
-          _bufferedPart3RecordingState = PracticeRecordingState.idle;
-          _answerLanguageError = '录音保存失败，请重新录音。';
-        });
-        _syncRecordingTimer();
-      }
-    }
-  }
-
-  Future<void> _discardBufferedPart3Recording() async {
-    _bufferedPart3RecordingLimitTimer?.cancel();
-    _bufferedPart3RecordingLimitTimer = null;
-    final start = _bufferedPart3StartFuture;
-    if (start != null) {
-      await start;
-    }
-    final state = _bufferedPart3RecordingState;
-    final audio = _bufferedPart3Audio;
-    _bufferedPart3Audio = null;
-    _bufferedPart3RecordingState = PracticeRecordingState.idle;
-    _syncRecordingTimer();
-    try {
-      if (state == PracticeRecordingState.starting ||
-          state == PracticeRecordingState.recording) {
-        await widget.controller.recorder.discardCurrent();
-      }
-      if (audio != null) {
-        await widget.controller.recorder.discard(audio);
-      }
-    } on Object {
-      // The recorder cleanup is best-effort; account cleanup remains the
-      // durable privacy boundary.
-    }
-    if (mounted && !_disposing) {
-      setState(() {});
-    }
-  }
-
-  void _flushBufferedPart3Audio() {
-    final audio = _bufferedPart3Audio;
-    if (_flushingBufferedPart3Audio ||
-        audio == null ||
-        !_part2TurnConfirmed ||
-        widget.controller.recordingState != PracticeRecordingState.idle) {
-      return;
-    }
-    _flushingBufferedPart3Audio = true;
-    final accepted = widget.controller.submitBufferedPracticeAudio(audio);
-    if (accepted) {
-      _bufferedPart3Audio = null;
-      _bufferedPart3RecordingState = PracticeRecordingState.idle;
-      _syncRecordingTimer();
-    }
-    _flushingBufferedPart3Audio = false;
-    if (mounted) {
-      setState(() {});
-    }
-  }
 
   @override
   void initState() {
@@ -474,8 +307,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _ticker?.cancel();
     _recordingTicker?.cancel();
     _part2TranscriptionRetryTimer?.cancel();
-    _bufferedPart3RecordingLimitTimer?.cancel();
-    unawaited(_discardBufferedPart3Recording());
     unawaited(_stopExaminerSpeakerSafely());
     if (_ownsExaminerSpeaker) {
       unawaited(_examinerSpeaker.dispose());
@@ -609,8 +440,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2Intro ||
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation => value.phase,
+        IeltsMockPhase.part2Complete => IeltsMockPhase.part2Complete,
         IeltsMockPhase.part2Speaking ||
-        IeltsMockPhase.part2Complete ||
         IeltsMockPhase.part3Intro ||
         IeltsMockPhase.part3 => IeltsMockPhase.part2Speaking,
         _ => IeltsMockPhase.part2Intro,
@@ -652,8 +483,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2Intro ||
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation ||
+        IeltsMockPhase.part2Complete ||
         IeltsMockPhase.part3Intro => value.phase,
-        IeltsMockPhase.part2Complete => IeltsMockPhase.part2Speaking,
         IeltsMockPhase.part2Speaking
             when _part2RetryNeeded ||
                 widget.controller.errorMessage != null ||
@@ -746,7 +577,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       });
     }
     _scheduleQuestionNarration();
-    _flushBufferedPart3Audio();
   }
 
   void _jumpToLatestMessage() {
@@ -831,12 +661,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (phase != IeltsMockPhase.part1 && phase != IeltsMockPhase.part3) {
       return;
     }
-    final preview = phase == IeltsMockPhase.part3 && !_part2TurnConfirmed
-        ? _part3ConversationMessages.firstOrNull
-        : null;
-    final questionId = preview?.id ?? widget.controller.currentQuestion?.id;
-    final questionText =
-        preview?.text ?? widget.controller.currentQuestion?.text;
+    final questionId = widget.controller.currentQuestion?.id;
+    final questionText = widget.controller.currentQuestion?.text;
     if (questionId == null ||
         questionText == null ||
         _autoNarratedQuestionId == questionId) {
@@ -849,8 +675,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _autoNarratedQuestionId = questionId;
     _autoNarratedQuestionText = questionText;
-    if (preview == null &&
-        widget.controller.currentQuestion?.speechPath != null &&
+    if (widget.controller.currentQuestion?.speechPath != null &&
         widget.onReplayQuestionWithAvatar != null) {
       return;
     }
@@ -981,8 +806,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   void _syncRecordingTimer() {
     final recording =
-        widget.controller.recordingState == PracticeRecordingState.recording ||
-        _bufferedPart3RecordingState == PracticeRecordingState.recording;
+        widget.controller.recordingState == PracticeRecordingState.recording;
     if (recording) {
       if (_recordingTicker != null) {
         return;
@@ -1085,7 +909,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _answerLanguageError = '未检测到可评分的英文，请使用英文重新作答。';
     if (rejectingPart2) {
       _part2RetryNeeded = true;
-      unawaited(_discardBufferedPart3Recording());
       final progress = _progress;
       if (progress != null) {
         unawaited(
@@ -1432,7 +1255,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 .clamp(0, 120);
       await _setProgress(
         progress.copyWith(
-          phase: IeltsMockPhase.part2Speaking,
+          phase: IeltsMockPhase.part2Complete,
           part2SpokenSeconds: spoken,
           clearPreparationDeadline: true,
           clearSpeakingStartedAt: true,
@@ -1460,6 +1283,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final progress = _progress;
     if (progress == null ||
         progress.phase != IeltsMockPhase.part2Complete ||
+        !_part2TurnConfirmed ||
         _enteringPart3) {
       return;
     }
@@ -1961,30 +1785,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     return _RecorderDock(
       controller: widget.controller,
       recordingSeconds: _recordingSeconds,
-      stateOverride: _usesBufferedPart3Recorder
-          ? _bufferedPart3RecordingState
-          : null,
-      enabledOverride: _usesBufferedPart3Recorder
-          ? _bufferedPart3RecordingState == PracticeRecordingState.idle
-          : null,
-      allowTextAnswer: !_usesBufferedPart3Recorder,
+      stateOverride: null,
+      enabledOverride: null,
+      allowTextAnswer: true,
       validationMessage: _answerLanguageError,
       convertedAnswerController: _convertedAnswerController,
       convertedAnswerFocusNode: _convertedAnswerFocusNode,
       convertedAnswerMode: _convertedAnswerMode,
       convertedAnswerSubmitting: _convertedAnswerSubmitting,
-      onStart: _usesBufferedPart3Recorder
-          ? _startBufferedPart3Recording
-          : _startShortRecording,
-      onSendVoice: _usesBufferedPart3Recorder
-          ? _stopBufferedPart3Recording
-          : _sendShortVoice,
-      onConvertToText: _usesBufferedPart3Recorder
-          ? _stopBufferedPart3Recording
-          : _convertShortVoice,
-      onCancelRecording: _usesBufferedPart3Recorder
-          ? _discardBufferedPart3Recording
-          : _cancelShortVoice,
+      onStart: _startShortRecording,
+      onSendVoice: _sendShortVoice,
+      onConvertToText: _convertShortVoice,
+      onCancelRecording: _cancelShortVoice,
       onSubmitConvertedAnswer: _submitConvertedAnswer,
       onCancelConvertedAnswer: _cancelConvertedAnswer,
       onOpenTextAnswer: _openTextAnswer,
@@ -2113,12 +1925,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       ),
       IeltsMockPhase.part2Complete => _Part2Transition(
         key: const Key('ielts-mock-part-2-transition'),
-        processing: _part2BackgroundProcessing,
+        processing: _part2Processing,
         ready: _part2TurnConfirmed,
         errorMessage:
             _answerLanguageError ??
             widget.controller.errorMessage ??
-            (_part2RetryNeeded && !_part2BackgroundProcessing
+            (_part2RetryNeeded && !_part2Processing
                 ? 'Part 2 录音暂时无法识别，录音已保留。'
                 : null),
         onContinue: _continueFromPart2,
@@ -3137,18 +2949,33 @@ class _Part2Transition extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(
-                failed
-                    ? Icons.error_outline_rounded
-                    : ready
-                    ? Icons.check_circle_rounded
-                    : Icons.cloud_upload_outlined,
-                size: 88,
-                color: color,
-              ),
+              if (processing && !ready)
+                Center(
+                  child: SizedBox.square(
+                    dimension: 72,
+                    child: CircularProgressIndicator(
+                      key: const Key('ielts-part2-processing-indicator'),
+                      color: color,
+                      strokeWidth: 6,
+                      semanticsLabel: '正在识别 Part 2 作答',
+                    ),
+                  ),
+                )
+              else
+                Icon(
+                  failed
+                      ? Icons.error_outline_rounded
+                      : Icons.check_circle_rounded,
+                  size: 88,
+                  color: color,
+                ),
               const SizedBox(height: 24),
               Text(
-                'Part 2 已完成',
+                failed
+                    ? 'Part 2 处理失败'
+                    : ready
+                    ? 'Part 2 已完成'
+                    : '正在处理 Part 2',
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.pageTitle.copyWith(fontSize: 30),
               ),
@@ -3158,7 +2985,7 @@ class _Part2Transition extends StatelessWidget {
                     ? errorMessage!
                     : ready
                     ? '作答已经保存。请选择继续 Part 3，或返回训练。'
-                    : '录音已保存，正在完成识别；成功后即可进入 Part 3。',
+                    : '录音已保存，正在识别你的回答。完成前不会进入 Part 3。',
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
@@ -3192,16 +3019,16 @@ class _Part2Transition extends StatelessWidget {
                     ),
                   ],
                 )
-              else
+              else if (ready)
                 FilledButton(
                   key: const Key('ielts-part2-continue-part3'),
-                  onPressed: ready ? onContinue : null,
+                  onPressed: onContinue,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
                     backgroundColor: SpeakUpDesign.ink,
                     foregroundColor: Colors.white,
                   ),
-                  child: Text(ready ? '继续 Part 3 →' : '正在识别…'),
+                  child: const Text('继续 Part 3 →'),
                 ),
               const SizedBox(height: 12),
               OutlinedButton(
@@ -3242,7 +3069,7 @@ class _Part3Intro extends StatelessWidget {
           '${cueCardPrompt == null ? 'Discussion topic' : 'This discussion continues the Part 2 topic'}:\n'
           '$topicTitle'
           '${cueCardPrompt == null ? '' : '\n\n$cueCardPrompt'}'
-          '${ready ? '' : '\n\nPart 2 正在后台确认，完成后会自动开始。'}',
+          '${ready ? '' : '\n\n请先等待 Part 2 作答处理完成。'}',
       buttonLabel: ready ? 'Start Part 3' : '正在准备第一个问题…',
       buttonKey: const Key('ielts-part3-start'),
       onPressed: ready ? onPressed : null,
@@ -3457,6 +3284,20 @@ class _Part2LongTurn extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (recordingState == PracticeRecordingState.starting ||
+                      recordingState == PracticeRecordingState.recording) ...[
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      key: const Key('ielts-mock-finish-speaking'),
+                      onPressed: busy ? null : onPressed,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        backgroundColor: SpeakUpDesign.ink,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('结束作答 →'),
+                    ),
+                  ],
                   if (errorMessage != null) ...[
                     const SizedBox(height: 16),
                     Text(
