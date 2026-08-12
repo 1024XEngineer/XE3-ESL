@@ -197,6 +197,8 @@ void main() {
       launchController.bootstrap?.session.practiceMode,
       PracticeMode.fullMock,
     );
+    expect(launchClient.lastProfileInput?.kind, isNull);
+    expect(launchClient.lastProfileInput?.scenario, isNull);
     expect(navigations, 1);
   });
 
@@ -230,7 +232,7 @@ void main() {
     expect(find.byKey(const Key('preparation-catalog-empty')), findsOneWidget);
   });
 
-  testWidgets('ordinary scene requires five-field Preparation before launch', (
+  testWidgets('workplace scene launches with hidden catalog defaults', (
     tester,
   ) async {
     final preparationController = PreparationController(
@@ -278,42 +280,12 @@ void main() {
     await tester.tap(
       find.byKey(const Key('catalog-scene-scn_general_speaking')),
     );
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('scenario-preparation-form')), findsOneWidget);
-    expect(launchClient.calls, isEmpty);
-    expect(find.text('情景描述'), findsOneWidget);
-    expect(find.text('我的身份'), findsOneWidget);
-    expect(find.text('对方身份'), findsOneWidget);
-    expect(find.text('我的目标'), findsOneWidget);
-    expect(find.text('对方人设'), findsOneWidget);
-
-    final situation = find.descendant(
-      of: find.byKey(const Key('scenario-situation')),
-      matching: find.byType(TextFormField),
-    );
-    final goal = find.descendant(
-      of: find.byKey(const Key('scenario-goal')),
-      matching: find.byType(TextFormField),
-    );
-    expect(
-      tester.widget<TextFormField>(situation).controller?.text,
-      _workplacePrompt.publicSceneBrief,
-    );
-    await tester.enterText(situation, 'Report a delayed workplace project.');
-    await tester.enterText(goal, 'Agree on a clear recovery plan.');
-
-    final submit = find.byKey(const Key('scenario-preparation-submit'));
-    await tester.scrollUntilVisible(
-      submit,
-      240,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(submit);
+    await tester.pump();
     for (var attempt = 0; attempt < 20 && navigations == 0; attempt++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    expect(find.byKey(const Key('scenario-preparation-form')), findsNothing);
     expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
     expect(navigations, 1);
     expect(
@@ -328,11 +300,75 @@ void main() {
     expect(
       launchClient.lastProfileInput?.scenario,
       const ScenarioPreparationContext(
-        situation: 'Report a delayed workplace project.',
+        situation: 'Give a workplace progress update.',
         userRole: 'Project owner',
         counterpartRole: 'Stakeholder',
-        goal: 'Agree on a clear recovery plan.',
+        goal: 'Explain progress and risk clearly.',
         counterpartPersona: 'Direct and supportive.',
+      ),
+    );
+  });
+
+  testWidgets('life and travel scene launches with hidden catalog defaults', (
+    tester,
+  ) async {
+    final preparationController = PreparationController(
+      client: _LifeSceneClient(),
+    );
+    final launchClient = _PageLaunchClient();
+    var navigations = 0;
+    final launchController = PreparationLaunchController(
+      client: launchClient,
+      contextProvider: () => _pageContext,
+      threadIdProvider: () => _pageContext.threadId,
+      goalActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async => _pageContext,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+      idFactory: (scope) => '$scope-life-widget-key',
+    );
+    addTearDown(preparationController.dispose);
+    addTearDown(launchController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: preparationController,
+          launchController: launchController,
+          onPracticeStarted: () async {
+            navigations++;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openFamily(tester, 'DAILY');
+    await tester.tap(find.byKey(Key('catalog-scene-${_dailyScene.id}')));
+    for (var attempt = 0; attempt < 20 && navigations == 0; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byKey(const Key('scenario-preparation-form')), findsNothing);
+    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+    expect(navigations, 1);
+    expect(launchClient.lastProfileInput?.kind, PreparationKind.scenario);
+    expect(
+      launchClient.lastProfileInput?.scenario,
+      const ScenarioPreparationContext(
+        situation: 'Resolve a hotel check-in issue.',
+        userRole: 'Hotel guest',
+        counterpartRole: 'Front desk agent',
+        goal: 'Explain the issue and agree on a solution.',
+        counterpartPersona: 'Professional and solution oriented.',
       ),
     );
   });
@@ -438,6 +474,17 @@ final class _MultiSceneClient implements SceneClient {
   @override
   Future<List<RoleDefinition>> listRoles(String sceneId) async =>
       sceneId == _sceneId ? _roles : [_otherRole];
+}
+
+final class _LifeSceneClient implements SceneClient {
+  @override
+  Future<SceneDefinition> getScene(String sceneId) async => _dailyDetail;
+
+  @override
+  Future<List<SceneDefinition>> listScenes() async => [_dailyScene];
+
+  @override
+  Future<List<RoleDefinition>> listRoles(String sceneId) async => [_dailyRole];
 }
 
 final class _FourFamilyClient implements SceneClient {
@@ -548,6 +595,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     final scene = switch (input.sceneId) {
       _sceneId => _detail,
       'scn_general_speaking' => _otherDetail,
+      'scn_daily_hotel_checkin_issue' => _dailyDetail,
       'scn_ielts_speaking_test' => _examScene,
       _ => throw StateError('Unknown Page test Scene.'),
     };
@@ -692,6 +740,43 @@ final _dailyScene = testScene(
   category: SceneCategory.lifeTravel,
   name: 'Hotel check-in and issue handling',
   version: 1,
+  prompt: _lifePrompt,
+);
+
+final _dailyRole = testRole(
+  id: 'role_hotel_front_desk',
+  sceneId: 'scn_daily_hotel_checkin_issue',
+  type: 'SERVICE_STAFF',
+  displayName: 'Front desk agent',
+  responsibilities: 'Help the guest resolve a check-in issue.',
+  style: 'Professional and solution oriented.',
+  practiceObjectiveIds: ['problem_solving'],
+);
+
+final _dailyDetail = testScene(
+  id: _dailyScene.id,
+  experience: _dailyScene.experience,
+  category: _dailyScene.category,
+  name: _dailyScene.name,
+  version: _dailyScene.version,
+  status: _dailyScene.status,
+  prompt: _lifePrompt,
+  roles: [_dailyRole],
+  practiceOptions: [
+    testPracticeOption(
+      id: 'option_hotel_full',
+      sceneId: _dailyScene.id,
+      mode: PracticeMode.fullSimulation,
+      displayName: 'Full practice',
+    ),
+    testPracticeOption(
+      id: 'option_hotel_focus',
+      sceneId: _dailyScene.id,
+      roleId: _dailyRole.id,
+      mode: PracticeMode.focus,
+      displayName: 'Problem-solving focus',
+    ),
+  ],
 );
 
 final _otherRole = testRole(
@@ -748,6 +833,16 @@ const _workplacePrompt = ScenePrompt(
   personaSummary: 'Direct and supportive.',
   focusAreas: ['fluency'],
   turnBlueprints: ['Ask for current progress.'],
+);
+
+const _lifePrompt = ScenePrompt(
+  publicSceneBrief: 'Resolve a hotel check-in issue.',
+  practiceGoal: 'Explain the issue and agree on a solution.',
+  userRole: 'Hotel guest',
+  aiRole: 'Front desk agent',
+  personaSummary: 'Professional and solution oriented.',
+  focusAreas: ['clarity', 'problem_solving'],
+  turnBlueprints: ['Ask the guest to describe the issue.'],
 );
 
 final _technicalRole = testRole(
