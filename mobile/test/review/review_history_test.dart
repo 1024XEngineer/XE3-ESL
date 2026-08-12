@@ -351,6 +351,41 @@ void main() {
     expect(client.requests, hasLength(1));
   });
 
+  testWidgets('Shell refreshes cached history when the Profile tab is opened', (
+    tester,
+  ) async {
+    final client = _SequencedControlledClient();
+    final historyController = ReviewHistoryController(client: client);
+    final harness = await _completedShellHarness(_newerId);
+    addTearDown(historyController.dispose);
+    addTearDown(harness.dispose);
+
+    final initialRefresh = historyController.refresh();
+    client.complete(0, ReviewHistoryPage(items: [_item(_olderId, score: 78)]));
+    await initialRefresh;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SpeakUpShell(
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          practiceController: harness.practice,
+          reviewHistoryController: historyController,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(historyController.items, hasLength(1));
+    expect(client.requests, hasLength(1));
+
+    await tester.tap(find.byKey(const Key('primary-tab-profile')));
+    await tester.pump();
+
+    expect(client.requests, hasLength(2));
+    expect(client.requests.last.cursor, isNull);
+  });
+
   testWidgets('Practice restore does not trigger Review history loading', (
     tester,
   ) async {

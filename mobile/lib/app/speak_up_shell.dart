@@ -176,9 +176,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
-      if (index == 2 ||
-          (index == 3 &&
-              (widget.reviewHistoryController?.items.isEmpty ?? false))) {
+      if (index == 2 || index == 3) {
         _refreshReviewIndexes();
       }
       return;
@@ -221,9 +219,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     unawaited(widget.practiceController.stopPracticeAudio());
-    if (index == 2 ||
-        (index == 3 &&
-            (widget.reviewHistoryController?.items.isEmpty ?? false))) {
+    if (index == 2 || index == 3) {
       _refreshReviewIndexes();
     }
     setState(() => _selectedIndex = index);
