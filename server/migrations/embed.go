@@ -78,4 +78,5 @@ import "embed"
 //go:embed 000090_evaluation_ielts_speaking_prompt_v6.*.sql
 //go:embed 000091_evaluation_ielts_speaking_prompt_v7.*.sql
 //go:embed 000092_evaluation_ielts_practice_band_runtime.*.sql
+//go:embed 000093_interview_user_controlled_sessions.*.sql
 var Files embed.FS

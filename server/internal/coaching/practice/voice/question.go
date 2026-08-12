@@ -350,10 +350,15 @@ func interviewQuestionGenerationRequest(
 	followUpAllowed bool,
 ) (QuestionGenerationRequest, error) {
 	prompt := session.Prompt
+	turnLimited := session.CompletionMode == practice.CompletionModeTurnLimited
+	userControlled := session.CompletionMode == practice.CompletionModeUserControlled
 	maxQuestions := session.TurnLimit * (session.MaxFollowUpsPerQuestion + 1)
-	if sequence < 2 || sequence > maxQuestions ||
+	if sequence < 2 ||
+		(!turnLimited && !userControlled) ||
+		(turnLimited &&
+			(sequence > maxQuestions || session.EffectiveTurns >= session.TurnLimit)) ||
+		(userControlled && session.TurnLimit != 0) ||
 		session.EffectiveTurns < 1 ||
-		session.EffectiveTurns >= session.TurnLimit ||
 		session.MaxFollowUpsPerQuestion < 1 ||
 		strings.TrimSpace(session.PreviousQuestion) == "" ||
 		strings.TrimSpace(session.PreviousUserResponse) == "" ||
@@ -379,11 +384,22 @@ func interviewQuestionGenerationRequest(
 		prompt.PersonaSummary,
 		decisionRule,
 	)
+	progressContext := fmt.Sprintf(
+		"Completed primary interview questions: %d. Continue naturally until the learner chooses to finish.",
+		session.EffectiveTurns,
+	)
+	if turnLimited {
+		progressContext = fmt.Sprintf(
+			"Current displayed round: %d of %d.",
+			session.EffectiveTurns,
+			session.TurnLimit,
+		)
+	}
 	contextParts := []string{
 		fmt.Sprintf("Scene: %s", prompt.PublicSceneBrief),
 		fmt.Sprintf("Practice goal: %s", prompt.PracticeGoal),
 		fmt.Sprintf("Focus areas: %s", strings.Join(prompt.FocusAreas, "; ")),
-		fmt.Sprintf("Current displayed round: %d of %d.", session.EffectiveTurns, session.TurnLimit),
+		progressContext,
 		fmt.Sprintf("Previous interviewer question: %s", session.PreviousQuestion),
 		fmt.Sprintf("Latest learner answer: %s", session.PreviousUserResponse),
 		fmt.Sprintf("Next independent-question blueprint: %s", prompt.TurnBlueprints[nextBlueprintIndex]),

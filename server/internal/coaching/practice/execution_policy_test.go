@@ -28,8 +28,10 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 		{"daily hotel", DailyHotelCheckinIssueSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
 		{"workplace", WorkplacePracticeSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
 		{"workplace risk", WorkplaceProgressRiskUpdateSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
-		{"interview", InterviewPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
-		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"legacy interview", InterviewPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"interview", InterviewUserControlledSessionPolicy, CompletionModeUserControlled, 0, false, true, 3, nil},
+		{"legacy interview deep dive", InterviewProjectDeepDiveSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"interview deep dive", InterviewProjectDeepDiveUserControlledSessionPolicy, CompletionModeUserControlled, 0, false, true, 3, nil},
 		{"exam", ExamPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, false, 1, nil},
 		{"unknown", "unknown.practice.session.v1", "", 0, false, false, 0, ErrExecutionPolicyNotFound},
 	}

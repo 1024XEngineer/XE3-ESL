@@ -13,18 +13,20 @@ const (
 	IELTSSpeakingPart3TurnPolicy          = "ielts.speaking_part3.turn.v1"
 	IELTSSpeakingFullMockTurnPolicy       = "ielts.speaking_full_mock.turn.v1"
 
-	GenericPracticeSessionPolicy             = "generic.practice.session.v1"
-	DailyPracticeSessionPolicy               = "daily.practice.session.v1"
-	WorkplacePracticeSessionPolicy           = "workplace.practice.session.v1"
-	InterviewPracticeSessionPolicy           = "interview.practice.session.v1"
-	ExamPracticeSessionPolicy                = "exam.practice.session.v1"
-	DailyHotelCheckinIssueSessionPolicy      = "daily.hotel_checkin_issue.session.v1"
-	WorkplaceProgressRiskUpdateSessionPolicy = "workplace.progress_risk_update.session.v1"
-	InterviewProjectDeepDiveSessionPolicy    = "interview.project_deep_dive.session.v1"
-	IELTSSpeakingPart1SessionPolicy          = "ielts.speaking_part1.session.v1"
-	IELTSSpeakingPart2SessionPolicy          = "ielts.speaking_part2.session.v1"
-	IELTSSpeakingPart3SessionPolicy          = "ielts.speaking_part3.session.v1"
-	IELTSSpeakingFullMockSessionPolicy       = "ielts.speaking_full_mock.session.v1"
+	GenericPracticeSessionPolicy                        = "generic.practice.session.v1"
+	DailyPracticeSessionPolicy                          = "daily.practice.session.v1"
+	WorkplacePracticeSessionPolicy                      = "workplace.practice.session.v1"
+	InterviewPracticeSessionPolicy                      = "interview.practice.session.v1"
+	InterviewUserControlledSessionPolicy                = "interview.user_controlled.session.v1"
+	ExamPracticeSessionPolicy                           = "exam.practice.session.v1"
+	DailyHotelCheckinIssueSessionPolicy                 = "daily.hotel_checkin_issue.session.v1"
+	WorkplaceProgressRiskUpdateSessionPolicy            = "workplace.progress_risk_update.session.v1"
+	InterviewProjectDeepDiveSessionPolicy               = "interview.project_deep_dive.session.v1"
+	InterviewProjectDeepDiveUserControlledSessionPolicy = "interview.project_deep_dive.user_controlled.session.v1"
+	IELTSSpeakingPart1SessionPolicy                     = "ielts.speaking_part1.session.v1"
+	IELTSSpeakingPart2SessionPolicy                     = "ielts.speaking_part2.session.v1"
+	IELTSSpeakingPart3SessionPolicy                     = "ielts.speaking_part3.session.v1"
+	IELTSSpeakingFullMockSessionPolicy                  = "ielts.speaking_full_mock.session.v1"
 )
 
 var ErrExecutionPolicyNotFound = errors.New(
@@ -189,6 +191,17 @@ func resolveSessionPolicyRegistration(
 		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
+	case InterviewUserControlledSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
+		standard.maxFollowUpsPerQuestion = 3
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
+		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
+		return standard, true
 	case DailyPracticeSessionPolicy,
 		DailyHotelCheckinIssueSessionPolicy,
 		WorkplacePracticeSessionPolicy,
@@ -204,6 +217,17 @@ func resolveSessionPolicyRegistration(
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewProjectDeepDiveSessionPolicy:
+		standard.maxFollowUpsPerQuestion = 3
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
+		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
+		return standard, true
+	case InterviewProjectDeepDiveUserControlledSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
