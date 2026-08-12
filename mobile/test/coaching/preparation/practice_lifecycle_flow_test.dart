@@ -273,7 +273,6 @@ void main() {
       await tester.tap(replace);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      await _confirmScenarioPreparation(tester);
 
       expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
       expect(practiceClient.endedSessionIds, [firstSessionId]);
@@ -365,7 +364,6 @@ Future<void> _openScene(WidgetTester tester, SceneDefinition definition) async {
   await tester.tap(scene);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
-  await _confirmScenarioPreparation(tester);
 }
 
 Future<void> _showPracticeHub(WidgetTester tester, Key key) async {
@@ -379,21 +377,6 @@ Future<void> _showPracticeHub(WidgetTester tester, Key key) async {
     await tester.pumpAndSettle();
   }
   expect(hub, findsOneWidget);
-}
-
-Future<void> _confirmScenarioPreparation(WidgetTester tester) async {
-  if (find.byKey(const Key('scenario-preparation-form')).evaluate().isEmpty) {
-    return;
-  }
-  final submit = find.byKey(const Key('scenario-preparation-submit'));
-  await tester.scrollUntilVisible(
-    submit,
-    240,
-    scrollable: find.byType(Scrollable).first,
-  );
-  await tester.tap(submit);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 500));
 }
 
 Future<void> _leavePractice(WidgetTester tester) async {

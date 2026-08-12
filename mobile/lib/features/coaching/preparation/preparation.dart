@@ -20,7 +20,6 @@ import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dar
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
-import 'package:speakup/features/coaching/preparation/scenario_preparation_form.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
@@ -64,8 +63,6 @@ class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
   _PracticeHub? _selectedHub;
   IeltsPracticeSelection? _launchingIeltsSelection;
-  bool _scenarioFormVisible = false;
-  bool _scenarioReplaceCurrentPractice = false;
   bool _handlingIeltsNavigation = false;
 
   @override
@@ -234,7 +231,6 @@ class _PreparationPageState extends State<PreparationPage> {
       setState(() {
         _selectedHub = null;
         _launchingIeltsSelection = null;
-        _scenarioFormVisible = false;
       });
     }
   }
@@ -263,7 +259,6 @@ class _PreparationPageState extends State<PreparationPage> {
       setState(() {
         _selectedHub = null;
         _launchingIeltsSelection = null;
-        _scenarioFormVisible = false;
       });
     }
   }
@@ -274,7 +269,7 @@ class _PreparationPageState extends State<PreparationPage> {
     PracticeMode? practiceMode,
     IeltsPracticeSelection? ieltsSelection,
     bool forceReplaceCurrentPractice = false,
-    bool requireScenarioPreparation = false,
+    bool useDefaultScenarioContext = false,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -323,29 +318,13 @@ class _PreparationPageState extends State<PreparationPage> {
       controller.showSceneList();
       return;
     }
-    if (requireScenarioPreparation) {
-      setState(() {
-        _scenarioFormVisible = true;
-        _scenarioReplaceCurrentPractice = replaceCurrentPractice;
-      });
-      return;
-    }
     _launchingIeltsSelection = ieltsSelection;
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
-    );
-  }
-
-  Future<void> _submitScenarioPreparation(
-    ScenarioPreparationContext context,
-  ) async {
-    setState(() {
-      _scenarioFormVisible = false;
-    });
-    await _startPractice(
-      replaceCurrentPractice: _scenarioReplaceCurrentPractice,
-      scenarioContext: context,
+      scenarioContext: useDefaultScenarioContext
+          ? _defaultScenarioContext(controller.detail!)
+          : null,
     );
   }
 
@@ -488,10 +467,6 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       launch?.selectionChanged();
       controller?.showSceneList();
-      setState(() {
-        _scenarioFormVisible = false;
-        _scenarioReplaceCurrentPractice = false;
-      });
       return;
     }
     if (_selectedHub != null) {
@@ -551,19 +526,6 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildCatalog(PreparationController controller) {
     final selectedScene = controller.selectedScene;
     if (selectedScene != null) {
-      if (_scenarioFormVisible &&
-          (selectedScene.experience == PracticeExperience.workplace ||
-              selectedScene.experience == PracticeExperience.lifeAndTravel)) {
-        return ScenarioPreparationForm(
-          key: ValueKey(
-            'scenario-preparation-${selectedScene.id}-${selectedScene.version}',
-          ),
-          scene: selectedScene,
-          hasPrimaryNavigation: !widget.showBackButton,
-          onBack: () => unawaited(_handleBack(controller)),
-          onSubmit: _submitScenarioPreparation,
-        );
-      }
       return _SceneLaunchStatus(
         controller: controller,
         scene: selectedScene,
@@ -757,7 +719,7 @@ class _PreparationPageState extends State<PreparationPage> {
               _startSceneDirectly(
                 controller,
                 scene,
-                requireScenarioPreparation: true,
+                useDefaultScenarioContext: true,
               ),
             ),
           ),
@@ -1245,6 +1207,17 @@ String _practiceHubLabel(_PracticeHub hub) {
     _PracticeHub.workplace => '职场英语',
     _PracticeHub.life => '生活与旅行',
   };
+}
+
+ScenarioPreparationContext _defaultScenarioContext(SceneDefinition scene) {
+  final prompt = scene.prompt;
+  return ScenarioPreparationContext(
+    situation: prompt.publicSceneBrief.trim(),
+    userRole: prompt.userRole.trim(),
+    counterpartRole: prompt.aiRole.trim(),
+    goal: prompt.practiceGoal.trim(),
+    counterpartPersona: prompt.personaSummary.trim(),
+  );
 }
 
 String _practiceHubDisplayTitle(_PracticeHub hub) {
