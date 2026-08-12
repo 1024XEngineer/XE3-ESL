@@ -15,17 +15,19 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 		SuggestedDurationSeconds: 600,
 	}
 	tests := []struct {
-		name        string
-		reference   string
-		completion  CompletionMode
-		maxTurns    int
-		retry       bool
-		translation bool
-		followUps   int
-		wantErr     error
+		name       string
+		reference  string
+		completion CompletionMode
+		maxTurns   int
+		retry      bool
+		readAids   bool
+		followUps  int
+		wantErr    error
 	}{
-		{"daily", DailyPracticeSessionPolicy, CompletionModeUserControlled, 0, true, false, 1, nil},
-		{"workplace", WorkplacePracticeSessionPolicy, CompletionModeUserControlled, 0, true, false, 1, nil},
+		{"daily", DailyPracticeSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"daily hotel", DailyHotelCheckinIssueSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"workplace", WorkplacePracticeSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"workplace risk", WorkplaceProgressRiskUpdateSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
 		{"interview", InterviewPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
 		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
 		{"exam", ExamPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, false, 1, nil},
@@ -43,7 +45,8 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 			if err != nil || policy.CompletionMode != test.completion ||
 				policy.MaxEffectiveTurns != test.maxTurns ||
 				policy.RetryAllowed != test.retry ||
-				policy.QuestionTranslationAllowed != test.translation ||
+				policy.QuestionTranslationAllowed != test.readAids ||
+				policy.QuestionTipsAllowed != test.readAids ||
 				policy.MaxFollowUpsPerQuestion != test.followUps ||
 				!ValidSessionPolicy(
 					test.reference,

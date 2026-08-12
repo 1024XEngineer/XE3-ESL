@@ -442,7 +442,12 @@ void main() {
     expect(factoryCalls, 1);
     expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
     expect(find.byKey(const Key('scenario-avatar-surface')), findsOneWidget);
-    expect(find.byKey(const Key('scenario-question-tip')), findsOneWidget);
+    expect(
+      find.byKey(
+        Key('scenario-question-tip-${practiceController.currentQuestion!.id}'),
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
 

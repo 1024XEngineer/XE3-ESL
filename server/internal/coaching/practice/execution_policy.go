@@ -198,6 +198,8 @@ func resolveSessionPolicyRegistration(
 		standard.maxEffectiveTurns = 0
 		standard.coverageCheckpointTurn = 1
 		standard.retryAllowed = true
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
 		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true

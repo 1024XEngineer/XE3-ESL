@@ -13,6 +13,7 @@ import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -57,6 +58,8 @@ void main() {
       closeTo(844 * 0.34, 0.1),
     );
     expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
+    expect(find.byKey(const Key('scenario-replay-question')), findsNothing);
+    expect(find.byKey(const Key('scenario-question-tip')), findsNothing);
     expect(find.textContaining('评分'), findsNothing);
     expect(find.text('翻译'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -226,7 +229,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final controller = await _scenarioController(
-      practiceClient: _QuestionTipPracticeClient(),
+      practiceClient: _TranslationPracticeClient(),
     );
     addTearDown(controller.dispose);
 
@@ -235,8 +238,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('scenario-question-tip')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('scenario-question-tip')));
+    final questionId = controller.currentQuestion!.id;
+    final tipButton = find.byKey(Key('scenario-question-tip-$questionId'));
+    expect(tipButton, findsOneWidget);
+    await tester.tap(tipButton);
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
@@ -625,7 +630,8 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const Key('scenario-replay-question')));
+    final questionId = controller.currentQuestion!.id;
+    await tester.tap(find.byKey(Key('scenario-question-voice-$questionId')));
     await tester.pump();
 
     expect(replayCalls, 1);
@@ -646,10 +652,121 @@ void main() {
       ),
     );
 
-    final button = tester.widget<IconButton>(
-      find.byKey(const Key('scenario-replay-question')),
+    final questionId = controller.currentQuestion!.id;
+    final button = tester.widget<TextButton>(
+      find.byKey(Key('scenario-question-voice-$questionId')),
     );
     expect(button.onPressed, isNull);
+    await controller.cancelRecording();
+  });
+
+  testWidgets('keeps Tips on the current assistant message only', (
+    tester,
+  ) async {
+    final controller = await _scenarioController(
+      practiceClient: _TranslationPracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    final firstQuestionId = controller.currentQuestion!.id;
+    await controller.submitPracticeText('I have a reservation under Chen.');
+    final currentQuestionId = controller.currentQuestion!.id;
+
+    await tester.pumpWidget(
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(Key('scenario-question-voice-$firstQuestionId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('scenario-question-tip-$firstQuestionId')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(Key('scenario-question-tip-$currentQuestionId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('practice-assistant-translate-$firstQuestionId')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('reads and stops an assistant message inline', (tester) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    final speaker = _ControlledPromptSpeaker();
+    final question = controller.currentQuestion!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          questionSpeaker: speaker,
+        ),
+      ),
+    );
+
+    final button = find.byKey(Key('scenario-question-voice-${question.id}'));
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(speaker.spokenTexts, <String>[question.text]);
+    expect(find.text('停止朗读'), findsOneWidget);
+
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(speaker.stopCalls, greaterThanOrEqualTo(2));
+    expect(find.text('朗读'), findsOneWidget);
+  });
+
+  testWidgets('shows retry after inline narration fails', (tester) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    final questionId = controller.currentQuestion!.id;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          questionSpeaker: _FailingPromptSpeaker(),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(Key('scenario-question-voice-$questionId')));
+    await tester.pump();
+
+    expect(find.text('重试朗读'), findsOneWidget);
+  });
+
+  testWidgets('stops inline narration before recording starts', (tester) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    final speaker = _ControlledPromptSpeaker();
+    final questionId = controller.currentQuestion!.id;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          questionSpeaker: speaker,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(Key('scenario-question-voice-$questionId')));
+    await tester.pump();
+    final stopsBeforeRecording = speaker.stopCalls;
+
+    await tester.tap(find.byKey(const Key('scenario-record')));
+    await tester.pump();
+
+    expect(speaker.stopCalls, greaterThan(stopsBeforeRecording));
+    expect(controller.recordingState, PracticeRecordingState.recording);
     await controller.cancelRecording();
   });
 
@@ -807,7 +924,10 @@ final class _ScenePracticeClient implements PracticeClient {
 }
 
 final class _TranslationPracticeClient
-    implements PracticeClient, PracticeQuestionTranslationClient {
+    implements
+        PracticeClient,
+        PracticeQuestionTranslationClient,
+        PracticeQuestionTipClient {
   final _delegate = _AsyncReviewPracticeClient(
     practiceExperience: PracticeExperience.lifeAndTravel,
     sceneCategory: SceneCategory.lifeTravel,
@@ -878,6 +998,19 @@ final class _TranslationPracticeClient
       content: translation,
     );
   }
+
+  @override
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  }) async => PracticeQuestionTip(
+    id: 'tip-translation-client',
+    sessionId: sessionId,
+    questionId: questionId,
+    content: 'I would describe the situation and my specific role.',
+    createdAt: DateTime.utc(2026, 8, 12),
+  );
 }
 
 final class _FailOncePracticeClient implements PracticeClient {
@@ -955,75 +1088,6 @@ final class _FailOncePracticeClient implements PracticeClient {
     ),
     PracticeExperience.lifeAndTravel,
     SceneCategory.lifeTravel,
-  );
-}
-
-final class _QuestionTipPracticeClient
-    implements PracticeClient, PracticeQuestionTipClient {
-  final _delegate = FakePracticeClient(
-    practiceExperience: PracticeExperience.lifeAndTravel,
-    sceneCategory: SceneCategory.lifeTravel,
-  );
-
-  @override
-  Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<PracticeSessionSnapshot> restorePractice({
-    required String sessionId,
-  }) => _delegate.restorePractice(sessionId: sessionId);
-
-  @override
-  Future<PracticeSessionSnapshot> activatePractice({
-    required String sessionId,
-    required String clientOperationId,
-  }) => _delegate.activatePractice(
-    sessionId: sessionId,
-    clientOperationId: clientOperationId,
-  );
-
-  @override
-  Future<TranscriptionCandidate> transcribe(
-    PracticeTranscriptionRequest request,
-  ) => _delegate.transcribe(request);
-
-  @override
-  Future<PracticeTurnConfirmation> confirm({
-    required String sessionId,
-    required String questionId,
-    required String candidateId,
-    required String idempotencyKey,
-  }) => _delegate.confirm(
-    sessionId: sessionId,
-    questionId: questionId,
-    candidateId: candidateId,
-    idempotencyKey: idempotencyKey,
-  );
-
-  @override
-  Future<PracticeTurnConfirmation> submitText({
-    required String sessionId,
-    required String questionId,
-    required String answerText,
-    required String idempotencyKey,
-  }) => _delegate.submitText(
-    sessionId: sessionId,
-    questionId: questionId,
-    answerText: answerText,
-    idempotencyKey: idempotencyKey,
-  );
-
-  @override
-  Future<PracticeQuestionTip> ensureQuestionTip({
-    required String sessionId,
-    required String questionId,
-    required String idempotencyKey,
-  }) async => PracticeQuestionTip(
-    id: 'tip-1',
-    sessionId: sessionId,
-    questionId: questionId,
-    content: 'I would describe the situation and my specific role.',
-    createdAt: DateTime.utc(2026, 8, 3),
   );
 }
 
@@ -1217,4 +1281,43 @@ final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
 
   @override
   Future<void> clearAccountState() async {}
+}
+
+final class _ControlledPromptSpeaker implements PracticePromptSpeaker {
+  final List<String> spokenTexts = <String>[];
+  Completer<void>? _activeSpeech;
+  int stopCalls = 0;
+
+  @override
+  Future<void> speak(String text) {
+    spokenTexts.add(text);
+    _activeSpeech = Completer<void>();
+    return _activeSpeech!.future;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+    final activeSpeech = _activeSpeech;
+    if (activeSpeech != null && !activeSpeech.isCompleted) {
+      activeSpeech.complete();
+    }
+    _activeSpeech = null;
+  }
+
+  @override
+  Future<void> dispose() => stop();
+}
+
+final class _FailingPromptSpeaker implements PracticePromptSpeaker {
+  @override
+  Future<void> speak(String text) async {
+    throw StateError('narration failed');
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
