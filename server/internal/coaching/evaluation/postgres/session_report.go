@@ -263,14 +263,10 @@ func ieltsSessionReportAuthority(
 			scoring.IELTSSpeakingFullMockEvaluationPolicyRef,
 			true
 	}
-	spec, ok := generalSceneDurableJobSpec(evaluation.SceneIELTSSpeaking)
-	if !ok {
-		return nil, "", "", durableSceneJobSpec{}, "", false
-	}
 	return sections,
-		scoring.GeneralSceneStrategyRef,
-		scoring.GeneralScenePipelineVersion,
-		spec,
+		scoring.IELTSSpeakingShadowStrategyRef,
+		scoring.IELTSSpeakingShadowPipelineVersion,
+		ieltsDurableSceneJobSpec,
 		scoring.IELTSSpeakingPracticeEvaluationPolicyRef,
 		true
 }

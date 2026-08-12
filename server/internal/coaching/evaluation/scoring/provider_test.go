@@ -188,7 +188,7 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 	for _, required := range []string{
 		IELTSSpeakingShadowProviderSchemaVersion,
 		"exactly one item",
-		"complete frozen mock-test question sequence",
+		"complete frozen question sequence for the selected practice_mode",
 		"ielts.pr.*",
 	} {
 		if !strings.Contains(request.SystemPrompt, required) {

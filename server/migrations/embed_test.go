@@ -176,6 +176,28 @@ func TestIELTSSpeakingPromptV5MigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingPromptV7MigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000091_evaluation_ielts_speaking_prompt_v7.up.sql")
+	for _, required := range []string{
+		"IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V7",
+		"EVALUATION_IELTS_SCENE_RESULTS_V7_LINEAGE_CHECK",
+		"EVALUATION_IELTS_V7_LINEAGE_IS_VALID",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("IELTS Prompt v7 migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000091_evaluation_ielts_speaking_prompt_v7.down.sql")
+	if strings.Contains(
+		down,
+		"'IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V7'",
+	) {
+		t.Error("IELTS Prompt v7 rollback must restore the v6 prompt constraint")
+	}
+}
+
 func TestProviderQualifiedModelIDsMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 

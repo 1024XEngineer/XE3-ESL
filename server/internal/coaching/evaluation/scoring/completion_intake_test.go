@@ -122,7 +122,7 @@ func TestEvaluationPolicyRegistryCoversEveryFormalPolicy(t *testing.T) {
 		strategy  string
 	}{
 		{InterviewEvaluationPolicyRef, evaluation.SceneInterview, InterviewShadowStrategyRef},
-		{IELTSSpeakingPracticeEvaluationPolicyRef, evaluation.SceneIELTSSpeaking, GeneralSceneStrategyRef},
+		{IELTSSpeakingPracticeEvaluationPolicyRef, evaluation.SceneIELTSSpeaking, IELTSSpeakingShadowStrategyRef},
 		{IELTSSpeakingFullMockEvaluationPolicyRef, evaluation.SceneIELTSSpeaking, IELTSSpeakingShadowStrategyRef},
 		{WorkplaceEvaluationPolicyRef, evaluation.SceneOverseasWorkplace, GeneralSceneStrategyRef},
 		{DailyEvaluationPolicyRef, evaluation.SceneOverseasDaily, GeneralSceneStrategyRef},

@@ -109,6 +109,80 @@ func TestProjectIELTSSpeakingPracticeReportScopesStandaloneParts(t *testing.T) {
 	}
 }
 
+func TestProjectIELTSSpeakingBandPracticeReportKeepsBandScale(t *testing.T) {
+	t.Parallel()
+	snapshot := ieltsPracticeReportTestSnapshot(t, "PART_1")
+	result, err := scoring.NewIELTSSpeakingShadowEngine(
+		&ieltsBandPracticeReportProvider{},
+	).Evaluate(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("evaluate IELTS Band practice fixture: %v", err)
+	}
+	formal, err := ProjectIELTSFormalReport(snapshot, result)
+	if err != nil {
+		t.Fatalf("project IELTS Band practice FormalReport: %v", err)
+	}
+	if formal.DetailSchema != IELTSSpeakingPracticeReportSchemaVersion ||
+		len(formal.Dimensions) != len(scoring.IELTSCriteria()) {
+		t.Fatalf("formal = %#v", formal)
+	}
+	for _, dimension := range formal.Dimensions {
+		if dimension.Scale != ReportScaleIELTSBand {
+			t.Fatalf("dimension = %#v", dimension)
+		}
+	}
+	var detail IELTSSpeakingPracticeReport
+	if err := json.Unmarshal(formal.Detail, &detail); err != nil ||
+		!detail.Valid() || detail.ReportScope != IELTSSpeakingPracticeReportPart1 {
+		t.Fatalf("detail = %#v; error = %v", detail, err)
+	}
+}
+
+type ieltsBandPracticeReportProvider struct{}
+
+func (*ieltsBandPracticeReportProvider) AnalyzeIELTSCriterion(
+	_ context.Context,
+	request scoring.IELTSSpeakingCriterionProviderRequest,
+) (scoring.IELTSSpeakingShadowProviderResult, error) {
+	input := request.Input
+	criterion := input.AssessableCriteria[0]
+	response := input.Questions[0].Response
+	if response == nil {
+		panic("IELTS Band report fixture requires an answered opportunity")
+	}
+	prefix := map[scoring.IELTSCriterion]string{
+		scoring.IELTSCriterionFC:  "ielts.fc",
+		scoring.IELTSCriterionLR:  "ielts.lr",
+		scoring.IELTSCriterionGRA: "ielts.gra",
+		scoring.IELTSCriterionPR:  "ielts.pr",
+	}[criterion]
+	criterionPayload := map[string]any{
+		"criterion_id": criterion,
+		"strengths": []any{map[string]any{
+			"template_id": prefix + ".strength.v1",
+			"evidence": []any{map[string]any{
+				"evidence_ref_id": response.EvidenceRefID,
+				"quote":           response.Transcript,
+				"occurrence":      1,
+			}},
+		}},
+		"improvements":     []any{},
+		"upgrade_examples": []any{},
+	}
+	if len(input.RubricDescriptors) == 1 {
+		criterionPayload["rubric_descriptor"] =
+			input.RubricDescriptors[0].Descriptors[5].ID
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema_version": scoring.IELTSSpeakingShadowProviderSchemaVersion,
+		"criteria":       []any{criterionPayload},
+	})
+	return scoring.IELTSSpeakingShadowProviderResult{
+		Payload: payload, Provider: "qianwen", Model: "qwen-plus",
+		RequestID: "band-" + string(criterion),
+	}, err
+}
+
 type ieltsPracticeReportProvider struct{}
 
 func (*ieltsPracticeReportProvider) AnalyzeGeneralScene(

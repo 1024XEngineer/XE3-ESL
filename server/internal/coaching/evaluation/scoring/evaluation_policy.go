@@ -26,8 +26,8 @@ var registeredEvaluationPolicies = map[string]evaluationPolicySpec{
 	},
 	IELTSSpeakingPracticeEvaluationPolicyRef: {
 		SceneType:       evaluation.SceneIELTSSpeaking,
-		StrategyRef:     GeneralSceneStrategyRef,
-		PipelineVersion: GeneralScenePipelineVersion,
+		StrategyRef:     IELTSSpeakingShadowStrategyRef,
+		PipelineVersion: IELTSSpeakingShadowPipelineVersion,
 		Enabled:         true,
 	},
 	IELTSSpeakingFullMockEvaluationPolicyRef: {

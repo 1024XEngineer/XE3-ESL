@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -92,6 +93,34 @@ func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
 	if pronunciation.EstimatedBand == nil ||
 		!sameRatio(pronunciation.Coverage, ratio(4, ieltsTestQuestionCount)) {
 		t.Fatalf("pronunciation = %#v", pronunciation)
+	}
+}
+
+func TestIELTSSpeakingShadowScoresFrozenPart1WithIELTSRubric(t *testing.T) {
+	snapshot := ieltsSpeakingPart1TestSnapshot(t)
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Scoreability != IELTSSpeakingScoreabilityProvisional ||
+		provider.input.PracticeMode != "PART_1" ||
+		len(provider.input.Questions) != ieltsTestPart1QuestionCount ||
+		len(provider.input.AssessableCriteria) != 1 ||
+		len(provider.input.RubricDescriptors) != 1 ||
+		provider.input.RubricDescriptors[0].CriterionID !=
+			provider.input.AssessableCriteria[0] ||
+		!reflect.DeepEqual(
+			provider.input.RubricDescriptors[0].Descriptors,
+			ieltsDescriptorsFor(provider.input.AssessableCriteria[0]),
+		) {
+		t.Fatalf("result = %#v; input = %#v", result, provider.input)
+	}
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
 	}
 }
 
@@ -1000,6 +1029,32 @@ func ieltsSpeakingSnapshotWithTranscript(
 		payload.ConfirmedTurns[index].Transcript.Text = transcript
 		payload.EvidenceRefs[index].TranscriptSpan.EndUTF8Byte = len(transcript)
 	}
+	return rebuildIELTSSpeakingSnapshot(t, payload)
+}
+
+func ieltsSpeakingPart1TestSnapshot(t *testing.T) evidence.EvidenceSnapshot {
+	t.Helper()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	var payload evidence.SnapshotPayload
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+		t.Fatalf("decode IELTS Snapshot: %v", err)
+	}
+	payload.PracticeContext.PracticeMode = "PART_1"
+	payload.PracticeContext.EvaluationPolicyRef = IELTSSpeakingPracticeEvaluationPolicyRef
+	payload.PracticeContext.PracticeOption.Mode = "PART_1"
+	payload.PracticeContext.IELTSAssignment.Mode = "PART_1"
+	payload.PracticeContext.IELTSAssignment.Parts =
+		payload.PracticeContext.IELTSAssignment.Parts[:1]
+	payload.PracticeContext.TaskBlueprints =
+		payload.PracticeContext.TaskBlueprints[:ieltsTestPart1QuestionCount]
+	payload.OpportunityManifest =
+		payload.OpportunityManifest[:ieltsTestPart1QuestionCount]
+	payload.ConfirmedTurns = payload.ConfirmedTurns[:ieltsTestPart1QuestionCount]
+	payload.EvidenceRefs = payload.EvidenceRefs[:ieltsTestPart1QuestionCount]
+	payload.ProviderLineage.ASR =
+		payload.ProviderLineage.ASR[:ieltsTestPart1QuestionCount]
+	payload.VersionManifest.TurnEvidence =
+		payload.VersionManifest.TurnEvidence[:ieltsTestPart1QuestionCount]
 	return rebuildIELTSSpeakingSnapshot(t, payload)
 }
 

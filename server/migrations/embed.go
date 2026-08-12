@@ -76,4 +76,5 @@ import "embed"
 //go:embed 000088_evaluation_ielts_acoustic_snapshot.*.sql
 //go:embed 000089_evaluation_general_scene_atomic_attempts.*.sql
 //go:embed 000090_evaluation_ielts_speaking_prompt_v6.*.sql
+//go:embed 000091_evaluation_ielts_speaking_prompt_v7.*.sql
 var Files embed.FS

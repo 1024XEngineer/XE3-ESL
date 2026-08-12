@@ -151,11 +151,16 @@ func ProjectIELTSFormalReport(
 	snapshot evidence.EvidenceSnapshot,
 	result scoring.IELTSSpeakingShadowResult,
 ) (FormalReport, error) {
-	detail, err := ProjectIELTSSpeakingReport(snapshot, result)
+	practiceContext, err := reportPracticeContext(snapshot)
 	if err != nil {
 		return FormalReport{}, err
 	}
-	practiceContext, err := reportPracticeContext(snapshot)
+	var detail any
+	if practiceContext.PracticeMode == "FULL_MOCK" {
+		detail, err = ProjectIELTSSpeakingReport(snapshot, result)
+	} else {
+		detail, err = ProjectIELTSSpeakingBandPracticeReport(snapshot, result)
+	}
 	if err != nil {
 		return FormalReport{}, err
 	}
@@ -167,15 +172,22 @@ func ProjectIELTSFormalReport(
 		PracticeMode:       practiceContext.PracticeMode,
 		ScoreabilityStatus: ReportScoreabilityProvisional,
 		Summary:            "本次练习已形成 IELTS 口语评估，可按优先行动继续复练。",
-		Dimensions:         make([]ReportDimension, len(detail.Criteria)),
-		PriorityActions:    make([]ReportPriorityAction, len(detail.PriorityActions)),
-		DetailSchema:       detail.SchemaVersion,
+		Dimensions:         make([]ReportDimension, len(result.Criteria)),
+		PriorityActions:    []ReportPriorityAction{},
 	}
-	if detail.ScoreabilityStatus == scoring.IELTSSpeakingScoreabilityInsufficient {
+	switch value := detail.(type) {
+	case IELTSSpeakingReport:
+		report.DetailSchema = value.SchemaVersion
+	case IELTSSpeakingPracticeReport:
+		report.DetailSchema = value.SchemaVersion
+	default:
+		return FormalReport{}, evaluation.ErrInvalidRequest
+	}
+	if result.Scoreability == scoring.IELTSSpeakingScoreabilityInsufficient {
 		report.ScoreabilityStatus = ReportScoreabilityInsufficient
 		report.Summary = "本次练习的有效证据不足，暂不形成能力结论。"
 	}
-	for index, criterion := range detail.Criteria {
+	for index, criterion := range result.Criteria {
 		projected := ReportDimension{
 			Key:          string(criterion.CriterionID),
 			Scale:        ReportScaleIELTSBand,
@@ -192,11 +204,14 @@ func ProjectIELTSFormalReport(
 			projected.Score = &value
 		}
 		report.Dimensions[index] = projected
-	}
-	for index, action := range detail.PriorityActions {
-		report.PriorityActions[index] = ReportPriorityAction{
-			DimensionKey: string(action.CriterionID),
-			FindingID:    action.FindingID,
+		for _, finding := range criterion.Improvements {
+			if len(report.PriorityActions) == 3 {
+				break
+			}
+			report.PriorityActions = append(report.PriorityActions, ReportPriorityAction{
+				DimensionKey: string(criterion.CriterionID),
+				FindingID:    finding.ID,
+			})
 		}
 	}
 	report.Detail, err = json.Marshal(detail)

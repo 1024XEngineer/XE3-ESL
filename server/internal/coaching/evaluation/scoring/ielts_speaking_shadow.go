@@ -23,7 +23,7 @@ import (
 const (
 	IELTSSpeakingShadowSchemaVersion          = "ielts-speaking-full-mock-shadow/v1"
 	IELTSSpeakingShadowProviderSchemaVersion  = "ielts-speaking-full-mock-shadow-provider/v3"
-	IELTSSpeakingShadowPromptVersion          = "ielts-speaking-full-mock-shadow-prompt/v6"
+	IELTSSpeakingShadowPromptVersion          = "ielts-speaking-full-mock-shadow-prompt/v7"
 	IELTSSpeakingShadowRubricVersion          = "ielts-speaking-public-band-rubric/v2"
 	IELTSSpeakingCriterionRepairPolicyVersion = "ielts-speaking-criterion-repair/v1"
 
@@ -829,7 +829,7 @@ func prepareIELTSSpeakingShadow(
 	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil {
 		return preparedIELTSSpeakingShadow{}, evaluation.ErrInvalidRequest
 	}
-	questionParts, validAssignment := frozenIELTSFullMockQuestionParts(
+	questionParts, validAssignment := frozenIELTSQuestionParts(
 		payload.PracticeContext,
 	)
 	questionCount := len(questionParts)
@@ -1004,21 +1004,39 @@ func ieltsLanguageEvidence(text string) (englishWords int, cjkCharacters int) {
 	return englishWords, cjkCharacters
 }
 
-func frozenIELTSFullMockQuestionParts(
+func frozenIELTSQuestionParts(
 	context evidence.PracticeContext,
 ) ([]IELTSPart, bool) {
 	assignment := context.IELTSAssignment
-	if context.EvaluationPolicyRef !=
-		IELTSSpeakingFullMockEvaluationPolicyRef ||
-		context.PracticeMode != "FULL_MOCK" || assignment == nil ||
-		assignment.Mode != "FULL_MOCK" ||
+	if context.PracticeExperience != "IELTS_SPEAKING" || assignment == nil ||
+		assignment.Mode != context.PracticeMode ||
 		!validIdentifier(assignment.BankID) ||
 		strings.TrimSpace(assignment.Season) == "" ||
-		strings.TrimSpace(assignment.Season) != assignment.Season ||
-		len(assignment.Parts) != 3 {
+		strings.TrimSpace(assignment.Season) != assignment.Season {
 		return nil, false
 	}
-	expectedParts := [...]IELTSPart{IELTSPart1, IELTSPart2, IELTSPart3}
+	var expectedParts []IELTSPart
+	switch context.PracticeMode {
+	case "FULL_MOCK":
+		if context.EvaluationPolicyRef != IELTSSpeakingFullMockEvaluationPolicyRef {
+			return nil, false
+		}
+		expectedParts = []IELTSPart{IELTSPart1, IELTSPart2, IELTSPart3}
+	case "PART_1":
+		expectedParts = []IELTSPart{IELTSPart1}
+	case "PART_2":
+		expectedParts = []IELTSPart{IELTSPart2, IELTSPart3}
+	case "PART_3":
+		expectedParts = []IELTSPart{IELTSPart3}
+	default:
+		return nil, false
+	}
+	if context.PracticeMode != "FULL_MOCK" && context.EvaluationPolicyRef != IELTSSpeakingPracticeEvaluationPolicyRef {
+		return nil, false
+	}
+	if len(assignment.Parts) != len(expectedParts) {
+		return nil, false
+	}
 	questionParts := make([]IELTSPart, 0, len(context.TaskBlueprints))
 	blueprints := make([]string, 0, len(context.TaskBlueprints))
 	for index, part := range assignment.Parts {
@@ -1056,9 +1074,19 @@ func frozenIELTSFullMockQuestionParts(
 			}
 		}
 	}
-	if assignment.Parts[1].SourceID != assignment.Parts[2].SourceID ||
-		assignment.Parts[1].TopicTitle != assignment.Parts[2].TopicTitle ||
-		len(questionParts) == 0 || len(questionParts) > ieltsMaximumQuestions ||
+	if len(expectedParts) > 1 {
+		part2Index := 0
+		part3Index := 1
+		if context.PracticeMode == "FULL_MOCK" {
+			part2Index = 1
+			part3Index = 2
+		}
+		if assignment.Parts[part2Index].SourceID != assignment.Parts[part3Index].SourceID ||
+			assignment.Parts[part2Index].TopicTitle != assignment.Parts[part3Index].TopicTitle {
+			return nil, false
+		}
+	}
+	if len(questionParts) == 0 || len(questionParts) > ieltsMaximumQuestions ||
 		!slices.Equal(blueprints, context.TaskBlueprints) {
 		return nil, false
 	}
@@ -2006,10 +2034,9 @@ func validIELTSSpeakingProviderInputShape(
 		input.PromptVersion != IELTSSpeakingShadowPromptVersion ||
 		input.RubricVersion != IELTSSpeakingShadowRubricVersion ||
 		input.SceneType != evaluation.SceneIELTSSpeaking ||
-		input.PracticeMode != "FULL_MOCK" ||
 		len(input.Questions) == 0 ||
 		len(input.Questions) > ieltsMaximumQuestions ||
-		!validIELTSFullMockQuestionSequence(input.Questions) {
+		!validIELTSQuestionSequence(input.PracticeMode, input.Questions) {
 		return false
 	}
 	if len(input.RubricDescriptors) != len(expectedRubricCriteria) {
@@ -2128,24 +2155,38 @@ func validIELTSCriterionRejectionCode(code string) bool {
 	}
 }
 
-func validIELTSFullMockQuestionSequence(
+func validIELTSQuestionSequence(
+	practiceMode string,
 	questions []IELTSSpeakingProviderQuestion,
 ) bool {
-	if len(questions) == 0 || questions[0].PartID != IELTSPart1 {
+	var expected []IELTSPart
+	switch practiceMode {
+	case "FULL_MOCK":
+		expected = []IELTSPart{IELTSPart1, IELTSPart2, IELTSPart3}
+	case "PART_1":
+		expected = []IELTSPart{IELTSPart1}
+	case "PART_2":
+		expected = []IELTSPart{IELTSPart2, IELTSPart3}
+	case "PART_3":
+		expected = []IELTSPart{IELTSPart3}
+	default:
+		return false
+	}
+	if len(questions) == 0 || questions[0].PartID != expected[0] {
 		return false
 	}
 	partIndex := 0
 	for _, question := range questions[1:] {
-		if question.PartID == ieltsPartOrder[partIndex] {
+		if question.PartID == expected[partIndex] {
 			continue
 		}
-		if partIndex+1 >= len(ieltsPartOrder) ||
-			question.PartID != ieltsPartOrder[partIndex+1] {
+		if partIndex+1 >= len(expected) ||
+			question.PartID != expected[partIndex+1] {
 			return false
 		}
 		partIndex++
 	}
-	return partIndex == len(ieltsPartOrder)-1
+	return partIndex == len(expected)-1
 }
 
 func stableIELTSFindingID(

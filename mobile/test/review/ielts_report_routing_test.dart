@@ -163,6 +163,80 @@ void main() {
     },
   );
 
+  testWidgets('single Part IELTS Band report uses official criteria', (
+    tester,
+  ) async {
+    final item = _item(
+      practiceMode: 'PART_1',
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      dimensions: const <EvaluationReportDimension>[
+        EvaluationReportDimension(
+          key: 'IELTS_FC',
+          score: 6,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'IELTS_LR',
+          score: 7,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'IELTS_GRA',
+          score: 8,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'IELTS_PR',
+          score: 9,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('流利与连贯'), findsOneWidget);
+    expect(find.text('发音'), findsOneWidget);
+    expect(find.text('语法'), findsOneWidget);
+    expect(find.text('词汇'), findsOneWidget);
+    expect(find.text('6'), findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(find.text('8'), findsOneWidget);
+    expect(find.text('9'), findsOneWidget);
+    expect(find.text('任务达成'), findsNothing);
+  });
+
   testWidgets('section detail must match the outer practice mode', (
     tester,
   ) async {
