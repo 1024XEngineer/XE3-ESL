@@ -410,7 +410,7 @@ func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingShadowKeepsValidFindingWhenPeerIsInvalid(
+func TestIELTSSpeakingShadowKeepsWordAnchorFromValidTurnWhenPeerIsInvalid(
 	t *testing.T,
 ) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
@@ -445,7 +445,7 @@ func TestIELTSSpeakingShadowKeepsValidFindingWhenPeerIsInvalid(
 			Suggestion: "Use a more precise example.",
 			Evidence: []ieltsProviderAnchor{{
 				EvidenceRefID: response.EvidenceRefID,
-				Quote:         response.Transcript,
+				Quote:         "concrete",
 				Occurrence:    1,
 			}},
 		},
@@ -460,11 +460,91 @@ func TestIELTSSpeakingShadowKeepsValidFindingWhenPeerIsInvalid(
 		t.Fatalf("normalize valid sibling: %v", err)
 	}
 	if len(criterion.Strengths) != 0 || len(criterion.Improvements) != 1 ||
-		!strings.Contains(
-			criterion.Improvements[0].Suggestion,
-			"Use a more precise example.",
-		) {
+		criterion.Improvements[0].Suggestion !=
+			template.ImprovementSuggestion {
 		t.Fatalf("criterion findings = %#v", criterion)
+	}
+}
+
+func TestIELTSSpeakingShadowDropsImprovementWithoutEnglishAnchorOrTurn(
+	t *testing.T,
+) {
+	tests := []struct {
+		name       string
+		transcript string
+		quote      string
+	}{
+		{name: "short turn", transcript: "I agree", quote: "I agree"},
+		{name: "Chinese turn", transcript: "这个我不知道", quote: "这个我不知道"},
+		{
+			name:       "Chinese anchor in mixed valid turn",
+			transcript: "I have enough English words 问题啊得很",
+			quote:      "问题啊得很",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+			var snapshotPayload evidence.SnapshotPayload
+			if err := json.Unmarshal(snapshot.Payload, &snapshotPayload); err != nil {
+				t.Fatal(err)
+			}
+			snapshotPayload.ConfirmedTurns[0].Transcript.Text = test.transcript
+			snapshotPayload.EvidenceRefs[0].TranscriptSpan.EndUTF8Byte =
+				len(test.transcript)
+			snapshot = rebuildIELTSSpeakingSnapshot(t, snapshotPayload)
+
+			prepared, err := prepareIELTSSpeakingShadow(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := singleIELTSProviderPayload(
+				t,
+				prepared.input,
+				IELTSCriterionLR,
+			)
+			targetResponse := prepared.input.Questions[0].Response
+			validResponse := prepared.input.Questions[1].Response
+			if targetResponse == nil || validResponse == nil {
+				t.Fatal("missing response fixture")
+			}
+			strength, _ := lookupIELTSFeedbackTemplate(
+				IELTSCriterionLR,
+				ieltsFindingStrength,
+			)
+			improvement, _ := lookupIELTSFeedbackTemplate(
+				IELTSCriterionLR,
+				ieltsFindingImprovement,
+			)
+			payload.Criteria[0].Strengths = []ieltsProviderFinding{{
+				TemplateID: strength.ID,
+				Evidence: []ieltsProviderAnchor{{
+					EvidenceRefID: validResponse.EvidenceRefID,
+					Quote:         validResponse.Transcript,
+					Occurrence:    1,
+				}},
+			}}
+			payload.Criteria[0].Improvements = []ieltsProviderFinding{{
+				TemplateID: improvement.ID,
+				Evidence: []ieltsProviderAnchor{{
+					EvidenceRefID: targetResponse.EvidenceRefID,
+					Quote:         test.quote,
+					Occurrence:    1,
+				}},
+			}}
+
+			criterion, err := normalizeIELTSSpeakingCriterionProviderResult(
+				prepared,
+				IELTSCriterionLR,
+				ieltsProviderResult(t, payload),
+			)
+			if err != nil {
+				t.Fatalf("normalize criterion: %v", err)
+			}
+			if len(criterion.Strengths) != 1 || len(criterion.Improvements) != 0 {
+				t.Fatalf("criterion findings = %#v", criterion)
+			}
+		})
 	}
 }
 
@@ -502,7 +582,7 @@ func TestIELTSSpeakingFeedbackTemplatesUseChineseCriterionCopy(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingImprovementSuggestionIncludesValidProviderAdvice(
+func TestIELTSSpeakingImprovementSuggestionDoesNotExposeProviderAdvice(
 	t *testing.T,
 ) {
 	providerSuggestion := "Use a more precise collocation in the quoted sentence."
@@ -516,8 +596,8 @@ func TestIELTSSpeakingImprovementSuggestionIncludesValidProviderAdvice(
 		ieltsFindingImprovement,
 	)
 	if finding.Message != template.Message ||
-		!strings.HasPrefix(finding.Suggestion, template.ImprovementSuggestion) ||
-		!strings.Contains(finding.Suggestion, providerSuggestion) {
+		finding.Suggestion != template.ImprovementSuggestion ||
+		strings.Contains(finding.Suggestion, providerSuggestion) {
 		t.Fatalf("finding = %#v", finding)
 	}
 }

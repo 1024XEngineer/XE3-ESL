@@ -1289,25 +1289,6 @@ func lookupIELTSFeedbackTemplate(
 	}
 }
 
-func normalizeIELTSImprovementSuggestion(
-	criterion IELTSCriterion,
-	template ieltsFeedbackTemplate,
-	providerSuggestion string,
-) string {
-	fallback := template.ImprovementSuggestion
-	if criterion == IELTSCriterionPR ||
-		!validInterviewText(providerSuggestion, ieltsMaximumFindingText) ||
-		providerSuggestion == fallback {
-		return fallback
-	}
-	combined := fallback + " 结合本次原句，还可以这样调整：" +
-		providerSuggestion
-	if !validInterviewText(combined, ieltsMaximumFindingText) {
-		return fallback
-	}
-	return combined
-}
-
 func normalizeIELTSSpeakingCriterionProviderResult(
 	prepared preparedIELTSSpeakingShadow,
 	target IELTSCriterion,
@@ -1571,6 +1552,19 @@ items:
 			if err != nil {
 				continue items
 			}
+			if kind == ieltsFindingImprovement {
+				turn := prepared.turnsByID[resolved.TurnID]
+				turnEnglishWords, _ := ieltsLanguageEvidence(
+					turn.Transcript.Text,
+				)
+				anchorEnglishWords, _ := ieltsLanguageEvidence(
+					resolved.OriginalExcerpt,
+				)
+				if turnEnglishWords < ieltsMinimumEnglishWordsPerTurn ||
+					anchorEnglishWords == 0 {
+					continue items
+				}
+			}
 			if criterion == IELTSCriterionPR &&
 				len(prepared.acousticRefs) > 0 {
 				if _, acousticallyAssessed := prepared.acousticRefs[resolved.EvidenceRefID]; !acousticallyAssessed {
@@ -1588,11 +1582,7 @@ items:
 		}
 		suggestion := item.Suggestion
 		if kind == ieltsFindingImprovement {
-			suggestion = normalizeIELTSImprovementSuggestion(
-				criterion,
-				template,
-				item.Suggestion,
-			)
+			suggestion = template.ImprovementSuggestion
 		}
 		finding := IELTSSpeakingShadowFinding{
 			Message:    template.Message,

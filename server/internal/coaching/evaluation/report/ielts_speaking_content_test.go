@@ -306,7 +306,7 @@ func TestProjectIELTSSpeakingReportPublishesEvidenceBoundContentAndActions(
 	wantOrder := []scoring.IELTSCriterion{
 		scoring.IELTSCriterionPR,
 		scoring.IELTSCriterionLR,
-		scoring.IELTSCriterionFC,
+		scoring.IELTSCriterionGRA,
 	}
 	if len(report.PriorityActions) != len(wantOrder) {
 		t.Fatalf(
