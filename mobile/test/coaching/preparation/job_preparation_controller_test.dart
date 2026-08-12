@@ -95,6 +95,9 @@ void main() {
     ]);
     expect(controller.plan, isNotNull);
     expect(controller.bootstrap, isNotNull);
+    expect(controller.interviewPlans, hasLength(1));
+    expect(controller.interviewPlans.single.id, controller.plan!.id);
+    expect(controller.interviewPlans.single.jobTitle, 'Backend engineer');
     expect(voiceKeys, hasLength(1));
   });
 

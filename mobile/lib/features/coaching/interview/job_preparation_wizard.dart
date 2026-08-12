@@ -30,13 +30,15 @@ class JobPreparationWizard extends StatefulWidget {
     this.catalogController,
     this.resumeController,
     this.onPracticeStarted,
+    this.onExit,
     super.key,
   });
 
   final JobPreparationController controller;
   final PreparationController? catalogController;
   final ResumeController? resumeController;
-  final VoidCallback? onPracticeStarted;
+  final FutureOr<void> Function()? onPracticeStarted;
+  final VoidCallback? onExit;
 
   @override
   State<JobPreparationWizard> createState() => _JobPreparationWizardState();
@@ -331,7 +333,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     if (started && mounted) {
       _practiceStarted = true;
       widget.catalogController?.showSceneList();
-      widget.onPracticeStarted?.call();
+      await widget.onPracticeStarted?.call();
     }
   }
 
@@ -353,7 +355,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     if (started && mounted) {
       _practiceStarted = true;
       widget.catalogController?.showSceneList();
-      widget.onPracticeStarted?.call();
+      await widget.onPracticeStarted?.call();
     }
   }
 
@@ -381,7 +383,12 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     setState(() {});
     await WidgetsBinding.instance.endOfFrame;
     if (mounted) {
-      await Navigator.of(context).maybePop();
+      final onExit = widget.onExit;
+      if (onExit != null) {
+        onExit();
+      } else {
+        await Navigator.of(context).maybePop();
+      }
     }
   }
 

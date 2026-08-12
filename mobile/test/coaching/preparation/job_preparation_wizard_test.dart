@@ -162,7 +162,7 @@ void main() {
       MaterialApp(
         home: JobPreparationWizard(
           controller: controller,
-          onPracticeStarted: () => created++,
+          onPracticeStarted: () async => created++,
         ),
       ),
     );
@@ -224,6 +224,26 @@ void main() {
     expect(find.text('不使用简历'), findsNothing);
     expect(find.byType(DropdownButtonFormField<String?>), findsNothing);
     expect(controller.resumeSelection, isNull);
+  });
+
+  testWidgets('close delegates to the catalog route boundary', (tester) async {
+    final controller = _controller(_WizardClient());
+    var exits = 0;
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: JobPreparationWizard(
+          controller: controller,
+          onExit: () => exits++,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('job-wizard-close')));
+    await tester.pumpAndSettle();
+
+    expect(exits, 1);
+    expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
   });
 
   testWidgets('temporary parse failure keeps job context and can be skipped', (

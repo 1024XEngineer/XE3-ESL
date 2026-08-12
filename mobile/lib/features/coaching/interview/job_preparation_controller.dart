@@ -854,6 +854,7 @@ final class JobPreparationController extends ChangeNotifier {
         );
       }
       _plan = plan;
+      _upsertInterviewPlan(plan);
       _bootstrap = null;
       _sessionKey = null;
       _voiceKey = null;
@@ -897,6 +898,37 @@ final class JobPreparationController extends ChangeNotifier {
     return startPractice();
   }
 
+  void _upsertInterviewPlan(PracticePlan plan) {
+    final candidate = plan.preparationSnapshot.jobTargetCandidate;
+    final summary = PracticePlanSummary(
+      id: plan.id,
+      revision: plan.revision,
+      status: plan.status,
+      experience: plan.sceneSelection.scene.experience,
+      sceneName: plan.sceneSelection.scene.name,
+      practiceScope: plan.practiceOption.displayName,
+      jobTitle: candidate?.jobTitle ?? '',
+      practiceObjectives: List<String>.unmodifiable(
+        plan.practiceObjectives.map((objective) => objective.description),
+      ),
+      resumeUsed: plan.preparationSnapshot.resumeSnapshot != null,
+      suggestedDurationSeconds: plan.sessionPolicy.suggestedDurationSeconds,
+      minEffectiveTurns: plan.sessionPolicy.minEffectiveTurns,
+      maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
+      createdAt: plan.createdAt,
+      updatedAt: plan.updatedAt,
+    );
+    _interviewPlans = <PracticePlanSummary>[
+      summary,
+      for (final existing in _interviewPlans)
+        if (existing.id != summary.id) existing,
+    ];
+    _planListEpoch++;
+    _plansLoading = false;
+    _plansLoaded = true;
+    _plansErrorMessage = null;
+  }
+
   Future<bool> revisePreview({
     required String roleDefinitionId,
     required String practiceOptionId,
@@ -928,6 +960,7 @@ final class JobPreparationController extends ChangeNotifier {
         );
       }
       _plan = revised;
+      _upsertInterviewPlan(revised);
       _planRevisionKey = null;
       _bootstrap = null;
       _sessionKey = null;
