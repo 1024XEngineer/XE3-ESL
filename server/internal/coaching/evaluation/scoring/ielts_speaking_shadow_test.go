@@ -107,17 +107,37 @@ func TestIELTSSpeakingShadowScoresFrozenPart1WithIELTSRubric(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if result.Scoreability != IELTSSpeakingScoreabilityProvisional ||
-		provider.input.PracticeMode != "PART_1" ||
-		len(provider.input.Questions) != ieltsTestPart1QuestionCount ||
-		len(provider.input.AssessableCriteria) != 1 ||
-		len(provider.input.RubricDescriptors) != 1 ||
-		provider.input.RubricDescriptors[0].CriterionID !=
-			provider.input.AssessableCriteria[0] ||
-		!reflect.DeepEqual(
-			provider.input.RubricDescriptors[0].Descriptors,
-			ieltsDescriptorsFor(provider.input.AssessableCriteria[0]),
-		) {
-		t.Fatalf("result = %#v; input = %#v", result, provider.input)
+		len(provider.inputs) != 3 {
+		t.Fatalf("result = %#v; inputs = %#v", result, provider.inputs)
+	}
+	for _, criterion := range []IELTSCriterion{
+		IELTSCriterionFC,
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	} {
+		input, ok := provider.inputs[criterion]
+		if !ok || input.PracticeMode != "PART_1" ||
+			len(input.Questions) != ieltsTestPart1QuestionCount ||
+			!reflect.DeepEqual(
+				input.AssessableCriteria,
+				[]IELTSCriterion{criterion},
+			) {
+			t.Fatalf("%s input = %#v", criterion, input)
+		}
+		if criterion == IELTSCriterionFC {
+			if len(input.RubricDescriptors) != 0 {
+				t.Fatalf("FC descriptors = %#v", input.RubricDescriptors)
+			}
+			continue
+		}
+		if len(input.RubricDescriptors) != 1 ||
+			input.RubricDescriptors[0].CriterionID != criterion ||
+			!reflect.DeepEqual(
+				input.RubricDescriptors[0].Descriptors,
+				ieltsDescriptorsFor(criterion),
+			) {
+			t.Fatalf("%s descriptors = %#v", criterion, input.RubricDescriptors)
+		}
 	}
 	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
 		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
@@ -683,6 +703,7 @@ type ieltsProviderStub struct {
 	err            error
 	calls          int
 	input          IELTSSpeakingShadowProviderInput
+	inputs         map[IELTSCriterion]IELTSSpeakingShadowProviderInput
 }
 
 func (provider *ieltsProviderStub) AnalyzeIELTSCriterion(
@@ -695,6 +716,12 @@ func (provider *ieltsProviderStub) AnalyzeIELTSCriterion(
 	provider.mu.Lock()
 	provider.calls++
 	provider.input = request.Input
+	if provider.inputs == nil {
+		provider.inputs = make(
+			map[IELTSCriterion]IELTSSpeakingShadowProviderInput,
+		)
+	}
+	provider.inputs[request.Input.AssessableCriteria[0]] = request.Input
 	call := provider.calls
 	provider.mu.Unlock()
 	if provider.err != nil {
