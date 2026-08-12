@@ -1588,9 +1588,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       );
     }
     final complete = progress.phase == IeltsMockPhase.complete;
-    final showCompletionPage = complete && !_preserveCompletedConversation;
+    final keepPart1CompletionConversation = _keepsPart1CompletionInConversation(
+      progress,
+    );
+    final keepCompletedConversation =
+        _preserveCompletedConversation || keepPart1CompletionConversation;
+    final showCompletionPage = complete && !keepCompletedConversation;
     final completionSheet = _completionSheet(progress);
-    final stagePhase = complete && _preserveCompletedConversation
+    final stagePhase = complete && keepCompletedConversation
         ? (_mode == PracticeMode.part1
               ? IeltsMockPhase.part1
               : IeltsMockPhase.part3)
@@ -1691,18 +1696,23 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       duration: const Duration(milliseconds: 220),
       child:
           progress.phase == IeltsMockPhase.complete &&
-              _preserveCompletedConversation
+              (_preserveCompletedConversation ||
+                  _keepsPart1CompletionInConversation(progress))
           ? _completedConversationPhase()
           : _buildPhase(progress),
     );
   }
 
   Widget? _completionSheet(IeltsMockProgress progress) {
-    if (_showCompletionSheet) {
+    if (_showCompletionSheet || _keepsPart1CompletionInConversation(progress)) {
       return _SectionCompletionSheet(
         title: _completionTitle,
         message: '${widget.controller.completedTurns} 道回答已保存',
-        primaryLabel: _mode == PracticeMode.fullMock ? '查看报告状态' : '查看专项复盘',
+        primaryLabel: switch (_mode) {
+          PracticeMode.fullMock => '查看报告状态',
+          PracticeMode.part1 => _part1CompletionPrimaryLabel,
+          _ => '查看专项复盘',
+        },
         secondaryLabel: _mode == PracticeMode.fullMock ? '返回训练' : '返回题单',
         onPrimary: _openCompletedReview,
         onSecondary: _leaveCompletedPractice,
@@ -1734,6 +1744,20 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     return null;
   }
 
+  bool _keepsPart1CompletionInConversation(IeltsMockProgress progress) {
+    final reportController = widget.reportStatusController;
+    if (_mode != PracticeMode.part1 ||
+        progress.phase != IeltsMockPhase.complete ||
+        reportController == null) {
+      return false;
+    }
+    final reportStatus = reportController.status?.evaluationStatus;
+    return reportStatus == PracticeReportEvaluationStatus.queued ||
+        reportStatus == PracticeReportEvaluationStatus.running ||
+        reportStatus == PracticeReportEvaluationStatus.ready ||
+        reportStatus == null && reportController.errorMessage == null;
+  }
+
   String get _completionTitle => switch (_mode) {
     PracticeMode.part1 => 'Part 1 已完成',
     PracticeMode.part2 => 'Part 2 + Part 3 已完成',
@@ -1763,10 +1787,40 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _openCompletedReview() {
+    if (_mode == PracticeMode.part1) {
+      final reportController = widget.reportStatusController;
+      final reportStatus = reportController?.status?.evaluationStatus;
+      if (reportStatus == PracticeReportEvaluationStatus.ready) {
+        unawaited(_openReadyReport());
+        return;
+      }
+      if (reportController != null &&
+          (reportStatus == null ||
+              reportStatus == PracticeReportEvaluationStatus.queued ||
+              reportStatus == PracticeReportEvaluationStatus.running)) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('复盘生成中，完成后将自动打开。')));
+        return;
+      }
+    }
     setState(() {
       _showCompletionSheet = false;
       _preserveCompletedConversation = false;
     });
+  }
+
+  String get _part1CompletionPrimaryLabel {
+    final reportController = widget.reportStatusController;
+    final reportStatus = reportController?.status?.evaluationStatus;
+    if (reportStatus == PracticeReportEvaluationStatus.ready) {
+      return '查看专项复盘';
+    }
+    if (reportStatus == PracticeReportEvaluationStatus.failed ||
+        reportController?.errorMessage != null && reportStatus == null) {
+      return '查看生成状态';
+    }
+    return '复盘生成中…';
   }
 
   Future<void> _openReadyReport() async {

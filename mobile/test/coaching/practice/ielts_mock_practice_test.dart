@@ -1560,6 +1560,114 @@ void main() {
   });
 
   testWidgets(
+    'Part 1 running report stays with the final answer instead of opening the completion page',
+    (tester) async {
+      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+      final controller = PracticeController(
+        client: practice,
+        recorder: _Recorder(),
+      );
+      final reportController = PracticeReportStatusController(
+        client: _Part1ReportStatusClient(
+          evaluationStatus: PracticeReportEvaluationStatus.running,
+        ),
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 1,
+      );
+      addTearDown(controller.dispose);
+      addTearDown(reportController.dispose);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: PracticeMode.part1,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            reportStatusController: reportController,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await _answerCurrentShortQuestion(tester, controller);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('复盘生成中…'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part1')),
+        findsNothing,
+      );
+      expect(find.text('复盘生成中，完成后将自动打开。'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'restored completed Part 1 keeps the pending report with the final answer',
+    (tester) async {
+      final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
+      final controller = PracticeController(
+        client: practice,
+        recorder: _Recorder(),
+      );
+      final reportController = PracticeReportStatusController(
+        client: _Part1ReportStatusClient(
+          evaluationStatus: PracticeReportEvaluationStatus.running,
+        ),
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 1,
+      );
+      addTearDown(controller.dispose);
+      addTearDown(reportController.dispose);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: PracticeMode.part1,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            reportStatusController: reportController,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('复盘生成中…'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part1')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
     'Part 1 ready report opens directly and returns to the section list',
     (tester) async {
       final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
@@ -1570,7 +1678,9 @@ void main() {
       final preparation = IeltsPreparationController(
         client: _UnusedQuestionBankClient(),
       );
-      final reportClient = _ReadyPart1ReportStatusClient();
+      final reportClient = _Part1ReportStatusClient(
+        evaluationStatus: PracticeReportEvaluationStatus.ready,
+      );
       final reportController = PracticeReportStatusController(
         client: reportClient,
         pollInterval: Duration.zero,
@@ -2268,12 +2378,14 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   }
 }
 
-final class _ReadyPart1ReportStatusClient
-    implements PracticeReportStatusClient {
+final class _Part1ReportStatusClient implements PracticeReportStatusClient {
+  _Part1ReportStatusClient({required this.evaluationStatus});
+
   static const _evaluationId = '7b000001-0000-4000-8000-000000000001';
   static const _evaluationRevisionId = 'a1000001-0000-4000-8000-000000000001';
   static const _reportId = '20000000-0000-4000-8000-000000000002';
 
+  final PracticeReportEvaluationStatus evaluationStatus;
   int readyReportCalls = 0;
 
   @override
@@ -2286,17 +2398,23 @@ final class _ReadyPart1ReportStatusClient
           IeltsSpeakingPartId.part1,
         ],
         detailSchema: 'ielts-speaking-practice-report/v1',
-        evaluationStatus: PracticeReportEvaluationStatus.ready,
+        evaluationStatus: evaluationStatus,
         statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
         evaluationId: _evaluationId,
         evaluationRevisionId: _evaluationRevisionId,
         revision: 1,
-        reportRef: const PracticeReportRef(
-          reportId: _reportId,
-          href: '/v1/evaluation-reports/$_reportId',
-        ),
-        scoreability: EvaluationReportScoreability.provisional,
-        summary: 'Part 1 专项复盘已生成。',
+        reportRef: evaluationStatus == PracticeReportEvaluationStatus.ready
+            ? const PracticeReportRef(
+                reportId: _reportId,
+                href: '/v1/evaluation-reports/$_reportId',
+              )
+            : null,
+        scoreability: evaluationStatus == PracticeReportEvaluationStatus.ready
+            ? EvaluationReportScoreability.provisional
+            : null,
+        summary: evaluationStatus == PracticeReportEvaluationStatus.ready
+            ? 'Part 1 专项复盘已生成。'
+            : null,
       );
 
   @override
