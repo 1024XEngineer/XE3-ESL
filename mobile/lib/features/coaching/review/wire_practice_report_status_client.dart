@@ -148,7 +148,7 @@ final class WirePracticeReportStatusClient
     final evaluationId = status.evaluationId;
     if (status.evaluationStatus != PracticeReportEvaluationStatus.failed ||
         status.stableFailure?.retryable != true ||
-        status.practiceMode != PracticeMode.fullMock ||
+        !_ieltsPracticeMode(status.practiceMode) ||
         evaluationId == null ||
         !_validEvaluationId(evaluationId)) {
       throw const PracticeReportStatusException(
@@ -262,6 +262,12 @@ final class WirePracticeReportStatusClient
     _accountGeneration++;
   }
 }
+
+bool _ieltsPracticeMode(PracticeMode mode) =>
+    mode == PracticeMode.part1 ||
+    mode == PracticeMode.part2 ||
+    mode == PracticeMode.part3 ||
+    mode == PracticeMode.fullMock;
 
 PracticeReportStatusException _unexpectedStatus(int statusCode) {
   if (statusCode >= 500) {

@@ -301,6 +301,14 @@ func generalSceneTestSnapshot(
 	if experience == scene.PracticeExperienceIELTSSpeaking {
 		payload.PracticeContext.EvaluationPolicyRef =
 			scoring.IELTSSpeakingPracticeEvaluationPolicyRef
+		payload.PracticeContext.TaskBlueprints = make(
+			[]string,
+			len(payload.OpportunityManifest),
+		)
+		for index, opportunity := range payload.OpportunityManifest {
+			payload.PracticeContext.TaskBlueprints[index] =
+				opportunity.QuestionText
+		}
 		payload.PracticeContext.IELTSAssignment = &evidence.IELTSAssignment{
 			BankID: "ielts-bank-1",
 			Season: "2026-05",

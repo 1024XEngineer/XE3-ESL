@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -92,6 +93,54 @@ func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
 	if pronunciation.EstimatedBand == nil ||
 		!sameRatio(pronunciation.Coverage, ratio(4, ieltsTestQuestionCount)) {
 		t.Fatalf("pronunciation = %#v", pronunciation)
+	}
+}
+
+func TestIELTSSpeakingShadowScoresFrozenPart1WithIELTSRubric(t *testing.T) {
+	snapshot := ieltsSpeakingPart1TestSnapshot(t)
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Scoreability != IELTSSpeakingScoreabilityProvisional ||
+		len(provider.inputs) != 3 {
+		t.Fatalf("result = %#v; inputs = %#v", result, provider.inputs)
+	}
+	for _, criterion := range []IELTSCriterion{
+		IELTSCriterionFC,
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	} {
+		input, ok := provider.inputs[criterion]
+		if !ok || input.PracticeMode != "PART_1" ||
+			len(input.Questions) != ieltsTestPart1QuestionCount ||
+			!reflect.DeepEqual(
+				input.AssessableCriteria,
+				[]IELTSCriterion{criterion},
+			) {
+			t.Fatalf("%s input = %#v", criterion, input)
+		}
+		if criterion == IELTSCriterionFC {
+			if len(input.RubricDescriptors) != 0 {
+				t.Fatalf("FC descriptors = %#v", input.RubricDescriptors)
+			}
+			continue
+		}
+		if len(input.RubricDescriptors) != 1 ||
+			input.RubricDescriptors[0].CriterionID != criterion ||
+			!reflect.DeepEqual(
+				input.RubricDescriptors[0].Descriptors,
+				ieltsDescriptorsFor(criterion),
+			) {
+			t.Fatalf("%s descriptors = %#v", criterion, input.RubricDescriptors)
+		}
+	}
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
 	}
 }
 
@@ -654,6 +703,7 @@ type ieltsProviderStub struct {
 	err            error
 	calls          int
 	input          IELTSSpeakingShadowProviderInput
+	inputs         map[IELTSCriterion]IELTSSpeakingShadowProviderInput
 }
 
 func (provider *ieltsProviderStub) AnalyzeIELTSCriterion(
@@ -666,6 +716,12 @@ func (provider *ieltsProviderStub) AnalyzeIELTSCriterion(
 	provider.mu.Lock()
 	provider.calls++
 	provider.input = request.Input
+	if provider.inputs == nil {
+		provider.inputs = make(
+			map[IELTSCriterion]IELTSSpeakingShadowProviderInput,
+		)
+	}
+	provider.inputs[request.Input.AssessableCriteria[0]] = request.Input
 	call := provider.calls
 	provider.mu.Unlock()
 	if provider.err != nil {
@@ -1000,6 +1056,32 @@ func ieltsSpeakingSnapshotWithTranscript(
 		payload.ConfirmedTurns[index].Transcript.Text = transcript
 		payload.EvidenceRefs[index].TranscriptSpan.EndUTF8Byte = len(transcript)
 	}
+	return rebuildIELTSSpeakingSnapshot(t, payload)
+}
+
+func ieltsSpeakingPart1TestSnapshot(t *testing.T) evidence.EvidenceSnapshot {
+	t.Helper()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	var payload evidence.SnapshotPayload
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+		t.Fatalf("decode IELTS Snapshot: %v", err)
+	}
+	payload.PracticeContext.PracticeMode = "PART_1"
+	payload.PracticeContext.EvaluationPolicyRef = IELTSSpeakingPracticeEvaluationPolicyRef
+	payload.PracticeContext.PracticeOption.Mode = "PART_1"
+	payload.PracticeContext.IELTSAssignment.Mode = "PART_1"
+	payload.PracticeContext.IELTSAssignment.Parts =
+		payload.PracticeContext.IELTSAssignment.Parts[:1]
+	payload.PracticeContext.TaskBlueprints =
+		payload.PracticeContext.TaskBlueprints[:ieltsTestPart1QuestionCount]
+	payload.OpportunityManifest =
+		payload.OpportunityManifest[:ieltsTestPart1QuestionCount]
+	payload.ConfirmedTurns = payload.ConfirmedTurns[:ieltsTestPart1QuestionCount]
+	payload.EvidenceRefs = payload.EvidenceRefs[:ieltsTestPart1QuestionCount]
+	payload.ProviderLineage.ASR =
+		payload.ProviderLineage.ASR[:ieltsTestPart1QuestionCount]
+	payload.VersionManifest.TurnEvidence =
+		payload.VersionManifest.TurnEvidence[:ieltsTestPart1QuestionCount]
 	return rebuildIELTSSpeakingSnapshot(t, payload)
 }
 

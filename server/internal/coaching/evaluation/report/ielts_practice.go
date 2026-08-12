@@ -131,6 +131,87 @@ func ProjectIELTSSpeakingPracticeReport(
 	return report, nil
 }
 
+func ProjectIELTSSpeakingBandPracticeReport(
+	snapshot evidence.EvidenceSnapshot,
+	result scoring.IELTSSpeakingShadowResult,
+) (IELTSSpeakingPracticeReport, error) {
+	if err := scoring.ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		return IELTSSpeakingPracticeReport{}, err
+	}
+	var payload evidence.SnapshotPayload
+	decoder := json.NewDecoder(bytes.NewReader(snapshot.Payload))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || ensureJSONEOF(decoder) != nil {
+		return IELTSSpeakingPracticeReport{}, evaluation.ErrInvalidRequest
+	}
+	parts, scope, ok := ieltsPracticeQuestionParts(payload.PracticeContext)
+	if !ok || len(parts) != len(result.QuestionResults) ||
+		len(parts) != len(payload.OpportunityManifest) {
+		return IELTSSpeakingPracticeReport{}, evaluation.ErrInvalidRequest
+	}
+	turns := make(map[string]evidence.ConfirmedTurn, len(payload.ConfirmedTurns))
+	for _, turn := range payload.ConfirmedTurns {
+		turns[turn.TurnID] = turn
+	}
+	report := IELTSSpeakingPracticeReport{
+		SchemaVersion:     IELTSSpeakingPracticeReportSchemaVersion,
+		ReportScope:       scope,
+		AvailableSections: ieltsPracticeAvailableSections(parts),
+		Questions:         make([]IELTSSpeakingPracticeReportQuestion, len(parts)),
+		SectionReviews:    []IELTSSpeakingPracticeReportPartReview{},
+	}
+	for index, resultQuestion := range result.QuestionResults {
+		opportunity := payload.OpportunityManifest[index]
+		question := IELTSSpeakingPracticeReportQuestion{
+			QuestionID:     resultQuestion.QuestionID,
+			PartID:         resultQuestion.PartID,
+			Index:          resultQuestion.Index,
+			QuestionText:   opportunity.QuestionText,
+			ResponseTurnID: resultQuestion.ResponseTurnID,
+			EvidenceRefIDs: slices.Clone(resultQuestion.EvidenceRefIDs),
+		}
+		if resultQuestion.ResponseTurnID != "" {
+			turn, exists := turns[resultQuestion.ResponseTurnID]
+			if !exists || turn.QuestionID != resultQuestion.QuestionID ||
+				turn.Sequence != resultQuestion.Index {
+				return IELTSSpeakingPracticeReport{}, evaluation.ErrInvalidRequest
+			}
+			question.ConfirmedTranscript = turn.Transcript.Text
+		}
+		report.Questions[index] = question
+	}
+	for _, section := range report.AvailableSections {
+		review := IELTSSpeakingPracticeReportPartReview{
+			PartID:                   section,
+			QuestionIndexes:          []int{},
+			EvidenceRefIDs:           []string{},
+			StrengthFindingIDs:       []string{},
+			ImprovementFindingIDs:    []string{},
+			UpgradeExampleFindingIDs: []string{},
+		}
+		strengths := map[string]struct{}{}
+		improvements := map[string]struct{}{}
+		upgrades := map[string]struct{}{}
+		for _, question := range result.QuestionResults {
+			if question.PartID != section {
+				continue
+			}
+			review.QuestionIndexes = append(review.QuestionIndexes, question.Index)
+			review.EvidenceRefIDs = append(review.EvidenceRefIDs, question.EvidenceRefIDs...)
+			for _, criterion := range question.CriterionFindings {
+				appendUniqueStrings(&review.StrengthFindingIDs, strengths, criterion.StrengthFindingIDs)
+				appendUniqueStrings(&review.ImprovementFindingIDs, improvements, criterion.ImprovementFindingIDs)
+				appendUniqueStrings(&review.UpgradeExampleFindingIDs, upgrades, criterion.UpgradeExampleFindingIDs)
+			}
+		}
+		report.SectionReviews = append(report.SectionReviews, review)
+	}
+	if !report.Valid() {
+		return IELTSSpeakingPracticeReport{}, evaluation.ErrInvalidRequest
+	}
+	return report, nil
+}
+
 func (report IELTSSpeakingPracticeReport) Valid() bool {
 	expectedSections := expectedIELTSPracticeSections(report.ReportScope)
 	if report.SchemaVersion != IELTSSpeakingPracticeReportSchemaVersion ||

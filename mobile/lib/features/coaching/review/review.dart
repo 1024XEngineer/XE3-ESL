@@ -839,19 +839,28 @@ class _IeltsSectionPerformance extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final usesPracticeScale = dimensions.every(
-      (dimension) =>
-          dimension.scale == EvaluationReportScoreScale.percentage100,
+    final usesIeltsBandScale = dimensions.every(
+      (dimension) => dimension.scale == EvaluationReportScoreScale.ieltsBand,
     );
     final byKey = {
       for (final dimension in dimensions) dimension.key: dimension,
     };
-    final ordered = <EvaluationReportDimension?>[
-      byKey['TASK_ACHIEVEMENT'],
-      byKey['CLARITY_COHERENCE'],
-      byKey['LANGUAGE_CONTROL'],
-      byKey['INTERACTION'],
-    ];
+    final ordered = usesIeltsBandScale
+        ? <EvaluationReportDimension?>[
+            byKey['IELTS_FC'],
+            byKey['IELTS_PR'],
+            byKey['IELTS_GRA'],
+            byKey['IELTS_LR'],
+          ]
+        : <EvaluationReportDimension?>[
+            byKey['TASK_ACHIEVEMENT'],
+            byKey['CLARITY_COHERENCE'],
+            byKey['LANGUAGE_CONTROL'],
+            byKey['INTERACTION'],
+          ];
+    final labels = usesIeltsBandScale
+        ? const ['流利与连贯', '发音', '语法', '词汇']
+        : const ['任务达成', '清晰与连贯', '语言运用', '互动表现'];
     return Card(
       key: const Key('review-detail-dimensions'),
       child: Padding(
@@ -863,12 +872,12 @@ class _IeltsSectionPerformance extends StatelessWidget {
             const SizedBox(height: SpeakUpDesign.space20),
             FourAxisScoreRadar(
               axes: <FourAxisRadarAxis>[
-                FourAxisRadarAxis(label: '任务达成', value: ordered[0]?.score),
-                FourAxisRadarAxis(label: '清晰与连贯', value: ordered[1]?.score),
-                FourAxisRadarAxis(label: '语言运用', value: ordered[2]?.score),
-                FourAxisRadarAxis(label: '互动表现', value: ordered[3]?.score),
+                FourAxisRadarAxis(label: labels[0], value: ordered[0]?.score),
+                FourAxisRadarAxis(label: labels[1], value: ordered[1]?.score),
+                FourAxisRadarAxis(label: labels[2], value: ordered[2]?.score),
+                FourAxisRadarAxis(label: labels[3], value: ordered[3]?.score),
               ],
-              maximum: usesPracticeScale ? 100 : 9,
+              maximum: usesIeltsBandScale ? 9 : 100,
               semanticsKey: const Key('review-section-score-radar'),
               semanticsPrefix: '专项练习四维雷达图',
             ),

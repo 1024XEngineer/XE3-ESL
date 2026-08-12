@@ -352,15 +352,23 @@ func sessionReportResource(
 	}
 	if state.Evaluation != nil {
 		value := *state.Evaluation
+		legacyPracticeReport := state.Status == evaluation.StatusReady &&
+			state.PracticeMode != "FULL_MOCK" &&
+			value.Revision.SceneStrategyRef ==
+				scoring.GeneralSceneStrategyRef &&
+			value.Revision.PipelineVersion ==
+				scoring.GeneralScenePipelineVersion
 		if !value.Valid() || value.OwnerUserID != ownerUserID ||
 			value.PracticeSessionID != practiceSessionID ||
 			value.Scope != evaluation.ScopeSession ||
 			value.SceneType != evaluation.SceneIELTSSpeaking ||
 			len(value.Revision.Channels) != 1 ||
 			value.Revision.Channels[0] != evaluation.ChannelScene ||
-			value.Revision.SceneStrategyRef != strategyRef ||
+			(value.Revision.SceneStrategyRef != strategyRef &&
+				!legacyPracticeReport) ||
 			value.Revision.Core4DStrategyRef != "" ||
-			value.Revision.PipelineVersion != pipelineVersion ||
+			(value.Revision.PipelineVersion != pipelineVersion &&
+				!legacyPracticeReport) ||
 			value.Revision.Status != state.Status || value.Revision.IsFinal {
 			return SessionReportResource{}, evaluation.ErrInvalidRequest
 		}
@@ -401,6 +409,13 @@ func sessionReportResource(
 			return SessionReportResource{}, evaluation.ErrInvalidRequest
 		}
 		resource.DetailSchema = stored.Report.DetailSchema
+		legacyPracticeReport := state.Evaluation.Revision.SceneStrategyRef ==
+			scoring.GeneralSceneStrategyRef
+		if !legacyPracticeReport &&
+			resource.DetailSchema ==
+				legacyIELTSSpeakingPracticeReportSchemaVersion {
+			return SessionReportResource{}, evaluation.ErrInvalidRequest
+		}
 		resource.ReportID = stored.ReportID
 		resource.ScoreabilityStatus = stored.Report.ScoreabilityStatus
 		resource.Summary = stored.Report.Summary
@@ -444,8 +459,8 @@ func sessionReportAuthority(mode string) (
 	}
 	return reportScope,
 		ieltsSpeakingPracticeReportSchemaVersion,
-		scoring.GeneralSceneStrategyRef,
-		scoring.GeneralScenePipelineVersion,
+		scoring.IELTSSpeakingShadowStrategyRef,
+		scoring.IELTSSpeakingShadowPipelineVersion,
 		true
 }
 
@@ -460,6 +475,11 @@ func sessionReportFailure(
 	case "source_not_found":
 		return EvaluationFailure{ReasonCode: ReasonEvidenceRefInvalid}
 	case "evaluation_unavailable":
+		return EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	case "provider_invalid_response":
 		return EvaluationFailure{
 			ReasonCode: ReasonInternalRetryable,
 			Retryable:  true,
