@@ -106,6 +106,15 @@ void main() {
 
       expect(find.byKey(const Key('ielts-avatar-region')), findsOneWidget);
       expect(find.byKey(const Key('ielts-avatar-placeholder')), findsOneWidget);
+      final examinerImage = tester.widget<Image>(
+        find.byKey(const Key('ielts-avatar-placeholder')),
+      );
+      expect(examinerImage.fit, BoxFit.cover);
+      expect(examinerImage.alignment, const Alignment(0, -0.32));
+      expect(
+        (examinerImage.image as AssetImage).assetName,
+        'assets/images/scenes/ielts-examiner.jpg',
+      );
       expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
       expect(
         find.byKey(const Key('ielts-mock-record')).hitTestable(),

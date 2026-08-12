@@ -1587,6 +1587,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                     title: _stageTitle(stagePhase),
                     fallback: const PracticeAvatarFallback(
                       semanticLabel: 'IELTS 考官静态画面',
+                      assetName: 'assets/images/scenes/ielts-examiner.jpg',
+                      alignment: Alignment(0, -0.32),
                       imageKey: Key('ielts-avatar-placeholder'),
                     ),
                     surfaceBuilder: widget.avatarSurfaceBuilder,

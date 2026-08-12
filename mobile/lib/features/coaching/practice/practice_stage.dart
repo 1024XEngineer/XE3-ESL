@@ -180,11 +180,15 @@ class PracticeAvatarStage extends StatelessWidget {
 class PracticeAvatarFallback extends StatelessWidget {
   const PracticeAvatarFallback({
     required this.semanticLabel,
+    this.assetName = 'assets/images/scenes/static-avatar-van-gogh.jpg',
+    this.alignment = Alignment.center,
     this.imageKey,
     super.key,
   });
 
   final String semanticLabel;
+  final String assetName;
+  final Alignment alignment;
   final Key? imageKey;
 
   @override
@@ -193,10 +197,10 @@ class PracticeAvatarFallback extends StatelessWidget {
       label: semanticLabel,
       image: true,
       child: Image.asset(
-        'assets/images/scenes/static-avatar-van-gogh.jpg',
+        assetName,
         key: imageKey,
         fit: BoxFit.cover,
-        alignment: Alignment.center,
+        alignment: alignment,
       ),
     );
   }
