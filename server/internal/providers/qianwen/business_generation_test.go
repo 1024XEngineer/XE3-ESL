@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -158,6 +159,50 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 				t.Fatalf("business request exposed tools: %#v", received)
 			}
 		})
+	}
+}
+
+func TestQianwenIELTSCriterionUsesStrictJSONSchema(t *testing.T) {
+	t.Parallel()
+	const content = `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v3","criteria":[{"criterion_id":"IELTS_LR","rubric_descriptor":"LR_PRACTICE_BAND_6","strengths":[{"template_id":"ielts.lr.strength.v1","evidence":[{"evidence_ref_id":"evidence-1","quote":"I answer clearly.","occurrence":1}]}],"improvements":[],"upgrade_examples":[]}]}`
+	var received chatCompletionRequest
+	client := mustBusinessGenerator(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-qianwen-ielts-criterion",
+			"model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":`+strconv.Quote(content)+`}}],
+			"usage":{"prompt_tokens":30,"completion_tokens":12,"total_tokens":42}
+		}`), nil
+	}))
+	result, err := (&EvaluationScoringGenerator{generator: client}).Generate(
+		context.Background(),
+		scoring.TextGenerationRequest{
+			SystemPrompt:    scoring.IELTSSpeakingShadowSystemContract,
+			UserPrompt:      `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
+			OutputContract:  scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion: scoring.IELTSCriterionLR,
+		},
+	)
+	if err != nil || result.Content != content {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if received.ResponseFormat == nil ||
+		received.ResponseFormat.Type != "json_schema" ||
+		received.ResponseFormat.JSONSchema == nil ||
+		!received.ResponseFormat.JSONSchema.Strict ||
+		received.ResponseFormat.JSONSchema.Name !=
+			"ielts_speaking_criterion_v3" ||
+		received.MaxTokens != nil || len(received.Tools) != 0 ||
+		received.ToolChoice != nil {
+		t.Fatalf("request=%#v", received)
+	}
+	criteria := received.ResponseFormat.JSONSchema.Schema["properties"].(map[string]any)["criteria"].(map[string]any)
+	if criteria["minItems"] != float64(1) ||
+		criteria["maxItems"] != float64(1) {
+		t.Fatalf("criteria schema=%#v", criteria)
 	}
 }
 

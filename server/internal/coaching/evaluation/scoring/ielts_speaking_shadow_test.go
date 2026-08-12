@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,9 +17,9 @@ import (
 )
 
 const (
-	ieltsTestPart1QuestionCount = 3
+	ieltsTestPart1QuestionCount = 8
 	ieltsTestPart2QuestionCount = 1
-	ieltsTestQuestionCount      = 7
+	ieltsTestQuestionCount      = 15
 )
 
 func TestIELTSSpeakingShadowProducesHonestPartialResult(t *testing.T) {
@@ -30,8 +31,8 @@ func TestIELTSSpeakingShadowProducesHonestPartialResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("Provider calls = %d, want 1", provider.calls)
+	if provider.calls != 3 {
+		t.Fatalf("Provider calls = %d, want 3", provider.calls)
 	}
 	if err := ValidateIELTSSpeakingShadowResult(
 		snapshot,
@@ -66,8 +67,8 @@ func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(result.Criteria) != 4 {
-		t.Fatalf("result = %#v", result)
+	if provider.calls != 4 || len(result.Criteria) != 4 {
+		t.Fatalf("provider calls = %d; result = %#v", provider.calls, result)
 	}
 	for _, criterion := range result.Criteria {
 		if criterion.Scoreability != IELTSSpeakingScoreabilityProvisional ||
@@ -215,7 +216,7 @@ func TestIELTSSpeakingShadowRejectsProviderGateAndNumericScore(
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := validIELTSProviderPayload(prepared.input)
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -230,8 +231,9 @@ func TestIELTSSpeakingShadowRejectsProviderGateAndNumericScore(
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = normalizeIELTSSpeakingProviderResult(
+	_, err = normalizeIELTSSpeakingCriterionProviderResult(
 		prepared,
+		IELTSCriterionFC,
 		IELTSSpeakingShadowProviderResult{
 			Payload:   raw,
 			Provider:  "provider",
@@ -280,8 +282,9 @@ func TestIELTSSpeakingShadowClassifiesProviderJSONContractFailures(
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, normalizeErr := normalizeIELTSSpeakingProviderResult(
+			_, normalizeErr := normalizeIELTSSpeakingCriterionProviderResult(
 				prepared,
+				IELTSCriterionFC,
 				IELTSSpeakingShadowProviderResult{
 					Payload:   test.payload,
 					Provider:  "provider",
@@ -320,17 +323,18 @@ func TestIELTSSpeakingShadowRepairsUniquelyMispairedAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := validIELTSProviderPayload(prepared.input)
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
 	payload.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID =
 		prepared.input.Questions[1].Response.EvidenceRefID
-	result, err := normalizeIELTSSpeakingProviderResult(
+	result, err := normalizeIELTSSpeakingCriterionProviderResult(
 		prepared,
+		IELTSCriterionFC,
 		ieltsProviderResult(t, payload),
 	)
 	if err != nil {
 		t.Fatalf("repair unique cross-turn anchor: %v", err)
 	}
-	if got := result.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID; got != prepared.input.Questions[0].Response.EvidenceRefID {
+	if got := result.Strengths[0].Evidence[0].EvidenceRefID; got != prepared.input.Questions[0].Response.EvidenceRefID {
 		t.Fatalf("repaired evidence_ref_id = %q", got)
 	}
 }
@@ -341,16 +345,156 @@ func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := validIELTSProviderPayload(prepared.input)
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
 	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
 	anchor.EvidenceRefID = "missing-evidence-ref"
 	anchor.Quote = "I explain"
-	_, err = normalizeIELTSSpeakingProviderResult(
+	_, err = normalizeIELTSSpeakingCriterionProviderResult(
 		prepared,
+		IELTSCriterionFC,
 		ieltsProviderResult(t, payload),
 	)
 	if !errors.Is(err, ErrInvalidIELTSSpeakingShadow) {
 		t.Fatalf("ambiguous cross-turn anchor error = %v", err)
+	}
+}
+
+func TestIELTSSpeakingShadowKeepsValidFindingWhenPeerIsInvalid(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionLR)
+	response := prepared.input.Questions[0].Response
+	if response == nil {
+		t.Fatal("missing response fixture")
+	}
+	template, ok := lookupIELTSFeedbackTemplate(
+		IELTSCriterionLR,
+		ieltsFindingImprovement,
+	)
+	if !ok {
+		t.Fatal("missing LR improvement template")
+	}
+	payload.Criteria[0].Strengths = []ieltsProviderFinding{}
+	payload.Criteria[0].Improvements = []ieltsProviderFinding{
+		{
+			TemplateID: template.ID,
+			Evidence: []ieltsProviderAnchor{{
+				EvidenceRefID: response.EvidenceRefID,
+				Quote:         "This quote does not exist.",
+				Occurrence:    1,
+			}},
+		},
+		{
+			TemplateID: template.ID,
+			Suggestion: "Use a more precise example.",
+			Evidence: []ieltsProviderAnchor{{
+				EvidenceRefID: response.EvidenceRefID,
+				Quote:         response.Transcript,
+				Occurrence:    1,
+			}},
+		},
+	}
+
+	criterion, err := normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		IELTSCriterionLR,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("normalize valid sibling: %v", err)
+	}
+	if len(criterion.Strengths) != 0 || len(criterion.Improvements) != 1 ||
+		criterion.Improvements[0].Suggestion != "Use a more precise example." {
+		t.Fatalf("criterion findings = %#v", criterion)
+	}
+}
+
+func TestIELTSSpeakingShadowRejectsCriterionWhenAllPrimaryFindingsAreDropped(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionLR)
+	payload.Criteria[0].Strengths[0].Evidence[0].Quote =
+		"This quote does not exist in the frozen snapshot."
+
+	_, err = normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		IELTSCriterionLR,
+		ieltsProviderResult(t, payload),
+	)
+	var rejection *ieltsCriterionProviderRejection
+	if !errors.As(err, &rejection) ||
+		rejection.stage != "semantic_validation" ||
+		rejection.code != "no_primary_findings" {
+		t.Fatalf("rejection = %#v; error = %v", rejection, err)
+	}
+}
+
+func TestIELTSSpeakingShadowCorrectsUniqueOccurrenceWithinReference(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
+	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
+	anchor.Quote = "I explain"
+	anchor.Occurrence = 2
+
+	criterion, err := normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		IELTSCriterionFC,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("normalize unique occurrence: %v", err)
+	}
+	evidence := criterion.Strengths[0].Evidence[0]
+	if evidence.EvidenceRefID != anchor.EvidenceRefID ||
+		evidence.OriginalExcerpt != anchor.Quote ||
+		evidence.StartUTF8Byte != 0 ||
+		evidence.EndUTF8Byte != len(anchor.Quote) {
+		t.Fatalf("corrected evidence = %#v", evidence)
+	}
+}
+
+func TestIELTSSpeakingShadowDeduplicatesCanonicalFindings(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
+	duplicate := payload.Criteria[0].Strengths[0]
+	duplicate.Evidence = slices.Clone(duplicate.Evidence)
+	duplicate.Evidence[0].EvidenceRefID =
+		prepared.input.Questions[1].Response.EvidenceRefID
+	payload.Criteria[0].Strengths = append(
+		payload.Criteria[0].Strengths,
+		duplicate,
+	)
+
+	criterion, err := normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		IELTSCriterionFC,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("normalize duplicate findings: %v", err)
+	}
+	if len(criterion.Strengths) != 1 {
+		t.Fatalf("strengths = %#v", criterion.Strengths)
 	}
 }
 
@@ -362,18 +506,18 @@ func TestIELTSSpeakingShadowIgnoresFCDescriptorWithoutAcoustics(
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := validIELTSProviderPayload(prepared.input)
+	payload := singleIELTSProviderPayload(t, prepared.input, IELTSCriterionFC)
 	payload.Criteria[0].RubricDescriptor = "FC_PRACTICE_BAND_7"
-	result, err := normalizeIELTSSpeakingProviderResult(
+	result, err := normalizeIELTSSpeakingCriterionProviderResult(
 		prepared,
+		IELTSCriterionFC,
 		ieltsProviderResult(t, payload),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Criteria[0].EstimatedBand != nil ||
-		result.Criteria[0].BandDescriptor != "" {
-		t.Fatalf("FC criterion = %#v", result.Criteria[0])
+	if result.EstimatedBand != nil || result.BandDescriptor != "" {
+		t.Fatalf("FC criterion = %#v", result)
 	}
 }
 
@@ -500,29 +644,59 @@ func TestIELTSSpeakingShadowRejectsFindingKindConfusion(
 }
 
 type ieltsProviderStub struct {
+	mu      sync.Mutex
 	payload []byte
-	err     error
-	calls   int
-	input   IELTSSpeakingShadowProviderInput
+	mutate  func(
+		IELTSSpeakingCriterionProviderRequest,
+		ieltsProviderPayload,
+	) ieltsProviderPayload
+	observeContext func(context.Context)
+	err            error
+	calls          int
+	input          IELTSSpeakingShadowProviderInput
 }
 
-func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(
-	_ context.Context,
-	input IELTSSpeakingShadowProviderInput,
+func (provider *ieltsProviderStub) AnalyzeIELTSCriterion(
+	ctx context.Context,
+	request IELTSSpeakingCriterionProviderRequest,
 ) (IELTSSpeakingShadowProviderResult, error) {
+	if provider.observeContext != nil {
+		provider.observeContext(ctx)
+	}
+	provider.mu.Lock()
 	provider.calls++
-	provider.input = input
+	provider.input = request.Input
+	call := provider.calls
+	provider.mu.Unlock()
 	if provider.err != nil {
 		return IELTSSpeakingShadowProviderResult{}, provider.err
 	}
-	result := ieltsProviderResult(
-		nil,
-		validIELTSProviderPayload(input),
+	payload := validIELTSProviderPayload(request.Input)
+	if provider.mutate != nil {
+		payload = provider.mutate(request, payload)
+	}
+	result := ieltsProviderResult(nil, payload)
+	result.RequestID = criterionRequestID(
+		request.Input.AssessableCriteria[0],
+		call,
 	)
 	if provider.payload != nil {
 		result.Payload = provider.payload
 	}
 	return result, nil
+}
+
+func singleIELTSProviderPayload(
+	t *testing.T,
+	input IELTSSpeakingShadowProviderInput,
+	target IELTSCriterion,
+) ieltsProviderPayload {
+	t.Helper()
+	criterionInput, err := ieltsCriterionProviderInput(input, target)
+	if err != nil {
+		t.Fatalf("ieltsCriterionProviderInput: %v", err)
+	}
+	return validIELTSProviderPayload(criterionInput)
 }
 
 func validIELTSProviderPayload(
@@ -555,8 +729,7 @@ func validIELTSProviderPayload(
 			UpgradeExamples: []ieltsProviderFinding{},
 		}
 		if descriptors := ieltsDescriptorsFor(criterion); len(descriptors) > 0 &&
-			(criterion != IELTSCriterionFC ||
-				slices.Contains(input.AssessableCriteria, IELTSCriterionPR)) {
+			len(input.RubricDescriptors) > 0 {
 			value.RubricDescriptor =
 				descriptors[5].ID
 		}
@@ -657,12 +830,20 @@ func ieltsSpeakingTestSnapshot(
 		"Part 1 question: Where is your hometown?",
 		"Part 1 question: Is there anything you do not like about your hometown?",
 		"Part 1 question: Would you say it is a good place for young people?",
+		"Part 1 question: What do people usually do in your hometown?",
+		"Part 1 question: Has your hometown changed in recent years?",
+		"Part 1 question: Do you often visit your hometown?",
+		"Part 1 question: What is the weather like in your hometown?",
+		"Part 1 question: Would you like to live there in the future?",
 		"Part 2 cue card: Describe a skill you would like to learn.\n" +
 			"You should say:\n• What the skill is\n• Why you want to learn it\n" +
 			"• How you would learn it\n• And explain how learning this skill would benefit you",
 		"Part 3 question: What kinds of skills are most valuable in today's society?",
 		"Part 3 question: Some people say it is never too late to learn a new skill. Do you agree?",
 		"Part 3 question: Do you think schools should focus more on practical skills?",
+		"Part 3 question: How has technology changed the way people learn skills?",
+		"Part 3 question: Should employers help workers learn new skills?",
+		"Part 3 question: Why do some people stop learning after leaving school?",
 	}
 	payload.PracticeContext.IELTSAssignment = &evidence.IELTSAssignment{
 		BankID: "ielts-bank-1",

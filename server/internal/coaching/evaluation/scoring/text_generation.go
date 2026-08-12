@@ -2,9 +2,18 @@ package scoring
 
 import "context"
 
+type TextGenerationOutputContract string
+
+const (
+	TextGenerationOutputDefault                  TextGenerationOutputContract = ""
+	TextGenerationOutputIELTSSpeakingCriterionV3 TextGenerationOutputContract = IELTSSpeakingShadowProviderSchemaVersion
+)
+
 type TextGenerationRequest struct {
-	SystemPrompt string
-	UserPrompt   string
+	SystemPrompt    string
+	UserPrompt      string
+	OutputContract  TextGenerationOutputContract
+	OutputCriterion IELTSCriterion
 }
 
 type TextGenerationResult struct {

@@ -87,15 +87,16 @@ func NewIELTSSpeakingShadowProvider(
 	}, nil
 }
 
-func (provider *ieltsSpeakingShadowTextProvider) AnalyzeIELTSSpeaking(
+func (provider *ieltsSpeakingShadowTextProvider) AnalyzeIELTSCriterion(
 	ctx context.Context,
-	input IELTSSpeakingShadowProviderInput,
+	request IELTSSpeakingCriterionProviderRequest,
 ) (IELTSSpeakingShadowProviderResult, error) {
-	if provider == nil || provider.generator == nil || ctx == nil {
+	if provider == nil || provider.generator == nil || ctx == nil ||
+		!validIELTSSpeakingCriterionProviderRequest(request) {
 		return IELTSSpeakingShadowProviderResult{},
 			evaluation.ErrInvalidRequest
 	}
-	evidenceJSON, err := json.Marshal(input)
+	evidenceJSON, err := json.Marshal(request)
 	if err != nil {
 		return IELTSSpeakingShadowProviderResult{}, err
 	}
@@ -104,8 +105,10 @@ func (provider *ieltsSpeakingShadowTextProvider) AnalyzeIELTSSpeaking(
 	generated, err := provider.generator.Generate(
 		generationContext,
 		TextGenerationRequest{
-			SystemPrompt: IELTSSpeakingShadowSystemContract,
-			UserPrompt:   string(evidenceJSON),
+			SystemPrompt:    IELTSSpeakingShadowSystemContract,
+			UserPrompt:      string(evidenceJSON),
+			OutputContract:  TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion: request.Input.AssessableCriteria[0],
 		},
 	)
 	if err != nil {

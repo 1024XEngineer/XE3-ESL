@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -20,10 +21,11 @@ import (
 )
 
 const (
-	IELTSSpeakingShadowSchemaVersion         = "ielts-speaking-full-mock-shadow/v1"
-	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v2"
-	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v5"
-	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
+	IELTSSpeakingShadowSchemaVersion          = "ielts-speaking-full-mock-shadow/v1"
+	IELTSSpeakingShadowProviderSchemaVersion  = "ielts-speaking-full-mock-shadow-provider/v3"
+	IELTSSpeakingShadowPromptVersion          = "ielts-speaking-full-mock-shadow-prompt/v6"
+	IELTSSpeakingShadowRubricVersion          = "ielts-speaking-public-band-rubric/v2"
+	IELTSSpeakingCriterionRepairPolicyVersion = "ielts-speaking-criterion-repair/v1"
 
 	ieltsMaximumProviderPayload     = 64 * 1024
 	ieltsMaximumFindingText         = 2048
@@ -48,6 +50,26 @@ var errIELTSSpeakingProviderInvalidJSON = fmt.Errorf(
 
 var errIELTSSpeakingProviderSchemaMismatch = fmt.Errorf(
 	"evaluation: IELTS Speaking provider response schema mismatch: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
+var errIELTSProviderFindingCollections = fmt.Errorf(
+	"evaluation: IELTS Speaking provider finding collections are invalid: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
+var errIELTSProviderNoPrimaryFindings = fmt.Errorf(
+	"evaluation: IELTS Speaking provider has no canonical primary finding: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
+var errIELTSProviderRubricDescriptor = fmt.Errorf(
+	"evaluation: IELTS Speaking provider rubric descriptor is invalid: %w",
+	ErrInvalidIELTSSpeakingShadow,
+)
+
+var errIELTSProviderMissingEvidence = fmt.Errorf(
+	"evaluation: IELTS Speaking provider evidence is missing: %w",
 	ErrInvalidIELTSSpeakingShadow,
 )
 
@@ -139,11 +161,30 @@ type IELTSRubricDescriptorSet struct {
 	Descriptors []IELTSRubricDescriptor `json:"descriptors"`
 }
 
+// IELTSRubricDescriptors returns the canonical public descriptors for one
+// criterion. Callers receive an independent slice.
+func IELTSRubricDescriptors(
+	criterion IELTSCriterion,
+) []IELTSRubricDescriptor {
+	return slices.Clone(ieltsDescriptorsFor(criterion))
+}
+
 type IELTSSpeakingShadowProvider interface {
-	AnalyzeIELTSSpeaking(
+	AnalyzeIELTSCriterion(
 		context.Context,
-		IELTSSpeakingShadowProviderInput,
+		IELTSSpeakingCriterionProviderRequest,
 	) (IELTSSpeakingShadowProviderResult, error)
+}
+
+type IELTSSpeakingCriterionProviderRequest struct {
+	Input  IELTSSpeakingShadowProviderInput `json:"input"`
+	Repair *IELTSSpeakingCriterionRepair    `json:"repair,omitempty"`
+}
+
+type IELTSSpeakingCriterionRepair struct {
+	Attempt int    `json:"attempt"`
+	Stage   string `json:"stage"`
+	Code    string `json:"code"`
 }
 
 type IELTSSpeakingShadowProviderResult struct {
@@ -208,12 +249,41 @@ type IELTSSpeakingTurnAcoustics struct {
 }
 
 type IELTSSpeakingShadowProviderLineage struct {
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	RequestID      string `json:"request_id"`
-	PromptVersion  string `json:"prompt_version"`
-	ResponseSchema string `json:"response_schema"`
-	RubricVersion  string `json:"rubric_version"`
+	Provider       string                              `json:"provider"`
+	Model          string                              `json:"model"`
+	RequestID      string                              `json:"request_id,omitempty"`
+	PromptVersion  string                              `json:"prompt_version"`
+	ResponseSchema string                              `json:"response_schema"`
+	RubricVersion  string                              `json:"rubric_version"`
+	CriterionRuns  []IELTSSpeakingCriterionProviderRun `json:"criterion_runs,omitempty"`
+}
+
+type IELTSSpeakingCriterionProviderRun struct {
+	CriterionID IELTSCriterion                        `json:"criterion_id"`
+	Attempts    []IELTSSpeakingProviderAttemptLineage `json:"attempts"`
+}
+
+type IELTSSpeakingProviderAttemptKind string
+
+const (
+	IELTSSpeakingProviderAttemptInitial IELTSSpeakingProviderAttemptKind = "INITIAL"
+	IELTSSpeakingProviderAttemptRepair  IELTSSpeakingProviderAttemptKind = "REPAIR"
+)
+
+type IELTSSpeakingProviderAttemptOutcome string
+
+const (
+	IELTSSpeakingProviderAttemptAccepted IELTSSpeakingProviderAttemptOutcome = "ACCEPTED"
+	IELTSSpeakingProviderAttemptRejected IELTSSpeakingProviderAttemptOutcome = "REJECTED"
+)
+
+type IELTSSpeakingProviderAttemptLineage struct {
+	Sequence       int                                 `json:"sequence"`
+	Kind           IELTSSpeakingProviderAttemptKind    `json:"kind"`
+	RequestID      string                              `json:"request_id"`
+	Outcome        IELTSSpeakingProviderAttemptOutcome `json:"outcome"`
+	RejectionStage string                              `json:"rejection_stage,omitempty"`
+	RejectionCode  string                              `json:"rejection_code,omitempty"`
 }
 
 type IELTSSpeakingShadowResult struct {
@@ -282,6 +352,31 @@ type IELTSSpeakingShadowEngine struct {
 	provider IELTSSpeakingShadowProvider
 }
 
+type ieltsCriterionProviderRejection struct {
+	stage string
+	code  string
+	cause error
+}
+
+func (rejection *ieltsCriterionProviderRejection) Error() string {
+	return "evaluation: IELTS Speaking criterion response rejected at " +
+		rejection.stage + ": " + rejection.code
+}
+
+func (rejection *ieltsCriterionProviderRejection) Unwrap() error {
+	return rejection.cause
+}
+
+type ieltsCriterionCallResult struct {
+	criterionID IELTSCriterion
+	criterion   IELTSSpeakingShadowCriterionResult
+	provider    string
+	model       string
+	attempt     IELTSSpeakingProviderAttemptLineage
+	rejection   *ieltsCriterionProviderRejection
+	err         error
+}
+
 func NewIELTSSpeakingShadowEngine(
 	provider IELTSSpeakingShadowProvider,
 ) *IELTSSpeakingShadowEngine {
@@ -332,17 +427,7 @@ func (engine *IELTSSpeakingShadowEngine) evaluate(
 			return IELTSSpeakingShadowResult{}, err
 		}
 	}
-	generated, err := engine.provider.AnalyzeIELTSSpeaking(
-		ctx,
-		prepared.input,
-	)
-	if err != nil {
-		return IELTSSpeakingShadowResult{}, err
-	}
-	result, err := normalizeIELTSSpeakingProviderResult(
-		prepared,
-		generated,
-	)
+	result, err := engine.evaluateCriteria(ctx, prepared)
 	if err != nil {
 		return IELTSSpeakingShadowResult{}, err
 	}
@@ -353,6 +438,248 @@ func (engine *IELTSSpeakingShadowEngine) evaluate(
 		return IELTSSpeakingShadowResult{}, err
 	}
 	return result, nil
+}
+
+func (engine *IELTSSpeakingShadowEngine) evaluateCriteria(
+	ctx context.Context,
+	prepared preparedIELTSSpeakingShadow,
+) (IELTSSpeakingShadowResult, error) {
+	targets := slices.Clone(prepared.input.AssessableCriteria)
+	initial := engine.callIELTSCriteria(ctx, prepared, targets, nil)
+	criteria := make(
+		map[IELTSCriterion]IELTSSpeakingShadowCriterionResult,
+		len(targets),
+	)
+	runs := make([]IELTSSpeakingCriterionProviderRun, len(targets))
+	repairs := make(map[IELTSCriterion]*IELTSSpeakingCriterionRepair)
+	provider := ""
+	model := ""
+
+	for index, call := range initial {
+		if call.err != nil {
+			return IELTSSpeakingShadowResult{}, call.err
+		}
+		if err := mergeIELTSCriterionLineage(
+			&provider,
+			&model,
+			call,
+		); err != nil {
+			return IELTSSpeakingShadowResult{}, err
+		}
+		runs[index] = IELTSSpeakingCriterionProviderRun{
+			CriterionID: call.criterionID,
+			Attempts: []IELTSSpeakingProviderAttemptLineage{
+				call.attempt,
+			},
+		}
+		if call.rejection == nil {
+			criteria[call.criterionID] = call.criterion
+			continue
+		}
+		repairs[call.criterionID] = &IELTSSpeakingCriterionRepair{
+			Attempt: 2,
+			Stage:   call.rejection.stage,
+			Code:    call.rejection.code,
+		}
+	}
+
+	if len(repairs) > 0 {
+		repairTargets := make([]IELTSCriterion, 0, len(repairs))
+		for _, target := range targets {
+			if repairs[target] != nil {
+				repairTargets = append(repairTargets, target)
+			}
+		}
+		for _, call := range engine.callIELTSCriteria(
+			ctx,
+			prepared,
+			repairTargets,
+			repairs,
+		) {
+			if call.err != nil {
+				return IELTSSpeakingShadowResult{}, call.err
+			}
+			if err := mergeIELTSCriterionLineage(
+				&provider,
+				&model,
+				call,
+			); err != nil {
+				return IELTSSpeakingShadowResult{}, err
+			}
+			index := slices.Index(targets, call.criterionID)
+			if index < 0 {
+				return IELTSSpeakingShadowResult{},
+					ErrInvalidIELTSSpeakingShadow
+			}
+			runs[index].Attempts = append(
+				runs[index].Attempts,
+				call.attempt,
+			)
+			if call.rejection != nil {
+				return IELTSSpeakingShadowResult{}, call.rejection
+			}
+			criteria[call.criterionID] = call.criterion
+		}
+	}
+
+	result := prepared.result
+	result.Criteria = make(
+		[]IELTSSpeakingShadowCriterionResult,
+		0,
+		len(ieltsCriterionOrder),
+	)
+	for _, target := range targets {
+		criterion, ok := criteria[target]
+		if !ok {
+			return IELTSSpeakingShadowResult{},
+				ErrInvalidIELTSSpeakingShadow
+		}
+		result.Criteria = append(result.Criteria, criterion)
+	}
+	if !slices.Contains(targets, IELTSCriterionPR) {
+		result.Criteria = append(
+			result.Criteria,
+			blockedIELTSCriterion(
+				IELTSCriterionPR,
+				1,
+				IELTSReasonPronunciationArtifactUnavailable,
+			),
+		)
+	}
+	result.Provider = &IELTSSpeakingShadowProviderLineage{
+		Provider:       provider,
+		Model:          model,
+		PromptVersion:  IELTSSpeakingShadowPromptVersion,
+		ResponseSchema: IELTSSpeakingShadowProviderSchemaVersion,
+		RubricVersion:  IELTSSpeakingShadowRubricVersion,
+		CriterionRuns:  runs,
+	}
+	result.QuestionResults = ieltsSpeakingQuestionResults(
+		prepared,
+		result.Criteria,
+	)
+	return result, nil
+}
+
+func (engine *IELTSSpeakingShadowEngine) callIELTSCriteria(
+	ctx context.Context,
+	prepared preparedIELTSSpeakingShadow,
+	targets []IELTSCriterion,
+	repairs map[IELTSCriterion]*IELTSSpeakingCriterionRepair,
+) []ieltsCriterionCallResult {
+	results := make([]ieltsCriterionCallResult, len(targets))
+	type indexedCall struct {
+		index int
+		call  ieltsCriterionCallResult
+	}
+	completed := make(chan indexedCall, len(targets))
+	for index, target := range targets {
+		go func() {
+			completed <- indexedCall{
+				index: index,
+				call: engine.callIELTSCriterion(
+					ctx,
+					prepared,
+					target,
+					repairs[target],
+				),
+			}
+		}()
+	}
+	for range targets {
+		value := <-completed
+		results[value.index] = value.call
+	}
+	return results
+}
+
+func (engine *IELTSSpeakingShadowEngine) callIELTSCriterion(
+	ctx context.Context,
+	prepared preparedIELTSSpeakingShadow,
+	target IELTSCriterion,
+	repair *IELTSSpeakingCriterionRepair,
+) ieltsCriterionCallResult {
+	input, err := ieltsCriterionProviderInput(prepared.input, target)
+	if err != nil {
+		return ieltsCriterionCallResult{criterionID: target, err: err}
+	}
+	generated, err := engine.provider.AnalyzeIELTSCriterion(
+		ctx,
+		IELTSSpeakingCriterionProviderRequest{
+			Input:  input,
+			Repair: repair,
+		},
+	)
+	if err != nil {
+		return ieltsCriterionCallResult{criterionID: target, err: err}
+	}
+	kind := IELTSSpeakingProviderAttemptInitial
+	sequence := 1
+	if repair != nil {
+		kind = IELTSSpeakingProviderAttemptRepair
+		sequence = 2
+	}
+	call := ieltsCriterionCallResult{
+		criterionID: target,
+		provider:    generated.Provider,
+		model:       generated.Model,
+		attempt: IELTSSpeakingProviderAttemptLineage{
+			Sequence:  sequence,
+			Kind:      kind,
+			RequestID: generated.RequestID,
+		},
+	}
+	call.criterion, err = normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		target,
+		generated,
+	)
+	if err == nil {
+		call.attempt.Outcome = IELTSSpeakingProviderAttemptAccepted
+		return call
+	}
+	var rejection *ieltsCriterionProviderRejection
+	if errors.As(err, &rejection) {
+		call.rejection = rejection
+		call.attempt.Outcome = IELTSSpeakingProviderAttemptRejected
+		call.attempt.RejectionStage = rejection.stage
+		call.attempt.RejectionCode = rejection.code
+		slog.Warn(
+			"IELTS Speaking criterion provider response rejected",
+			"criterion_id",
+			target,
+			"attempt",
+			sequence,
+			"rejection_stage",
+			rejection.stage,
+			"rejection_code",
+			rejection.code,
+		)
+		return call
+	}
+	call.err = err
+	return call
+}
+
+func mergeIELTSCriterionLineage(
+	provider *string,
+	model *string,
+	call ieltsCriterionCallResult,
+) error {
+	if !validProviderIdentifier(call.provider) ||
+		!validModelIdentifier(call.model) ||
+		!validProviderIdentifier(call.attempt.RequestID) {
+		return ErrInvalidIELTSSpeakingShadow
+	}
+	if *provider == "" {
+		*provider = call.provider
+		*model = call.model
+		return nil
+	}
+	if *provider != call.provider || *model != call.model {
+		return ErrInvalidIELTSSpeakingShadow
+	}
+	return nil
 }
 
 func withFrozenIELTSAcoustics(
@@ -886,26 +1213,29 @@ func lookupIELTSFeedbackTemplate(
 	}
 }
 
-func normalizeIELTSSpeakingProviderResult(
+func normalizeIELTSSpeakingCriterionProviderResult(
 	prepared preparedIELTSSpeakingShadow,
+	target IELTSCriterion,
 	generated IELTSSpeakingShadowProviderResult,
-) (IELTSSpeakingShadowResult, error) {
+) (IELTSSpeakingShadowCriterionResult, error) {
 	if len(generated.Payload) == 0 ||
 		len(generated.Payload) > ieltsMaximumProviderPayload ||
 		!validProviderIdentifier(generated.Provider) ||
 		!validModelIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
-		return IELTSSpeakingShadowResult{}, fmt.Errorf(
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
 			"provider envelope: %w",
 			ErrInvalidIELTSSpeakingShadow,
 		)
 	}
 	var payload ieltsProviderPayload
 	if !json.Valid(generated.Payload) {
-		return IELTSSpeakingShadowResult{}, fmt.Errorf(
-			"provider JSON: %w",
-			errIELTSSpeakingProviderInvalidJSON,
-		)
+		return IELTSSpeakingShadowCriterionResult{},
+			newIELTSCriterionProviderRejection(
+				"json_decode",
+				"invalid_json",
+				errIELTSSpeakingProviderInvalidJSON,
+			)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(generated.Payload))
 	decoder.DisallowUnknownFields()
@@ -913,76 +1243,62 @@ func normalizeIELTSSpeakingProviderResult(
 		ensureJSONEOF(decoder) != nil ||
 		payload.SchemaVersion !=
 			IELTSSpeakingShadowProviderSchemaVersion ||
-		len(payload.Criteria) != len(prepared.input.AssessableCriteria) {
-		return IELTSSpeakingShadowResult{}, fmt.Errorf(
-			"provider JSON shape: %w",
-			errIELTSSpeakingProviderSchemaMismatch,
-		)
-	}
-	byCriterion := make(
-		map[IELTSCriterion]ieltsProviderCriterion,
-		len(payload.Criteria),
-	)
-	for index, criterion := range payload.Criteria {
-		expected := prepared.input.AssessableCriteria[index]
-		if criterion.CriterionID != expected {
-			return IELTSSpeakingShadowResult{}, fmt.Errorf(
-				"provider criterion order: %w",
+		len(payload.Criteria) != 1 {
+		return IELTSSpeakingShadowCriterionResult{},
+			newIELTSCriterionProviderRejection(
+				"schema_validation",
+				"invalid_shape",
 				errIELTSSpeakingProviderSchemaMismatch,
 			)
-		}
-		if _, duplicate := byCriterion[criterion.CriterionID]; duplicate {
-			return IELTSSpeakingShadowResult{}, fmt.Errorf(
-				"provider duplicate criterion: %w",
+	}
+	if payload.Criteria[0].CriterionID != target {
+		return IELTSSpeakingShadowCriterionResult{},
+			newIELTSCriterionProviderRejection(
+				"schema_validation",
+				"wrong_criterion",
 				errIELTSSpeakingProviderSchemaMismatch,
 			)
-		}
-		byCriterion[criterion.CriterionID] = criterion
 	}
-
-	result := prepared.result
-	result.Criteria = make(
-		[]IELTSSpeakingShadowCriterionResult,
-		0,
-		len(ieltsCriterionOrder),
+	criterion, err := normalizeIELTSProviderCriterion(
+		prepared,
+		payload.Criteria[0],
 	)
-	result.Provider = &IELTSSpeakingShadowProviderLineage{
-		Provider:       generated.Provider,
-		Model:          generated.Model,
-		RequestID:      generated.RequestID,
-		PromptVersion:  IELTSSpeakingShadowPromptVersion,
-		ResponseSchema: IELTSSpeakingShadowProviderSchemaVersion,
-		RubricVersion:  IELTSSpeakingShadowRubricVersion,
-	}
-	for _, criterionID := range prepared.input.AssessableCriteria {
-		criterion, err := normalizeIELTSProviderCriterion(
-			prepared,
-			byCriterion[criterionID],
-		)
-		if err != nil {
-			return IELTSSpeakingShadowResult{}, fmt.Errorf(
-				"provider criterion %s: %w",
-				criterionID,
+	if err != nil {
+		return IELTSSpeakingShadowCriterionResult{},
+			newIELTSCriterionProviderRejection(
+				"semantic_validation",
+				ieltsCriterionSemanticRejectionCode(err),
 				err,
 			)
-		}
-		result.Criteria = append(result.Criteria, criterion)
 	}
-	if !slices.Contains(prepared.input.AssessableCriteria, IELTSCriterionPR) {
-		result.Criteria = append(
-			result.Criteria,
-			blockedIELTSCriterion(
-				IELTSCriterionPR,
-				1,
-				IELTSReasonPronunciationArtifactUnavailable,
-			),
-		)
+	return criterion, nil
+}
+
+func newIELTSCriterionProviderRejection(
+	stage string,
+	code string,
+	cause error,
+) error {
+	return &ieltsCriterionProviderRejection{
+		stage: stage,
+		code:  code,
+		cause: cause,
 	}
-	result.QuestionResults = ieltsSpeakingQuestionResults(
-		prepared,
-		result.Criteria,
-	)
-	return result, nil
+}
+
+func ieltsCriterionSemanticRejectionCode(err error) string {
+	switch {
+	case errors.Is(err, errIELTSProviderNoPrimaryFindings):
+		return "no_primary_findings"
+	case errors.Is(err, errIELTSProviderRubricDescriptor):
+		return "invalid_rubric_descriptor"
+	case errors.Is(err, errIELTSProviderFindingCollections):
+		return "invalid_finding_collections"
+	case errors.Is(err, errIELTSProviderMissingEvidence):
+		return "missing_evidence"
+	default:
+		return "invalid_criterion"
+	}
 }
 
 func normalizeIELTSProviderCriterion(
@@ -994,12 +1310,13 @@ func normalizeIELTSProviderCriterion(
 		source.UpgradeExamples == nil ||
 		len(source.Strengths) > ieltsMaximumFindings ||
 		len(source.Improvements) > ieltsMaximumFindings ||
-		len(source.UpgradeExamples) > ieltsMaximumFindings ||
-		len(source.Strengths)+len(source.Improvements) == 0 {
-		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
-			"finding collections: %w",
-			ErrInvalidIELTSSpeakingShadow,
-		)
+		len(source.UpgradeExamples) > ieltsMaximumFindings {
+		return IELTSSpeakingShadowCriterionResult{},
+			errIELTSProviderFindingCollections
+	}
+	if len(source.Strengths)+len(source.Improvements) == 0 {
+		return IELTSSpeakingShadowCriterionResult{},
+			errIELTSProviderNoPrimaryFindings
 	}
 	result := IELTSSpeakingShadowCriterionResult{
 		CriterionID:  source.CriterionID,
@@ -1030,10 +1347,8 @@ func normalizeIELTSProviderCriterion(
 			source.RubricDescriptor,
 		)
 		if !ok {
-			return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
-				"rubric descriptor: %w",
-				ErrInvalidIELTSSpeakingShadow,
-			)
+			return IELTSSpeakingShadowCriterionResult{},
+				errIELTSProviderRubricDescriptor
 		}
 		result.EstimatedBand = &band
 		result.BandDescriptor = descriptor
@@ -1082,6 +1397,10 @@ func normalizeIELTSProviderCriterion(
 			err,
 		)
 	}
+	if len(result.Strengths)+len(result.Improvements) == 0 {
+		return IELTSSpeakingShadowCriterionResult{},
+			errIELTSProviderNoPrimaryFindings
+	}
 	refSet := make(map[string]struct{})
 	for _, findings := range [][]IELTSSpeakingShadowFinding{
 		result.Strengths,
@@ -1102,10 +1421,8 @@ func normalizeIELTSProviderCriterion(
 	}
 	slices.Sort(result.EvidenceRefIDs)
 	if len(result.EvidenceRefIDs) == 0 {
-		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
-			"missing evidence: %w",
-			ErrInvalidIELTSSpeakingShadow,
-		)
+		return IELTSSpeakingShadowCriterionResult{},
+			errIELTSProviderMissingEvidence
 	}
 	result.Coverage = ratio(
 		len(result.EvidenceRefIDs),
@@ -1132,6 +1449,7 @@ func normalizeIELTSFindings(
 	if !exists {
 		return nil, ErrInvalidIELTSSpeakingShadow
 	}
+items:
 	for _, item := range source {
 		if item.TemplateID != template.ID ||
 			len(item.Evidence) == 0 ||
@@ -1142,7 +1460,7 @@ func normalizeIELTSFindings(
 					item.Suggestion,
 					ieltsMaximumFindingText,
 				)) {
-			return nil, ErrInvalidIELTSSpeakingShadow
+			continue
 		}
 		evidence := make(
 			[]IELTSSpeakingShadowEvidence,
@@ -1156,19 +1474,19 @@ func normalizeIELTSFindings(
 				anchor,
 			)
 			if err != nil {
-				return nil, err
+				continue items
 			}
 			if criterion == IELTSCriterionPR &&
 				len(prepared.acousticRefs) > 0 {
 				if _, acousticallyAssessed := prepared.acousticRefs[resolved.EvidenceRefID]; !acousticallyAssessed {
-					return nil, ErrInvalidIELTSSpeakingShadow
+					continue items
 				}
 			}
 			key := resolved.EvidenceRefID + "\x00" +
 				strconv.Itoa(resolved.StartUTF8Byte) + "\x00" +
 				strconv.Itoa(resolved.EndUTF8Byte)
 			if _, duplicate := seenAnchors[key]; duplicate {
-				return nil, ErrInvalidIELTSSpeakingShadow
+				continue items
 			}
 			seenAnchors[key] = struct{}{}
 			evidence = append(evidence, resolved)
@@ -1185,7 +1503,7 @@ func normalizeIELTSFindings(
 			finding,
 		)
 		if _, duplicate := seen[finding.ID]; duplicate {
-			return nil, ErrInvalidIELTSSpeakingShadow
+			continue
 		}
 		seen[finding.ID] = struct{}{}
 		result = append(result, finding)
@@ -1201,6 +1519,13 @@ func resolveIELTSProviderAnchor(
 	if err == nil {
 		return resolved, nil
 	}
+	resolved, err = resolveUniqueIELTSProviderQuoteWithinRef(
+		prepared,
+		anchor,
+	)
+	if err == nil {
+		return resolved, nil
+	}
 	// Providers occasionally copy an exact quote but pair it with the adjacent
 	// response's evidence_ref_id (or an occurrence number that belongs to that
 	// adjacent response). The quote is still trustworthy when it has exactly
@@ -1208,6 +1533,65 @@ func resolveIELTSProviderAnchor(
 	// location instead of discarding the entire report. Ambiguous or inexact
 	// quotes remain invalid and never become evidence.
 	return resolveUniqueIELTSProviderQuote(prepared, anchor.Quote)
+}
+
+func resolveUniqueIELTSProviderQuoteWithinRef(
+	prepared preparedIELTSSpeakingShadow,
+	anchor ieltsProviderAnchor,
+) (IELTSSpeakingShadowEvidence, error) {
+	if !validInterviewText(anchor.Quote, ieltsMaximumFindingText) {
+		return IELTSSpeakingShadowEvidence{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	ref, exists := prepared.refsByID[anchor.EvidenceRefID]
+	_, allowed := prepared.responseRefs[anchor.EvidenceRefID]
+	turn, turnExists := prepared.turnsByID[ref.TurnID]
+	if !exists || !allowed || !turnExists ||
+		ref.TranscriptSpan.StartUTF8Byte < 0 ||
+		ref.TranscriptSpan.EndUTF8Byte <=
+			ref.TranscriptSpan.StartUTF8Byte ||
+		ref.TranscriptSpan.EndUTF8Byte > len(turn.Transcript.Text) {
+		return IELTSSpeakingShadowEvidence{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	searchStart := ref.TranscriptSpan.StartUTF8Byte
+	searchEnd := ref.TranscriptSpan.EndUTF8Byte
+	var unique IELTSSpeakingShadowEvidence
+	matches := 0
+	for searchStart < searchEnd {
+		relative := strings.Index(
+			turn.Transcript.Text[searchStart:searchEnd],
+			anchor.Quote,
+		)
+		if relative < 0 {
+			break
+		}
+		start := searchStart + relative
+		end := start + len(anchor.Quote)
+		if end > searchEnd ||
+			!utf8.ValidString(turn.Transcript.Text[start:end]) {
+			return IELTSSpeakingShadowEvidence{},
+				ErrInvalidIELTSSpeakingShadow
+		}
+		matches++
+		if matches > 1 {
+			return IELTSSpeakingShadowEvidence{},
+				ErrInvalidIELTSSpeakingShadow
+		}
+		unique = IELTSSpeakingShadowEvidence{
+			EvidenceRefID:   ref.EvidenceRefID,
+			TurnID:          ref.TurnID,
+			StartUTF8Byte:   start,
+			EndUTF8Byte:     end,
+			OriginalExcerpt: turn.Transcript.Text[start:end],
+		}
+		searchStart = end
+	}
+	if matches != 1 {
+		return IELTSSpeakingShadowEvidence{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	return unique, nil
 }
 
 func resolveStrictIELTSProviderAnchor(
@@ -1495,17 +1879,6 @@ func mapIELTSRubricDescriptor(
 func validIELTSSpeakingProviderInput(
 	input IELTSSpeakingShadowProviderInput,
 ) bool {
-	if input.SchemaVersion !=
-		IELTSSpeakingShadowProviderSchemaVersion ||
-		input.PromptVersion != IELTSSpeakingShadowPromptVersion ||
-		input.RubricVersion != IELTSSpeakingShadowRubricVersion ||
-		input.SceneType != evaluation.SceneIELTSSpeaking ||
-		input.PracticeMode != "FULL_MOCK" ||
-		len(input.Questions) == 0 ||
-		len(input.Questions) > ieltsMaximumQuestions ||
-		!validIELTSFullMockQuestionSequence(input.Questions) {
-		return false
-	}
 	fullAcoustics := slices.Equal(
 		input.AssessableCriteria,
 		ieltsCriterionOrder[:],
@@ -1524,6 +1897,120 @@ func validIELTSSpeakingProviderInput(
 			IELTSCriterionLR,
 			IELTSCriterionGRA,
 		}
+	}
+	return validIELTSSpeakingProviderInputShape(
+		input,
+		fullAcoustics,
+		expectedRubricCriteria,
+	)
+}
+
+func ieltsCriterionProviderInput(
+	input IELTSSpeakingShadowProviderInput,
+	target IELTSCriterion,
+) (IELTSSpeakingShadowProviderInput, error) {
+	if !validIELTSSpeakingProviderInput(input) ||
+		!slices.Contains(input.AssessableCriteria, target) {
+		return IELTSSpeakingShadowProviderInput{},
+			evaluation.ErrInvalidRequest
+	}
+	result := input
+	result.AssessableCriteria = []IELTSCriterion{target}
+	result.RubricDescriptors = []IELTSRubricDescriptorSet{}
+	for _, descriptors := range input.RubricDescriptors {
+		if descriptors.CriterionID == target {
+			result.RubricDescriptors = []IELTSRubricDescriptorSet{
+				{
+					CriterionID: descriptors.CriterionID,
+					Descriptors: slices.Clone(descriptors.Descriptors),
+				},
+			}
+			break
+		}
+	}
+	result.Questions = slices.Clone(input.Questions)
+	for index := range result.Questions {
+		if input.Questions[index].Response == nil {
+			continue
+		}
+		response := *input.Questions[index].Response
+		result.Questions[index].Response = &response
+	}
+	if !validIELTSSpeakingCriterionProviderInput(result) {
+		return IELTSSpeakingShadowProviderInput{},
+			evaluation.ErrInvalidRequest
+	}
+	return result, nil
+}
+
+func validIELTSSpeakingCriterionProviderRequest(
+	request IELTSSpeakingCriterionProviderRequest,
+) bool {
+	if !validIELTSSpeakingCriterionProviderInput(request.Input) {
+		return false
+	}
+	if request.Repair == nil {
+		return true
+	}
+	return request.Repair.Attempt == 2 &&
+		validIELTSCriterionRejectionStage(request.Repair.Stage) &&
+		validIELTSCriterionRejectionCode(request.Repair.Code)
+}
+
+func validIELTSSpeakingCriterionProviderInput(
+	input IELTSSpeakingShadowProviderInput,
+) bool {
+	if len(input.AssessableCriteria) != 1 ||
+		!slices.Contains(ieltsCriterionOrder[:], input.AssessableCriteria[0]) {
+		return false
+	}
+	target := input.AssessableCriteria[0]
+	fullAcoustics := ieltsProviderInputHasAcoustics(input)
+	if target == IELTSCriterionPR && !fullAcoustics {
+		return false
+	}
+	expectedRubricCriteria := []IELTSCriterion{target}
+	if target == IELTSCriterionFC && !fullAcoustics {
+		expectedRubricCriteria = []IELTSCriterion{}
+	}
+	return validIELTSSpeakingProviderInputShape(
+		input,
+		fullAcoustics,
+		expectedRubricCriteria,
+	)
+}
+
+func ieltsProviderInputHasAcoustics(
+	input IELTSSpeakingShadowProviderInput,
+) bool {
+	for _, question := range input.Questions {
+		if question.Response != nil &&
+			(question.Response.PronunciationScore != nil ||
+				question.Response.AcousticFluencyScore != nil ||
+				question.Response.SpeakingSpeedWPM != nil ||
+				question.Response.AcousticProvider != "" ||
+				question.Response.AcousticProviderRun != "") {
+			return true
+		}
+	}
+	return false
+}
+
+func validIELTSSpeakingProviderInputShape(
+	input IELTSSpeakingShadowProviderInput,
+	fullAcoustics bool,
+	expectedRubricCriteria []IELTSCriterion,
+) bool {
+	if input.SchemaVersion !=
+		IELTSSpeakingShadowProviderSchemaVersion ||
+		input.PromptVersion != IELTSSpeakingShadowPromptVersion ||
+		input.RubricVersion != IELTSSpeakingShadowRubricVersion ||
+		input.SceneType != evaluation.SceneIELTSSpeaking ||
+		input.PracticeMode != "FULL_MOCK" ||
+		len(input.Questions) == 0 ||
+		len(input.Questions) > ieltsMaximumQuestions ||
+		!validIELTSFullMockQuestionSequence(input.Questions) {
+		return false
 	}
 	if len(input.RubricDescriptors) != len(expectedRubricCriteria) {
 		return false
@@ -1619,6 +2106,28 @@ func validIELTSSpeakingProviderInput(
 	return !fullAcoustics || acousticResponses > 0
 }
 
+func validIELTSCriterionRejectionStage(stage string) bool {
+	return stage == "json_decode" ||
+		stage == "schema_validation" ||
+		stage == "semantic_validation"
+}
+
+func validIELTSCriterionRejectionCode(code string) bool {
+	switch code {
+	case "invalid_json",
+		"invalid_shape",
+		"wrong_criterion",
+		"invalid_rubric_descriptor",
+		"invalid_finding_collections",
+		"no_primary_findings",
+		"missing_evidence",
+		"invalid_criterion":
+		return true
+	default:
+		return false
+	}
+}
+
 func validIELTSFullMockQuestionSequence(
 	questions []IELTSSpeakingProviderQuestion,
 ) bool {
@@ -1706,10 +2215,15 @@ func ValidateIELTSSpeakingShadowResult(
 				IELTSReasonPracticeEstimateUncalibrated,
 			}
 		}
+		expectedProviderRuns := 3
+		if fullAcoustics {
+			expectedProviderRuns = 4
+		}
 		if result.Gate != IELTSSpeakingGateFeedbackOnly ||
 			!slices.Equal(result.ReasonCodes, expectedReasons) ||
 			result.Provider == nil ||
-			!validIELTSProviderLineage(*result.Provider) {
+			!validIELTSProviderLineage(*result.Provider) ||
+			len(result.Provider.CriterionRuns) != expectedProviderRuns {
 			return ErrInvalidIELTSSpeakingShadow
 		}
 	case IELTSSpeakingScoreabilityInsufficient:
@@ -1994,13 +2508,63 @@ func validIELTSProvisionalBandCriterion(
 func validIELTSProviderLineage(
 	lineage IELTSSpeakingShadowProviderLineage,
 ) bool {
-	return validProviderIdentifier(lineage.Provider) &&
-		validModelIdentifier(lineage.Model) &&
-		validProviderIdentifier(lineage.RequestID) &&
-		lineage.PromptVersion == IELTSSpeakingShadowPromptVersion &&
-		lineage.ResponseSchema ==
-			IELTSSpeakingShadowProviderSchemaVersion &&
-		lineage.RubricVersion == IELTSSpeakingShadowRubricVersion
+	if !validProviderIdentifier(lineage.Provider) {
+		return false
+	}
+	if !validModelIdentifier(lineage.Model) ||
+		lineage.PromptVersion != IELTSSpeakingShadowPromptVersion ||
+		lineage.ResponseSchema !=
+			IELTSSpeakingShadowProviderSchemaVersion ||
+		lineage.RubricVersion != IELTSSpeakingShadowRubricVersion {
+		return false
+	}
+	if lineage.RequestID != "" ||
+		(len(lineage.CriterionRuns) != 3 &&
+			len(lineage.CriterionRuns) != 4) {
+		return false
+	}
+	seenRequestIDs := make(map[string]struct{}, len(lineage.CriterionRuns)*2)
+	for index, run := range lineage.CriterionRuns {
+		if run.CriterionID != ieltsCriterionOrder[index] ||
+			len(run.Attempts) < 1 || len(run.Attempts) > 2 {
+			return false
+		}
+		for attemptIndex, attempt := range run.Attempts {
+			expectedSequence := attemptIndex + 1
+			expectedKind := IELTSSpeakingProviderAttemptInitial
+			if attemptIndex == 1 {
+				expectedKind = IELTSSpeakingProviderAttemptRepair
+			}
+			if attempt.Sequence != expectedSequence ||
+				attempt.Kind != expectedKind ||
+				!validProviderIdentifier(attempt.RequestID) {
+				return false
+			}
+			if _, duplicate := seenRequestIDs[attempt.RequestID]; duplicate {
+				return false
+			}
+			seenRequestIDs[attempt.RequestID] = struct{}{}
+			final := attemptIndex == len(run.Attempts)-1
+			if final {
+				if attempt.Outcome != IELTSSpeakingProviderAttemptAccepted ||
+					attempt.RejectionStage != "" ||
+					attempt.RejectionCode != "" {
+					return false
+				}
+				continue
+			}
+			if attempt.Outcome != IELTSSpeakingProviderAttemptRejected ||
+				!validIELTSCriterionRejectionStage(
+					attempt.RejectionStage,
+				) ||
+				!validIELTSCriterionRejectionCode(
+					attempt.RejectionCode,
+				) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validIELTSBlockedReason(

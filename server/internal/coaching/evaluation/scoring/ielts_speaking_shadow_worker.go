@@ -156,6 +156,8 @@ type IELTSSpeakingShadowWorker struct {
 	freezer       *IELTSAcousticSnapshotFreezer
 }
 
+const ieltsCompletionLeaseMargin = 5 * time.Second
+
 func NewIELTSSpeakingShadowWorker(
 	repository IELTSSpeakingShadowRuntimeRepository,
 	engine *IELTSSpeakingShadowEngine,
@@ -265,8 +267,13 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 		) {
 		return "", evaluation.ErrInvalidRequest
 	}
-	result, err := worker.engine.EvaluateWithAcousticSnapshot(
+	evaluationContext, cancel := context.WithDeadline(
 		ctx,
+		claim.LeaseExpiresAt.Add(-ieltsCompletionLeaseMargin),
+	)
+	defer cancel()
+	result, err := worker.engine.EvaluateWithAcousticSnapshot(
+		evaluationContext,
 		claim.Snapshot,
 		claim.AcousticSnapshot,
 	)

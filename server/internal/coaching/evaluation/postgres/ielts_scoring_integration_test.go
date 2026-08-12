@@ -104,15 +104,31 @@ func TestPostgresIELTSSpeakingShadowConcurrentClaimAndComplete(
 		t.Fatalf("ready state = %#v", state)
 	}
 	var resultCount int
+	var requestIDIsNull bool
+	var criterionRunCount int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT count(*)
+		SELECT
+			count(*),
+			bool_and(provider_request_id IS NULL),
+			max(jsonb_array_length(
+				result_payload #> '{provider_lineage,criterion_runs}'
+			))
 		FROM evaluation_ielts_speaking_scene_results
 		WHERE evaluation_revision_id = $1
-	`, evaluation.Revision.ID).Scan(&resultCount); err != nil {
+	`, evaluation.Revision.ID).Scan(
+		&resultCount,
+		&requestIDIsNull,
+		&criterionRunCount,
+	); err != nil {
 		t.Fatalf("count IELTS results: %v", err)
 	}
-	if resultCount != 1 {
-		t.Fatalf("result count = %d, want 1", resultCount)
+	if resultCount != 1 || !requestIDIsNull || criterionRunCount != 3 {
+		t.Fatalf(
+			"result count = %d; request ID null = %t; criterion runs = %d",
+			resultCount,
+			requestIDIsNull,
+			criterionRunCount,
+		)
 	}
 }
 
@@ -399,7 +415,7 @@ func TestPostgresIELTSSpeakingResultConstraintRejectsFCBand(
 		t.Fatal(err)
 	}
 	var providerRequestID any
-	if result.Provider != nil {
+	if result.Provider != nil && result.Provider.RequestID != "" {
 		providerRequestID = result.Provider.RequestID
 	}
 	_, err = pool.Exec(context.Background(), `
@@ -442,6 +458,206 @@ func TestPostgresIELTSSpeakingResultConstraintRejectsFCBand(
 		providerRequestID, claim.FencingToken, payload)
 	if err == nil {
 		t.Fatal("database accepted an FC Band")
+	}
+}
+
+func TestPostgresIELTSSpeakingPromptV6LineageConstraintAndRoundTrip(
+	t *testing.T,
+) {
+	pool, repository, configuration, evaluation :=
+		prepareIELTSSpeakingShadowRuntime(t)
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	result := evaluateIELTSSpeakingClaim(t, claim)
+	if result.Provider == nil || len(result.Provider.CriterionRuns) != 3 {
+		t.Fatalf("criterion lineage = %#v", result.Provider)
+	}
+	result.Provider.CriterionRuns[0].Attempts[0].Outcome =
+		scoring.IELTSSpeakingProviderAttemptRejected
+	result.Provider.CriterionRuns[0].Attempts[0].RejectionStage =
+		"semantic_validation"
+	result.Provider.CriterionRuns[0].Attempts[0].RejectionCode =
+		"no_primary_findings"
+	result.Provider.CriterionRuns[0].Attempts = append(
+		result.Provider.CriterionRuns[0].Attempts,
+		scoring.IELTSSpeakingProviderAttemptLineage{
+			Sequence:  2,
+			Kind:      scoring.IELTSSpeakingProviderAttemptRepair,
+			RequestID: "repair-request-round-trip",
+			Outcome:   scoring.IELTSSpeakingProviderAttemptAccepted,
+		},
+	)
+	tests := []struct {
+		name              string
+		providerRequestID any
+		mutate            func(*scoring.IELTSSpeakingShadowResult)
+	}{
+		{
+			name:              "legacy request ID column",
+			providerRequestID: "legacy-request",
+		},
+		{
+			name: "legacy root request ID",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.RequestID = "legacy-request"
+			},
+		},
+		{
+			name: "duplicate criterion",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.CriterionRuns[1].CriterionID =
+					scoring.IELTSCriterionFC
+			},
+		},
+		{
+			name: "unexpected pronunciation run",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.CriterionRuns = append(
+					value.Provider.CriterionRuns,
+					scoring.IELTSSpeakingCriterionProviderRun{
+						CriterionID: scoring.IELTSCriterionPR,
+						Attempts: []scoring.IELTSSpeakingProviderAttemptLineage{{
+							Sequence:  1,
+							Kind:      scoring.IELTSSpeakingProviderAttemptInitial,
+							RequestID: "unexpected-pr-request",
+							Outcome:   scoring.IELTSSpeakingProviderAttemptAccepted,
+						}},
+					},
+				)
+			},
+		},
+		{
+			name: "missing attempts",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.CriterionRuns[0].Attempts =
+					[]scoring.IELTSSpeakingProviderAttemptLineage{}
+			},
+		},
+		{
+			name: "too many attempts",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				attempt := value.Provider.CriterionRuns[0].Attempts[0]
+				value.Provider.CriterionRuns[0].Attempts = append(
+					value.Provider.CriterionRuns[0].Attempts,
+					attempt,
+					attempt,
+				)
+			},
+		},
+		{
+			name: "invalid attempt shape",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.CriterionRuns[0].Attempts[0].Sequence = 2
+				value.Provider.CriterionRuns[0].Attempts[0].Kind =
+					scoring.IELTSSpeakingProviderAttemptRepair
+				value.Provider.CriterionRuns[0].Attempts[0].Outcome =
+					scoring.IELTSSpeakingProviderAttemptRejected
+			},
+		},
+		{
+			name: "duplicate request ID",
+			mutate: func(value *scoring.IELTSSpeakingShadowResult) {
+				value.Provider.CriterionRuns[1].Attempts[0].RequestID =
+					value.Provider.CriterionRuns[0].Attempts[0].RequestID
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var candidate scoring.IELTSSpeakingShadowResult
+			if err := json.Unmarshal(payload, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			if test.mutate != nil {
+				test.mutate(&candidate)
+			}
+			payload, err = json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = insertIELTSSpeakingResultFixture(
+				context.Background(),
+				pool,
+				claim,
+				test.providerRequestID,
+				payload,
+			)
+			var databaseError *pgconn.PgError
+			if !errors.As(err, &databaseError) ||
+				databaseError.ConstraintName !=
+					"evaluation_ielts_scene_results_v6_lineage_check" {
+				t.Fatalf("invalid v6 lineage error = %v", err)
+			}
+		})
+	}
+
+	if err := repository.CompleteIELTSSpeakingShadow(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("complete valid v6 lineage: %v", err)
+	}
+	state, err := repository.GetIELTSSpeakingShadowState(
+		context.Background(),
+		claim.OwnerUserID,
+		evaluation.ID,
+		evaluation.Revision.ID,
+	)
+	if err != nil {
+		t.Fatalf("read v6 lineage: %v", err)
+	}
+	if state.Result == nil {
+		t.Fatal("round-trip v6 result is missing")
+	}
+	want, err := json.Marshal(result.Provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(state.Result.Provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("round-trip lineage = %s, want %s", got, want)
+	}
+}
+
+func TestPostgresIELTSSpeakingPromptV6AllowsNoProviderLineageWhenInsufficient(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount-1)
+	_, repository, configuration, evaluation :=
+		prepareIELTSSpeakingShadowRuntimeWithSnapshot(t, snapshot)
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	result := evaluateIELTSSpeakingClaim(t, claim)
+	if result.Scoreability != scoring.IELTSSpeakingScoreabilityInsufficient ||
+		result.Provider != nil {
+		t.Fatalf("insufficient result = %#v", result)
+	}
+	if err := repository.CompleteIELTSSpeakingShadow(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("complete insufficient v6 result: %v", err)
+	}
+	state, err := repository.GetIELTSSpeakingShadowState(
+		context.Background(),
+		claim.OwnerUserID,
+		evaluation.ID,
+		evaluation.Revision.ID,
+	)
+	if err != nil {
+		t.Fatalf("read insufficient v6 result: %v", err)
+	}
+	if state.Result == nil || state.Result.Provider != nil ||
+		state.Result.Scoreability !=
+			scoring.IELTSSpeakingScoreabilityInsufficient {
+		t.Fatalf("round-trip insufficient result = %#v", state.Result)
 	}
 }
 
@@ -516,7 +732,7 @@ func insertRawIELTSSpeakingResult(
 		t.Fatalf("encode raw IELTS result: %v", err)
 	}
 	var providerRequestID any
-	if result.Provider != nil {
+	if result.Provider != nil && result.Provider.RequestID != "" {
 		providerRequestID = result.Provider.RequestID
 	}
 	_, err = pool.Exec(context.Background(), `
@@ -1132,8 +1348,87 @@ func prepareIELTSSpeakingValidatingRuntime(
 	return pool, repository, value, snapshot
 }
 
+func TestIELTSSpeakingPromptV6MigrationRoundTrip(t *testing.T) {
+	pool := evaluationDatabase(t)
+	ctx := context.Background()
+	down, err := migrations.Files.ReadFile(
+		"000090_evaluation_ielts_speaking_prompt_v6.down.sql",
+	)
+	if err != nil {
+		t.Fatalf("read IELTS prompt v6 down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(down)); err != nil {
+		t.Fatalf("apply IELTS prompt v6 down migration: %v", err)
+	}
+	var lineageObjectsExist bool
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			to_regprocedure(
+				'evaluation_ielts_v6_lineage_is_valid(jsonb)'
+			) IS NOT NULL
+			OR EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conrelid =
+					'evaluation_ielts_speaking_scene_results'::regclass
+				  AND conname =
+					'evaluation_ielts_scene_results_v6_lineage_check'
+			)
+	`).Scan(&lineageObjectsExist); err != nil {
+		t.Fatalf("inspect down-migrated v6 lineage: %v", err)
+	}
+	if lineageObjectsExist {
+		t.Fatal("v6 lineage objects remain after down migration")
+	}
+
+	up, err := migrations.Files.ReadFile(
+		"000090_evaluation_ielts_speaking_prompt_v6.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read IELTS prompt v6 up migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(up)); err != nil {
+		t.Fatalf("reapply IELTS prompt v6 up migration: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			to_regprocedure(
+				'evaluation_ielts_v6_lineage_is_valid(jsonb)'
+			) IS NOT NULL
+			AND EXISTS (
+				SELECT 1
+				FROM pg_constraint
+				WHERE conrelid =
+					'evaluation_ielts_speaking_scene_results'::regclass
+				  AND conname =
+					'evaluation_ielts_scene_results_v6_lineage_check'
+			)
+	`).Scan(&lineageObjectsExist); err != nil {
+		t.Fatalf("inspect reapplied v6 lineage: %v", err)
+	}
+	if !lineageObjectsExist {
+		t.Fatal("v6 lineage objects missing after migration reapply")
+	}
+}
+
 func prepareIELTSSpeakingShadowRuntime(
 	t *testing.T,
+) (
+	*pgxpool.Pool,
+	*PostgresRepository,
+	scoring.IELTSSpeakingShadowRuntimeConfiguration,
+	evaluationcore.Evaluation,
+) {
+	t.Helper()
+	return prepareIELTSSpeakingShadowRuntimeWithSnapshot(
+		t,
+		ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount),
+	)
+}
+
+func prepareIELTSSpeakingShadowRuntimeWithSnapshot(
+	t *testing.T,
+	snapshot evidence.EvidenceSnapshot,
 ) (
 	*pgxpool.Pool,
 	*PostgresRepository,
@@ -1150,7 +1445,6 @@ func prepareIELTSSpeakingShadowRuntime(
 	)
 	repository := NewPostgresRepository(pool)
 	evidenceRepository := evidence.NewPostgresRepository(pool)
-	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount)
 	persistEvidenceSnapshotFixture(t, pool, snapshot)
 	service := evaluationcore.NewService(repository, evidenceRepository)
 	evaluation, replayed, err := service.Create(
@@ -1297,4 +1591,47 @@ func evaluateIELTSSpeakingClaim(
 		result.Provider.Model = claim.Model
 	}
 	return result
+}
+
+func insertIELTSSpeakingResultFixture(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	claim scoring.IELTSSpeakingShadowClaim,
+	providerRequestID any,
+	payload []byte,
+) error {
+	_, err := pool.Exec(ctx, `
+		INSERT INTO evaluation_ielts_speaking_scene_results (
+			module_run_id,
+			evaluation_id,
+			evaluation_revision_id,
+			owner_user_id,
+			channel,
+			strategy_ref,
+			practice_session_id,
+			input_snapshot_id,
+			input_revision,
+			scene_type,
+			snapshot_hash,
+			full_config_hash,
+			prompt_version,
+			provider,
+			model,
+			provider_request_id,
+			fencing_token,
+			result_payload
+		)
+		VALUES (
+			$1, $2, $3, $4, 'SCENE', $5, $6, $7, $8,
+			'IELTS_SPEAKING', $9, $10, $11, $12, $13,
+			$14, $15, $16
+		)
+	`, claim.ModuleRunID, claim.EvaluationID,
+		claim.EvaluationRevisionID, claim.OwnerUserID,
+		claim.StrategyRef, claim.Snapshot.PracticeSessionID,
+		claim.Snapshot.ID, claim.Snapshot.InputRevision,
+		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
+		claim.PromptVersion, claim.Provider, claim.Model,
+		providerRequestID, claim.FencingToken, payload)
+	return err
 }

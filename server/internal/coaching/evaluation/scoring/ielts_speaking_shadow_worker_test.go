@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,47 @@ func TestIELTSSpeakingShadowWorkerCompletesEvidenceBoundResult(
 			repository.result,
 		) != nil {
 		t.Fatalf("repository = %#v", repository)
+	}
+}
+
+func TestIELTSSpeakingShadowWorkerKeepsLeaseMarginForCompletion(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validIELTSSpeakingShadowClaim(t)
+	claim.LeaseExpiresAt = time.Now().Add(time.Minute)
+	deadlines := make(chan time.Time, 3)
+	provider := &ieltsProviderStub{
+		observeContext: func(ctx context.Context) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				deadlines <- time.Time{}
+				return
+			}
+			deadlines <- deadline
+		},
+	}
+	repository := &ieltsShadowRuntimeRepositoryStub{
+		claim:    claim,
+		acquired: true,
+	}
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		NewIELTSSpeakingShadowEngine(provider),
+		validIELTSSpeakingShadowRuntimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.ProcessPending(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	expected := claim.LeaseExpiresAt.Add(-5 * time.Second)
+	for range 3 {
+		deadline := <-deadlines
+		if deadline.IsZero() || deadline.Sub(expected).Abs() > time.Millisecond {
+			t.Fatalf("provider deadline = %s, want %s", deadline, expected)
+		}
 	}
 }
 
@@ -181,9 +223,21 @@ func TestIELTSSpeakingShadowWorkerRetryUsesIdenticalFrozenProviderInput(
 	if err != nil || second.Completed != 1 {
 		t.Fatalf("second=%#v err=%v", second, err)
 	}
-	if len(provider.inputs) != 2 ||
-		!bytes.Equal(provider.inputs[0], provider.inputs[1]) {
-		t.Fatalf("provider inputs changed: %q %q", provider.inputs[0], provider.inputs[1])
+	inputs := provider.Inputs()
+	for _, criterion := range []IELTSCriterion{
+		IELTSCriterionFC,
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	} {
+		criterionInputs := inputs[criterion]
+		if len(criterionInputs) != 2 ||
+			!bytes.Equal(criterionInputs[0], criterionInputs[1]) {
+			t.Fatalf(
+				"provider inputs for %s changed: %q",
+				criterion,
+				criterionInputs,
+			)
+		}
 	}
 }
 
@@ -232,18 +286,7 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	t *testing.T,
 ) {
 	claim := validIELTSSpeakingShadowClaim(t)
-	prepared, err := prepareIELTSSpeakingShadow(claim.Snapshot)
-	if err != nil {
-		t.Fatalf("prepareIELTSSpeakingShadow: %v", err)
-	}
-	payload := validIELTSProviderPayload(prepared.input)
-	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
-	anchor.EvidenceRefID = "missing-evidence-ref"
-	anchor.Quote = "I explain"
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
+	const sensitiveQuote = "This sensitive quote is not in the snapshot."
 
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:      claim,
@@ -252,7 +295,16 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	}
 	worker, err := NewIELTSSpeakingShadowWorker(
 		repository,
-		NewIELTSSpeakingShadowEngine(&ieltsProviderStub{payload: raw}),
+		NewIELTSSpeakingShadowEngine(&ieltsProviderStub{
+			mutate: func(
+				_ IELTSSpeakingCriterionProviderRequest,
+				payload ieltsProviderPayload,
+			) ieltsProviderPayload {
+				payload.Criteria[0].Strengths[0].Evidence[0].Quote =
+					sensitiveQuote
+				return payload
+			},
+		}),
 		validIELTSSpeakingShadowRuntimeConfiguration(),
 	)
 	if err != nil {
@@ -272,7 +324,10 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	if sweep.Failed != 1 ||
 		!strings.Contains(logged, `"failure_code":"provider_invalid_response"`) ||
 		!strings.Contains(logged, `"rejection_stage":"semantic_validation"`) ||
-		strings.Contains(logged, "I explain") {
+		!strings.Contains(logged, `"criterion_id":"IELTS_FC"`) ||
+		!strings.Contains(logged, `"attempt":1`) ||
+		!strings.Contains(logged, `"rejection_code":"no_primary_findings"`) ||
+		strings.Contains(logged, sensitiveQuote) {
 		t.Fatalf("sweep = %#v; log = %s", sweep, logged)
 	}
 }
@@ -422,24 +477,44 @@ type ieltsShadowRuntimeRepositoryStub struct {
 }
 
 type ieltsRetryProviderStub struct {
+	mu        sync.Mutex
 	failFirst bool
-	inputs    [][]byte
+	inputs    map[IELTSCriterion][][]byte
 }
 
-func (stub *ieltsRetryProviderStub) AnalyzeIELTSSpeaking(
+func (stub *ieltsRetryProviderStub) AnalyzeIELTSCriterion(
 	ctx context.Context,
-	input IELTSSpeakingShadowProviderInput,
+	request IELTSSpeakingCriterionProviderRequest,
 ) (IELTSSpeakingShadowProviderResult, error) {
-	encoded, err := json.Marshal(input)
+	encoded, err := json.Marshal(request.Input)
 	if err != nil {
 		return IELTSSpeakingShadowProviderResult{}, err
 	}
-	stub.inputs = append(stub.inputs, encoded)
-	if stub.failFirst {
+	criterion := request.Input.AssessableCriteria[0]
+	stub.mu.Lock()
+	if stub.inputs == nil {
+		stub.inputs = make(map[IELTSCriterion][][]byte)
+	}
+	stub.inputs[criterion] = append(stub.inputs[criterion], encoded)
+	fail := stub.failFirst
+	if fail {
 		stub.failFirst = false
+	}
+	stub.mu.Unlock()
+	if fail {
 		return IELTSSpeakingShadowProviderResult{}, context.DeadlineExceeded
 	}
-	return (&ieltsProviderStub{}).AnalyzeIELTSSpeaking(ctx, input)
+	return (&ieltsProviderStub{}).AnalyzeIELTSCriterion(ctx, request)
+}
+
+func (stub *ieltsRetryProviderStub) Inputs() map[IELTSCriterion][][]byte {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	result := make(map[IELTSCriterion][][]byte, len(stub.inputs))
+	for criterion, inputs := range stub.inputs {
+		result[criterion] = append([][]byte(nil), inputs...)
+	}
+	return result
 }
 
 func (stub *ieltsShadowRuntimeRepositoryStub) ClaimIELTSSpeakingShadow(

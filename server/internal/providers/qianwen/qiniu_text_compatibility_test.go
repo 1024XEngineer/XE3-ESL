@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -105,6 +107,175 @@ func TestQiniuGenerateMapsToolCallsAndLineage(t *testing.T) {
 	if result.Provider != qiniuProviderName || result.FinishReason != "tool_calls" ||
 		len(result.ToolCalls) != 1 || result.ToolCalls[0].Name != "review.search.v1" {
 		t.Fatalf("Qiniu tool result = %#v", result)
+	}
+}
+
+func TestQiniuIELTSCriterionUsesForcedSingleCriterionTool(t *testing.T) {
+	const arguments = `{
+		"schema_version":"ielts-speaking-full-mock-shadow-provider/v3",
+		"criteria":[{
+			"criterion_id":"IELTS_LR",
+			"rubric_descriptor":"LR_PRACTICE_BAND_6",
+			"strengths":[{"template_id":"ielts.lr.strength.v1","evidence":[{"evidence_ref_id":"evidence-1","quote":"I answer clearly.","occurrence":1}]}],
+			"improvements":[],
+			"upgrade_examples":[]
+		}]
+	}`
+	var payload chatCompletionRequest
+	client := mustQiniuGenerator(t, doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-qiniu-ielts-criterion",
+			"model":"moonshotai/kimi-k2.6",
+			"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{
+				"id":"call_ielts_1","type":"function","function":{"name":"ielts_speaking_criterion_v3","arguments":`+strconv.Quote(arguments)+`}
+			}]}}],
+			"usage":{"prompt_tokens":30,"completion_tokens":12,"total_tokens":42}
+		}`), nil
+	}), "qiniu-test-key")
+
+	result, err := (&EvaluationScoringGenerator{generator: client}).Generate(
+		context.Background(),
+		scoring.TextGenerationRequest{
+			SystemPrompt:    scoring.IELTSSpeakingShadowSystemContract,
+			UserPrompt:      `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
+			OutputContract:  scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion: scoring.IELTSCriterionLR,
+		},
+	)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.Content != arguments || payload.ResponseFormat != nil ||
+		len(payload.Tools) != 1 ||
+		payload.Tools[0].Function.Name != "ielts_speaking_criterion_v3" {
+		t.Fatalf("result = %#v; request = %#v", result, payload)
+	}
+	choice, ok := payload.ToolChoice.(map[string]any)
+	if !ok || choice["type"] != "function" {
+		t.Fatalf("tool choice = %#v", payload.ToolChoice)
+	}
+	function, ok := choice["function"].(map[string]any)
+	if !ok || function["name"] != "ielts_speaking_criterion_v3" {
+		t.Fatalf("tool choice function = %#v", choice["function"])
+	}
+
+	schema := payload.Tools[0].Function.Parameters
+	assertBasicQiniuJSONSchema(t, schema)
+	properties := schema["properties"].(map[string]any)
+	criteria := properties["criteria"].(map[string]any)
+	if criteria["minItems"] != float64(1) ||
+		criteria["maxItems"] != float64(1) {
+		t.Fatalf("criteria schema = %#v", criteria)
+	}
+	criterion := criteria["items"].(map[string]any)
+	criterionProperties := criterion["properties"].(map[string]any)
+	assertSchemaStringEnum(
+		t,
+		criterionProperties["criterion_id"].(map[string]any),
+		[]string{"IELTS_LR"},
+	)
+	rubricSchema := criterionProperties["rubric_descriptor"].(map[string]any)
+	for _, value := range rubricSchema["enum"].([]any) {
+		if !strings.HasPrefix(value.(string), "LR_PRACTICE_BAND_") {
+			t.Fatalf("rubric descriptor enum = %#v", rubricSchema["enum"])
+		}
+	}
+	for collection, kind := range map[string]string{
+		"strengths":        "strength",
+		"improvements":     "improvement",
+		"upgrade_examples": "upgrade",
+	} {
+		value := criterionProperties[collection].(map[string]any)
+		if _, hasMinimum := value["minItems"]; hasMinimum ||
+			value["maxItems"] != float64(3) {
+			t.Fatalf("%s schema = %#v", collection, value)
+		}
+		finding := value["items"].(map[string]any)
+		template := finding["properties"].(map[string]any)["template_id"].(map[string]any)
+		assertSchemaStringEnum(
+			t,
+			template,
+			[]string{"ielts.lr." + kind + ".v1"},
+		)
+	}
+	evidence := criterionProperties["improvements"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["evidence"].(map[string]any)
+	if evidence["minItems"] != float64(1) ||
+		evidence["maxItems"] != float64(4) {
+		t.Fatalf("evidence schema = %#v", evidence)
+	}
+}
+
+func assertSchemaStringEnum(
+	t *testing.T,
+	schema map[string]any,
+	want []string,
+) {
+	t.Helper()
+	values, ok := schema["enum"].([]any)
+	if !ok || len(values) != len(want) {
+		t.Fatalf("schema enum = %#v, want %#v", schema["enum"], want)
+	}
+	for index, value := range values {
+		if value != want[index] {
+			t.Fatalf("schema enum = %#v, want %#v", values, want)
+		}
+	}
+}
+
+func TestQiniuIELTSCriterionRejectsMissingForcedToolCall(t *testing.T) {
+	client := mustQiniuGenerator(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-qiniu-ielts-invalid",
+			"model":"moonshotai/kimi-k2.6",
+			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{}"}}],
+			"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11}
+		}`), nil
+	}), "qiniu-test-key")
+	_, err := (&EvaluationScoringGenerator{generator: client}).Generate(
+		context.Background(),
+		scoring.TextGenerationRequest{
+			SystemPrompt:    scoring.IELTSSpeakingShadowSystemContract,
+			UserPrompt:      `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
+			OutputContract:  scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion: scoring.IELTSCriterionLR,
+		},
+	)
+	if err == nil {
+		t.Fatal("Generate succeeded without the required criterion tool call")
+	}
+}
+
+func assertBasicQiniuJSONSchema(t *testing.T, schema map[string]any) {
+	t.Helper()
+	allowed := map[string]bool{
+		"type": true, "properties": true, "required": true,
+		"additionalProperties": true, "items": true, "enum": true,
+		"minimum": true, "maximum": true, "minItems": true,
+		"maxItems": true, "minLength": true, "maxLength": true,
+	}
+	for keyword, value := range schema {
+		if !allowed[keyword] {
+			t.Fatalf("unsupported Qiniu JSON Schema keyword %q", keyword)
+		}
+		switch keyword {
+		case "properties":
+			for name, property := range value.(map[string]any) {
+				child, ok := property.(map[string]any)
+				if !ok {
+					t.Fatalf("schema property %q = %#v", name, property)
+				}
+				assertBasicQiniuJSONSchema(t, child)
+			}
+		case "items":
+			child, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("schema items = %#v", value)
+			}
+			assertBasicQiniuJSONSchema(t, child)
+		}
 	}
 }
 

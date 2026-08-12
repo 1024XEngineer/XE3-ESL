@@ -274,10 +274,11 @@ type ieltsReportProviderAnchor struct {
 	Occurrence    int    `json:"occurrence"`
 }
 
-func (*ieltsReportProvider) AnalyzeIELTSSpeaking(
+func (*ieltsReportProvider) AnalyzeIELTSCriterion(
 	_ context.Context,
-	input scoring.IELTSSpeakingShadowProviderInput,
+	request scoring.IELTSSpeakingCriterionProviderRequest,
 ) (scoring.IELTSSpeakingShadowProviderResult, error) {
+	input := request.Input
 	first := input.Questions[0].Response
 	if first == nil {
 		panic("IELTS report fixture requires one response")
@@ -317,10 +318,15 @@ func (*ieltsReportProvider) AnalyzeIELTSSpeaking(
 		return scoring.IELTSSpeakingShadowProviderResult{}, err
 	}
 	return scoring.IELTSSpeakingShadowProviderResult{
-		Payload:   raw,
-		Provider:  "provider",
-		Model:     "model",
-		RequestID: "request-1",
+		Payload:  raw,
+		Provider: "provider",
+		Model:    "model",
+		RequestID: "request-" + strings.ToLower(
+			strings.TrimPrefix(
+				string(input.AssessableCriteria[0]),
+				"IELTS_",
+			),
+		),
 	}, nil
 }
 
