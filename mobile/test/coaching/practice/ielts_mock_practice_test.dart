@@ -1786,6 +1786,52 @@ void main() {
     },
   );
 
+  testWidgets('Part 1 ready transition opens without another screen frame', (
+    tester,
+  ) async {
+    final statusGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    final reportClient = _Part1ReportStatusClient(
+      evaluationStatus: PracticeReportEvaluationStatus.ready,
+      statusGate: statusGate.future,
+    );
+    final reportController = PracticeReportStatusController(
+      client: reportClient,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(reportController.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          reportStatusController: reportController,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(reportClient.readyReportCalls, 0);
+
+    statusGate.complete();
+    await tester.idle();
+
+    expect(reportClient.readyReportCalls, 1);
+  });
+
   testWidgets('the full-mock PracticeOption opens the three-part flow', (
     tester,
   ) async {
@@ -2416,43 +2462,44 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
 }
 
 final class _Part1ReportStatusClient implements PracticeReportStatusClient {
-  _Part1ReportStatusClient({required this.evaluationStatus});
+  _Part1ReportStatusClient({required this.evaluationStatus, this.statusGate});
 
   static const _evaluationId = '7b000001-0000-4000-8000-000000000001';
   static const _evaluationRevisionId = 'a1000001-0000-4000-8000-000000000001';
   static const _reportId = '20000000-0000-4000-8000-000000000002';
 
   final PracticeReportEvaluationStatus evaluationStatus;
+  final Future<void>? statusGate;
   int readyReportCalls = 0;
 
   @override
-  Future<PracticeReportStatus> getStatus(String practiceSessionId) async =>
-      PracticeReportStatus(
-        practiceSessionId: practiceSessionId,
-        practiceMode: PracticeMode.part1,
-        reportScope: PracticeReportScope.part1,
-        availableSections: const <IeltsSpeakingPartId>[
-          IeltsSpeakingPartId.part1,
-        ],
-        detailSchema: 'ielts-speaking-practice-report/v1',
-        evaluationStatus: evaluationStatus,
-        statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
-        evaluationId: _evaluationId,
-        evaluationRevisionId: _evaluationRevisionId,
-        revision: 1,
-        reportRef: evaluationStatus == PracticeReportEvaluationStatus.ready
-            ? const PracticeReportRef(
-                reportId: _reportId,
-                href: '/v1/evaluation-reports/$_reportId',
-              )
-            : null,
-        scoreability: evaluationStatus == PracticeReportEvaluationStatus.ready
-            ? EvaluationReportScoreability.provisional
-            : null,
-        summary: evaluationStatus == PracticeReportEvaluationStatus.ready
-            ? 'Part 1 专项复盘已生成。'
-            : null,
-      );
+  Future<PracticeReportStatus> getStatus(String practiceSessionId) async {
+    await statusGate;
+    return PracticeReportStatus(
+      practiceSessionId: practiceSessionId,
+      practiceMode: PracticeMode.part1,
+      reportScope: PracticeReportScope.part1,
+      availableSections: const <IeltsSpeakingPartId>[IeltsSpeakingPartId.part1],
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      evaluationStatus: evaluationStatus,
+      statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
+      evaluationId: _evaluationId,
+      evaluationRevisionId: _evaluationRevisionId,
+      revision: 1,
+      reportRef: evaluationStatus == PracticeReportEvaluationStatus.ready
+          ? const PracticeReportRef(
+              reportId: _reportId,
+              href: '/v1/evaluation-reports/$_reportId',
+            )
+          : null,
+      scoreability: evaluationStatus == PracticeReportEvaluationStatus.ready
+          ? EvaluationReportScoreability.provisional
+          : null,
+      summary: evaluationStatus == PracticeReportEvaluationStatus.ready
+          ? 'Part 1 专项复盘已生成。'
+          : null,
+    );
+  }
 
   @override
   Future<EvaluationReport> getReadyReport(PracticeReportRef reportRef) async {

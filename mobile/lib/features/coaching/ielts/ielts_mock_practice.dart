@@ -995,7 +995,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     _readyReportNavigationScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    scheduleMicrotask(() {
       _readyReportNavigationScheduled = false;
       if (mounted && !_disposing) {
         unawaited(_openReadyReport());
