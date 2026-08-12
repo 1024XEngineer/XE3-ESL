@@ -117,6 +117,76 @@ void main() {
     expect(decoded.partReviews[2].questionIndexes, <int>[4, 5]);
   });
 
+  test('decodes a Part that aggregates more than three finding refs', () {
+    final value = _readyClone();
+    final lexical = _criterion(value, 1);
+    final improvements = lexical['improvements']! as List<Object?>;
+    final source = improvements.single! as Map<String, Object?>;
+    for (final id in <String>['ielts_finding_lr_002', 'ielts_finding_lr_003']) {
+      improvements.add(
+        cloneIeltsSpeakingReportFixture(source)..['finding_id'] = id,
+      );
+    }
+    final questionFindings =
+        _question(value, 0)['criterion_findings']! as List<Object?>;
+    (questionFindings[1]!
+        as Map<String, Object?>)['improvement_finding_ids'] = <Object?>[
+      'ielts_finding_lr_001',
+      'ielts_finding_lr_002',
+      'ielts_finding_lr_003',
+    ];
+    _part(value, 0)['improvement_finding_ids'] = <Object?>[
+      'ielts_finding_lr_001',
+      'ielts_finding_lr_002',
+      'ielts_finding_lr_003',
+      'ielts_finding_gra_001',
+    ];
+
+    final decoded = decodeIeltsSpeakingReport(value).report!;
+
+    expect(decoded.partReviews.first.improvementFindingIds, hasLength(4));
+  });
+
+  test('rejects a Part with more than 36 finding refs', () {
+    final value = _readyClone();
+    _part(value, 0)['improvement_finding_ids'] = <Object?>[
+      for (var index = 0; index < 37; index++) 'ielts_finding_$index',
+    ];
+
+    expect(
+      () => decodeIeltsSpeakingReport(value),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
+  });
+
+  test('rejects duplicate finding refs within a Part', () {
+    final value = _readyClone();
+    _part(value, 0)['improvement_finding_ids'] = <Object?>[
+      'ielts_finding_lr_001',
+      'ielts_finding_lr_001',
+    ];
+
+    expect(
+      () => decodeIeltsSpeakingReport(value),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
+  });
+
+  test('rejects a question criterion with more than three finding refs', () {
+    final value = _readyClone();
+    final questionFindings =
+        _question(value, 0)['criterion_findings']! as List<Object?>;
+    (questionFindings.first!
+        as Map<String, Object?>)['strength_finding_ids'] = <Object?>[
+      for (var index = 0; index < 4; index++) 'ielts_finding_$index',
+    ];
+
+    expect(
+      () => decodeIeltsSpeakingReport(value),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
+  });
+
   test('accepts only false for an explicitly non-retryable failure', () {
     final value = cloneIeltsSpeakingReportFixture(
       ieltsSpeakingReportContractFixture()['failed'],
