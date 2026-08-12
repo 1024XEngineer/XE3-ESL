@@ -28,7 +28,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('我的简历'), findsOneWidget);
-    expect(find.textContaining('上传 PDF'), findsOneWidget);
+    expect(find.text('未上传'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('profile-resume-card')));
     await tester.pumpAndSettle();

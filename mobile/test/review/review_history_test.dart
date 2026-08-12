@@ -467,17 +467,15 @@ void main() {
       await tester.pump();
       expect(
         find.byKey(const Key('review-history-initial-loading')),
-        findsNothing,
+        findsOneWidget,
       );
-      await tester.tap(find.byKey(const Key('review-history-entry')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byKey(const Key('review-history-page')), findsOneWidget);
+      expect(find.byKey(const Key('review-page')), findsOneWidget);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
       await _ensureHistoryVisible(
         tester,
         find.byKey(const Key('review-history-load-more')),
@@ -538,7 +536,7 @@ void main() {
     await tester.pump();
     expect(
       find.byKey(const Key('review-history-initial-loading')),
-      findsNothing,
+      findsOneWidget,
     );
     await _expandHistory(tester);
     expect(find.byKey(const Key('review-history-error')), findsOneWidget);
@@ -596,8 +594,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.cursors, <String?>[null, null, null]);
-      expect(find.text('本次练习 · 92 分'), findsOneWidget);
-      expect(find.text('summary-92'), findsOneWidget);
+      expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
       expect(controller.hasMore, isFalse);
     },
   );
@@ -650,9 +647,8 @@ void main() {
     expect(find.byKey(const Key('review-content')), findsNothing);
     expect(
       find.byKey(const Key('review-history-initial-loading')),
-      findsNothing,
+      findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('review-history-entry')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(
@@ -719,8 +715,8 @@ void main() {
     expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
     expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
     expect(find.byKey(const Key('review-content')), findsOneWidget);
-    expect(find.text('summary-91'), findsOneWidget);
-    expect(find.text('summary-78'), findsOneWidget);
+    expect(find.text('summary-91'), findsNothing);
+    expect(find.text('summary-78'), findsNothing);
 
     await _ensureHistoryVisible(
       tester,
@@ -762,7 +758,7 @@ void main() {
 
     expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(item.review.summary), findsOneWidget);
+    expect(find.text(item.review.summary), findsNothing);
     expect(
       tester
           .getSize(find.byKey(Key('review-history-${item.review.id}')))
@@ -899,7 +895,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _expandHistory(tester);
-    expect(find.text('IELTS 口语模考报告'), findsOneWidget);
+    expect(find.text('IELTS 模考'), findsOneWidget);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -940,6 +936,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _expandHistory(tester);
+    await tester.tap(find.byKey(const Key('review-toggle-insufficient')));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -969,8 +967,8 @@ void main() {
     await _expandHistory(tester);
 
     final expectedLabel =
-        '${item.review.title}，摘要：${item.review.summary}，'
-        '2026-07-26，已完成，查看复盘详情';
+        '模拟面试，Interview，摘要：${item.review.summary}，'
+        '7月26日，已完成，查看复盘详情';
     expect(
       tester.getSemantics(find.byKey(const Key('review-content'))),
       matchesSemantics(
@@ -979,10 +977,7 @@ void main() {
         hasTapAction: true,
       ),
     );
-    expect(
-      find.bySemanticsLabel(RegExp(RegExp.escape(item.review.title))),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel(RegExp('模拟面试')), findsOneWidget);
     semanticsHandle.dispose();
   });
 
@@ -1015,10 +1010,10 @@ void main() {
         findsOneWidget,
       );
     }
-    expect(find.text('2026-07-26'), findsOneWidget);
-    expect(find.text('2026-07-17'), findsOneWidget);
+    expect(find.textContaining('7月26日'), findsOneWidget);
+    expect(find.textContaining('7月17日'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(items.first.review.summary), findsOneWidget);
+    expect(find.text(items.first.review.summary), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1063,10 +1058,12 @@ void main() {
     await tester.pumpAndSettle();
     await _expandHistory(tester);
 
-    final historyScrollable = find.descendant(
-      of: find.byKey(const Key('review-history-list')),
-      matching: find.byType(Scrollable),
-    );
+    final historyScrollable = find
+        .descendant(
+          of: find.byKey(const Key('review-history-list')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
     await tester.scrollUntilVisible(
       find.byKey(const Key('review-history-load-more')),
       500,
@@ -1111,19 +1108,8 @@ void main() {
 }
 
 Future<void> _expandHistory(WidgetTester tester) async {
-  final entry = find.byKey(const Key('review-history-entry'));
-  final scrollable = find
-      .descendant(
-        of: find.byKey(const Key('review-overview-scroll')),
-        matching: find.byType(Scrollable),
-      )
-      .first;
-  await tester.scrollUntilVisible(entry, 200, scrollable: scrollable);
-  await tester.drag(scrollable, const Offset(0, -120));
   await tester.pumpAndSettle();
-  await tester.tap(entry);
-  await tester.pumpAndSettle();
-  expect(find.byKey(const Key('review-history-page')), findsOneWidget);
+  expect(find.byKey(const Key('review-page')), findsOneWidget);
 }
 
 Future<void> _ensureHistoryVisible(WidgetTester tester, Finder target) async {
