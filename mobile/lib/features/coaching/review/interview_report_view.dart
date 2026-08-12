@@ -16,7 +16,7 @@ class InterviewReportPage extends StatefulWidget {
     this.title = '面试复盘报告',
     this.speechFeedbackController,
     this.speechFeedbackSourceKeys = const <String>[],
-    this.onContinueWithAgent,
+    this.onReturnToConversation,
     super.key,
   });
 
@@ -25,7 +25,7 @@ class InterviewReportPage extends StatefulWidget {
   final String title;
   final SpeechFeedbackController? speechFeedbackController;
   final List<String> speechFeedbackSourceKeys;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function()? onReturnToConversation;
 
   @override
   State<InterviewReportPage> createState() => _InterviewReportPageState();
@@ -76,7 +76,7 @@ class _InterviewReportPageState extends State<InterviewReportPage> {
               ],
               InterviewReportPanel(
                 controller: widget.controller,
-                onContinueWithAgent: widget.onContinueWithAgent,
+                onReturnToConversation: widget.onReturnToConversation,
               ),
             ],
           ),
@@ -89,12 +89,12 @@ class _InterviewReportPageState extends State<InterviewReportPage> {
 class InterviewReportPanel extends StatefulWidget {
   const InterviewReportPanel({
     required this.controller,
-    this.onContinueWithAgent,
+    this.onReturnToConversation,
     super.key,
   });
 
   final InterviewReportController controller;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function()? onReturnToConversation;
 
   @override
   State<InterviewReportPanel> createState() => _InterviewReportPanelState();
@@ -151,7 +151,7 @@ class _InterviewReportPanelState extends State<InterviewReportPanel> {
       ),
       InterviewReportEvaluationStatus.ready => _ReadyInterviewReport(
         report: envelope.report!,
-        onContinueWithAgent: widget.onContinueWithAgent,
+        onReturnToConversation: widget.onReturnToConversation,
       ),
       InterviewReportEvaluationStatus.failed => _ReportFailure(
         message: '报告生成遇到技术问题，这不代表你的面试表现较差。',
@@ -248,17 +248,18 @@ class _LanguagePerformancePanelState extends State<_LanguagePerformancePanel> {
   }
 }
 
-class _ContinueWithAgentButton extends StatefulWidget {
-  const _ContinueWithAgentButton({required this.onPressed});
+class _ReturnToConversationButton extends StatefulWidget {
+  const _ReturnToConversationButton({required this.onPressed});
 
   final Future<bool> Function() onPressed;
 
   @override
-  State<_ContinueWithAgentButton> createState() =>
-      _ContinueWithAgentButtonState();
+  State<_ReturnToConversationButton> createState() =>
+      _ReturnToConversationButtonState();
 }
 
-class _ContinueWithAgentButtonState extends State<_ContinueWithAgentButton> {
+class _ReturnToConversationButtonState
+    extends State<_ReturnToConversationButton> {
   bool _busy = false;
   String? _error;
 
@@ -275,7 +276,9 @@ class _ContinueWithAgentButtonState extends State<_ContinueWithAgentButton> {
       return;
     }
     if (completed) {
-      Navigator.of(context).pop(CompletedPracticeRouteResult.continueWithAgent);
+      Navigator.of(
+        context,
+      ).pop(CompletedPracticeRouteResult.returnToConversation);
       return;
     }
     setState(() {
@@ -290,7 +293,7 @@ class _ContinueWithAgentButtonState extends State<_ContinueWithAgentButton> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         FilledButton.icon(
-          key: const Key('interview-report-continue-agent'),
+          key: const Key('interview-report-return-conversation'),
           onPressed: _busy ? null : _continue,
           icon: _busy
               ? const SizedBox.square(
@@ -298,7 +301,7 @@ class _ContinueWithAgentButtonState extends State<_ContinueWithAgentButton> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.chat_bubble_outline_rounded),
-          label: Text(_busy ? '正在回到原会话…' : '和 Agent 继续复盘'),
+          label: Text(_busy ? '正在回到原会话…' : '返回主聊天'),
         ),
         if (_error != null) ...[
           const SizedBox(height: 8),
@@ -409,10 +412,13 @@ class _ReportFailure extends StatelessWidget {
 }
 
 class _ReadyInterviewReport extends StatelessWidget {
-  const _ReadyInterviewReport({required this.report, this.onContinueWithAgent});
+  const _ReadyInterviewReport({
+    required this.report,
+    this.onReturnToConversation,
+  });
 
   final InterviewReport report;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function()? onReturnToConversation;
 
   @override
   Widget build(BuildContext context) {
@@ -433,9 +439,9 @@ class _ReadyInterviewReport extends StatelessWidget {
           const SizedBox(height: 12),
           _PriorityActions(report: report),
         ],
-        if (onContinueWithAgent != null) ...[
+        if (onReturnToConversation != null) ...[
           const SizedBox(height: 16),
-          _ContinueWithAgentButton(onPressed: onContinueWithAgent!),
+          _ReturnToConversationButton(onPressed: onReturnToConversation!),
         ],
       ],
     );

@@ -908,66 +908,66 @@ void main() {
     expect(await store.read('account-1'), isNull);
   });
 
-  test(
-    'completed interview returns to its source Agent thread for review',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'agent-created-interview',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-        practiceExperience: PracticeExperience.interview,
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practiceClient.complete(launched.lease.practiceThreadId);
-      expect(
-        await harness.conversation.selectThread(
-          launched.lease.practiceThreadId,
-        ),
-        isTrue,
-      );
-      await harness.practiceController.restoreCreatedPractice(
-        sessionId: 'practice-session-1',
-        scene: launched.scene,
-      );
-      expect(
-        harness.practiceController.recordingState,
-        PracticeRecordingState.completed,
-      );
+  test('completed practice returns without sending a review request', () async {
+    final store = _InspectableRecordStore();
+    final harness = await _createHarness();
+    final workspace = PracticeWorkspaceController(
+      conversationController: harness.conversation,
+      practiceController: harness.practiceController,
+      recordStore: store,
+    );
+    addTearDown(() {
+      workspace.dispose();
+      harness.dispose();
+    });
+    await workspace.activateAccount('account-1');
+    final homeThreadId = harness.conversation.threadId;
+    final homeMessages = harness.conversation.messages
+        .map((message) => (message.role, message.text))
+        .toList(growable: false);
+    final launched = await _launchPractice(
+      harness: harness,
+      workspace: workspace,
+      operationId: 'agent-created-interview',
+      sceneId: 'interview-screening',
+      sceneTitle: '招聘初筛',
+      sessionId: 'practice-session-1',
+      practiceExperience: PracticeExperience.interview,
+    );
+    expect(await workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.complete(launched.lease.practiceThreadId);
+    expect(
+      await harness.conversation.selectThread(launched.lease.practiceThreadId),
+      isTrue,
+    );
+    await harness.practiceController.restoreCreatedPractice(
+      sessionId: 'practice-session-1',
+      scene: launched.scene,
+    );
+    expect(
+      harness.practiceController.recordingState,
+      PracticeRecordingState.completed,
+    );
 
-      expect(await workspace.completeAndContinueWithAgent(), isTrue);
+    expect(await workspace.parkCurrentPractice(), isTrue);
 
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(workspace.hasResumable, isFalse);
-      expect(
-        harness.conversation.messages.any(
-          (message) =>
-              message.role == AgentMessageRole.user &&
-              message.text.contains('招聘初筛') &&
-              !message.text.contains('practice-session-1') &&
-              !message.text.contains('练习记录 ID') &&
-              !message.text.contains('profile ID') &&
-              message.text.contains('直接读取这次练习的真实评分与报告'),
-        ),
-        isTrue,
-      );
-    },
-  );
+    expect(harness.conversation.threadId, homeThreadId);
+    expect(workspace.hasResumable, isFalse);
+    expect(
+      harness.conversation.messages
+          .map((message) => (message.role, message.text))
+          .toList(growable: false),
+      homeMessages,
+    );
+    expect(
+      harness.conversation.messages.any(
+        (message) =>
+            message.role == AgentMessageRole.user &&
+            message.text.contains('直接读取这次练习的真实评分与报告'),
+      ),
+      isFalse,
+    );
+  });
 
   test(
     'records stay isolated by account and private cleanup deletes one account',

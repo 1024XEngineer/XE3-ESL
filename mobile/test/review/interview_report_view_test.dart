@@ -203,7 +203,7 @@ void main() {
     expect(find.byKey(const Key('interview-report-dimensions')), findsNothing);
   });
 
-  testWidgets('Agent continuation triggers a server-side report lookup', (
+  testWidgets('return to conversation invokes the completion callback', (
     tester,
   ) async {
     final ready = decodeInterviewReport(
@@ -222,7 +222,7 @@ void main() {
           body: SingleChildScrollView(
             child: InterviewReportPanel(
               controller: controller,
-              onContinueWithAgent: () async {
+              onReturnToConversation: () async {
                 continued = true;
                 return false;
               },
@@ -234,9 +234,11 @@ void main() {
     await controller.load(ready.practiceSessionId);
     await tester.pump();
     await tester.ensureVisible(
-      find.byKey(const Key('interview-report-continue-agent')),
+      find.byKey(const Key('interview-report-return-conversation')),
     );
-    await tester.tap(find.byKey(const Key('interview-report-continue-agent')));
+    await tester.tap(
+      find.byKey(const Key('interview-report-return-conversation')),
+    );
     await tester.pump();
 
     expect(continued, isTrue);

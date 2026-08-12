@@ -368,8 +368,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           title: completion.title,
           speechFeedbackController: widget.speechFeedbackController,
           speechFeedbackSourceKeys: completion.speechFeedbackSourceKeys,
-          onContinueWithAgent:
-              widget.preparationLaunchController?.completeAndContinueWithAgent,
+          onReturnToConversation:
+              widget.preparationLaunchController?.parkCurrentPractice,
         ),
       ),
     );
@@ -507,7 +507,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         return ScenarioPracticeSession(
           practiceController: _practiceController,
           avatarControllerFactory: factory,
-          onPracticeCompleted: launchController?.completeAndContinueWithAgent,
+          onPracticeCompleted: launchController?.parkCurrentPractice,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
         );
@@ -515,7 +515,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       return ScenarioPracticePage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
-        onPracticeCompleted: launchController?.completeAndContinueWithAgent,
+        onPracticeCompleted: launchController?.parkCurrentPractice,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );
@@ -531,7 +531,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           : _openInterviewReport,
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
-      onContinueWithAgent: launchController?.completeAndContinueWithAgent,
+      onReturnToConversation: launchController?.parkCurrentPractice,
     );
   }
 

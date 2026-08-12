@@ -39,7 +39,7 @@ class InterviewPracticePage extends StatefulWidget {
     this.previewMode = false,
     this.practiceController,
     this.onExitRequested,
-    this.onContinueWithAgent,
+    this.onReturnToConversation,
     this.onOpenInterviewReport,
     this.speechFeedbackController,
     this.practicePromptSpeaker,
@@ -49,7 +49,7 @@ class InterviewPracticePage extends StatefulWidget {
   final bool previewMode;
   final PracticeController? practiceController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function()? onReturnToConversation;
   final OpenInterviewPracticeReport? onOpenInterviewReport;
   final SpeechFeedbackController? speechFeedbackController;
   final PracticePromptSpeaker? practicePromptSpeaker;
@@ -226,7 +226,8 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
           ),
         ),
       );
-      if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+      if (mounted &&
+          result == CompletedPracticeRouteResult.returnToConversation) {
         Navigator.of(context).pop(result);
       }
     } finally {
