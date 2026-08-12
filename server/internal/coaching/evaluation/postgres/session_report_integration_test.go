@@ -10,6 +10,7 @@ import (
 
 	evaluationcore "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -102,7 +103,8 @@ func TestPostgresSessionReportReadsLegacyPart1GeneralSceneReport(
 		state.Evaluation.Revision.SceneStrategyRef !=
 			scoring.GeneralSceneStrategyRef ||
 		state.FormalReport == nil || !state.FormalReport.Valid() ||
-		state.FormalReport.Report.DetailSchema != scoring.GeneralSceneSchemaVersion ||
+		state.FormalReport.Report.DetailSchema !=
+			report.IELTSSpeakingPracticeReportSchemaVersion ||
 		len(state.AvailableSections) != 1 ||
 		state.AvailableSections[0] != "PART_1" {
 		t.Fatalf("legacy Part 1 Session report state=%#v err=%v", state, err)
@@ -250,6 +252,14 @@ func installIELTSSessionReportAuthorityFixture(
 	}
 	options := []practice.PracticeOption{
 		{
+			ID: "session-report-full-mock", SceneID: sceneID,
+			Mode: practice.PracticeModeFullMock, DisplayName: "IELTS full mock",
+			SuggestedDurationSeconds: 900,
+			TurnPolicyRef:            practice.IELTSSpeakingFullMockTurnPolicy,
+			SessionPolicyRef:         practice.IELTSSpeakingFullMockSessionPolicy,
+			EvaluationPolicyRef:      scoring.IELTSSpeakingFullMockEvaluationPolicyRef,
+		},
+		{
 			ID: "session-report-part-1", SceneID: sceneID,
 			Mode: practice.PracticeModePart1, DisplayName: "IELTS Part 1",
 			SuggestedDurationSeconds: 300,
@@ -278,9 +288,6 @@ func installIELTSSessionReportAuthorityFixture(
 		if options[index].Mode == mode {
 			options[index] = option
 		}
-	}
-	if mode == practice.PracticeModeFullMock {
-		options = append(options, option)
 	}
 	role := practice.RoleDefinition{
 		ID:                 roleID,

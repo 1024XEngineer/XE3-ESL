@@ -411,9 +411,9 @@ func sessionReportResource(
 		resource.DetailSchema = stored.Report.DetailSchema
 		legacyPracticeReport := state.Evaluation.Revision.SceneStrategyRef ==
 			scoring.GeneralSceneStrategyRef
-		if legacyPracticeReport !=
-			(resource.DetailSchema ==
-				legacyIELTSSpeakingPracticeReportSchemaVersion) {
+		if !legacyPracticeReport &&
+			resource.DetailSchema ==
+				legacyIELTSSpeakingPracticeReportSchemaVersion {
 			return SessionReportResource{}, evaluation.ErrInvalidRequest
 		}
 		resource.ReportID = stored.ReportID

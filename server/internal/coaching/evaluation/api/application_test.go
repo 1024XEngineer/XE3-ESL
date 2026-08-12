@@ -523,6 +523,11 @@ func TestSessionReportResourceReadsSupportedReadyPracticeSchemas(
 			legacy:       true,
 		},
 		{
+			name:         "legacy strategy with dedicated practice report",
+			detailSchema: ieltsSpeakingPracticeReportSchemaVersion,
+			legacy:       true,
+		},
+		{
 			name:         "unknown report",
 			detailSchema: "unknown-report/v1",
 			wantError:    evaluation.ErrInvalidRequest,
