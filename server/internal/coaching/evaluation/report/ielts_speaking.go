@@ -513,19 +513,20 @@ func ieltsSpeakingOverallExplanation(
 	band float64,
 	criteria []IELTSSpeakingReportCriterion,
 ) string {
-	intro := "考生能够在熟悉话题中表达基本意思，但语言控制仍会给交流带来一定负担。"
+	intro := "你能够表达部分基本信息，但回答的完整度、语言准确性和清晰度仍会明显影响交流。"
 	switch {
 	case band >= 8:
-		intro = "考生能够流畅、清晰且精确地讨论熟悉和抽象话题，语言运用自然，整体交流几乎不受影响。"
+		intro = "你能够流畅、清晰且准确地讨论熟悉和抽象话题，语言运用自然，交流几乎不受影响。"
 	case band >= 7:
-		intro = "考生能够较自然地展开观点并进行连贯交流，语言范围和控制较好，少量不准确或犹豫通常不影响理解。"
+		intro = "你能够自然地展开观点并保持连贯交流，词汇和句式运用较灵活；少量犹豫或错误通常不影响理解。"
 	case band >= 6:
-		intro = "考生能够清楚回答问题并表达主要观点，整体交流可以顺利进行；在较长或较复杂的回答中，语言的连贯性、精确度或稳定性仍会波动。"
+		intro = "你能够清楚回答问题并表达主要观点，交流大多可以顺利进行；回答变长或内容更复杂时，连贯性、准确性或清晰度仍会波动。"
 	case band >= 5:
-		intro = "考生能够围绕常见话题传达主要意思，但回答展开和语言控制不够稳定，遇到复杂内容时会增加听者的理解负担。"
+		intro = "你能够就熟悉话题表达主要意思，听者通常可以理解；但回答变长或内容更复杂时，观点展开和语言控制还不够稳定。"
 	case band < 4.5:
-		intro = "考生能够传达部分基本信息，但回答展开、语言准确性和整体清晰度较受限制，交流需要听者较多配合。"
+		intro = "你能够传达部分基本信息，但回答的完整度、语言准确性和清晰度仍会明显影响交流。"
 	}
+	intro = fmt.Sprintf("本次口语练习估分为 %s 分。%s", formatIELTSBand(band), intro)
 	if len(criteria) == 0 {
 		return intro
 	}
@@ -546,43 +547,17 @@ func ieltsSpeakingOverallExplanation(
 		return intro
 	}
 	if maximum == minimum {
-		strengthFocus := ""
-		improvementFocus := ""
-		for _, criterion := range criteria {
-			if strengthFocus == "" && len(criterion.Strengths) > 0 {
-				strengthFocus = truncateIELTSReportText(
-					criterion.Strengths[0].Message,
-					220,
-				)
-			}
-			if improvementFocus == "" && len(criterion.Improvements) > 0 {
-				improvementFocus = truncateIELTSReportText(
-					criterion.Improvements[0].Message,
-					220,
-				)
-			}
-		}
-		detail := ""
-		if strengthFocus != "" {
-			detail += " 已核验优势是：" + strengthFocus
-		}
-		if improvementFocus != "" {
-			detail += " 当前首先要改善的是：" + improvementFocus
-		}
 		return truncateIELTSReportText(
 			fmt.Sprintf(
-				"%s 四项均为 %d 分，表现较为均衡。%s 下方各维度列出了对应原句与具体练法。",
+				"%s 四项均为 %d 分，当前表现较为均衡，没有明显的单项优势或短板。下一步建议进行完整回答训练：每次连续回答 60 秒，并依次检查观点是否展开、用词是否准确、句式是否完整、表达是否容易听懂。",
 				intro,
 				maximum,
-				strings.TrimSpace(detail),
 			),
 			reportMaximumTextBytes,
 		)
 	}
 	highNames := []string{}
 	lowNames := []string{}
-	highFocus := ""
-	lowFocus := ""
 	for _, criterion := range criteria {
 		if criterion.EstimatedBand == nil {
 			continue
@@ -592,42 +567,108 @@ func ieltsSpeakingOverallExplanation(
 				highNames,
 				ieltsCriterionName(criterion.CriterionID),
 			)
-			if highFocus == "" && len(criterion.Strengths) > 0 {
-				highFocus = truncateIELTSReportText(
-					criterion.Strengths[0].Message,
-					220,
-				)
-			}
 		}
 		if *criterion.EstimatedBand == minimum {
 			lowNames = append(
 				lowNames,
 				ieltsCriterionName(criterion.CriterionID),
 			)
-			if lowFocus == "" && len(criterion.Improvements) > 0 {
-				lowFocus = truncateIELTSReportText(
-					criterion.Improvements[0].Message,
-					240,
-				)
-			}
 		}
 	}
-	result := fmt.Sprintf(
-		"%s 从四项表现看，%s（%d 分）是相对优势；%s（%d 分）是优先提升方向。",
-		intro,
-		strings.Join(highNames, "、"),
-		maximum,
-		strings.Join(lowNames, "、"),
-		minimum,
-	)
-	if highFocus != "" {
-		result += " 这项优势的已核验证据表明：" + highFocus
+	result := intro
+	if len(highNames) == 1 {
+		result += fmt.Sprintf(
+			" 当前优势是%s（%d 分）：%s",
+			strings.Join(highNames, "、"),
+			maximum,
+			ieltsOverallCriterionMeaning(criteria, maximum),
+		)
+	} else {
+		result += fmt.Sprintf(
+			" 当前相对优势是%s（%d 分），这些维度共同支撑了你的整体表现。",
+			strings.Join(highNames, "、"),
+			maximum,
+		)
 	}
-	if lowFocus != "" {
-		result += " 短板对应的已核验回答显示：" + lowFocus
+	if len(lowNames) == 1 {
+		result += fmt.Sprintf(
+			" 首要提升的是%s（%d 分）：%s",
+			strings.Join(lowNames, "、"),
+			minimum,
+			ieltsOverallCriterionMeaning(criteria, minimum),
+		)
+	} else {
+		result += fmt.Sprintf(
+			" 优先提升的是%s（%d 分），需要结合下方反馈逐项练习。",
+			strings.Join(lowNames, "、"),
+			minimum,
+		)
 	}
-	result += " 下方各维度列出了对应原句与具体练法。"
+	result += " 下一步先做：" + ieltsOverallNextStep(criteria, minimum)
 	return truncateIELTSReportText(result, reportMaximumTextBytes)
+}
+
+func formatIELTSBand(band float64) string {
+	if band == float64(int(band)) {
+		return fmt.Sprintf("%d", int(band))
+	}
+	return fmt.Sprintf("%.1f", band)
+}
+
+func ieltsOverallCriterionMeaning(
+	criteria []IELTSSpeakingReportCriterion,
+	band int,
+) string {
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil || *criterion.EstimatedBand != band {
+			continue
+		}
+		switch criterion.CriterionID {
+		case scoring.IELTSCriterionFC:
+			if band >= 6 {
+				return "主要观点通常容易跟随，较长回答中的衔接和展开仍可更稳定。"
+			}
+			return "你能给出基本回答，但停顿、重复或重新起句会打断观点推进。"
+		case scoring.IELTSCriterionLR:
+			if band >= 6 {
+				return "现有词汇能支撑话题表达，复杂内容中的选词和改述仍可更准确。"
+			}
+			return "常用词汇可以传达基本意思，但重复、模糊选词或搭配不自然会降低表达的准确度。"
+		case scoring.IELTSCriterionGRA:
+			if band >= 6 {
+				return "你能使用简单句和部分复杂句表达主要意思，较复杂结构的稳定性仍可提升。"
+			}
+			return "你能够使用基础句式，但语法错误或句子不完整有时会让意思变得不够清楚。"
+		case scoring.IELTSCriterionPR:
+			if band >= 6 {
+				return "整体发音较清楚，主要意思容易听懂，较长表达中的清晰度仍可更稳定。"
+			}
+			return "多数基本内容可以听懂，但整句清晰度和语流稳定性仍需要加强。"
+		}
+	}
+	return ""
+}
+
+func ieltsOverallNextStep(
+	criteria []IELTSSpeakingReportCriterion,
+	minimum int,
+) string {
+	for _, criterion := range criteria {
+		if criterion.EstimatedBand == nil || *criterion.EstimatedBand != minimum {
+			continue
+		}
+		switch criterion.CriterionID {
+		case scoring.IELTSCriterionFC:
+			return "用“观点—原因—例子”结构完成 60 秒连续作答；录音复听时标出停顿、重复和重新起句的位置，再完整重答一次。"
+		case scoring.IELTSCriterionLR:
+			return "围绕一个高频话题准备 5 组常用搭配和 2 种改述方式，并在 60 秒回答中实际使用，避免只背单词。"
+		case scoring.IELTSCriterionGRA:
+			return "选取本次回答中的 3 个基础句，分别加入原因、条件或对比信息，改写后朗读并检查句子是否完整准确。"
+		case scoring.IELTSCriterionPR:
+			return "选取一段完整回答做两轮跟读和录音对比，复听时只检查整句是否容易听清、节奏是否稳定。"
+		}
+	}
+	return "结合下方各维度的原句和练法，先完成一轮针对性练习。"
 }
 
 func ieltsCriterionName(criterion scoring.IELTSCriterion) string {

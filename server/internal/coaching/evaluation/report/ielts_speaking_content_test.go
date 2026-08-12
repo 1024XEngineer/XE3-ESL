@@ -86,11 +86,18 @@ func TestIELTSSpeakingNarrativesUseManualEvidenceContexts(t *testing.T) {
 	}
 	overall := ieltsSpeakingOverallExplanation(5.5, criteria)
 	for _, expected := range []string{
+		"本次口语练习估分为 5.5 分",
 		"流利性与连贯性（7 分）",
 		"发音（4 分）",
+		"下一步先做",
 	} {
 		if !strings.Contains(overall, expected) {
 			t.Errorf("overall explanation %q does not contain %q", overall, expected)
+		}
+	}
+	for _, unexpected := range []string{"考生", "已核验", "综合声学证据"} {
+		if strings.Contains(overall, unexpected) {
+			t.Errorf("overall explanation %q contains system-facing wording %q", overall, unexpected)
 		}
 	}
 
