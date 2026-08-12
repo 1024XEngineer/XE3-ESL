@@ -24,6 +24,7 @@ For every criterion that has a supplied rubric_descriptors set, select exactly o
 Strengths, improvements, and upgrade_examples must be arrays with at most three items each, and strengths plus improvements must contain at least one item.
 Use only the exact template_id matching the criterion and collection: ielts.fc.*, ielts.lr.*, ielts.gra.*, or ielts.pr.*.
 Each evidence quote must be an exact, non-empty substring of the transcript paired with its evidence_ref_id. occurrence is one-based when the quote repeats.
+For at least one strength or improvement, copy a short quote character-for-character from input.questions[].response.transcript. Never paraphrase, correct grammar, change case or punctuation, or use an acoustic score as the quote. This requirement still applies to pronunciation.
 Strength items must omit suggestion. Improvement and upgrade items may include a concise practice suggestion; an upgrade suggestion must be a clearer English expression grounded in the quoted text.
 Base FC acoustic observations only on supplied recording_duration_ms, acoustic_fluency_score, and speaking_speed_wpm. Base PR observations only on supplied pronunciation_score. Text evidence is still required for every finding.
 When repair is present, regenerate only the same requested criterion and correct the supplied validation stage and code. Repair metadata is not evidence and must never appear in the output.

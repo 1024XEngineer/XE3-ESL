@@ -198,6 +198,34 @@ func TestIELTSSpeakingPromptV7MigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingPracticeBandRuntimeMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(
+		t,
+		"000092_evaluation_ielts_practice_band_runtime.up.sql",
+	)
+	for _, required := range []string{
+		"IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V8",
+		"EVALUATION_IELTS_SCENE_RESULTS_V8_LINEAGE_CHECK",
+		"ASSIGNMENT ->> 'MODE'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("IELTS practice Band migration is missing %q", required)
+		}
+	}
+	down := readMigration(
+		t,
+		"000092_evaluation_ielts_practice_band_runtime.down.sql",
+	)
+	if strings.Contains(
+		down,
+		"'IELTS-SPEAKING-FULL-MOCK-SHADOW-PROMPT/V8'",
+	) {
+		t.Error("IELTS practice Band rollback must restore Prompt v7")
+	}
+}
+
 func TestProviderQualifiedModelIDsMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 

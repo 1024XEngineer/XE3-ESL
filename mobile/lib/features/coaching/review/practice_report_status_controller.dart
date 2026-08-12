@@ -50,7 +50,6 @@ final class PracticeReportStatusController extends ChangeNotifier {
             PracticeReportEvaluationStatus.failed &&
         currentStatus?.stableFailure?.retryable == true &&
         currentStatus?.evaluationId != null &&
-        currentStatus?.reportScope == PracticeReportScope.fullMock &&
         client is PracticeReportRegenerationClient;
   }
 

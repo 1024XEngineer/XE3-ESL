@@ -557,8 +557,6 @@ func readyPart1SessionReportState(
 	detailSchema string,
 ) (string, evaluationreport.SessionReportReadState) {
 	value := evaluationTestIELTSValue(evaluation.StatusReady)
-	value.Revision.SceneStrategyRef = scoring.GeneralSceneStrategyRef
-	value.Revision.PipelineVersion = scoring.GeneralScenePipelineVersion
 	stored := evaluationreport.StoredFormalReport{
 		ReportID:             "30000000-0000-4000-8000-000000000001",
 		EvaluationID:         value.ID,
@@ -577,8 +575,8 @@ func readyPart1SessionReportState(
 			Summary:            "本次专项练习已生成报告。",
 			Dimensions: []evaluationreport.ReportDimension{
 				{
-					Key:          "fluency",
-					Scale:        evaluationreport.ReportScalePercentage100,
+					Key:          "IELTS_FC",
+					Scale:        evaluationreport.ReportScaleIELTSBand,
 					Coverage:     1,
 					Confidence:   1,
 					ReasonCodes:  []string{},
@@ -818,6 +816,29 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 		t.Fatalf(
 			"IELTS Session failed report resource = %#v, %v",
 			sessionResource,
+			err,
+		)
+	}
+	providerFailed := evaluationTestIELTSValue(evaluation.StatusFailed)
+	providerResource, err := sessionReportResource(
+		providerFailed.PracticeSessionID,
+		providerFailed.OwnerUserID,
+		evaluationreport.SessionReportReadState{
+			PracticeMode:      "PART_1",
+			AvailableSections: []string{"PART_1"},
+			Status:            evaluation.StatusFailed,
+			Evaluation:        &providerFailed,
+			Failure: &evaluationreport.SessionReportFailure{
+				Code: "provider_invalid_response",
+			},
+		},
+	)
+	if err != nil || providerResource.StableFailure == nil ||
+		providerResource.StableFailure.ReasonCode != ReasonInternalRetryable ||
+		!providerResource.StableFailure.Retryable {
+		t.Fatalf(
+			"provider Session failure resource = %#v, %v",
+			providerResource,
 			err,
 		)
 	}

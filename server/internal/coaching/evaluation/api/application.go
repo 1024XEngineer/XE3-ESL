@@ -444,8 +444,8 @@ func sessionReportAuthority(mode string) (
 	}
 	return reportScope,
 		ieltsSpeakingPracticeReportSchemaVersion,
-		scoring.GeneralSceneStrategyRef,
-		scoring.GeneralScenePipelineVersion,
+		scoring.IELTSSpeakingShadowStrategyRef,
+		scoring.IELTSSpeakingShadowPipelineVersion,
 		true
 }
 
@@ -460,6 +460,11 @@ func sessionReportFailure(
 	case "source_not_found":
 		return EvaluationFailure{ReasonCode: ReasonEvidenceRefInvalid}
 	case "evaluation_unavailable":
+		return EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	case "provider_invalid_response":
 		return EvaluationFailure{
 			ReasonCode: ReasonInternalRetryable,
 			Retryable:  true,

@@ -181,7 +181,7 @@ void main() {
     );
   });
 
-  test('wire client rejects section regeneration before transport', () async {
+  test('wire client creates a Part 2 replacement revision', () async {
     final transport = _Transport(
       const IdentityHttpResponse(statusCode: HttpStatus.accepted, body: '{}'),
     );
@@ -199,16 +199,19 @@ void main() {
       transport: transport,
     );
 
-    await expectLater(
-      client.regenerateReport(
-        _status(
-          PracticeReportEvaluationStatus.failed,
-          withEvaluationIdentity: true,
-        ),
+    await client.regenerateReport(
+      _status(
+        PracticeReportEvaluationStatus.failed,
+        withEvaluationIdentity: true,
       ),
-      throwsA(isA<PracticeReportStatusException>()),
     );
-    expect(transport.method, isNull);
+
+    expect(transport.method, 'POST');
+    expect(jsonDecode(transport.body!), <String, Object>{
+      'channels': <String>['SCENE'],
+      'scene_strategy_ref': 'ielts-speaking-full-mock-shadow/v1',
+      'pipeline_version': 'evaluation-pipeline-shadow/v1',
+    });
   });
 
   test('decodes the frozen Part 2 + Part 3 READY contract', () {
@@ -674,7 +677,7 @@ void main() {
     expect(find.text('重试打开'), findsOneWidget);
   });
 
-  testWidgets('section FAILED with identity cannot regenerate', (tester) async {
+  testWidgets('section FAILED with identity can regenerate', (tester) async {
     final client = _RegeneratingStatusClient(
       _status(
         PracticeReportEvaluationStatus.failed,
@@ -701,11 +704,17 @@ void main() {
 
     expect(
       find.byKey(const Key('ielts-completion-report-retry')),
-      findsNothing,
+      findsOneWidget,
     );
-    await controller.regenerate();
-    expect(client.regenerationCalls, 0);
-    expect(client.statusCalls, 1);
+    await tester.tap(find.byKey(const Key('ielts-completion-report-retry')));
+    await tester.pump();
+    await tester.pump();
+    expect(client.regenerationCalls, 1);
+    expect(client.statusCalls, 2);
+    expect(
+      find.byKey(const Key('ielts-completion-report-generating')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('handoff FAILED without identity cannot regenerate', (

@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -173,6 +174,48 @@ func TestPostgresIELTSSpeakingReportReadIsOwnerScoped(
 		evaluation.PracticeSessionID,
 	); !errors.Is(err, evaluationcore.ErrNotFound) {
 		t.Fatalf("cross-owner report error = %v", err)
+	}
+}
+
+func TestPostgresIELTSSpeakingPart1ResultBindingAndFormalReport(t *testing.T) {
+	snapshot := generalSceneTestSnapshot(
+		t,
+		evaluationcore.SceneIELTSSpeaking,
+		scene.PracticeExperienceIELTSSpeaking,
+		scene.SceneCategoryIELTSSpeaking,
+		scene.PracticeModePart1,
+		"I prefer happy music because it gives me energy.",
+	)
+	pool, repository, configuration, value :=
+		prepareIELTSSpeakingShadowRuntimeWithSnapshot(t, snapshot)
+	claim := claimIELTSSpeakingShadow(t, repository, configuration)
+	result := evaluateIELTSSpeakingClaim(t, claim)
+	if err := repository.CompleteIELTSSpeakingShadow(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("complete Part 1 IELTS result: %v", err)
+	}
+	var resultCount, reportCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*)
+			 FROM evaluation_ielts_speaking_scene_results
+			 WHERE evaluation_revision_id = $1),
+			(SELECT count(*)
+			 FROM evaluation_formal_reports
+			 WHERE evaluation_revision_id = $1
+			   AND practice_mode = 'PART_1')
+	`, value.Revision.ID).Scan(&resultCount, &reportCount); err != nil {
+		t.Fatalf("count Part 1 IELTS artifacts: %v", err)
+	}
+	if resultCount != 1 || reportCount != 1 {
+		t.Fatalf(
+			"Part 1 IELTS artifacts results=%d reports=%d",
+			resultCount,
+			reportCount,
+		)
 	}
 }
 
@@ -461,7 +504,7 @@ func TestPostgresIELTSSpeakingResultConstraintRejectsFCBand(
 	}
 }
 
-func TestPostgresIELTSSpeakingPromptV7LineageConstraintAndRoundTrip(
+func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
 	t *testing.T,
 ) {
 	pool, repository, configuration, evaluation :=
@@ -588,8 +631,8 @@ func TestPostgresIELTSSpeakingPromptV7LineageConstraintAndRoundTrip(
 			var databaseError *pgconn.PgError
 			if !errors.As(err, &databaseError) ||
 				databaseError.ConstraintName !=
-					"evaluation_ielts_scene_results_v7_lineage_check" {
-				t.Fatalf("invalid v7 lineage error = %v", err)
+					"evaluation_ielts_scene_results_v8_lineage_check" {
+				t.Fatalf("invalid v8 lineage error = %v", err)
 			}
 		})
 	}
@@ -599,7 +642,7 @@ func TestPostgresIELTSSpeakingPromptV7LineageConstraintAndRoundTrip(
 		claim,
 		result,
 	); err != nil {
-		t.Fatalf("complete valid v7 lineage: %v", err)
+		t.Fatalf("complete valid v8 lineage: %v", err)
 	}
 	state, err := repository.GetIELTSSpeakingShadowState(
 		context.Background(),
@@ -608,10 +651,10 @@ func TestPostgresIELTSSpeakingPromptV7LineageConstraintAndRoundTrip(
 		evaluation.Revision.ID,
 	)
 	if err != nil {
-		t.Fatalf("read v7 lineage: %v", err)
+		t.Fatalf("read v8 lineage: %v", err)
 	}
 	if state.Result == nil {
-		t.Fatal("round-trip v7 result is missing")
+		t.Fatal("round-trip v8 result is missing")
 	}
 	want, err := json.Marshal(result.Provider)
 	if err != nil {
@@ -626,7 +669,7 @@ func TestPostgresIELTSSpeakingPromptV7LineageConstraintAndRoundTrip(
 	}
 }
 
-func TestPostgresIELTSSpeakingPromptV7AllowsNoProviderLineageWhenInsufficient(
+func TestPostgresIELTSSpeakingPromptV8AllowsNoProviderLineageWhenInsufficient(
 	t *testing.T,
 ) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount-1)
@@ -643,7 +686,7 @@ func TestPostgresIELTSSpeakingPromptV7AllowsNoProviderLineageWhenInsufficient(
 		claim,
 		result,
 	); err != nil {
-		t.Fatalf("complete insufficient v7 result: %v", err)
+		t.Fatalf("complete insufficient v8 result: %v", err)
 	}
 	state, err := repository.GetIELTSSpeakingShadowState(
 		context.Background(),
@@ -652,7 +695,7 @@ func TestPostgresIELTSSpeakingPromptV7AllowsNoProviderLineageWhenInsufficient(
 		evaluation.Revision.ID,
 	)
 	if err != nil {
-		t.Fatalf("read insufficient v7 result: %v", err)
+		t.Fatalf("read insufficient v8 result: %v", err)
 	}
 	if state.Result == nil || state.Result.Provider != nil ||
 		state.Result.Scoreability !=
