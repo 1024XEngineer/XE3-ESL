@@ -437,7 +437,9 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     }
     setState(() => _completionInFlight = false);
     if (completed) {
-      Navigator.of(context).pop(CompletedPracticeRouteResult.continueWithAgent);
+      Navigator.of(
+        context,
+      ).pop(CompletedPracticeRouteResult.returnToConversation);
       return;
     }
     ScaffoldMessenger.of(context)
@@ -453,8 +455,8 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('结束练习并复盘？'),
-        content: const Text('结束后将保存本次对话，并进入评分与复盘。'),
+        title: const Text('结束练习？'),
+        content: const Text('结束后将保存本次对话并生成练习报告，稍后可在“复盘”中查看。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -463,7 +465,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
           FilledButton(
             key: const Key('scenario-confirm-completion'),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('结束并复盘'),
+            child: const Text('结束练习'),
           ),
         ],
       ),
@@ -902,7 +904,7 @@ class _ConversationHeader extends StatelessWidget {
                   ? onCompleteRequested
                   : null,
               icon: const Icon(Icons.stop_circle_outlined, size: 18),
-              label: const Text('结束练习并复盘'),
+              label: const Text('结束练习'),
             )
           else
             Flexible(
@@ -1170,8 +1172,8 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
                 : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.completed => PracticeComposerAction(
-            label: '练习已完成，可以返回继续对话。',
-            actionLabel: '完成并返回',
+            label: '练习已结束，报告生成后可在“复盘”中查看。',
+            actionLabel: '返回主聊天',
             onPressed: widget.onPracticeCompleted,
           ),
         },

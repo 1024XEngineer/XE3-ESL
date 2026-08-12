@@ -322,7 +322,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           ),
         );
       } else if (mounted &&
-          result == CompletedPracticeRouteResult.continueWithAgent) {
+          result == CompletedPracticeRouteResult.returnToConversation) {
         setState(() => _selectedIndex = 0);
       }
     } finally {

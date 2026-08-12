@@ -399,7 +399,7 @@ enum PracticeSessionLifecycleStatus {
   endedEarly,
 }
 
-enum CompletedPracticeRouteResult { continueWithAgent }
+enum CompletedPracticeRouteResult { returnToConversation }
 
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({

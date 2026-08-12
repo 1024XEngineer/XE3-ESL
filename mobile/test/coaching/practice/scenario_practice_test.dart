@@ -149,7 +149,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('scenario-complete-practice')));
     await tester.pumpAndSettle();
-    expect(find.text('结束练习并复盘？'), findsOneWidget);
+    expect(find.text('结束练习？'), findsOneWidget);
+    expect(find.text('结束后将保存本次对话并生成练习报告，稍后可在“复盘”中查看。'), findsOneWidget);
     await tester.tap(find.byKey(const Key('scenario-confirm-completion')));
     await tester.pumpAndSettle();
 
@@ -578,7 +579,7 @@ void main() {
       );
       expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
       expect(find.text('正在生成评分与纠错…'), findsNothing);
-      expect(find.text('完成并返回'), findsOneWidget);
+      expect(find.text('返回主聊天'), findsOneWidget);
     },
   );
 
@@ -606,7 +607,7 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('完成并返回'));
+    await tester.tap(find.text('返回主聊天'));
     await tester.pump();
 
     expect(completionCalls, 1);
