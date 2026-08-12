@@ -907,21 +907,6 @@ class _CriterionFeedback extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: _criterionColor(
-                      criterion.id,
-                    ).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _criterionIcon(criterion.id),
-                    color: _criterionColor(criterion.id),
-                  ),
-                ),
-                const SizedBox(width: SpeakUpDesign.space12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1075,16 +1060,6 @@ String _criterionEnglishLabel(IeltsSpeakingCriterionId criterion) =>
     };
 
 Color _criterionColor(IeltsSpeakingCriterionId _) => SpeakUpDesign.ink;
-
-IconData _criterionIcon(IeltsSpeakingCriterionId criterion) =>
-    switch (criterion) {
-      IeltsSpeakingCriterionId.fluencyAndCoherence =>
-        Icons.auto_stories_rounded,
-      IeltsSpeakingCriterionId.lexicalResource => Icons.translate_rounded,
-      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy =>
-        Icons.task_alt_rounded,
-      IeltsSpeakingCriterionId.pronunciation => Icons.record_voice_over_rounded,
-    };
 
 String _durationLabel(int durationMs) {
   final totalSeconds = durationMs ~/ 1000;
