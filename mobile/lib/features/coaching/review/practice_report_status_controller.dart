@@ -9,7 +9,7 @@ final class PracticeReportStatusController extends ChangeNotifier {
   PracticeReportStatusController({
     required this.client,
     this.pollInterval = const Duration(seconds: 2),
-    this.maximumPollAttempts = 30,
+    this.maximumPollAttempts = 150,
   }) {
     if (pollInterval < Duration.zero) {
       throw ArgumentError.value(pollInterval, 'pollInterval');

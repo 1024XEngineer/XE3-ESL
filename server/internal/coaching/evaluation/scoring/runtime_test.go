@@ -1,6 +1,9 @@
 package scoring
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	t.Parallel()
@@ -38,6 +41,14 @@ func TestRuntimeConfigurationsAreDeterministic(t *testing.T) {
 	}
 	if firstIELTS.MaxAttempts != runtimeMaxAttempts {
 		t.Fatalf("IELTS max attempts = %d", firstIELTS.MaxAttempts)
+	}
+	if firstIELTS.AcousticWaitDuration !=
+		IELTSAcousticSnapshotWaitDurationV1 ||
+		IELTSAcousticSnapshotWaitDurationV1 != 120*time.Second {
+		t.Fatalf(
+			"IELTS acoustic wait = %s",
+			firstIELTS.AcousticWaitDuration,
+		)
 	}
 
 	firstGeneral, err := generalRuntimeConfiguration(configuration)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
@@ -84,6 +85,8 @@ type durableSceneJobClaim struct {
 	Provider             string
 	Model                string
 	Snapshot             evidence.EvidenceSnapshot
+	AcousticSnapshot     *scoring.IELTSAcousticSnapshot
+	InputBundleHash      [sha256.Size]byte
 }
 
 func (claim durableSceneJobClaim) valid(spec durableSceneJobSpec) bool {
@@ -106,7 +109,26 @@ func (claim durableSceneJobClaim) valid(spec durableSceneJobSpec) bool {
 		claim.Snapshot.Valid() &&
 		claim.Snapshot.OwnerUserID == claim.OwnerUserID &&
 		claim.Snapshot.Scope == evaluation.ScopeSession &&
-		claim.Snapshot.SceneType == spec.sceneType
+		claim.Snapshot.SceneType == spec.sceneType &&
+		claim.validAcousticBinding(spec)
+}
+
+func (claim durableSceneJobClaim) validAcousticBinding(
+	spec durableSceneJobSpec,
+) bool {
+	requiresAcoustics := spec.sceneType == evaluation.SceneIELTSSpeaking &&
+		spec.strategyRef == scoring.IELTSSpeakingShadowStrategyRef
+	if !requiresAcoustics {
+		return claim.AcousticSnapshot == nil &&
+			claim.InputBundleHash == ([sha256.Size]byte{})
+	}
+	return claim.AcousticSnapshot != nil &&
+		!claim.AcousticSnapshot.CreatedAt.IsZero() &&
+		claim.AcousticSnapshot.ValidFor(claim.Snapshot) &&
+		claim.InputBundleHash == scoring.IELTSAcousticInputBundleHash(
+			claim.Snapshot,
+			*claim.AcousticSnapshot,
+		)
 }
 
 type durableSceneJobFailure struct {

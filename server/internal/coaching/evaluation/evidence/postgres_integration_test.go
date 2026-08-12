@@ -619,6 +619,15 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 
 func TestEvidenceSnapshotMigrationDownRemovesOwnedSchema(t *testing.T) {
 	pool := evidenceSnapshotDatabase(t)
+	acousticDown, err := migrations.Files.ReadFile(
+		"000088_evaluation_ielts_acoustic_snapshot.down.sql",
+	)
+	if err != nil {
+		t.Fatalf("read IELTS acoustic snapshot down migration: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), string(acousticDown)); err != nil {
+		t.Fatalf("apply IELTS acoustic snapshot down migration: %v", err)
+	}
 	down, err := migrations.Files.ReadFile(
 		"000036_evaluation_evidence_snapshots.down.sql",
 	)

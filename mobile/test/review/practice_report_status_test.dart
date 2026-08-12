@@ -415,6 +415,38 @@ void main() {
   );
 
   test(
+    'default polling budget outlives the acoustic validation barrier',
+    () async {
+      final client = _ScriptedStatusClient(<Object>[
+        for (var attempt = 0; attempt < 30; attempt++)
+          _status(
+            PracticeReportEvaluationStatus.queued,
+            practiceMode: PracticeMode.fullMock,
+            withEvaluationIdentity: true,
+          ),
+        _status(
+          PracticeReportEvaluationStatus.ready,
+          practiceMode: PracticeMode.fullMock,
+        ),
+      ]);
+      final controller = PracticeReportStatusController(
+        client: client,
+        pollInterval: Duration.zero,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load('session_595');
+
+      expect(client.statusCalls, 31);
+      expect(
+        controller.status?.evaluationStatus,
+        PracticeReportEvaluationStatus.ready,
+      );
+      expect(controller.errorMessage, isNull);
+    },
+  );
+
+  test(
     'controller stops retryable status polling at the configured bound',
     () async {
       final client = _ScriptedStatusClient(const <Object>[

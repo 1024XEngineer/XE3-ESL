@@ -56,13 +56,15 @@ func durableClaimFromIELTS(
 		Provider:             source.Provider,
 		Model:                source.Model,
 		Snapshot:             source.Snapshot,
+		AcousticSnapshot:     &source.AcousticSnapshot,
+		InputBundleHash:      source.InputBundleHash,
 	}
 }
 
 func ieltsClaimFromDurable(
 	source durableSceneJobClaim,
 ) scoring.IELTSSpeakingShadowClaim {
-	return scoring.IELTSSpeakingShadowClaim{
+	result := scoring.IELTSSpeakingShadowClaim{
 		OutboxID:             source.OutboxID,
 		ModuleRunID:          source.ModuleRunID,
 		EvaluationID:         source.EvaluationID,
@@ -79,7 +81,12 @@ func ieltsClaimFromDurable(
 		Provider:             source.Provider,
 		Model:                source.Model,
 		Snapshot:             source.Snapshot,
+		InputBundleHash:      source.InputBundleHash,
 	}
+	if source.AcousticSnapshot != nil {
+		result.AcousticSnapshot = *source.AcousticSnapshot
+	}
+	return result
 }
 
 func (r *PostgresRepository) ClaimIELTSSpeakingShadow(

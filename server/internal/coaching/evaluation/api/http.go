@@ -62,8 +62,8 @@ type HTTPApplication interface {
 }
 
 // EvaluationAccepted is the immutable revision identity returned by a write.
-// Fresh writes must be genuinely QUEUED. Idempotent replays may expose the
-// persisted current state without requeuing work.
+// Fresh writes must be waiting for validation or genuinely queued. Idempotent
+// replays may expose the persisted current state without requeuing work.
 type EvaluationAccepted struct {
 	EvaluationID         string
 	EvaluationRevisionID string
@@ -519,7 +519,8 @@ func (accepted EvaluationAccepted) valid() bool {
 		if !validEvaluationStatus(accepted.EvaluationStatus) {
 			return false
 		}
-	} else if accepted.EvaluationStatus != evaluation.StatusQueued {
+	} else if accepted.EvaluationStatus != evaluation.StatusValidating &&
+		accepted.EvaluationStatus != evaluation.StatusQueued {
 		return false
 	}
 	if accepted.Revision == 1 {
@@ -687,7 +688,7 @@ func (resource SessionReportResource) response() sessionReportResponse {
 		ReportScope:          resource.ReportScope,
 		AvailableSections:    append([]string(nil), resource.AvailableSections...),
 		DetailSchema:         resource.DetailSchema,
-		EvaluationStatus:     resource.EvaluationStatus,
+		EvaluationStatus:     reportWireStatus(resource.EvaluationStatus),
 		EvaluationID:         resource.EvaluationID,
 		EvaluationRevisionID: resource.EvaluationRevisionID,
 		Revision:             resource.Revision,
@@ -725,6 +726,10 @@ func (resource SessionReportResource) valid() bool {
 		return false
 	}
 	switch resource.EvaluationStatus {
+	case evaluation.StatusValidating:
+		return hasEvaluation && resource.ReportID == "" &&
+			resource.ScoreabilityStatus == "" && resource.Summary == "" &&
+			resource.StableFailure == nil
 	case evaluation.StatusQueued:
 		return resource.ReportID == "" && resource.ScoreabilityStatus == "" &&
 			resource.Summary == "" && resource.StableFailure == nil
@@ -745,6 +750,13 @@ func (resource SessionReportResource) valid() bool {
 	default:
 		return false
 	}
+}
+
+func reportWireStatus(status evaluation.Status) evaluation.Status {
+	if status == evaluation.StatusValidating {
+		return evaluation.StatusQueued
+	}
+	return status
 }
 
 func validSessionReportShape(
@@ -810,7 +822,7 @@ func (resource IELTSSpeakingReportResource) response() ieltsSpeakingReportRespon
 		EvaluationID:         resource.EvaluationID,
 		EvaluationRevisionID: resource.EvaluationRevisionID,
 		Revision:             resource.Revision,
-		EvaluationStatus:     resource.EvaluationStatus,
+		EvaluationStatus:     reportWireStatus(resource.EvaluationStatus),
 		IsFinal:              resource.IsFinal,
 		StatusURL: "/v1/practice-sessions/" +
 			resource.PracticeSessionID +
@@ -829,7 +841,8 @@ func (resource IELTSSpeakingReportResource) valid() bool {
 		return false
 	}
 	switch resource.EvaluationStatus {
-	case evaluation.StatusQueued, evaluation.StatusRunning:
+	case evaluation.StatusValidating, evaluation.StatusQueued,
+		evaluation.StatusRunning:
 		return resource.Report == nil &&
 			resource.StableFailure == nil
 	case evaluation.StatusReady:

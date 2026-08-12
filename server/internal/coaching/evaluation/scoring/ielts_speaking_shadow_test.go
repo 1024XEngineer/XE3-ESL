@@ -58,18 +58,16 @@ func TestIELTSSpeakingShadowProducesHonestPartialResult(t *testing.T) {
 func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 	t *testing.T,
 ) {
-	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	snapshot := ieltsSpeakingAcousticTestSnapshot(t)
 	provider := &ieltsProviderStub{}
-	acoustics := &ieltsAcousticSourceStub{}
-	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
-		provider,
-		acoustics,
-	).Evaluate(context.Background(), snapshot)
+	acoustics := ieltsAcousticSnapshotForTest(t, snapshot, ieltsTestQuestionCount)
+	result, err := NewIELTSSpeakingShadowEngine(provider).
+		EvaluateWithAcousticSnapshot(context.Background(), snapshot, acoustics)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if acoustics.calls != 1 || len(result.Criteria) != 4 {
-		t.Fatalf("acoustic calls = %d; result = %#v", acoustics.calls, result)
+	if len(result.Criteria) != 4 {
+		t.Fatalf("result = %#v", result)
 	}
 	for _, criterion := range result.Criteria {
 		if criterion.Scoreability != IELTSSpeakingScoreabilityProvisional ||
@@ -81,12 +79,11 @@ func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 }
 
 func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
-	snapshot := ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	snapshot := ieltsSpeakingAcousticTestSnapshot(t)
 	provider := &ieltsProviderStub{}
-	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
-		provider,
-		&ieltsAcousticSourceStub{limit: 4},
-	).Evaluate(context.Background(), snapshot)
+	acoustics := ieltsAcousticSnapshotForTest(t, snapshot, 4)
+	result, err := NewIELTSSpeakingShadowEngine(provider).
+		EvaluateWithAcousticSnapshot(context.Background(), snapshot, acoustics)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -507,39 +504,6 @@ type ieltsProviderStub struct {
 	err     error
 	calls   int
 	input   IELTSSpeakingShadowProviderInput
-}
-
-type ieltsAcousticSourceStub struct {
-	calls int
-	limit int
-	err   error
-}
-
-func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
-	_ context.Context,
-	_ string,
-	requests []IELTSSpeakingAcousticRequest,
-) ([]IELTSSpeakingTurnAcoustics, error) {
-	source.calls++
-	if source.err != nil {
-		return nil, source.err
-	}
-	result := make([]IELTSSpeakingTurnAcoustics, 0, len(requests))
-	for _, request := range requests {
-		if source.limit > 0 && len(result) == source.limit {
-			break
-		}
-		fluency := 76.0
-		result = append(result, IELTSSpeakingTurnAcoustics{
-			TurnID:               request.TurnID,
-			EvidenceRefID:        request.EvidenceRefID,
-			PronunciationScore:   72,
-			AcousticFluencyScore: &fluency,
-			Provider:             "xfyun_ise",
-			ProviderRun:          "run_fixture",
-		})
-	}
-	return result, nil
 }
 
 func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(

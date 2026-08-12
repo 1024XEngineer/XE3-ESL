@@ -15,20 +15,23 @@ import (
 )
 
 type IELTSSpeakingShadowRuntimeConfiguration struct {
-	MaxAttempts     int
-	LeaseDuration   time.Duration
-	StrategyRef     string
-	PipelineVersion string
-	FullConfigHash  [sha256.Size]byte
-	PromptVersion   string
-	Provider        string
-	Model           string
+	MaxAttempts          int
+	LeaseDuration        time.Duration
+	AcousticWaitDuration time.Duration
+	StrategyRef          string
+	PipelineVersion      string
+	FullConfigHash       [sha256.Size]byte
+	PromptVersion        string
+	Provider             string
+	Model                string
 }
 
 func (configuration IELTSSpeakingShadowRuntimeConfiguration) Valid() bool {
-	return durableConfigurationFromIELTS(configuration).valid(
-		ieltsDurableSceneJobSpec,
-	)
+	return configuration.AcousticWaitDuration >= time.Second &&
+		configuration.AcousticWaitDuration <= 10*time.Minute &&
+		durableConfigurationFromIELTS(configuration).valid(
+			ieltsDurableSceneJobSpec,
+		)
 }
 
 type IELTSSpeakingShadowClaim struct {
@@ -48,12 +51,17 @@ type IELTSSpeakingShadowClaim struct {
 	Provider             string
 	Model                string
 	Snapshot             evidence.EvidenceSnapshot
+	AcousticSnapshot     IELTSAcousticSnapshot
+	InputBundleHash      [sha256.Size]byte
 }
 
 func (claim IELTSSpeakingShadowClaim) Valid() bool {
-	return durableClaimFromIELTS(claim).valid(
-		ieltsDurableSceneJobSpec,
-	)
+	return !claim.AcousticSnapshot.CreatedAt.IsZero() &&
+		claim.AcousticSnapshot.ValidFor(claim.Snapshot) &&
+		claim.InputBundleHash == IELTSAcousticInputBundleHash(
+			claim.Snapshot,
+			claim.AcousticSnapshot,
+		) && durableClaimFromIELTS(claim).valid(ieltsDurableSceneJobSpec)
 }
 
 type IELTSSpeakingShadowFailure struct {
@@ -145,9 +153,8 @@ type IELTSSpeakingShadowWorker struct {
 	repository    IELTSSpeakingShadowRuntimeRepository
 	engine        *IELTSSpeakingShadowEngine
 	configuration IELTSSpeakingShadowRuntimeConfiguration
+	freezer       *IELTSAcousticSnapshotFreezer
 }
-
-const ieltsProviderAttemptReserve = 3
 
 func NewIELTSSpeakingShadowWorker(
 	repository IELTSSpeakingShadowRuntimeRepository,
@@ -164,6 +171,35 @@ func NewIELTSSpeakingShadowWorker(
 	}, nil
 }
 
+func NewIELTSSpeakingShadowWorkerWithAcousticSnapshots(
+	repository interface {
+		IELTSSpeakingShadowRuntimeRepository
+		IELTSAcousticSnapshotRepository
+	},
+	engine *IELTSSpeakingShadowEngine,
+	configuration IELTSSpeakingShadowRuntimeConfiguration,
+	source IELTSSpeakingAcousticSource,
+) (*IELTSSpeakingShadowWorker, error) {
+	worker, err := NewIELTSSpeakingShadowWorker(
+		repository,
+		engine,
+		configuration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	freezer, err := NewIELTSAcousticSnapshotFreezer(
+		repository,
+		source,
+		configuration.AcousticWaitDuration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	worker.freezer = freezer
+	return worker, nil
+}
+
 func (worker *IELTSSpeakingShadowWorker) ProcessPending(
 	ctx context.Context,
 	limit int,
@@ -171,6 +207,14 @@ func (worker *IELTSSpeakingShadowWorker) ProcessPending(
 	if worker == nil || worker.repository == nil ||
 		worker.engine == nil || ctx == nil {
 		return IELTSSpeakingShadowSweepResult{}, evaluation.ErrInvalidRequest
+	}
+	var freezerErr error
+	if worker.freezer != nil {
+		_, freezerErr = worker.freezer.ProcessPending(ctx, limit)
+		if errors.Is(freezerErr, context.Canceled) ||
+			errors.Is(freezerErr, context.DeadlineExceeded) || ctx.Err() != nil {
+			return IELTSSpeakingShadowSweepResult{}, freezerErr
+		}
 	}
 	sweep, err := processDurableSceneJobs(
 		ctx,
@@ -198,12 +242,16 @@ func (worker *IELTSSpeakingShadowWorker) ProcessPending(
 			return durableSceneJobStatus(status), processErr
 		},
 	)
-	return IELTSSpeakingShadowSweepResult{
+	result := IELTSSpeakingShadowSweepResult{
 		Claimed:   sweep.Claimed,
 		Completed: sweep.Completed,
 		Retried:   sweep.Retried,
 		Failed:    sweep.Failed,
-	}, err
+	}
+	if err != nil {
+		return result, err
+	}
+	return result, freezerErr
 }
 
 func (worker *IELTSSpeakingShadowWorker) processClaim(
@@ -217,18 +265,11 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 		) {
 		return "", evaluation.ErrInvalidRequest
 	}
-	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
-	if err != nil {
-		if errors.Is(err, ErrIELTSSpeakingAcousticsPending) &&
-			claim.AttemptCount > ieltsAcousticWaitAttemptLimit(
-				worker.configuration.MaxAttempts,
-			) {
-			result, err = worker.engine.evaluateWithoutAcoustics(
-				ctx,
-				claim.Snapshot,
-			)
-		}
-	}
+	result, err := worker.engine.EvaluateWithAcousticSnapshot(
+		ctx,
+		claim.Snapshot,
+		claim.AcousticSnapshot,
+	)
 	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
 	}
@@ -255,17 +296,6 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 		return "", err
 	}
 	return IELTSSpeakingShadowRuntimeReady, nil
-}
-
-func ieltsAcousticWaitAttemptLimit(maxAttempts int) int {
-	if maxAttempts <= 1 {
-		return 0
-	}
-	providerAttempts := min(
-		ieltsProviderAttemptReserve,
-		maxAttempts-1,
-	)
-	return maxAttempts - providerAttempts
 }
 
 func (worker *IELTSSpeakingShadowWorker) recordFailure(
@@ -329,11 +359,6 @@ func classifyIELTSSpeakingShadowFailure(
 	cause error,
 ) IELTSSpeakingShadowFailure {
 	switch {
-	case errors.Is(cause, ErrIELTSSpeakingAcousticsPending):
-		return IELTSSpeakingShadowFailure{
-			Code:      "acoustics_pending",
-			Retryable: true,
-		}
 	case errors.Is(cause, errIELTSSpeakingProviderInvalidJSON):
 		return IELTSSpeakingShadowFailure{
 			Code:      "provider_invalid_json",

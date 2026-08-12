@@ -3,7 +3,9 @@ package speechfeedback
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
@@ -18,95 +20,64 @@ func TestNewIELTSSpeakingAcousticSourceRejectsNilReader(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingAcousticSourceAcceptsSentenceAssessment(t *testing.T) {
+func TestIELTSSpeakingAcousticSourceReturnsVersionBoundAssessment(t *testing.T) {
+	request := ieltsAcousticRequestFixture()
+	completedAt := time.Now().UTC()
 	accuracy := 74.0
 	fluency := 68.0
 	reader := &ieltsSpeakingFeedbackReaderStub{
-		feedback: SpeechFeedback{
-			FeedbackStatus: SpeechFeedbackReady,
-			AcousticAssessment: SpeechFeedbackAcousticAssessment{
-				Pronunciation:   SpeechFeedbackAssessed,
-				AcousticFluency: SpeechFeedbackAssessed,
-				AccuracyScore:   &accuracy,
-				FluencyScore:    &fluency,
-				Provider:        "xfyun_ise",
-				ProviderSession: "session-1",
-			},
-		},
-	}
-	source, err := NewIELTSSpeakingAcousticSource(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	values, err := source.GetIELTSSpeakingAcoustics(
-		context.Background(),
-		"10000000-0000-4000-8000-000000000001",
-		[]scoring.IELTSSpeakingAcousticRequest{{
-			TurnID:        "turn_1",
-			EvidenceRefID: "evidence_1",
-		}},
-	)
-	if err != nil {
-		t.Fatalf("GetIELTSSpeakingAcoustics: %v", err)
-	}
-	if len(values) != 1 || values[0].PronunciationScore != accuracy ||
-		values[0].AcousticFluencyScore == nil ||
-		*values[0].AcousticFluencyScore != fluency ||
-		values[0].SpeakingSpeedWPM != nil {
-		t.Fatalf("acoustics = %#v", values)
-	}
-}
-
-func TestIELTSSpeakingAcousticSourceKeepsValidPartialEvidence(t *testing.T) {
-	accuracy := 82.0
-	fluency := 79.0
-	reader := &ieltsSpeakingFeedbackReaderStub{
-		referenceByTurn: map[string]string{
-			"turn_ready":  "feedback_ready",
-			"turn_failed": "feedback_failed",
-		},
-		feedbackByID: map[string]SpeechFeedback{
-			"feedback_ready": {
-				FeedbackStatus: SpeechFeedbackReady,
-				AcousticAssessment: SpeechFeedbackAcousticAssessment{
+		projections: map[string]ieltsSpeakingAcousticProjection{
+			request.TurnID: {
+				FeedbackStatus:    SpeechFeedbackReady,
+				CompletedAt:       completedAt,
+				EvidenceVersion:   request.EvidenceVersion,
+				AudioAssetID:      request.AudioAssetID,
+				AudioAssetVersion: int64(request.AudioAssetVersion),
+				AudioChecksum:     request.AudioChecksumSHA256,
+				Assessment: SpeechFeedbackAcousticAssessment{
 					Pronunciation:   SpeechFeedbackAssessed,
 					AcousticFluency: SpeechFeedbackAssessed,
 					AccuracyScore:   &accuracy,
 					FluencyScore:    &fluency,
 					Provider:        "xfyun_ise",
-					ProviderSession: "session-ready",
+					ProviderSession: "secret-provider-session",
 				},
 			},
-			"feedback_failed": {FeedbackStatus: SpeechFeedbackFailed},
 		},
 	}
 	source, err := NewIELTSSpeakingAcousticSource(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := source.GetIELTSSpeakingAcoustics(
+	read, err := source.ReadIELTSSpeakingAcoustics(
 		context.Background(),
 		"10000000-0000-4000-8000-000000000001",
-		[]scoring.IELTSSpeakingAcousticRequest{
-			{TurnID: "turn_ready", EvidenceRefID: "evidence_ready"},
-			{TurnID: "turn_failed", EvidenceRefID: "evidence_failed"},
-		},
+		[]scoring.IELTSSpeakingAcousticRequest{request},
+		completedAt,
 	)
-	if err != nil || len(values) != 1 || values[0].TurnID != "turn_ready" {
-		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(read.Values) != 1 || len(read.PendingTurnIDs) != 0 ||
+		read.Values[0].PronunciationScore != accuracy ||
+		read.Values[0].ProviderRun == "secret-provider-session" ||
+		!strings.HasPrefix(read.Values[0].ProviderRun, "run_") {
+		t.Fatalf("read = %#v", read)
 	}
 }
 
-func TestIELTSSpeakingAcousticSourceWaitsForPendingEvidence(
+func TestIELTSSpeakingAcousticSourceReportsPendingWithoutPartialShortcut(
 	t *testing.T,
 ) {
+	request := ieltsAcousticRequestFixture()
 	reader := &ieltsSpeakingFeedbackReaderStub{
-		referenceByTurn: map[string]string{
-			"turn_pending": "feedback_pending",
-		},
-		feedbackByID: map[string]SpeechFeedback{
-			"feedback_pending": {
-				FeedbackStatus: SpeechFeedbackRunning,
+		projections: map[string]ieltsSpeakingAcousticProjection{
+			request.TurnID: {
+				FeedbackStatus:    SpeechFeedbackRunning,
+				EvidenceVersion:   request.EvidenceVersion,
+				AudioAssetID:      request.AudioAssetID,
+				AudioAssetVersion: int64(request.AudioAssetVersion),
+				AudioChecksum:     request.AudioChecksumSHA256,
 			},
 		},
 	}
@@ -114,129 +85,135 @@ func TestIELTSSpeakingAcousticSourceWaitsForPendingEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := source.GetIELTSSpeakingAcoustics(
+	read, err := source.ReadIELTSSpeakingAcoustics(
 		context.Background(),
 		"10000000-0000-4000-8000-000000000001",
-		[]scoring.IELTSSpeakingAcousticRequest{
-			{TurnID: "turn_text", EvidenceRefID: "evidence_text"},
-			{
-				TurnID:              "turn_pending",
-				EvidenceRefID:       "evidence_pending",
-				RecordingDurationMS: 2000,
-			},
-		},
+		[]scoring.IELTSSpeakingAcousticRequest{request},
+		time.Now().Add(time.Minute),
 	)
-	if !errors.Is(err, scoring.ErrIELTSSpeakingAcousticsPending) ||
-		len(values) != 0 {
-		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	if err != nil || len(read.Values) != 0 ||
+		len(read.PendingTurnIDs) != 1 ||
+		read.PendingTurnIDs[0] != request.TurnID {
+		t.Fatalf("read = %#v, err = %v", read, err)
 	}
 }
 
-func TestIELTSSpeakingAcousticSourceUsesSufficientReadyEvidenceWhilePending(
+func TestIELTSSpeakingAcousticSourceExcludesAssessmentCompletedAfterCutoff(
 	t *testing.T,
 ) {
-	accuracy := 82.0
-	fluency := 79.0
-	reader := &ieltsSpeakingFeedbackReaderStub{
-		referenceByTurn: map[string]string{
-			"turn_ready":   "feedback_ready",
-			"turn_pending": "feedback_pending",
-		},
-		feedbackByID: map[string]SpeechFeedback{
-			"feedback_ready": {
-				FeedbackStatus: SpeechFeedbackReady,
-				AcousticAssessment: SpeechFeedbackAcousticAssessment{
-					Pronunciation:   SpeechFeedbackAssessed,
-					AcousticFluency: SpeechFeedbackAssessed,
-					AccuracyScore:   &accuracy,
-					FluencyScore:    &fluency,
-					Provider:        "xfyun_ise",
-					ProviderSession: "session-ready",
-				},
-			},
-			"feedback_pending": {FeedbackStatus: SpeechFeedbackRunning},
-		},
-	}
-	source, err := NewIELTSSpeakingAcousticSource(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	values, err := source.GetIELTSSpeakingAcoustics(
-		context.Background(),
-		"10000000-0000-4000-8000-000000000001",
-		[]scoring.IELTSSpeakingAcousticRequest{
-			{
-				TurnID:              "turn_ready",
-				EvidenceRefID:       "evidence_ready",
-				RecordingDurationMS: 3000,
-			},
-			{
-				TurnID:              "turn_pending",
-				EvidenceRefID:       "evidence_pending",
-				RecordingDurationMS: 2000,
-			},
-		},
-	)
-	if err != nil || len(values) != 1 || values[0].TurnID != "turn_ready" {
-		t.Fatalf("acoustics = %#v; err = %v", values, err)
-	}
-}
-
-func TestIELTSSpeakingAcousticSourceWaitsForMissingRecordedTurn(
-	t *testing.T,
-) {
+	request := ieltsAcousticRequestFixture()
+	cutoff := time.Now().UTC()
+	accuracy := 74.0
+	fluency := 68.0
 	source, err := NewIELTSSpeakingAcousticSource(
 		&ieltsSpeakingFeedbackReaderStub{
-			referenceByTurn: map[string]string{},
+			projections: map[string]ieltsSpeakingAcousticProjection{
+				request.TurnID: {
+					FeedbackStatus:    SpeechFeedbackReady,
+					CompletedAt:       cutoff.Add(time.Millisecond),
+					EvidenceVersion:   request.EvidenceVersion,
+					AudioAssetID:      request.AudioAssetID,
+					AudioAssetVersion: int64(request.AudioAssetVersion),
+					AudioChecksum:     request.AudioChecksumSHA256,
+					Assessment: SpeechFeedbackAcousticAssessment{
+						Pronunciation:   SpeechFeedbackAssessed,
+						AcousticFluency: SpeechFeedbackAssessed,
+						AccuracyScore:   &accuracy,
+						FluencyScore:    &fluency,
+						Provider:        "xfyun_ise",
+						ProviderSession: "late-provider-session",
+					},
+				},
+			},
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := source.GetIELTSSpeakingAcoustics(
+	read, err := source.ReadIELTSSpeakingAcoustics(
 		context.Background(),
 		"10000000-0000-4000-8000-000000000001",
-		[]scoring.IELTSSpeakingAcousticRequest{{
-			TurnID:              "turn_recorded",
-			EvidenceRefID:       "evidence_recorded",
-			RecordingDurationMS: 2000,
-		}},
+		[]scoring.IELTSSpeakingAcousticRequest{request},
+		cutoff,
 	)
-	if !errors.Is(err, scoring.ErrIELTSSpeakingAcousticsPending) ||
-		len(values) != 0 {
-		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	if err != nil || len(read.Values) != 0 || len(read.PendingTurnIDs) != 0 {
+		t.Fatalf("read=%#v err=%v", read, err)
+	}
+}
+
+func TestIELTSSpeakingAcousticSourceRejectsStaleAudioProjection(t *testing.T) {
+	request := ieltsAcousticRequestFixture()
+	base := ieltsSpeakingAcousticProjection{
+		FeedbackStatus:    SpeechFeedbackReady,
+		CompletedAt:       time.Now().UTC(),
+		EvidenceVersion:   request.EvidenceVersion,
+		AudioAssetID:      request.AudioAssetID,
+		AudioAssetVersion: int64(request.AudioAssetVersion),
+		AudioChecksum:     request.AudioChecksumSHA256,
+	}
+	tests := map[string]func(*ieltsSpeakingAcousticProjection){
+		"evidence version": func(value *ieltsSpeakingAcousticProjection) {
+			value.EvidenceVersion++
+		},
+		"audio asset": func(value *ieltsSpeakingAcousticProjection) {
+			value.AudioAssetID = "audio-stale"
+		},
+		"audio version": func(value *ieltsSpeakingAcousticProjection) {
+			value.AudioAssetVersion++
+		},
+		"audio checksum": func(value *ieltsSpeakingAcousticProjection) {
+			value.AudioChecksum = strings.Repeat("cd", 32)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			projection := base
+			mutate(&projection)
+			source, err := NewIELTSSpeakingAcousticSource(
+				&ieltsSpeakingFeedbackReaderStub{
+					projections: map[string]ieltsSpeakingAcousticProjection{
+						request.TurnID: projection,
+					},
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = source.ReadIELTSSpeakingAcoustics(
+				context.Background(),
+				"10000000-0000-4000-8000-000000000001",
+				[]scoring.IELTSSpeakingAcousticRequest{request},
+				time.Now().Add(time.Minute),
+			)
+			if !errors.Is(err, scoring.ErrIELTSAcousticEvidenceInvalid) ||
+				!errors.Is(err, evaluation.ErrInvalidRequest) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func ieltsAcousticRequestFixture() scoring.IELTSSpeakingAcousticRequest {
+	return scoring.IELTSSpeakingAcousticRequest{
+		TurnID:              "turn-1",
+		EvidenceRefID:       "evidence-1",
+		EvidenceVersion:     2,
+		AudioAssetID:        "audio-1",
+		AudioAssetVersion:   3,
+		AudioChecksumSHA256: strings.Repeat("ab", 32),
+		RecordingDurationMS: 4_000,
 	}
 }
 
 type ieltsSpeakingFeedbackReaderStub struct {
-	feedback        SpeechFeedback
-	referenceByTurn map[string]string
-	feedbackByID    map[string]SpeechFeedback
+	projections map[string]ieltsSpeakingAcousticProjection
 }
 
-func (stub *ieltsSpeakingFeedbackReaderStub) FindSpeechFeedbackByConversationTurn(
+func (stub *ieltsSpeakingFeedbackReaderStub) ReadIELTSSpeakingAcousticProjection(
 	_ context.Context,
 	_ string,
 	turnID string,
-) (SpeechFeedbackReference, bool, error) {
-	if id, ok := stub.referenceByTurn[turnID]; ok {
-		return SpeechFeedbackReference{SpeechFeedbackID: id}, true, nil
-	}
-	if stub.referenceByTurn != nil {
-		return SpeechFeedbackReference{}, false, nil
-	}
-	return SpeechFeedbackReference{
-		SpeechFeedbackID: "20000000-0000-4000-8000-000000000001",
-	}, true, nil
-}
-
-func (stub *ieltsSpeakingFeedbackReaderStub) GetSpeechFeedback(
-	_ context.Context,
-	_ string,
-	feedbackID string,
-) (SpeechFeedback, error) {
-	if feedback, ok := stub.feedbackByID[feedbackID]; ok {
-		return feedback, nil
-	}
-	return stub.feedback, nil
+) (ieltsSpeakingAcousticProjection, bool, error) {
+	projection, found := stub.projections[turnID]
+	return projection, found, nil
 }

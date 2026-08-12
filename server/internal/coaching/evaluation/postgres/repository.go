@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -357,6 +358,11 @@ func insertRevision(
 	for index, channel := range config.Channels {
 		channelStrings[index] = string(channel)
 	}
+	requiresIELTSAcousticSnapshot := len(config.Channels) == 1 &&
+		config.Channels[0] == evaluation.ChannelScene &&
+		config.SceneStrategyRef == scoring.IELTSSpeakingShadowStrategyRef &&
+		config.Core4DStrategyRef == "" &&
+		config.PipelineVersion == scoring.IELTSSpeakingShadowPipelineVersion
 	var revisionID string
 	err := tx.QueryRow(ctx, `
 		INSERT INTO evaluation_revisions (
@@ -388,10 +394,28 @@ func insertRevision(
 		INSERT INTO evaluation_revision_states (
 			revision_id,
 			evaluation_id,
-			owner_user_id
+			owner_user_id,
+			evaluation_status
 		)
-		VALUES ($1, $2, $3)
-	`, revisionID, evaluationID, ownerUserID)
+		SELECT $1, $2, $3,
+		       CASE
+		           WHEN $4::boolean
+		            AND ledger.scope = 'SESSION'
+		            AND ledger.scene_type = 'IELTS_SPEAKING'
+		            AND NOT EXISTS (
+		                SELECT 1
+		                FROM evaluation_ielts_speaking_acoustic_snapshots
+		                WHERE evaluation_id = $2
+		                  AND owner_user_id = $3
+		            )
+		           THEN 'VALIDATING'
+		           ELSE 'QUEUED'
+		       END
+		FROM evaluation_ledgers AS ledger
+		WHERE ledger.id = $2
+		  AND ledger.owner_user_id = $3
+	`, revisionID, evaluationID, ownerUserID,
+		requiresIELTSAcousticSnapshot)
 	if err != nil {
 		return evaluation.Evaluation{}, fmt.Errorf(
 			"insert Evaluation revision state: %w",

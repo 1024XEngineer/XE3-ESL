@@ -113,6 +113,8 @@ type durableSceneJobClaim struct {
 	Provider             string
 	Model                string
 	Snapshot             evidence.EvidenceSnapshot
+	AcousticSnapshot     *IELTSAcousticSnapshot
+	InputBundleHash      [sha256.Size]byte
 }
 
 func (claim durableSceneJobClaim) valid(
@@ -137,7 +139,26 @@ func (claim durableSceneJobClaim) valid(
 		claim.Snapshot.Valid() &&
 		claim.Snapshot.OwnerUserID == claim.OwnerUserID &&
 		claim.Snapshot.Scope == evaluation.ScopeSession &&
-		claim.Snapshot.SceneType == spec.sceneType
+		claim.Snapshot.SceneType == spec.sceneType &&
+		claim.validAcousticBinding(spec)
+}
+
+func (claim durableSceneJobClaim) validAcousticBinding(
+	spec durableSceneJobSpec,
+) bool {
+	requiresAcoustics := spec.sceneType == evaluation.SceneIELTSSpeaking &&
+		spec.strategyRef == IELTSSpeakingShadowStrategyRef
+	if !requiresAcoustics {
+		return claim.AcousticSnapshot == nil &&
+			claim.InputBundleHash == ([sha256.Size]byte{})
+	}
+	return claim.AcousticSnapshot != nil &&
+		!claim.AcousticSnapshot.CreatedAt.IsZero() &&
+		claim.AcousticSnapshot.ValidFor(claim.Snapshot) &&
+		claim.InputBundleHash == IELTSAcousticInputBundleHash(
+			claim.Snapshot,
+			*claim.AcousticSnapshot,
+		)
 }
 
 type durableSceneJobFailure struct {
@@ -345,13 +366,15 @@ func durableClaimFromIELTS(
 		Provider:             source.Provider,
 		Model:                source.Model,
 		Snapshot:             source.Snapshot,
+		AcousticSnapshot:     &source.AcousticSnapshot,
+		InputBundleHash:      source.InputBundleHash,
 	}
 }
 
 func ieltsClaimFromDurable(
 	source durableSceneJobClaim,
 ) IELTSSpeakingShadowClaim {
-	return IELTSSpeakingShadowClaim{
+	result := IELTSSpeakingShadowClaim{
 		OutboxID:             source.OutboxID,
 		ModuleRunID:          source.ModuleRunID,
 		EvaluationID:         source.EvaluationID,
@@ -368,5 +391,10 @@ func ieltsClaimFromDurable(
 		Provider:             source.Provider,
 		Model:                source.Model,
 		Snapshot:             source.Snapshot,
+		InputBundleHash:      source.InputBundleHash,
 	}
+	if source.AcousticSnapshot != nil {
+		result.AcousticSnapshot = *source.AcousticSnapshot
+	}
+	return result
 }
