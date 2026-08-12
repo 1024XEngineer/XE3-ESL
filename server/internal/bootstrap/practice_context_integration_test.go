@@ -16,6 +16,7 @@ import (
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -251,7 +252,9 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	if err != nil {
 		t.Fatalf("get stored Preview plan: %v", err)
 	}
-	if storedPreviewPlan.SessionPolicy.MaxEffectiveTurns != 4 ||
+	if storedPreviewPlan.SessionPolicy.CompletionMode !=
+		preparation.CompletionModeUserControlled ||
+		storedPreviewPlan.SessionPolicy.MaxEffectiveTurns != 0 ||
 		storedPreviewPlan.SceneSelection.PracticeOptionID !=
 			testFullSimulationOptionID {
 		t.Fatalf("stored Preview plan = %#v", storedPreviewPlan)
