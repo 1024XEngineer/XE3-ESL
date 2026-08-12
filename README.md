@@ -54,6 +54,8 @@ make dev-android
 
 这两个入口会启动 PostgreSQL、执行数据库迁移、启动本地后端并运行 App。移动端的设备要求和模拟器限制见 [mobile/README.md](mobile/README.md)。
 
+需要在新机器上从零配置完整开发环境时，请阅读[新机器开发环境与启动指南](docs/DEVELOPMENT_ENVIRONMENT.md)。
+
 ## 质量检查
 
 在仓库根目录执行完整的 Flutter、Go、API 契约和确定性主流程检查：
