@@ -35,3 +35,16 @@ func TestNewWorkerConfigurationRejectsInvalidDeploymentInput(t *testing.T) {
 		t.Fatalf("NewWorkerConfiguration error = %v", err)
 	}
 }
+
+func TestNewWorkerConfigurationAcceptsMaximumProviderBudget(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewWorkerConfiguration(
+		"qianwen",
+		"qwen-plus",
+		11*time.Minute+30*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("NewWorkerConfiguration: %v", err)
+	}
+}

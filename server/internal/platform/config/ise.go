@@ -9,7 +9,7 @@ import (
 
 const (
 	defaultISEEndpoint = "wss://ise-api.xfyun.cn/v2/open-ise"
-	defaultISETimeout  = 90 * time.Second
+	defaultISETimeout  = 150 * time.Second
 )
 
 type ISEConfig struct {

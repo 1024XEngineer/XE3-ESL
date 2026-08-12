@@ -8,7 +8,7 @@ import (
 
 func TestSpeechFeedbackAudioHTTPClientOwnsReadPolicy(t *testing.T) {
 	client := NewSpeechFeedbackAudioHTTPClient()
-	if client.Timeout != speechFeedbackAudioReadTimeout ||
+	if client.Timeout != SpeechFeedbackAudioReadTimeout ||
 		client.CheckRedirect == nil {
 		t.Fatalf("NewSpeechFeedbackAudioHTTPClient() = %#v", client)
 	}

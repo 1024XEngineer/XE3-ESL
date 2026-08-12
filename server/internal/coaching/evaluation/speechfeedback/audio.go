@@ -17,13 +17,14 @@ import (
 
 const maxSpeechFeedbackAudioBytes = 9_600_000
 
-const speechFeedbackAudioReadTimeout = 30 * time.Second
+// SpeechFeedbackAudioReadTimeout bounds the protected audio download.
+const SpeechFeedbackAudioReadTimeout = 30 * time.Second
 
 // NewSpeechFeedbackAudioHTTPClient owns the bounded read and redirect policy
 // used to fetch protected Practice audio for acoustic assessment.
 func NewSpeechFeedbackAudioHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: speechFeedbackAudioReadTimeout,
+		Timeout: SpeechFeedbackAudioReadTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
