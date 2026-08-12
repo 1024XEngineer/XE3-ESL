@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.dart';
@@ -70,6 +72,60 @@ void main() {
     expect(decoded.speakingOverallBand, 6.5);
     expect(decoded.criteria[0].estimatedBand, 7);
     expect(decoded.criteria[3].estimatedBand, 6);
+  });
+
+  test('decodes detailed Chinese report feedback without new fields', () {
+    final value = completeIeltsSpeakingReportContractFixture();
+    final report = _report(value);
+    const overall = '本次回答能够围绕问题展开，主要观点易于理解；词汇是当前相对优势，复杂句的稳定性是下一步的重点。';
+    const criterionExplanation =
+        '在 Part 2 中能使用具体词组展开话题，但“very good”重复较多，影响了用词的准确性和自然度。';
+    const findingMessage = '“very good”在多个回答中重复出现，表达能被理解，但词汇变化不足。';
+    const suggestion =
+        '把原表达分别改为 beneficial、effective 或 enjoyable，再围绕本次话题各造两个句子。';
+
+    (report['speaking_overall']! as Map<String, Object?>)['explanation'] =
+        overall;
+    final lexical = _criterion(value, 1)
+      ..['explanation'] = criterionExplanation;
+    final improvement =
+        (lexical['improvements']! as List<Object?>).single!
+            as Map<String, Object?>;
+    improvement
+      ..['message'] = findingMessage
+      ..['suggestion'] = suggestion;
+
+    final decoded = decodeIeltsSpeakingReport(value).report!;
+
+    expect(decoded.speakingOverallExplanation, overall);
+    expect(decoded.criteria[1].explanation, criterionExplanation);
+    expect(decoded.criteria[1].improvements.single.message, findingMessage);
+    expect(decoded.criteria[1].improvements.single.suggestion, suggestion);
+  });
+
+  test('enforces the 2048-byte feedback limit for Chinese and emoji', () {
+    final exactly2048 = '${List.filled(681, '语').join()}🙂a';
+    final over2048 = '${exactly2048}b';
+    expect(utf8.encode(exactly2048), hasLength(2048));
+    expect(utf8.encode(over2048), hasLength(2049));
+
+    final accepted = _readyClone();
+    final acceptedOverall =
+        _report(accepted)['speaking_overall']! as Map<String, Object?>;
+    acceptedOverall['explanation'] = exactly2048;
+    expect(
+      decodeIeltsSpeakingReport(accepted).report?.speakingOverallExplanation,
+      exactly2048,
+    );
+
+    final rejected = _readyClone();
+    final rejectedOverall =
+        _report(rejected)['speaking_overall']! as Map<String, Object?>;
+    rejectedOverall['explanation'] = over2048;
+    expect(
+      () => decodeIeltsSpeakingReport(rejected),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
   });
 
   test('derives non-default Part boundaries from the report questions', () {

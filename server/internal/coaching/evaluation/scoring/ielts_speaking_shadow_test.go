@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
@@ -458,9 +460,209 @@ func TestIELTSSpeakingShadowKeepsValidFindingWhenPeerIsInvalid(
 		t.Fatalf("normalize valid sibling: %v", err)
 	}
 	if len(criterion.Strengths) != 0 || len(criterion.Improvements) != 1 ||
-		criterion.Improvements[0].Suggestion != "Use a more precise example." {
+		!strings.Contains(
+			criterion.Improvements[0].Suggestion,
+			"Use a more precise example.",
+		) {
 		t.Fatalf("criterion findings = %#v", criterion)
 	}
+}
+
+func TestIELTSSpeakingFeedbackTemplatesUseChineseCriterionCopy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		criterion IELTSCriterion
+		kind      ieltsFindingKind
+		contains  string
+	}{
+		{IELTSCriterionFC, ieltsFindingStrength, "观点衔接"},
+		{IELTSCriterionFC, ieltsFindingImprovement, "内容展开"},
+		{IELTSCriterionFC, ieltsFindingUpgrade, "衔接更清楚"},
+		{IELTSCriterionLR, ieltsFindingStrength, "选词"},
+		{IELTSCriterionLR, ieltsFindingImprovement, "表达精确度"},
+		{IELTSCriterionLR, ieltsFindingUpgrade, "词语或搭配"},
+		{IELTSCriterionGRA, ieltsFindingStrength, "语法结构"},
+		{IELTSCriterionGRA, ieltsFindingImprovement, "语法准确性"},
+		{IELTSCriterionGRA, ieltsFindingUpgrade, "完整、准确"},
+		{IELTSCriterionPR, ieltsFindingStrength, "综合声学证据"},
+		{IELTSCriterionPR, ieltsFindingImprovement, "整体清晰度"},
+		{IELTSCriterionPR, ieltsFindingUpgrade, "整句复练"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.criterion)+"/"+string(test.kind), func(t *testing.T) {
+			template, ok := lookupIELTSFeedbackTemplate(
+				test.criterion,
+				test.kind,
+			)
+			if !ok || !utf8.ValidString(template.Message) ||
+				!strings.Contains(template.Message, test.contains) {
+				t.Fatalf("template = %#v", template)
+			}
+		})
+	}
+}
+
+func TestIELTSSpeakingImprovementSuggestionIncludesValidProviderAdvice(
+	t *testing.T,
+) {
+	providerSuggestion := "Use a more precise collocation in the quoted sentence."
+	finding := normalizedIELTSImprovementForTest(
+		t,
+		IELTSCriterionLR,
+		providerSuggestion,
+	)
+	template, _ := lookupIELTSFeedbackTemplate(
+		IELTSCriterionLR,
+		ieltsFindingImprovement,
+	)
+	if finding.Message != template.Message ||
+		!strings.HasPrefix(finding.Suggestion, template.ImprovementSuggestion) ||
+		!strings.Contains(finding.Suggestion, providerSuggestion) {
+		t.Fatalf("finding = %#v", finding)
+	}
+}
+
+func TestIELTSSpeakingImprovementSuggestionFallsBackWhenEmpty(t *testing.T) {
+	finding := normalizedIELTSImprovementForTest(
+		t,
+		IELTSCriterionGRA,
+		"",
+	)
+	template, _ := lookupIELTSFeedbackTemplate(
+		IELTSCriterionGRA,
+		ieltsFindingImprovement,
+	)
+	if finding.Suggestion == "" ||
+		finding.Suggestion != template.ImprovementSuggestion {
+		t.Fatalf("finding = %#v", finding)
+	}
+}
+
+func TestIELTSSpeakingImprovementSuggestionFallsBackBeforeUTF8Overflow(
+	t *testing.T,
+) {
+	providerSuggestion := strings.Repeat(
+		"练",
+		ieltsMaximumFindingText/len("练"),
+	)
+	if !validInterviewText(providerSuggestion, ieltsMaximumFindingText) {
+		t.Fatal("test Provider suggestion must be independently valid")
+	}
+	finding := normalizedIELTSImprovementForTest(
+		t,
+		IELTSCriterionFC,
+		providerSuggestion,
+	)
+	template, _ := lookupIELTSFeedbackTemplate(
+		IELTSCriterionFC,
+		ieltsFindingImprovement,
+	)
+	if finding.Suggestion != template.ImprovementSuggestion ||
+		!utf8.ValidString(finding.Suggestion) ||
+		len(finding.Suggestion) > ieltsMaximumFindingText {
+		t.Fatalf("suggestion = %q", finding.Suggestion)
+	}
+}
+
+func TestIELTSSpeakingPronunciationImprovementStaysAtTurnLevel(t *testing.T) {
+	providerSuggestion := "Correct the stress in university and the /th/ phoneme."
+	finding := normalizedIELTSImprovementForTest(
+		t,
+		IELTSCriterionPR,
+		providerSuggestion,
+	)
+	template, _ := lookupIELTSFeedbackTemplate(
+		IELTSCriterionPR,
+		ieltsFindingImprovement,
+	)
+	if finding.Message != template.Message ||
+		finding.Suggestion != template.ImprovementSuggestion {
+		t.Fatalf("finding = %#v", finding)
+	}
+	for _, unsupported := range []string{
+		"university",
+		"phoneme",
+		"音素",
+		"重音",
+	} {
+		if strings.Contains(finding.Message, unsupported) ||
+			strings.Contains(finding.Suggestion, unsupported) {
+			t.Fatalf("PR finding contains unsupported detail %q: %#v", unsupported, finding)
+		}
+	}
+}
+
+func normalizedIELTSImprovementForTest(
+	t *testing.T,
+	criterion IELTSCriterion,
+	providerSuggestion string,
+) IELTSSpeakingShadowFinding {
+	t.Helper()
+	var snapshot evidence.EvidenceSnapshot
+	if criterion == IELTSCriterionPR {
+		snapshot = ieltsSpeakingAcousticTestSnapshot(t)
+	} else {
+		snapshot = ieltsSpeakingTestSnapshot(t, ieltsTestQuestionCount)
+	}
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if criterion == IELTSCriterionPR {
+		prepared, err = withFrozenIELTSAcoustics(
+			snapshot,
+			ieltsAcousticSnapshotForTest(t, snapshot, ieltsTestQuestionCount),
+			prepared,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload := singleIELTSProviderPayload(t, prepared.input, criterion)
+	response := prepared.input.Questions[0].Response
+	if response == nil {
+		t.Fatal("missing response fixture")
+	}
+	template, ok := lookupIELTSFeedbackTemplate(
+		criterion,
+		ieltsFindingImprovement,
+	)
+	if !ok {
+		t.Fatal("missing improvement template")
+	}
+	payload.Criteria[0].Strengths = []ieltsProviderFinding{}
+	payload.Criteria[0].Improvements = []ieltsProviderFinding{{
+		TemplateID: template.ID,
+		Suggestion: providerSuggestion,
+		Evidence: []ieltsProviderAnchor{{
+			EvidenceRefID: response.EvidenceRefID,
+			Quote:         response.Transcript,
+			Occurrence:    1,
+		}},
+	}}
+
+	result, err := normalizeIELTSSpeakingCriterionProviderResult(
+		prepared,
+		criterion,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("normalize improvement: %v", err)
+	}
+	if len(result.Improvements) != 1 {
+		t.Fatalf("improvements = %#v", result.Improvements)
+	}
+	finding := result.Improvements[0]
+	expectedID := stableIELTSFindingID(
+		prepared.result.SnapshotID,
+		criterion,
+		ieltsFindingImprovement,
+		finding,
+	)
+	if finding.ID != expectedID {
+		t.Fatalf("finding ID = %q, want %q", finding.ID, expectedID)
+	}
+	return finding
 }
 
 func TestIELTSSpeakingShadowRejectsCriterionWhenAllPrimaryFindingsAreDropped(

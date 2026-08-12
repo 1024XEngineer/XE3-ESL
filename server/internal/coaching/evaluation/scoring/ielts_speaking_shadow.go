@@ -1194,51 +1194,118 @@ const (
 )
 
 type ieltsFeedbackTemplate struct {
-	ID      string
-	Message string
+	ID                    string
+	Message               string
+	ImprovementSuggestion string
+}
+
+type ieltsCriterionFeedbackCopy struct {
+	StrengthMessage       string
+	ImprovementMessage    string
+	UpgradeMessage        string
+	ImprovementSuggestion string
+}
+
+func ieltsFeedbackCopyForCriterion(
+	criterion IELTSCriterion,
+) (ieltsCriterionFeedbackCopy, bool) {
+	switch criterion {
+	case IELTSCriterionFC:
+		return ieltsCriterionFeedbackCopy{
+			StrengthMessage: "这段回答在观点衔接或话题展开方面表现较好。",
+			ImprovementMessage: "这段回答在观点衔接、表达推进或内容展开上" +
+				"仍有提升空间。",
+			UpgradeMessage: "可以在保留原意的基础上，让这段表达衔接更清楚、" +
+				"展开更完整。",
+			ImprovementSuggestion: "先按“观点—原因—例子”整理这段回答，" +
+				"再连续复述并录音；复听时只检查衔接是否清楚，以及是否存在" +
+				"不必要的重复或回退。",
+		}, true
+	case IELTSCriterionLR:
+		return ieltsCriterionFeedbackCopy{
+			StrengthMessage: "这段回答在选词或话题表达上较为恰当，" +
+				"能够传达具体意思。",
+			ImprovementMessage: "这段回答的选词、搭配或表达精确度" +
+				"仍有提升空间。",
+			UpgradeMessage: "可以在保留原意的基础上，换用更准确、自然的" +
+				"词语或搭配。",
+			ImprovementSuggestion: "从原句中挑出一个不够准确或重复的词语，" +
+				"查证常见搭配后改写整句，并用新表达再造两个与本题相关的句子。",
+		}, true
+	case IELTSCriterionGRA:
+		return ieltsCriterionFeedbackCopy{
+			StrengthMessage: "这段回答使用了能够清楚传达意思的句式或语法结构。",
+			ImprovementMessage: "这段回答的句式组织或语法准确性" +
+				"仍有提升空间。",
+			UpgradeMessage: "可以在保留原意的基础上，把句子组织得更完整、准确。",
+			ImprovementSuggestion: "先把原句拆成主干和修饰部分，检查主谓、" +
+				"时态和句子连接，再改写为一个语法完整的版本并朗读两遍。",
+		}, true
+	case IELTSCriterionPR:
+		return ieltsCriterionFeedbackCopy{
+			StrengthMessage: "该回答轮次的综合声学证据显示，" +
+				"整体发音具有一定可理解度。",
+			ImprovementMessage: "该回答轮次的综合声学表现显示，" +
+				"整体清晰度与稳定性仍有提升空间。",
+			UpgradeMessage: "可以通过整句复练提升这段回答的整体清晰度与稳定性。",
+			ImprovementSuggestion: "选取这段回答中的完整句子进行两轮跟读和" +
+				"录音对比；每轮只检查听者能否轻松听清整句，以及整体表达是否稳定。",
+		}, true
+	default:
+		return ieltsCriterionFeedbackCopy{}, false
+	}
 }
 
 func lookupIELTSFeedbackTemplate(
 	criterion IELTSCriterion,
 	kind ieltsFindingKind,
 ) (ieltsFeedbackTemplate, bool) {
-	criterionName := map[IELTSCriterion]string{
-		IELTSCriterionFC:  "coherence",
-		IELTSCriterionLR:  "lexical resource",
-		IELTSCriterionGRA: "grammar",
-		IELTSCriterionPR:  "pronunciation",
-	}[criterion]
-	if criterionName == "" {
+	copy, ok := ieltsFeedbackCopyForCriterion(criterion)
+	if !ok {
 		return ieltsFeedbackTemplate{}, false
 	}
+	token := strings.ToLower(
+		strings.TrimPrefix(string(criterion), "IELTS_"),
+	)
 	switch kind {
 	case ieltsFindingStrength:
 		return ieltsFeedbackTemplate{
-			ID: "ielts." + strings.ToLower(
-				strings.TrimPrefix(string(criterion), "IELTS_"),
-			) + ".strength.v1",
-			Message: "This excerpt provides supported " +
-				criterionName + " evidence.",
+			ID:      "ielts." + token + ".strength.v1",
+			Message: copy.StrengthMessage,
 		}, true
 	case ieltsFindingImprovement:
 		return ieltsFeedbackTemplate{
-			ID: "ielts." + strings.ToLower(
-				strings.TrimPrefix(string(criterion), "IELTS_"),
-			) + ".improvement.v1",
-			Message: "This excerpt shows a supported " +
-				criterionName + " improvement opportunity.",
+			ID:                    "ielts." + token + ".improvement.v1",
+			Message:               copy.ImprovementMessage,
+			ImprovementSuggestion: copy.ImprovementSuggestion,
 		}, true
 	case ieltsFindingUpgrade:
 		return ieltsFeedbackTemplate{
-			ID: "ielts." + strings.ToLower(
-				strings.TrimPrefix(string(criterion), "IELTS_"),
-			) + ".upgrade.v1",
-			Message: "A clearer practice expression can be tried " +
-				"for this excerpt.",
+			ID:      "ielts." + token + ".upgrade.v1",
+			Message: copy.UpgradeMessage,
 		}, true
 	default:
 		return ieltsFeedbackTemplate{}, false
 	}
+}
+
+func normalizeIELTSImprovementSuggestion(
+	criterion IELTSCriterion,
+	template ieltsFeedbackTemplate,
+	providerSuggestion string,
+) string {
+	fallback := template.ImprovementSuggestion
+	if criterion == IELTSCriterionPR ||
+		!validInterviewText(providerSuggestion, ieltsMaximumFindingText) ||
+		providerSuggestion == fallback {
+		return fallback
+	}
+	combined := fallback + " 结合本次原句，还可以这样调整：" +
+		providerSuggestion
+	if !validInterviewText(combined, ieltsMaximumFindingText) {
+		return fallback
+	}
+	return combined
 }
 
 func normalizeIELTSSpeakingCriterionProviderResult(
@@ -1483,7 +1550,7 @@ items:
 			len(item.Evidence) == 0 ||
 			len(item.Evidence) > ieltsMaximumAnchors ||
 			(kind == ieltsFindingStrength && item.Suggestion != "") ||
-			(item.Suggestion != "" &&
+			(kind == ieltsFindingUpgrade && item.Suggestion != "" &&
 				!validInterviewText(
 					item.Suggestion,
 					ieltsMaximumFindingText,
@@ -1519,9 +1586,17 @@ items:
 			seenAnchors[key] = struct{}{}
 			evidence = append(evidence, resolved)
 		}
+		suggestion := item.Suggestion
+		if kind == ieltsFindingImprovement {
+			suggestion = normalizeIELTSImprovementSuggestion(
+				criterion,
+				template,
+				item.Suggestion,
+			)
+		}
 		finding := IELTSSpeakingShadowFinding{
 			Message:    template.Message,
-			Suggestion: item.Suggestion,
+			Suggestion: suggestion,
 			Evidence:   evidence,
 		}
 		finding.ID = stableIELTSFindingID(

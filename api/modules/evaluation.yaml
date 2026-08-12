@@ -1762,10 +1762,14 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Partial IELTS Speaking practice feedback projected from one frozen
-        Shadow revision. LR and GRA may contain provisional integer rubric
-        Bands. FC never contains a complete Band, PR is blocked, Speaking
-        Overall is unavailable, and no Part or question contains a score.
+        IELTS Speaking practice feedback projected from one frozen Shadow
+        revision. Complete, trustworthy acoustic evidence may support
+        provisional integer rubric Bands for all four criteria and a
+        calculated Speaking Overall. Without complete acoustic evidence, the
+        report remains partial: only supported criteria may contain Bands,
+        unsupported criteria are blocked, and Speaking Overall is unavailable
+        unless all four criterion Bands exist. No Part or question contains a
+        score.
       required:
         - schema_version
         - disclaimer_code
@@ -2727,8 +2731,10 @@ components:
       maxLength: 2048
       pattern: '^\S(?:[\s\S]*\S)?$'
       description: |
-        Server-controlled rubric descriptor or feedback template text;
-        never unvalidated provider prose.
+        Server-controlled rubric descriptor or validated feedback text; never
+        unvalidated provider prose. Runtime validation measures UTF-8 bytes
+        and requires a trimmed, non-empty value no larger than 2048 bytes; the
+        schema shape and maxLength remain unchanged.
     IeltsSpeakingReportSourceText:
       type: string
       minLength: 1
