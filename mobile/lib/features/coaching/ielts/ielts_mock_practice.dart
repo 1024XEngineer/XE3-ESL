@@ -21,9 +21,11 @@ import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/practice_report_status.dart';
 import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
 import 'package:speakup/features/coaching/review/practice_report_status_view.dart';
 import 'package:speakup/features/coaching/review/review.dart';
@@ -155,6 +157,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   int _observedCompletedTurns = 0;
   bool _preserveCompletedConversation = false;
   bool _showCompletionSheet = false;
+  bool _openingReadyReport = false;
 
   IeltsPracticeSelection? get _selection {
     final sessionId = widget.controller.practiceSessionId;
@@ -261,6 +264,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _observedCompletedTurns = widget.controller.completedTurns;
       _preserveCompletedConversation = false;
       _showCompletionSheet = false;
+      _openingReadyReport = false;
       _questionNarrationGeneration++;
       _autoNarratedQuestionId = null;
       _autoNarratedQuestionText = null;
@@ -288,6 +292,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       if (sessionId != null) {
         oldWidget.reportStatusController?.cancel(sessionId);
       }
+      _openingReadyReport = false;
       _syncCompletionReport();
     }
   }
@@ -1549,9 +1554,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       );
     }
     final complete = progress.phase == IeltsMockPhase.complete;
-    final showCompletionPage = complete && !_preserveCompletedConversation;
+    final keepPart1CompletionConversation = _keepsPart1CompletionInConversation(
+      progress,
+    );
+    final keepCompletedConversation =
+        _preserveCompletedConversation || keepPart1CompletionConversation;
+    final showCompletionPage = complete && !keepCompletedConversation;
     final completionSheet = _completionSheet(progress);
-    final stagePhase = complete && _preserveCompletedConversation
+    final stagePhase = complete && keepCompletedConversation
         ? (_mode == PracticeMode.part1
               ? IeltsMockPhase.part1
               : IeltsMockPhase.part3)
@@ -1654,18 +1664,23 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       duration: const Duration(milliseconds: 220),
       child:
           progress.phase == IeltsMockPhase.complete &&
-              _preserveCompletedConversation
+              (_preserveCompletedConversation ||
+                  _keepsPart1CompletionInConversation(progress))
           ? _completedConversationPhase()
           : _buildPhase(progress),
     );
   }
 
   Widget? _completionSheet(IeltsMockProgress progress) {
-    if (_showCompletionSheet) {
+    if (_showCompletionSheet || _keepsPart1CompletionInConversation(progress)) {
       return _SectionCompletionSheet(
         title: _completionTitle,
         message: '${widget.controller.completedTurns} 道回答已保存',
-        primaryLabel: _mode == PracticeMode.fullMock ? '查看报告状态' : '查看专项复盘',
+        primaryLabel: switch (_mode) {
+          PracticeMode.fullMock => '查看报告状态',
+          PracticeMode.part1 => '查看复盘报告',
+          _ => '查看专项复盘',
+        },
         secondaryLabel: _mode == PracticeMode.fullMock ? '返回训练' : '返回题单',
         onPrimary: _openCompletedReview,
         onSecondary: _leaveCompletedPractice,
@@ -1697,6 +1712,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     return null;
   }
 
+  bool _keepsPart1CompletionInConversation(IeltsMockProgress progress) {
+    return _mode == PracticeMode.part1 &&
+        progress.phase == IeltsMockPhase.complete;
+  }
+
   String get _completionTitle => switch (_mode) {
     PracticeMode.part1 => 'Part 1 已完成',
     PracticeMode.part2 => 'Part 2 + Part 3 已完成',
@@ -1726,50 +1746,86 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _openCompletedReview() {
+    if (_mode == PracticeMode.part1) {
+      unawaited(_openPart1Review());
+      return;
+    }
     setState(() {
       _showCompletionSheet = false;
       _preserveCompletedConversation = false;
     });
   }
 
+  Future<void> _openPart1Review() async {
+    if (_openingReadyReport) return;
+    _openingReadyReport = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => _Part1ReviewPage(
+            controller: widget.reportStatusController,
+            answerCount: widget.controller.completedTurns,
+          ),
+        ),
+      );
+      if (mounted && widget.controller.practiceMode == PracticeMode.part1) {
+        await _finishSection(IeltsPracticeCompletionAction.list);
+      }
+    } finally {
+      _openingReadyReport = false;
+    }
+  }
+
   Future<void> _openReadyReport() async {
+    if (_openingReadyReport) return;
     final statusController = widget.reportStatusController;
     final sessionId = widget.controller.practiceSessionId;
-    if (statusController == null || sessionId == null) return;
-    final report = await statusController.loadReadyReport();
-    if (!mounted || report == null) return;
-    if (_mode == PracticeMode.fullMock) {
-      try {
-        final detail = decodeIeltsSpeakingReportDetail(report.detail);
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => _CompletedReportPage(
-              title: evaluationReportTitle(report),
-              child: IeltsSpeakingReadyReportView(report: detail),
+    final mode = widget.controller.practiceMode;
+    if (statusController == null || sessionId == null || mode == null) return;
+    _openingReadyReport = true;
+    try {
+      final report = await statusController.loadReadyReport();
+      if (!mounted || report == null) return;
+      if (mode == PracticeMode.fullMock) {
+        try {
+          final detail = decodeIeltsSpeakingReportDetail(report.detail);
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => _CompletedReportPage(
+                title: evaluationReportTitle(report),
+                child: IeltsSpeakingReadyReportView(report: detail),
+              ),
             ),
-          ),
-        );
-      } on IeltsSpeakingReportDecodeException {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(const SnackBar(content: Text('报告内容暂时无法识别，请稍后重试。')));
+          );
+        } on IeltsSpeakingReportDecodeException {
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(content: Text('报告内容暂时无法识别，请稍后重试。')),
+              );
+          }
         }
+        return;
       }
-      return;
+      final item = ReviewHistoryItem(
+        review: presentEvaluationReport(report),
+        report: report,
+        practiceSessionId: report.practiceSessionId,
+        createdAt: report.createdAt,
+        completedAt: report.createdAt,
+      );
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ReviewReportDetailPage(item: item),
+        ),
+      );
+      if (mounted && widget.controller.practiceMode == PracticeMode.part1) {
+        await _finishSection(IeltsPracticeCompletionAction.list);
+      }
+    } finally {
+      _openingReadyReport = false;
     }
-    final item = ReviewHistoryItem(
-      review: presentEvaluationReport(report),
-      report: report,
-      practiceSessionId: report.practiceSessionId,
-      createdAt: report.createdAt,
-      completedAt: report.createdAt,
-    );
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => ReviewReportDetailPage(item: item),
-      ),
-    );
   }
 
   void _leaveCompletedPractice() {
@@ -3624,6 +3680,321 @@ class _CompactCompletionHeader extends StatelessWidget {
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _Part1ReviewPage extends StatefulWidget {
+  const _Part1ReviewPage({required this.controller, required this.answerCount});
+
+  final PracticeReportStatusController? controller;
+  final int answerCount;
+
+  @override
+  State<_Part1ReviewPage> createState() => _Part1ReviewPageState();
+}
+
+class _Part1ReviewPageState extends State<_Part1ReviewPage> {
+  EvaluationReport? _report;
+  bool _loadingReport = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller?.addListener(_handleStatusChanged);
+    scheduleMicrotask(_syncReadyReport);
+  }
+
+  @override
+  void didUpdateWidget(covariant _Part1ReviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller?.removeListener(_handleStatusChanged);
+    widget.controller?.addListener(_handleStatusChanged);
+    _report = null;
+    _loadingReport = false;
+    scheduleMicrotask(_syncReadyReport);
+  }
+
+  @override
+  void dispose() {
+    widget.controller?.removeListener(_handleStatusChanged);
+    super.dispose();
+  }
+
+  void _handleStatusChanged() {
+    if (!mounted) return;
+    setState(() {});
+    unawaited(_syncReadyReport());
+  }
+
+  Future<void> _syncReadyReport() async {
+    final controller = widget.controller;
+    if (!mounted ||
+        controller == null ||
+        _loadingReport ||
+        _report != null ||
+        controller.status?.evaluationStatus !=
+            PracticeReportEvaluationStatus.ready) {
+      return;
+    }
+    _loadingReport = true;
+    final report = await controller.loadReadyReport();
+    if (!mounted) return;
+    setState(() {
+      _report = report;
+      _loadingReport = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = _report;
+    if (report != null) {
+      return ReviewReportDetailPage(
+        item: ReviewHistoryItem(
+          review: presentEvaluationReport(report),
+          report: report,
+          practiceSessionId: report.practiceSessionId,
+          createdAt: report.createdAt,
+          completedAt: report.createdAt,
+        ),
+      );
+    }
+    final controller = widget.controller;
+    final status = controller?.status?.evaluationStatus;
+    final failed =
+        status == PracticeReportEvaluationStatus.failed ||
+        controller?.errorMessage != null &&
+            status != PracticeReportEvaluationStatus.queued &&
+            status != PracticeReportEvaluationStatus.running;
+    return Scaffold(
+      key: const Key('part1-review-loading-page'),
+      appBar: AppBar(title: const Text('Part 1 专项复盘')),
+      body: SafeArea(
+        top: false,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(28, 32, 28, 48),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: failed
+                  ? _Part1ReviewFailure(
+                      message: controller?.errorMessage ?? '本次复盘暂时无法生成。',
+                      canRetry: controller?.canRetry == true,
+                      onRetry: controller == null
+                          ? null
+                          : () => unawaited(controller.retry()),
+                    )
+                  : _Part1ReviewLoading(answerCount: widget.answerCount),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Part1ReviewLoading extends StatefulWidget {
+  const _Part1ReviewLoading({required this.answerCount});
+
+  final int answerCount;
+
+  @override
+  State<_Part1ReviewLoading> createState() => _Part1ReviewLoadingState();
+}
+
+class _Part1ReviewLoadingState extends State<_Part1ReviewLoading>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animation = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _animation.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AnimatedBuilder(
+          animation: _animation,
+          builder: (context, _) {
+            final pulse = (math.sin(_animation.value * math.pi * 2) + 1) / 2;
+            return SizedBox(
+              key: const Key('part1-review-loading-animation'),
+              width: 184,
+              height: 184,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 148 + pulse * 20,
+                    height: 148 + pulse * 20,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: SpeakUpDesign.primaryMuted.withValues(
+                        alpha: 0.45 - pulse * 0.2,
+                      ),
+                    ),
+                  ),
+                  Transform.rotate(
+                    angle: _animation.value * math.pi * 2,
+                    child: Container(
+                      width: 128,
+                      height: 128,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: SweepGradient(
+                          colors: [
+                            Colors.transparent,
+                            SpeakUpDesign.tertiary,
+                            SpeakUpDesign.ink,
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(3),
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: SpeakUpDesign.canvas,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: SpeakUpDesign.ink,
+                      boxShadow: [
+                        BoxShadow(
+                          color: SpeakUpDesign.ink.withValues(alpha: 0.16),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.auto_graph_rounded,
+                      color: Colors.white,
+                      size: 42,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 28),
+        Text(
+          '正在生成你的专项复盘',
+          textAlign: TextAlign.center,
+          style: SpeakUpDesign.pageTitle.copyWith(fontSize: 25),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '正在整理 ${widget.answerCount} 道回答，分析表达表现并生成下一步建议',
+          textAlign: TextAlign.center,
+          style: SpeakUpDesign.body.copyWith(height: 1.55),
+        ),
+        const SizedBox(height: 28),
+        const _ReviewLoadingSteps(),
+      ],
+    );
+  }
+}
+
+class _ReviewLoadingSteps extends StatelessWidget {
+  const _ReviewLoadingSteps();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+      ),
+      child: const Row(
+        children: [
+          _LoadingStep(icon: Icons.notes_rounded, label: '整理回答'),
+          _LoadingConnector(),
+          _LoadingStep(icon: Icons.radar_rounded, label: '分析表现'),
+          _LoadingConnector(),
+          _LoadingStep(icon: Icons.lightbulb_outline_rounded, label: '生成建议'),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingStep extends StatelessWidget {
+  const _LoadingStep({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, size: 22, color: SpeakUpDesign.ink),
+          const SizedBox(height: 6),
+          Text(label, maxLines: 1, style: SpeakUpDesign.meta),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingConnector extends StatelessWidget {
+  const _LoadingConnector();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(width: 16, height: 1, color: SpeakUpDesign.border);
+  }
+}
+
+class _Part1ReviewFailure extends StatelessWidget {
+  const _Part1ReviewFailure({
+    required this.message,
+    required this.canRetry,
+    required this.onRetry,
+  });
+
+  final String message;
+  final bool canRetry;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(
+          Icons.error_outline_rounded,
+          size: 64,
+          color: SpeakUpDesign.error,
+        ),
+        const SizedBox(height: 20),
+        Text('复盘暂时没有生成', style: SpeakUpDesign.sectionTitle),
+        const SizedBox(height: 10),
+        Text(message, textAlign: TextAlign.center, style: SpeakUpDesign.body),
+        if (canRetry) ...[
+          const SizedBox(height: 24),
+          FilledButton(onPressed: onRetry, child: const Text('重新加载')),
+        ],
       ],
     );
   }
