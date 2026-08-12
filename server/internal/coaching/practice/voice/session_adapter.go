@@ -213,6 +213,7 @@ func mapPracticeSession(
 		TurnPolicyRef:      option.TurnPolicyRef,
 		Prompt:             cloneScenePrompt(selection.Scene.Prompt),
 		ScenarioContext:    cloneScenarioPreparationContext(snapshot.Preparation.ScenarioContext),
+		InterviewContext:   cloneInterviewQuestionContext(snapshot),
 		IELTSAssignment:    cloneIELTSAssignment(snapshot.IELTSAssignment),
 		SessionVersion:     session.Version,
 		EffectiveTurns:     session.EffectiveTurns,
@@ -309,6 +310,80 @@ func mapPracticeSession(
 		return Session{}, ErrInvalidContext
 	}
 	return result, nil
+}
+
+func cloneInterviewQuestionContext(
+	snapshot practice.SessionSnapshot,
+) *InterviewQuestionContext {
+	if snapshot.Experience != practice.PracticeExperienceInterview {
+		return nil
+	}
+	preparation := snapshot.Preparation
+	if preparation.JobTargetInputSnapshot == nil &&
+		preparation.JobTargetCandidateSnapshot == nil &&
+		preparation.ResumeSnapshot == nil {
+		return nil
+	}
+	result := &InterviewQuestionContext{
+		Background: preparation.BackgroundSnapshot,
+	}
+	if input := preparation.JobTargetInputSnapshot; input != nil {
+		cloned := *input
+		result.Input = &cloned
+	}
+	if candidate := preparation.JobTargetCandidateSnapshot; candidate != nil {
+		cloned := *candidate
+		cloned.Responsibilities = cloneVoiceStrings(candidate.Responsibilities)
+		cloned.CoreSkills = cloneVoiceStrings(candidate.CoreSkills)
+		cloned.CommunicationFocus = cloneVoiceStrings(candidate.CommunicationFocus)
+		cloned.PracticeGoals = cloneVoiceStrings(candidate.PracticeGoals)
+		cloned.CatalogRecommendation.SelectedRoleIDs = cloneVoiceStrings(
+			candidate.CatalogRecommendation.SelectedRoleIDs,
+		)
+		result.Candidate = &cloned
+	}
+	if resume := preparation.ResumeSnapshot; resume != nil {
+		material := resume.Material
+		material.WorkExperiences = make(
+			[]practice.ResumeWorkExperience,
+			len(resume.Material.WorkExperiences),
+		)
+		for index, work := range resume.Material.WorkExperiences {
+			material.WorkExperiences[index] = work
+			material.WorkExperiences[index].Duties = cloneVoiceStrings(work.Duties)
+			material.WorkExperiences[index].Achievements = cloneVoiceStrings(
+				work.Achievements,
+			)
+		}
+		material.ProjectExperiences = make(
+			[]practice.ResumeProjectExperience,
+			len(resume.Material.ProjectExperiences),
+		)
+		for index, project := range resume.Material.ProjectExperiences {
+			material.ProjectExperiences[index] = project
+			material.ProjectExperiences[index].Technologies = cloneVoiceStrings(
+				project.Technologies,
+			)
+			material.ProjectExperiences[index].Duties = cloneVoiceStrings(
+				project.Duties,
+			)
+			material.ProjectExperiences[index].Achievements = cloneVoiceStrings(
+				project.Achievements,
+			)
+		}
+		material.EducationExperiences = append(
+			[]practice.ResumeEducationExperience(nil),
+			resume.Material.EducationExperiences...,
+		)
+		material.Skills = cloneVoiceStrings(resume.Material.Skills)
+		material.Awards = cloneVoiceStrings(resume.Material.Awards)
+		result.Resume = &material
+	}
+	return result
+}
+
+func cloneVoiceStrings(values []string) []string {
+	return append([]string(nil), values...)
 }
 
 func cloneScenePrompt(source practice.ScenePrompt) practice.ScenePrompt {

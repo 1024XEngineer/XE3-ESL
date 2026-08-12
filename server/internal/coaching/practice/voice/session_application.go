@@ -25,6 +25,7 @@ type Session struct {
 	TurnPolicyRef              string
 	Prompt                     practice.ScenePrompt
 	ScenarioContext            *practice.ScenarioPreparationContext
+	InterviewContext           *InterviewQuestionContext
 	IELTSAssignment            *practice.IELTSAssignment
 	PreviousUserResponse       string
 	PreviousQuestion           string
@@ -42,6 +43,16 @@ type Session struct {
 	Status                     string
 	FacilitatorParticipantID   string
 	LearnerParticipantID       string
+}
+
+// InterviewQuestionContext is the smallest frozen Preparation projection the
+// question generator needs for personalized interview questions. The values
+// are user-provided material and must never be treated as instructions.
+type InterviewQuestionContext struct {
+	Input      *practice.JobTargetInput
+	Candidate  *practice.JobTargetCandidate
+	Resume     *practice.ResumeMaterial
+	Background string
 }
 
 type SessionPort interface {

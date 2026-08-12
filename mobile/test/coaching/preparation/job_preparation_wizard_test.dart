@@ -76,7 +76,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.text('第 1/3 步 · 岗位信息'), findsOneWidget);
+    expect(find.textContaining('第 1/3 步'), findsNothing);
     expect(find.byKey(const Key('job-input-field')), findsOneWidget);
     expect(find.byKey(const Key('job-source-selector')), findsNothing);
     expect(find.byKey(const Key('job-description-field')), findsNothing);
@@ -93,27 +93,17 @@ void main() {
     expect(controller.input.jobTitle, 'Backend engineer');
     await _scrollTo(
       tester,
-      target: const Key('analyze-job-button'),
+      target: const Key('create-and-start-interview-button'),
       scrollable: const Key('job-wizard-input-step'),
     );
-    await tester.tap(find.byKey(const Key('analyze-job-button')));
+    await tester.tap(
+      find.byKey(const Key('create-and-start-interview-button')),
+    );
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('job-wizard-confirmation-step')),
-      findsOneWidget,
-    );
-    expect(find.text('第 2/3 步 · AI 预生成'), findsOneWidget);
-    expect(find.byKey(const Key('candidate-title-field')), findsOneWidget);
-    expect(
-      find.byKey(const Key('candidate-responsibilities-field')),
-      findsOneWidget,
-    );
-    expect(find.text('查看并编辑完整岗位信息'), findsNothing);
-    await tester.enterText(
-      find.byKey(const Key('candidate-title-field')),
-      'Senior backend engineer',
-    );
-    expect(controller.candidate?.jobTitle, 'Senior backend engineer');
+    expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
+    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
+    expect(find.byKey(const Key('job-wizard-preview-step')), findsNothing);
+    expect(controller.bootstrap, isNotNull);
   });
 
   testWidgets('automatically treats structured text as a JD', (tester) async {
@@ -131,9 +121,10 @@ void main() {
     expect(controller.input.source, JobTargetSource.jobDescription);
     expect(controller.input.jobTitle, isNull);
     expect(controller.input.jobDescription, contains('任职要求'));
+    expect(find.textContaining('通用模拟生成'), findsNothing);
   });
 
-  testWidgets('pre-generated step supports focus text and quick tags', (
+  testWidgets('AI analysis remains internal instead of opening an editor', (
     tester,
   ) async {
     final controller = _controller(_WizardClient());
@@ -144,43 +135,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: JobPreparationWizard(controller: controller)),
     );
-    expect(find.byKey(const Key('candidate-title-field')), findsOneWidget);
-    expect(find.byKey(const Key('candidate-company-field')), findsOneWidget);
-    expect(
-      find.byKey(const Key('candidate-responsibilities-field')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('candidate-skills-field')), findsOneWidget);
-    expect(
-      find.byKey(const Key('candidate-communication-field')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('candidate-seniority-field')), findsNothing);
-    await _scrollTo(
-      tester,
-      target: const Key('job-practice-focus-field'),
-      scrollable: const Key('job-wizard-confirmation-step'),
-    );
-
-    expect(find.byKey(const Key('job-practice-focus-field')), findsOneWidget);
-    expect(
-      find.byKey(const Key('job-practice-focus-suggestions')),
-      findsOneWidget,
-    );
-    final focusField = tester.widget<TextField>(
-      find.descendant(
-        of: find.byKey(const Key('job-practice-focus-field')),
-        matching: find.byType(TextField),
-      ),
-    );
-    expect(focusField.controller?.text, isEmpty);
-    await tester.tap(find.byKey(const Key('job-practice-focus-突出成就与贡献')));
-    await tester.pump();
-
-    expect(controller.candidate?.practiceGoals, contains('突出成就与贡献'));
+    expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
+    expect(find.byKey(const Key('candidate-title-field')), findsNothing);
+    expect(find.byKey(const Key('job-practice-focus-field')), findsNothing);
+    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
   });
 
-  testWidgets('saves a generated plan without creating a Session', (
+  testWidgets('start analyzes, creates a Session, and enters practice', (
     tester,
   ) async {
     final client = _WizardClient();
@@ -201,7 +162,7 @@ void main() {
       MaterialApp(
         home: JobPreparationWizard(
           controller: controller,
-          onPlanCreated: () => created++,
+          onPracticeStarted: () => created++,
         ),
       ),
     );
@@ -211,50 +172,21 @@ void main() {
     );
     await _scrollTo(
       tester,
-      target: const Key('analyze-job-button'),
+      target: const Key('create-and-start-interview-button'),
       scrollable: const Key('job-wizard-input-step'),
     );
-    await tester.tap(find.byKey(const Key('analyze-job-button')));
-    await tester.pump();
+    await tester.tap(
+      find.byKey(const Key('create-and-start-interview-button')),
+    );
+    await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const Key('job-wizard-confirmation-step')),
-      findsOneWidget,
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('job-practice-focus-field'),
-      scrollable: const Key('job-wizard-confirmation-step'),
-    );
-    await tester.enterText(
-      find.byKey(const Key('job-practice-focus-field')),
-      '自我介绍',
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('confirm-job-analysis-button'),
-      scrollable: const Key('job-wizard-confirmation-step'),
-    );
-    await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
-    await tester.pump();
-    expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
-    expect(find.byKey(const Key('job-wizard-setup-step')), findsNothing);
-    expect(find.text('第 3/3 步 · 确认面试'), findsOneWidget);
-    expect(client.sessionCalls, 0);
-
-    await _scrollTo(
-      tester,
-      target: const Key('save-job-plan-button'),
-      scrollable: const Key('job-wizard-preview-step'),
-    );
-    await tester.tap(find.byKey(const Key('save-job-plan-button')));
-    await tester.pump();
-
-    expect(client.sessionCalls, 0);
+    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
+    expect(find.byKey(const Key('job-wizard-preview-step')), findsNothing);
+    expect(client.sessionCalls, 1);
     expect(created, 1);
   });
 
-  testWidgets('confirmation selects an existing READY resume or no resume', (
+  testWidgets('first page only offers a per-interview resume upload', (
     tester,
   ) async {
     final controller = _controller(_WizardClient());
@@ -283,23 +215,14 @@ void main() {
     await _scrollTo(
       tester,
       target: const Key('job-resume-source-card'),
-      scrollable: const Key('job-wizard-confirmation-step'),
+      scrollable: const Key('job-wizard-input-step'),
     );
 
-    expect(find.text('简历（可选）'), findsOneWidget);
-    expect(find.text('不使用简历'), findsOneWidget);
-    await tester.tap(find.text('不使用简历'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Backend resume').last);
-    await tester.pumpAndSettle();
-
-    expect(controller.resumeSelection?.title, 'Backend resume');
-    expect(controller.resumeSelection?.temporary, isFalse);
-
-    await tester.tap(find.text('Backend resume'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('不使用简历').last);
-    await tester.pumpAndSettle();
+    expect(find.text('上传简历'), findsOneWidget);
+    expect(find.text('上传 PDF 简历'), findsOneWidget);
+    expect(find.text('Backend resume'), findsNothing);
+    expect(find.text('不使用简历'), findsNothing);
+    expect(find.byType(DropdownButtonFormField<String?>), findsNothing);
     expect(controller.resumeSelection, isNull);
   });
 
@@ -337,7 +260,7 @@ void main() {
     await _scrollTo(
       tester,
       target: const Key('temporary-resume-upload-button'),
-      scrollable: const Key('job-wizard-confirmation-step'),
+      scrollable: const Key('job-wizard-input-step'),
     );
     await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
     await tester.pumpAndSettle();
@@ -345,20 +268,18 @@ void main() {
     expect(find.text('临时简历解析失败，可以重试或重新上传。'), findsOneWidget);
     expect(find.text('重试解析'), findsOneWidget);
     expect(controller.candidate?.jobTitle, 'Backend engineer');
-    await tester.enterText(
-      find.byKey(const Key('job-practice-focus-field')),
-      '自我介绍',
-    );
     await _scrollTo(
       tester,
-      target: const Key('confirm-job-analysis-button'),
-      scrollable: const Key('job-wizard-confirmation-step'),
+      target: const Key('create-and-start-interview-button'),
+      scrollable: const Key('job-wizard-input-step'),
     );
-    await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
+    await tester.tap(
+      find.byKey(const Key('create-and-start-interview-button')),
+    );
     await tester.pumpAndSettle();
 
     expect(controller.resumeSelection, isNull);
-    expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
+    expect(controller.bootstrap, isNotNull);
   });
 
   testWidgets('temporary upload becomes the selected parsed resume', (
@@ -395,17 +316,8 @@ void main() {
     );
     await _scrollTo(
       tester,
-      target: const Key('job-practice-focus-field'),
-      scrollable: const Key('job-wizard-confirmation-step'),
-    );
-    await tester.enterText(
-      find.byKey(const Key('job-practice-focus-field')),
-      '自我介绍',
-    );
-    await _scrollTo(
-      tester,
       target: const Key('temporary-resume-upload-button'),
-      scrollable: const Key('job-wizard-confirmation-step'),
+      scrollable: const Key('job-wizard-input-step'),
     );
     await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
     await tester.pumpAndSettle();
@@ -456,19 +368,12 @@ void main() {
     );
     await _scrollTo(
       tester,
-      target: const Key('job-practice-focus-field'),
-      scrollable: const Key('job-wizard-confirmation-step'),
+      target: const Key('create-and-start-interview-button'),
+      scrollable: const Key('job-wizard-input-step'),
     );
-    await tester.enterText(
-      find.byKey(const Key('job-practice-focus-field')),
-      '自我介绍',
+    await tester.tap(
+      find.byKey(const Key('create-and-start-interview-button')),
     );
-    await _scrollTo(
-      tester,
-      target: const Key('confirm-job-analysis-button'),
-      scrollable: const Key('job-wizard-confirmation-step'),
-    );
-    await tester.tap(find.byKey(const Key('confirm-job-analysis-button')));
     await tester.pumpAndSettle();
 
     expect(client.snapshotCalls, 1);
@@ -544,10 +449,13 @@ void main() {
     expect(find.byKey(const Key('job-company-field')), findsNothing);
     await _scrollTo(
       tester,
-      target: const Key('analyze-job-button'),
+      target: const Key('create-and-start-interview-button'),
       scrollable: const Key('job-wizard-input-step'),
     );
-    expect(find.byKey(const Key('analyze-job-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('create-and-start-interview-button')),
+      findsOneWidget,
+    );
   });
 }
 
