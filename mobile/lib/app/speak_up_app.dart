@@ -432,7 +432,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
                   AppRoutes.practice,
                 );
               },
-              onPlanCreated: () => _navigatorKey.currentState?.pop(),
             ),
           AppRoutes.practice => _buildPracticePage(),
           AppRoutes.conversation => SpeakUpShell(

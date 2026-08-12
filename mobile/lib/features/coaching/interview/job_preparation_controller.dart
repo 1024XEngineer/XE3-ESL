@@ -876,6 +876,27 @@ final class JobPreparationController extends ChangeNotifier {
     }
   }
 
+  /// Runs the complete manual interview setup from the two user inputs.
+  ///
+  /// The individual operations remain separate server commands so their
+  /// existing idempotency and retry guarantees are preserved, while the UI
+  /// exposes them as one user action.
+  Future<bool> createAndStartPractice() async {
+    if (_disposed || _busy) {
+      return false;
+    }
+    if (!await analyze()) {
+      return false;
+    }
+    if (_target?.stage != JobTargetStage.confirmed && !await confirm()) {
+      return false;
+    }
+    if (_plan == null && !await createPreview()) {
+      return false;
+    }
+    return startPractice();
+  }
+
   Future<bool> revisePreview({
     required String roleDefinitionId,
     required String practiceOptionId,

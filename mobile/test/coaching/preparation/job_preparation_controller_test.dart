@@ -67,6 +67,37 @@ void main() {
     },
   );
 
+  test('one action analyzes, creates, and starts the interview', () async {
+    final client = _FakeJobPreparationClient();
+    final voiceKeys = <String>[];
+    final controller = _controller(
+      client,
+      voiceActivator:
+          ({
+            required context,
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async => voiceKeys.add(clientOperationId),
+    );
+    addTearDown(controller.dispose);
+    controller.updateInput(_input);
+
+    expect(await controller.createAndStartPractice(), isTrue);
+    expect(client.calls, <String>[
+      'create-target',
+      'analyze-target',
+      'confirm-target',
+      'profile',
+      'snapshot',
+      'plan',
+      'session',
+    ]);
+    expect(controller.plan, isNotNull);
+    expect(controller.bootstrap, isNotNull);
+    expect(voiceKeys, hasLength(1));
+  });
+
   test('double start creates exactly one Session', () async {
     final session = Completer<PreparationPracticeBootstrap>();
     final client = _FakeJobPreparationClient(sessionCompleter: session);
