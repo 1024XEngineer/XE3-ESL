@@ -107,61 +107,6 @@ void main() {
     },
   );
 
-  test('realtime failure can fall back to the retained WAV', () async {
-    final client = _RealtimePracticeClient(failAfterCapture: true);
-    final recorder = _StreamingPracticeRecorder();
-    final controller = PracticeController(
-      client: client,
-      recorder: recorder,
-      clientIdFactory: (scope) => '$scope-realtime-fallback-001',
-    );
-    addTearDown(controller.dispose);
-    await _restore(controller);
-
-    await controller.startRecording(fallbackToRecordedTranscription: true);
-    recorder.add(Uint8List.fromList(<int>[1, 2]));
-    await client.firstUpdate.future;
-    await controller.stopRecording();
-
-    expect(
-      controller.recordingState,
-      PracticeRecordingState.awaitingConfirmation,
-    );
-    expect(controller.candidateId, 'candidate-legacy');
-    expect(controller.transcript, 'Legacy answer');
-    expect(controller.hasPendingPracticeAudio, isFalse);
-    expect(client.legacyTranscriptions, 1);
-    expect(recorder.discarded, 1);
-  });
-
-  test('fallback keeps recording after realtime disconnects', () async {
-    final client = _RealtimePracticeClient(failDuringCapture: true);
-    final recorder = _StreamingPracticeRecorder();
-    final controller = PracticeController(
-      client: client,
-      recorder: recorder,
-      clientIdFactory: (scope) => '$scope-realtime-fallback-002',
-    );
-    addTearDown(controller.dispose);
-    await _restore(controller);
-
-    await controller.startRecording(fallbackToRecordedTranscription: true);
-    recorder.add(Uint8List.fromList(<int>[1, 2]));
-    await client.firstUpdate.future;
-    await Future<void>.delayed(Duration.zero);
-
-    expect(controller.recordingState, PracticeRecordingState.recording);
-
-    await controller.stopRecording();
-
-    expect(
-      controller.recordingState,
-      PracticeRecordingState.awaitingConfirmation,
-    );
-    expect(controller.candidateId, 'candidate-legacy');
-    expect(client.legacyTranscriptions, 1);
-  });
-
   test('account cleanup fences a late realtime Candidate', () async {
     final client = _RealtimePracticeClient();
     final recorder = _StreamingPracticeRecorder();
@@ -223,13 +168,9 @@ Future<void> _restore(PracticeController controller) {
 
 final class _RealtimePracticeClient
     implements PracticeClient, PracticeRealtimeTranscriptionClient {
-  _RealtimePracticeClient({
-    this.failAfterCapture = false,
-    this.failDuringCapture = false,
-  });
+  _RealtimePracticeClient({this.failAfterCapture = false});
 
   final bool failAfterCapture;
-  final bool failDuringCapture;
   final Completer<void> firstUpdate = Completer<void>();
   final Completer<void> captureFinished = Completer<void>();
   final Completer<void> releaseCandidate = Completer<void>();
@@ -272,12 +213,6 @@ final class _RealtimePracticeClient
           text: 'I led the migration',
           isFinal: false,
         );
-        if (failDuringCapture) {
-          throw const PracticeClientException(
-            kind: PracticeClientFailureKind.network,
-            retryable: true,
-          );
-        }
       }
     }
     if (!captureFinished.isCompleted) {

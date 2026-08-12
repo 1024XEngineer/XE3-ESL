@@ -76,7 +76,6 @@ final class PracticeController extends ChangeNotifier
   TranscriptionCandidate? _candidate;
   String _liveTranscript = '';
   Future<_RealtimePracticeCandidateResult>? _realtimeCandidate;
-  bool _fallbackRealtimeToRecordedTranscription = false;
   _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
@@ -155,38 +154,17 @@ final class PracticeController extends ChangeNotifier
     }
   }
 
-  /// Stops the active capture and returns once the shared recorder is free.
-  /// Server transcription continues through the existing recording operation.
-  Future<void> finishRecordingCapture() async {
-    if (_recordingState == PracticeRecordingState.starting) {
-      await _recorderStartFuture;
-    }
-    if (_recordingState == PracticeRecordingState.recording) {
-      unawaited(stopRecording());
-    }
-    await waitForPracticeRecorderRelease();
-  }
-
   /// Adopts a locally buffered answer for the current practice question.
   ///
   /// IELTS Part 3 uses this after it records while the previous Part 2 answer
   /// is still being transcribed. Returning true transfers audio ownership to
   /// this controller; false leaves ownership with the caller.
-  bool submitBufferedPracticeAudio(
-    RecordedPracticeAudio audio, {
-    required String expectedPracticeSessionId,
-    required String expectedQuestionId,
-    required int expectedCompletedTurns,
-  }) {
+  bool submitBufferedPracticeAudio(RecordedPracticeAudio audio) {
     final practice = client;
     final sessionId = _practiceSessionId;
     final question = _currentQuestion;
     if (sessionId == null ||
         question == null ||
-        sessionId != expectedPracticeSessionId ||
-        question.sessionId != expectedPracticeSessionId ||
-        question.id != expectedQuestionId ||
-        _completedTurns != expectedCompletedTurns ||
         _disposed ||
         isBusy ||
         _isSessionCompleted ||
@@ -950,7 +928,6 @@ final class PracticeController extends ChangeNotifier
   Future<void> startRecording({
     Duration? limit,
     bool useRealtimeTranscription = true,
-    bool fallbackToRecordedTranscription = false,
   }) {
     if (!hasActivePractice ||
         isBusy ||
@@ -972,8 +949,6 @@ final class PracticeController extends ChangeNotifier
     _candidate = null;
     _liveTranscript = '';
     _realtimeCandidate = null;
-    _fallbackRealtimeToRecordedTranscription =
-        useRealtimeTranscription && fallbackToRecordedTranscription;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
@@ -1153,7 +1128,6 @@ final class PracticeController extends ChangeNotifier
     }
     _practiceGeneration++;
     _realtimeCandidate = null;
-    _fallbackRealtimeToRecordedTranscription = false;
     _liveTranscript = '';
     final speechFeedbackRetry = _speechFeedbackRetry;
     _cancelRecordingLimit();
@@ -1184,16 +1158,15 @@ final class PracticeController extends ChangeNotifier
   }) async {
     RecordedPracticeAudio? audio;
     final realtime = _realtimeCandidate;
-    final fallbackToRecorded = _fallbackRealtimeToRecordedTranscription;
     final usedRealtime =
         realtime != null && recorder is PracticeStreamingRecorder;
     _recordingState = PracticeRecordingState.transcribing;
+    notifyListeners();
     try {
       final stopOperation = usedRealtime
           ? (recorder as PracticeStreamingRecorder).stopAudioStream()
           : recorder.stop();
       _recorderStopFuture = stopOperation;
-      notifyListeners();
       try {
         audio = await stopOperation;
       } finally {
@@ -1209,38 +1182,19 @@ final class PracticeController extends ChangeNotifier
         if (identical(_realtimeCandidate, realtime)) {
           _realtimeCandidate = null;
         }
+        if (result.error case final error?) {
+          throw error;
+        }
         final candidate = result.candidate;
-        final realtimeError =
-            result.error ??
-            (candidate == null
-                ? StateError(
-                    'Realtime Practice stream ended without a Candidate.',
-                  )
-                : null);
-        if (realtimeError != null) {
-          if (!fallbackToRecorded) {
-            throw realtimeError;
-          }
-          final pending = _PendingPracticeAudio(
-            audio: audio,
-            sessionId: sessionId,
-            questionId: question.id,
-            clientTurnId: clientTurnId,
+        if (candidate == null) {
+          throw StateError(
+            'Realtime Practice stream ended without a Candidate.',
           );
-          _liveTranscript = '';
-          _pendingPracticeAudio = pending;
-          audio = null;
-          await _transcribePendingPracticeAudio(
-            practice: practice,
-            pending: pending,
-            fence: fence,
-          );
-          return;
         }
         if (!_isOperationCurrent(fence)) {
           return;
         }
-        _validateCandidate(candidate!, sessionId, question.id);
+        _validateCandidate(candidate, sessionId, question.id);
         _candidate = candidate;
         _activeConfirmationId = null;
         _activeTextAnswer = null;
@@ -1272,9 +1226,6 @@ final class PracticeController extends ChangeNotifier
     } finally {
       if (identical(_realtimeCandidate, realtime)) {
         _realtimeCandidate = null;
-      }
-      if (_isOperationCurrent(fence)) {
-        _fallbackRealtimeToRecordedTranscription = false;
       }
       if (audio != null) {
         try {
@@ -1326,9 +1277,6 @@ final class PracticeController extends ChangeNotifier
             _recordingState != PracticeRecordingState.recording)) {
       return;
     }
-    if (_fallbackRealtimeToRecordedTranscription) {
-      return;
-    }
     final recovery = _recoverFromRealtimeFailure(
       fence: fence,
       realtime: realtime,
@@ -1355,7 +1303,6 @@ final class PracticeController extends ChangeNotifier
     }
     _cancelRecordingLimit();
     _realtimeCandidate = null;
-    _fallbackRealtimeToRecordedTranscription = false;
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
