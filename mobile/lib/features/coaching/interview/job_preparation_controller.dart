@@ -134,6 +134,9 @@ final class JobPreparationController extends ChangeNotifier {
     _plansLoading = true;
     _plansErrorMessage = null;
     final requestEpoch = ++_planListEpoch;
+    final plansAtRequestStart = <String, PracticePlanSummary>{
+      for (final plan in _interviewPlans) plan.id: plan,
+    };
     notifyListeners();
     try {
       final plans = await client.listPlans(
@@ -142,7 +145,16 @@ final class JobPreparationController extends ChangeNotifier {
       if (_disposed || requestEpoch != _planListEpoch) {
         return;
       }
-      _interviewPlans = plans;
+      final localUpserts = <PracticePlanSummary>[
+        for (final plan in _interviewPlans)
+          if (!identical(plansAtRequestStart[plan.id], plan)) plan,
+      ];
+      final localUpsertIds = localUpserts.map((plan) => plan.id).toSet();
+      _interviewPlans = <PracticePlanSummary>[
+        ...localUpserts,
+        for (final plan in plans)
+          if (!localUpsertIds.contains(plan.id)) plan,
+      ];
       _plansLoaded = true;
     } on Object {
       if (!_disposed && requestEpoch == _planListEpoch) {
@@ -854,6 +866,7 @@ final class JobPreparationController extends ChangeNotifier {
         );
       }
       _plan = plan;
+      _upsertInterviewPlan(plan);
       _bootstrap = null;
       _sessionKey = null;
       _voiceKey = null;
@@ -897,6 +910,37 @@ final class JobPreparationController extends ChangeNotifier {
     return startPractice();
   }
 
+  void _upsertInterviewPlan(PracticePlan plan) {
+    final candidate = plan.preparationSnapshot.jobTargetCandidate;
+    final summary = PracticePlanSummary(
+      id: plan.id,
+      revision: plan.revision,
+      status: plan.status,
+      experience: plan.sceneSelection.scene.experience,
+      sceneName: plan.sceneSelection.scene.name,
+      practiceScope: plan.practiceOption.displayName,
+      jobTitle: candidate?.jobTitle ?? '',
+      practiceObjectives: List<String>.unmodifiable(
+        plan.practiceObjectives.map((objective) => objective.description),
+      ),
+      resumeUsed: plan.preparationSnapshot.resumeSnapshot != null,
+      suggestedDurationSeconds: plan.sessionPolicy.suggestedDurationSeconds,
+      minEffectiveTurns: plan.sessionPolicy.minEffectiveTurns,
+      maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
+      createdAt: plan.createdAt,
+      updatedAt: plan.updatedAt,
+    );
+    _interviewPlans = <PracticePlanSummary>[
+      summary,
+      for (final existing in _interviewPlans)
+        if (existing.id != summary.id) existing,
+    ];
+    if (!_plansLoading) {
+      _plansLoaded = true;
+    }
+    _plansErrorMessage = null;
+  }
+
   Future<bool> revisePreview({
     required String roleDefinitionId,
     required String practiceOptionId,
@@ -928,6 +972,7 @@ final class JobPreparationController extends ChangeNotifier {
         );
       }
       _plan = revised;
+      _upsertInterviewPlan(revised);
       _planRevisionKey = null;
       _bootstrap = null;
       _sessionKey = null;

@@ -233,6 +233,12 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     _navigatorKey.currentState?.pushNamed(AppRoutes.jobPreparation);
   }
 
+  void _closeJobPreparation() {
+    _navigatorKey.currentState?.popUntil(
+      (route) => route.settings.name != AppRoutes.jobPreparation,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -427,6 +433,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
               controller: widget.jobPreparationController!,
               catalogController: widget.preparationController,
               resumeController: widget.resumeController,
+              onExit: _closeJobPreparation,
               onPracticeStarted: () async {
                 await _navigatorKey.currentState?.pushReplacementNamed(
                   AppRoutes.practice,
