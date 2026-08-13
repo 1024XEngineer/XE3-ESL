@@ -48,7 +48,7 @@ func NewGoalCreateCapability(port GoalPort) GoalCreateCapability {
 func (capability GoalCreateCapability) Definition() Definition {
 	return Definition{
 		Name:        GoalCreateCapabilityName,
-		Description: "Create and persist one long-lived Goal for the current user. Use when the user wants to establish a real-world objective such as preparing for a specific interview, meeting, client conversation, or presentation. This is a write operation and does not create or start a practice session. Do not use to find an existing Goal, start practice, inspect reviews, search user materials, or answer standalone translation and wording questions.",
+		Description: "Create and persist one long-lived Goal for the current user. Use only when the user explicitly asks to save, track, or establish a long-term real-world objective such as an interview, meeting, client conversation, or presentation. Never use when the user asks to create, arrange, or start a practice, exercise, simulation, or practice card, even if that practice is for an upcoming real-world event; use practice.preview.v1 for those requests. This is a write operation and does not create or start a practice session. Do not use to find an existing Goal, inspect reviews, search user materials, or answer standalone translation and wording questions.",
 		InputSchema: ObjectSchema(map[string]any{
 			"title": TextSchema(
 				"Required short user-facing title for the new Goal.",

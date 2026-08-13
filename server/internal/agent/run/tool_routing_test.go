@@ -112,3 +112,75 @@ func TestModelToolRoutingLogsSpecificChoice(t *testing.T) {
 		}
 	}
 }
+
+func TestUserIntentToolRoutingSelectsPracticeForNaturalRequests(t *testing.T) {
+	base := modelToolRouting{
+		Definitions: []ToolDefinition{
+			{Name: goalCreateToolName},
+			{Name: practicePreviewToolName},
+		},
+		ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
+	}
+	for _, input := range []string{
+		"我明天要参加英文产品经理面试，帮我模拟一场。",
+		"我需要练英文自我介绍，来一场面试。",
+		"帮我安排一次模拟。",
+		"直接来一场英文面试。",
+	} {
+		t.Run(input, func(t *testing.T) {
+			routing := applyUserIntentToolRouting(base, input)
+			if got, want := routing.ToolChoice, (ToolChoice{Mode: ToolChoiceRequired}); got != want {
+				t.Fatalf("ToolChoice = %#v, want %#v", got, want)
+			}
+			if got, want := exposedToolNameList(routing.Definitions), []string{practicePreviewToolName}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("exposed tools = %#v, want %#v", got, want)
+			}
+			if toolExposed(exposedToolNames(routing.Definitions), goalCreateToolName) {
+				t.Fatal("goal.create.v1 must not be exposed for a practice request")
+			}
+		})
+	}
+}
+
+func TestUserIntentToolRoutingDoesNotCreateImplicitGoal(t *testing.T) {
+	routing := applyUserIntentToolRouting(
+		modelToolRouting{
+			Definitions: []ToolDefinition{
+				{Name: goalCreateToolName},
+				{Name: practicePreviewToolName},
+			},
+			ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
+		},
+		"我明天有一场面试。",
+	)
+	if routing.ToolChoice.Mode != ToolChoiceAuto {
+		t.Fatalf("ToolChoice = %#v, want auto", routing.ToolChoice)
+	}
+	if toolExposed(exposedToolNames(routing.Definitions), goalCreateToolName) {
+		t.Fatal("goal.create.v1 must require explicit goal intent")
+	}
+}
+
+func TestUserIntentToolRoutingKeepsExplicitGoalCreation(t *testing.T) {
+	registry, err := capabilityfixture.NewRegistry(capabilityfixture.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	routing := applyUserIntentToolRouting(
+		buildModelToolRouting(registry, nil, "run-1", ToolChoice{}),
+		"帮我建立一个长期目标，准备产品经理面试。",
+	)
+	if !toolExposed(exposedToolNames(routing.Definitions), goalCreateToolName) {
+		t.Fatal("goal.create.v1 must remain exposed for explicit goal intent")
+	}
+}
+
+func TestSanitizeUserVisiblePracticeIdentifiers(t *testing.T) {
+	input := "场景：英文自我介绍 (scn_interview_self_introduction)\n" +
+		"角色：默认面试官 (role_interview_self_introduction_counterpart)\n" +
+		"模式：重点练习 (option_interview_self_introduction_focus)"
+	want := "场景：英文自我介绍\n角色：默认面试官\n模式：重点练习"
+	if got := sanitizeUserVisiblePracticeIdentifiers(input); got != want {
+		t.Fatalf("sanitized = %q, want %q", got, want)
+	}
+}

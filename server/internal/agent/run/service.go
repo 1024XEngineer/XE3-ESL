@@ -789,6 +789,7 @@ func (service *Service) generateObserved(
 		run.ID,
 		toolChoice,
 	)
+	routing = applyUserIntentToolRouting(routing, input)
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
@@ -827,6 +828,7 @@ func (service *Service) generateObserved(
 	toolIterations := 0
 	modelIterations := 0
 	previewSucceeded := previousIELTSTool == priorIELTSToolPreview
+	practicePreviewCalledThisTurn := false
 	ieltsPreviewCreatedThisTurn := false
 	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
@@ -882,6 +884,7 @@ func (service *Service) generateObserved(
 			return TextResult{}, err
 		}
 		request.Messages = append(request.Messages, toolMessage)
+		practicePreviewCalledThisTurn = call.Name == practicePreviewToolName
 		toolCalls = 1
 		toolIterations = 1
 		writeCalls = service.writeToolCallCount([]ModelToolCall{call})
@@ -922,7 +925,7 @@ func (service *Service) generateObserved(
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		modelObserver := deltaObserver
-		if guardWarmUpAnswer ||
+		if practicePreviewCalledThisTurn || guardWarmUpAnswer ||
 			ieltsRouting.active && request.ToolChoice.Mode != ToolChoiceNone {
 			modelObserver = nil
 		}
@@ -976,6 +979,11 @@ func (service *Service) generateObserved(
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
+			if practicePreviewCalledThisTurn {
+				result.Content = sanitizeUserVisiblePracticeIdentifiers(
+					result.Content,
+				)
+			}
 			if guardWarmUpAnswer &&
 				!validIELTSWarmUpAcknowledgement(result.Content, input) {
 				result = service.repairIELTSWarmUpAcknowledgement(
@@ -1126,6 +1134,8 @@ func (service *Service) generateObserved(
 				return TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
+			practicePreviewCalledThisTurn = practicePreviewCalledThisTurn ||
+				call.Name == practicePreviewToolName
 			if succeeded && call.Name == ieltsWarmUpToolName {
 				warmUpSucceeded = true
 				warmUpPrompt, _ = ieltsWarmUpPrompt(toolMessage)
