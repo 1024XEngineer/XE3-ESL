@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/interview/job_preparation_models.dart'
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
@@ -198,6 +199,36 @@ void main() {
       });
     },
   );
+
+  test('lists a user-controlled plan with an open turn limit', () async {
+    final summary = <String, Object?>{
+      'practice_plan_id': _planId,
+      'plan_revision': 1,
+      'practice_plan_status': 'ready',
+      'practice_experience': 'INTERVIEW',
+      'scene_name': 'Technical interview',
+      'practice_scope': 'System design focus',
+      'job_title': '',
+      'practice_objectives': <Object?>['Explain one design trade-off.'],
+      'resume_used': false,
+      'suggested_duration_seconds': 900,
+      'min_effective_turns': 1,
+      'max_effective_turns': 0,
+      'created_at': '2026-08-07T00:00:00Z',
+      'updated_at': '2026-08-07T00:00:00Z',
+    };
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(HttpStatus.ok, <String, Object?>{
+        'practice_plans': <Object?>[summary],
+      }),
+    ]);
+
+    final plans = await _client(
+      transport,
+    ).listPlans(experience: PracticeExperience.interview);
+
+    expect(plans.single.maxEffectiveTurns, 0);
+  });
 
   group('strict JobTarget decoder', () {
     final cases = <String, void Function(Map<String, Object?>)>{

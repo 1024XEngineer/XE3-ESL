@@ -64,6 +64,16 @@ void main() {
     expect(find.byType(Card), findsNWidgets(2));
   });
 
+  testWidgets('labels a user-controlled plan as open-ended', (tester) async {
+    await _pumpCatalog(
+      tester,
+      plans: [_plan('plan-open', maxEffectiveTurns: 0)],
+    );
+
+    expect(find.text('开放轮次'), findsOneWidget);
+    expect(find.text('1–0 轮'), findsNothing);
+  });
+
   testWidgets('keeps plan metadata usable at 320px and 3x text', (
     tester,
   ) async {
@@ -120,7 +130,7 @@ Future<void> _pumpCatalog(
   );
 }
 
-PracticePlanSummary _plan(String id) {
+PracticePlanSummary _plan(String id, {int maxEffectiveTurns = 3}) {
   return PracticePlanSummary(
     id: id,
     revision: 1,
@@ -133,7 +143,7 @@ PracticePlanSummary _plan(String id) {
     resumeUsed: true,
     suggestedDurationSeconds: 900,
     minEffectiveTurns: 1,
-    maxEffectiveTurns: 3,
+    maxEffectiveTurns: maxEffectiveTurns,
     createdAt: DateTime.utc(2026, 8, 7),
     updatedAt: DateTime.utc(2026, 8, 7),
   );

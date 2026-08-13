@@ -429,6 +429,8 @@ class _ReviewFilters extends StatelessWidget {
       ('全部', null),
       ('面试', EvaluationReportSceneType.interview),
       ('雅思', EvaluationReportSceneType.ieltsSpeaking),
+      ('日常英语', EvaluationReportSceneType.overseasDailyLife),
+      ('职场英语', EvaluationReportSceneType.overseasWorkplace),
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
