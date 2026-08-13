@@ -267,7 +267,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         widget.conversationController.isBusy) {
       return;
     }
-    _agentHandoffInFlight = true;
+    setState(() => _agentHandoffInFlight = true);
     try {
       var replaceCurrentPractice = false;
       if (controller.workspaceController.hasResumable) {
@@ -326,7 +326,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       }
       await _openPracticeRoute();
     } finally {
-      _agentHandoffInFlight = false;
+      if (mounted) {
+        setState(() => _agentHandoffInFlight = false);
+      }
     }
   }
 
@@ -544,37 +546,43 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ),
     ];
 
-    return Scaffold(
-      key: _scaffoldKey,
-      extendBody: !practiceSelected,
-      resizeToAvoidBottomInset: false,
-      backgroundColor: practiceSelected
-          ? SpeakUpDesign.canvas
-          : Colors.transparent,
-      drawer: _ConversationDrawer(
-        controller: widget.conversationController,
-        onOpenProfile: () => _selectDestination(3),
-        hiddenThreadIds: {
-          ?widget
-              .preparationLaunchController
-              ?.workspaceController
-              ?.currentPracticeThreadId,
-        },
-      ),
-      onDrawerChanged: (open) {
-        if (_conversationDrawerOpen != open) {
-          setState(() => _conversationDrawerOpen = open);
-        }
-      },
-      drawerScrimColor: const Color(0x52000000),
-      body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: _conversationDrawerOpen
-          ? null
-          : PlatformNavigationBar(
-              destinations: _destinations,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: _selectDestinationFromNavigation,
-            ),
+    return Stack(
+      children: [
+        Scaffold(
+          key: _scaffoldKey,
+          extendBody: !practiceSelected,
+          resizeToAvoidBottomInset: false,
+          backgroundColor: practiceSelected
+              ? SpeakUpDesign.canvas
+              : Colors.transparent,
+          drawer: _ConversationDrawer(
+            controller: widget.conversationController,
+            onOpenProfile: () => _selectDestination(3),
+            hiddenThreadIds: {
+              ?widget
+                  .preparationLaunchController
+                  ?.workspaceController
+                  ?.currentPracticeThreadId,
+            },
+          ),
+          onDrawerChanged: (open) {
+            if (_conversationDrawerOpen != open) {
+              setState(() => _conversationDrawerOpen = open);
+            }
+          },
+          drawerScrimColor: const Color(0x52000000),
+          body: IndexedStack(index: _selectedIndex, children: pages),
+          bottomNavigationBar: _conversationDrawerOpen
+              ? null
+              : PlatformNavigationBar(
+                  destinations: _destinations,
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _selectDestinationFromNavigation,
+                ),
+        ),
+        if (_agentHandoffInFlight)
+          const Positioned.fill(child: _PracticeTransitionOverlay()),
+      ],
     );
   }
 
@@ -583,6 +591,34 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     return controller == null
         ? null
         : AgentConversationFeedbackPresenter(controller: controller);
+  }
+}
+
+class _PracticeTransitionOverlay extends StatelessWidget {
+  const _PracticeTransitionOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      key: const Key('agent-practice-transition-overlay'),
+      color: SpeakUpDesign.canvas,
+      child: SafeArea(
+        child: Center(
+          child: Semantics(
+            label: '正在进入练习',
+            liveRegion: true,
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.play_circle_outline_rounded, size: 34),
+                SizedBox(height: 16),
+                Text('正在进入练习…', style: SpeakUpDesign.body),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
