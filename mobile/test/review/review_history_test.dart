@@ -940,6 +940,75 @@ void main() {
     expect(find.text('7.5 / 9'), findsOneWidget);
   });
 
+  testWidgets('four scene families keep their history card and report route', (
+    tester,
+  ) async {
+    const cases = [
+      (
+        id: 'interview',
+        sceneType: EvaluationReportSceneType.interview,
+        cardTitle: '模拟面试',
+        reportTitle: '面试复盘',
+        detailSchema: 'interview-report/v1',
+      ),
+      (
+        id: 'ielts-part-1',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        cardTitle: 'IELTS 专项',
+        reportTitle: 'Part 1 专项复盘',
+        detailSchema: 'ielts-speaking-practice-report/v1',
+      ),
+      (
+        id: 'workplace',
+        sceneType: EvaluationReportSceneType.overseasWorkplace,
+        cardTitle: '职场英语复盘',
+        reportTitle: '职场英语复盘',
+        detailSchema: 'general-scene-evaluation/v1',
+      ),
+      (
+        id: 'daily-life',
+        sceneType: EvaluationReportSceneType.overseasDailyLife,
+        cardTitle: '日常英语复盘',
+        reportTitle: '日常英语复盘',
+        detailSchema: 'general-scene-evaluation/v1',
+      ),
+    ];
+
+    for (final testCase in cases) {
+      final item = _sceneItem(
+        id: 'review-v2-${testCase.id}',
+        sceneType: testCase.sceneType,
+        practiceMode:
+            testCase.sceneType == EvaluationReportSceneType.ieltsSpeaking
+            ? 'PART_1'
+            : 'FULL_SIMULATION',
+        detailSchema: testCase.detailSchema,
+        scoreability: EvaluationReportScoreability.provisional,
+        dimensions: const <EvaluationReportDimension>[],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(testCase.cardTitle), findsOneWidget);
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(find.text(testCase.reportTitle), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    }
+  });
+
   testWidgets('insufficient evidence never renders a zero score', (
     tester,
   ) async {
@@ -1503,6 +1572,8 @@ ReviewHistoryItem _sceneItem({
   required EvaluationReportSceneType sceneType,
   required EvaluationReportScoreability scoreability,
   required List<EvaluationReportDimension> dimensions,
+  String? practiceMode,
+  String detailSchema = 'interview-report/v1',
   List<EvaluationReportPriorityAction> priorityActions =
       const <EvaluationReportPriorityAction>[],
 }) {
@@ -1527,17 +1598,19 @@ ReviewHistoryItem _sceneItem({
       EvaluationReportSceneType.overseasDailyLife => 'LIFE_TRAVEL',
       EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE_GENERAL',
     },
-    practiceMode: sceneType == EvaluationReportSceneType.ieltsSpeaking
-        ? 'FULL_MOCK'
-        : 'FULL_SIMULATION',
+    practiceMode:
+        practiceMode ??
+        (sceneType == EvaluationReportSceneType.ieltsSpeaking
+            ? 'FULL_MOCK'
+            : 'FULL_SIMULATION'),
     scoreability: scoreability,
     summary: scoreability == EvaluationReportScoreability.insufficient
         ? '当前回答不足以形成可靠结论。'
         : '本次回答已经形成可复盘的文本反馈。',
     dimensions: dimensions,
     priorityActions: priorityActions,
-    detailSchema: 'interview-report/v1',
-    detail: const <String, Object?>{'schema_version': 'interview-report/v1'},
+    detailSchema: detailSchema,
+    detail: <String, Object?>{'schema_version': detailSchema},
     createdAt: completedAt,
   );
   return ReviewHistoryItem(
