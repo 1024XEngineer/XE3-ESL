@@ -231,6 +231,17 @@ func mapPracticeSession(
 			practice.SessionCompleted,
 		Status: string(session.Status),
 	}
+	if snapshot.Experience == practice.PracticeExperienceInterview {
+		roles, err := selection.SelectedRoles()
+		if err != nil || (len(roles) == 1 &&
+			!applySelectedInterviewRole(
+				&result.Prompt,
+				roles[0],
+				option.Mode,
+			)) {
+			return Session{}, ErrInvalidContext
+		}
+	}
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
 	facilitatorRoles := make(map[string]struct{})
@@ -310,6 +321,40 @@ func mapPracticeSession(
 		return Session{}, ErrInvalidContext
 	}
 	return result, nil
+}
+
+func applySelectedInterviewRole(
+	prompt *practice.ScenePrompt,
+	role practice.RoleDefinition,
+	mode practice.PracticeMode,
+) bool {
+	displayName := strings.TrimSpace(role.DisplayName)
+	responsibilities := strings.TrimSpace(role.Responsibilities)
+	style := strings.TrimSpace(role.Style)
+	if prompt == nil || displayName == "" || responsibilities == "" ||
+		style == "" || len(role.PracticeObjectives) == 0 {
+		return false
+	}
+	focusAreas := make([]string, 0, len(role.PracticeObjectives))
+	turnBlueprints := make([]string, 0, len(role.PracticeObjectives))
+	for _, objective := range role.PracticeObjectives {
+		description := strings.TrimSpace(objective.Description)
+		if strings.TrimSpace(objective.ID) == "" || description == "" {
+			return false
+		}
+		focusAreas = append(focusAreas, description)
+		turnBlueprints = append(
+			turnBlueprints,
+			"Explore this objective using evidence from the candidate's experience: "+description,
+		)
+	}
+	prompt.AIRole = displayName
+	prompt.PersonaSummary = style + " " + responsibilities
+	prompt.FocusAreas = focusAreas
+	if mode == practice.PracticeModeFocus {
+		prompt.TurnBlueprints = turnBlueprints
+	}
+	return true
 }
 
 func cloneInterviewQuestionContext(

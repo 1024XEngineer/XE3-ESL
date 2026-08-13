@@ -382,6 +382,12 @@ func TestIELTSSelectionShapeSeparatesCreateAndReviseStrategies(t *testing.T) {
 		MaxEffectiveTurns:    5,
 		IELTSSelection:       &IELTSQuestionSelection{CueCardType: "place"},
 	}
+	openRevise := revise
+	openRevise.IELTSSelection = nil
+	openRevise.MaxEffectiveTurns = 0
+	if !ValidRevisePlanRequest(openRevise) {
+		t.Fatal("open-turn revision was rejected")
+	}
 	if ValidRevisePlanRequest(revise) {
 		t.Fatal("category-only IELTS revision selection was accepted")
 	}

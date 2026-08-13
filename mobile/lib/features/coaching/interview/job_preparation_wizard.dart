@@ -412,7 +412,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       child: Scaffold(
         key: const Key('job-preparation-wizard'),
         appBar: AppBar(
-          title: const Text('准备英文面试'),
+          title: Text(controller.openedSavedPlan ? '模拟面试' : '准备英文面试'),
           leading: IconButton(
             key: const Key('job-wizard-close'),
             tooltip: '关闭准备流程',
@@ -560,48 +560,57 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
       children: [
         Text(
-          '模拟面试详情',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          jobCandidate?.jobTitle ?? plan.sceneSelection.scene.name,
+          style: SpeakUpDesign.pageTitle,
         ),
-        const SizedBox(height: 8),
-        const Text('开始后才会创建正式练习记录。', style: SpeakUpDesign.body),
-        const SizedBox(height: 18),
-        _SummaryCard(
+        const SizedBox(height: SpeakUpDesign.space8),
+        Text(
+          '${plan.sceneSelection.scene.name} · ${plan.practiceOption.displayName}',
+          style: SpeakUpDesign.body,
+        ),
+        const SizedBox(height: SpeakUpDesign.space24),
+        _PlanSummary(
           key: const Key('job-plan-summary'),
-          title: plan.sceneSelection.scene.name,
-          subtitle: plan.practiceOption.displayName,
-          rows: [
-            ('岗位', jobCandidate?.jobTitle ?? plan.sceneSelection.scene.name),
-            ('预计时长', '约 $minutes 分钟'),
-            (
-              '有效轮次',
-              '${plan.sessionPolicy.minEffectiveTurns}–'
-                  '${plan.sessionPolicy.maxEffectiveTurns} 轮',
-            ),
-            ('训练视角', plan.selectedRoles.single.displayName),
-            (
-              '重点',
-              plan.practiceObjectives.map((item) => item.description).join('、'),
-            ),
-          ],
+          duration: '约 $minutes 分钟',
+          turns: plan.sessionPolicy.maxEffectiveTurns == 0
+              ? '开放轮次'
+              : '${plan.sessionPolicy.minEffectiveTurns}–'
+                    '${plan.sessionPolicy.maxEffectiveTurns} 轮',
+          role: plan.selectedRoles.single.displayName,
+          objective: plan.practiceObjectives
+              .map((item) => item.description)
+              .join('、'),
         ),
-        const SizedBox(height: 14),
-        ExpansionTile(
+        const SizedBox(height: SpeakUpDesign.space20),
+        const Divider(height: 1),
+        ListTile(
           key: const Key('job-plan-advanced-settings'),
-          tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-          title: const Text('高级设置'),
-          subtitle: const Text('面试官视角由服务端按岗位推荐'),
-          children: [_buildAdvancedSettings(controller, plan)],
+          contentPadding: EdgeInsets.zero,
+          title: const Text('调整面试设置', style: SpeakUpDesign.cardTitle),
+          subtitle: Text(
+            '${plan.selectedRoles.single.displayName} · '
+            '${plan.sessionPolicy.maxEffectiveTurns == 0 ? '开放轮次' : '最多 ${plan.sessionPolicy.maxEffectiveTurns} 轮'}',
+            style: SpeakUpDesign.meta,
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: controller.isBusy
+              ? null
+              : () => unawaited(_showAdvancedSettings(controller, plan)),
         ),
+        const Divider(height: 1),
         if (controller.errorMessage case final message?)
           _ErrorCard(
             key: const Key('job-preview-error'),
             message: message,
             onRetry: controller.canRetry ? controller.retry : null,
           ),
-        const SizedBox(height: 24),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const Text(
+          '准备好后开始，届时才会创建练习记录。',
+          textAlign: TextAlign.center,
+          style: SpeakUpDesign.meta,
+        ),
+        const SizedBox(height: SpeakUpDesign.space8),
         FilledButton.icon(
           key: const Key('start-job-practice-button'),
           onPressed: controller.isBusy ? null : _startPractice,
@@ -613,115 +622,261 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     );
   }
 
-  Widget _buildAdvancedSettings(
+  Future<void> _showAdvancedSettings(
     JobPreparationController controller,
     PracticePlan plan,
-  ) {
+  ) async {
     final catalog = widget.catalogController;
     final roles = catalog?.roles ?? const <RoleDefinition>[];
-    final options = catalog?.availableOptions ?? const <PracticeOption>[];
-    final selectedRole = catalog?.selectedRole;
-    final selectedOption = catalog?.selectedOption;
+    var options = catalog?.availableOptions ?? const <PracticeOption>[];
+    final originalRole = catalog?.selectedRole;
+    final originalOption = catalog?.selectedOption;
+    var selectedRole = catalog?.selectedRole;
+    var selectedOption = catalog?.selectedOption;
+    final userControlled =
+        plan.sessionPolicy.completionMode ==
+        PreparationCompletionMode.userControlled;
     final minTurns = plan.sessionPolicy.minEffectiveTurns;
-    final maxTurns = plan.sessionPolicy.maxEffectiveTurns < 6
-        ? 6
-        : plan.sessionPolicy.maxEffectiveTurns;
-    final selectedTurns = (_selectedTurnLimit ?? maxTurns)
-        .clamp(minTurns, maxTurns)
+    final maxTurns = plan.sessionPolicy.maxEffectiveTurns;
+    var selectedTurns = (_selectedTurnLimit ?? maxTurns)
+        .clamp(userControlled ? 0 : minTurns, maxTurns)
         .toInt();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    var saving = false;
+    var savedSettings = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: SpeakUpDesign.surface,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('面试设置', style: SpeakUpDesign.sectionTitle),
+              const SizedBox(height: SpeakUpDesign.space4),
+              const Text('调整本次模拟面试的方式。', style: SpeakUpDesign.body),
+              const SizedBox(height: SpeakUpDesign.space20),
+              _SettingsChoice(
+                key: const Key('job-plan-role-selector'),
+                label: '面试官视角',
+                value:
+                    selectedRole?.displayName ??
+                    plan.selectedRoles.single.displayName,
+                enabled: roles.isNotEmpty && !saving,
+                onTap: () async {
+                  final role = await _showSelectionSheet(
+                    title: '选择面试官视角',
+                    values: roles,
+                    label: (item) => item.displayName,
+                    selected: selectedRole,
+                  );
+                  if (role != null) {
+                    catalog?.selectRole(role);
+                    options =
+                        catalog?.availableOptions ?? const <PracticeOption>[];
+                    final matchingOption = options
+                        .where((item) => item.mode == selectedOption?.mode)
+                        .firstOrNull;
+                    selectedOption = matchingOption ?? options.firstOrNull;
+                    if (selectedOption case final option?) {
+                      catalog?.selectOption(option);
+                    }
+                    setSheetState(() => selectedRole = role);
+                  }
+                },
+              ),
+              const SizedBox(height: SpeakUpDesign.space12),
+              _SettingsChoice(
+                key: const Key('job-plan-option-selector'),
+                label: '训练重点',
+                value:
+                    selectedOption?.displayName ??
+                    plan.practiceOption.displayName,
+                enabled: options.isNotEmpty && !saving,
+                onTap: () async {
+                  final option = await _showSelectionSheet(
+                    title: '选择训练重点',
+                    values: options,
+                    label: (item) => item.displayName,
+                    selected: selectedOption,
+                  );
+                  if (option != null) {
+                    setSheetState(() => selectedOption = option);
+                  }
+                },
+              ),
+              const SizedBox(height: SpeakUpDesign.space20),
+              if (userControlled)
+                const _OpenTurnsNotice()
+              else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('练习轮次', style: SpeakUpDesign.cardTitle),
+                    Text('最多 $selectedTurns 轮', style: SpeakUpDesign.body),
+                  ],
+                ),
+                Slider(
+                  key: const Key('job-plan-turn-limit'),
+                  value: selectedTurns.toDouble(),
+                  min: minTurns.toDouble(),
+                  max: maxTurns.toDouble(),
+                  divisions: maxTurns - minTurns,
+                  label: '$selectedTurns 轮',
+                  onChanged: saving
+                      ? null
+                      : (value) =>
+                            setSheetState(() => selectedTurns = value.round()),
+                ),
+              ],
+              const SizedBox(height: SpeakUpDesign.space12),
+              FilledButton(
+                key: const Key('save-job-plan-revision'),
+                onPressed:
+                    saving || selectedRole == null || selectedOption == null
+                    ? null
+                    : () async {
+                        setSheetState(() => saving = true);
+                        catalog
+                          ?..selectRole(selectedRole!)
+                          ..selectOption(selectedOption!);
+                        _selectedTurnLimit = userControlled
+                            ? null
+                            : selectedTurns;
+                        final saved = await controller.revisePreview(
+                          roleDefinitionId: selectedRole!.id,
+                          practiceOptionId: selectedOption!.id,
+                          maxEffectiveTurns: userControlled ? 0 : selectedTurns,
+                        );
+                        if (!sheetContext.mounted) {
+                          return;
+                        }
+                        if (saved) {
+                          savedSettings = true;
+                          Navigator.of(sheetContext).pop();
+                        } else {
+                          setSheetState(() => saving = false);
+                        }
+                      },
+                style: _primaryButtonStyle,
+                child: Text(saving ? '正在保存…' : '保存设置'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!savedSettings && originalRole != null) {
+      catalog?.selectRole(originalRole);
+      if (originalOption != null) {
+        catalog?.selectOption(originalOption);
+      }
+    }
+  }
+
+  Future<T?> _showSelectionSheet<T>({
+    required String title,
+    required List<T> values,
+    required String Function(T value) label,
+    required T? selected,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: SpeakUpDesign.surface,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(title, style: SpeakUpDesign.sectionTitle),
+            const SizedBox(height: SpeakUpDesign.space12),
+            for (final value in values)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(label(value), style: SpeakUpDesign.cardTitle),
+                trailing: identical(value, selected)
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.of(context).pop(value),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsChoice extends StatelessWidget {
+  const _SettingsChoice({
+    required this.label,
+    required this.value,
+    required this.enabled,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surfaceMuted,
+      borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: SpeakUpDesign.space16,
+            vertical: SpeakUpDesign.space12,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: SpeakUpDesign.meta),
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(value, style: SpeakUpDesign.cardTitle),
+                  ],
+                ),
+              ),
+              if (enabled) const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OpenTurnsNotice extends StatelessWidget {
+  const _OpenTurnsNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(SpeakUpDesign.space16),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (roles.isEmpty)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('当前视角'),
-              subtitle: Text(plan.selectedRoles.single.displayName),
-            )
-          else
-            DropdownButtonFormField<String>(
-              key: const Key('job-plan-role-selector'),
-              initialValue: selectedRole?.id,
-              decoration: const InputDecoration(labelText: '面试官视角'),
-              items: [
-                for (final role in roles)
-                  DropdownMenuItem(
-                    value: role.id,
-                    child: Text(role.displayName),
-                  ),
-              ],
-              onChanged: controller.isBusy
-                  ? null
-                  : (id) {
-                      final role = roles
-                          .where((item) => item.id == id)
-                          .firstOrNull;
-                      if (role != null) {
-                        catalog?.selectRole(role);
-                      }
-                    },
-            ),
-          const SizedBox(height: 12),
-          if (options.isEmpty)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('练习方式'),
-              subtitle: Text(plan.practiceOption.displayName),
-            )
-          else
-            DropdownButtonFormField<String>(
-              key: const Key('job-plan-option-selector'),
-              initialValue: selectedOption?.id,
-              decoration: const InputDecoration(labelText: '训练重点'),
-              items: [
-                for (final option in options)
-                  DropdownMenuItem(
-                    value: option.id,
-                    child: Text(option.displayName),
-                  ),
-              ],
-              onChanged: controller.isBusy
-                  ? null
-                  : (id) {
-                      final option = options
-                          .where((item) => item.id == id)
-                          .firstOrNull;
-                      if (option != null) {
-                        catalog?.selectOption(option);
-                      }
-                    },
-            ),
-          const SizedBox(height: 12),
-          Text('最多 $selectedTurns 个有效轮次'),
-          Slider(
-            key: const Key('job-plan-turn-limit'),
-            value: selectedTurns.toDouble(),
-            min: minTurns.toDouble(),
-            max: maxTurns.toDouble(),
-            divisions: maxTurns - minTurns,
-            label: '$selectedTurns 轮',
-            onChanged: controller.isBusy
-                ? null
-                : (value) => setState(() => _selectedTurnLimit = value.round()),
-          ),
-          FilledButton.tonal(
-            key: const Key('save-job-plan-revision'),
-            onPressed:
-                controller.isBusy ||
-                    selectedRole == null ||
-                    selectedOption == null
-                ? null
-                : () => unawaited(
-                    controller.revisePreview(
-                      roleDefinitionId: selectedRole.id,
-                      practiceOptionId: selectedOption.id,
-                      maxEffectiveTurns: selectedTurns,
-                    ),
-                  ),
-            child: const Text('保存高级设置'),
-          ),
+          Text('开放轮次', style: SpeakUpDesign.cardTitle),
+          SizedBox(height: SpeakUpDesign.space4),
+          Text('面试会自然追问，由你决定何时结束。', style: SpeakUpDesign.body),
         ],
       ),
     );
@@ -999,41 +1154,73 @@ class _DraftCard extends StatelessWidget {
   }
 }
 
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({
-    required this.title,
-    required this.subtitle,
-    required this.rows,
+class _PlanSummary extends StatelessWidget {
+  const _PlanSummary({
+    required this.duration,
+    required this.turns,
+    required this.role,
+    required this.objective,
     super.key,
   });
 
-  final String title;
-  final String subtitle;
-  final List<(String, String)> rows;
+  final String duration;
+  final String turns;
+  final String role;
+  final String objective;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: SpeakUpDesign.sectionTitle),
-            if (subtitle.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(subtitle, style: SpeakUpDesign.body),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: SpeakUpDesign.space16,
+            vertical: SpeakUpDesign.space12,
+          ),
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _PlanStat(label: '时长', value: duration),
+              ),
+              Expanded(
+                child: _PlanStat(label: '轮次', value: turns),
+              ),
+              Expanded(
+                child: _PlanStat(label: '面试官', value: role),
+              ),
             ],
-            const SizedBox(height: 14),
-            for (final row in rows) ...[
-              Text(row.$1, style: SpeakUpDesign.meta),
-              const SizedBox(height: 3),
-              Text(row.$2.isEmpty ? '—' : row.$2),
-              const SizedBox(height: 12),
-            ],
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const Text('本次练习重点', style: SpeakUpDesign.sectionTitle),
+        const SizedBox(height: SpeakUpDesign.space8),
+        Text(objective.isEmpty ? '—' : objective, style: SpeakUpDesign.body),
+      ],
+    );
+  }
+}
+
+class _PlanStat extends StatelessWidget {
+  const _PlanStat({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: SpeakUpDesign.meta),
+        const SizedBox(height: SpeakUpDesign.space4),
+        Text(value, style: SpeakUpDesign.label),
+      ],
     );
   }
 }

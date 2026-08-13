@@ -1636,7 +1636,12 @@ void _requirePlanInput(CreatePreparationPlanInput input) {
 void _requireRevisePlanInput(RevisePreparationPlanInput input) {
   _requireVersion(input.expectedPlanRevision);
   _requireResourceId(input.practiceOptionId);
-  _requireVersion(input.maxEffectiveTurns);
+  if (input.maxEffectiveTurns < 0) {
+    throw const JobPreparationException(
+      kind: JobPreparationFailureKind.invalidRequest,
+      stage: JobPreparationOperationStage.plan,
+    );
+  }
   if (input.selectedRoleIds.isEmpty ||
       input.selectedRoleIds.toSet().length != input.selectedRoleIds.length) {
     throw const JobPreparationException(

@@ -495,7 +495,7 @@ func validRevisePlanRequest(request RevisePlanRequest) bool {
 	return request.ExpectedPlanRevision > 0 &&
 		validUniquePlanIDs(request.SelectedRoleIDs) &&
 		validPlanResourceID(request.PracticeOptionID) &&
-		request.MaxEffectiveTurns > 0 &&
+		request.MaxEffectiveTurns >= 0 &&
 		(request.IELTSSelection == nil ||
 			validIELTSExactSelectionShape(*request.IELTSSelection))
 }

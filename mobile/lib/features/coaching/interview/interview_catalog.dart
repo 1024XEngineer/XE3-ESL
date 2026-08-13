@@ -121,72 +121,129 @@ class _PlanCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: PreparationDesign.scenarioTint,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.mic_none_rounded),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: Key('delete-interview-plan-${plan.id}'),
-                    tooltip: '删除模拟面试',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                  ),
-                  const Icon(Icons.chevron_right_rounded),
-                ],
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/scenes/interview-plan-card-v2.webp',
+                key: Key('interview-plan-cover-${plan.id}'),
+                fit: BoxFit.cover,
+                excludeFromSemantics: true,
               ),
-              Padding(
-                padding: const EdgeInsets.only(left: 56, top: 4),
-                child: Text(
-                  plan.practiceScope,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: PreparationDesign.inkSecondary),
+            ),
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0x18000000),
+                      Color(0x66000000),
+                      Color(0xD6000000),
+                    ],
+                    stops: [0, 0.46, 1],
+                  ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.only(left: 56, top: 10),
-                child: Wrap(
-                  spacing: 16,
-                  runSpacing: 8,
+            ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 164),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _PlanMeta(
-                      icon: Icons.schedule_rounded,
-                      label: '约 $minutes 分钟',
-                    ),
-                    _PlanMeta(
-                      icon: Icons.repeat_rounded,
-                      label: plan.maxEffectiveTurns == 0
-                          ? '开放轮次'
-                          : '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
+                    const Expanded(flex: 4, child: SizedBox.shrink()),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 6,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.16),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    '模拟面试',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: PreparationDesign.meta.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                key: Key('delete-interview-plan-${plan.id}'),
+                                tooltip: '删除模拟面试',
+                                onPressed: onDelete,
+                                color: Colors.white,
+                                visualDensity: VisualDensity.compact,
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.black.withValues(
+                                    alpha: 0.24,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.1,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            plan.practiceScope,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: PreparationDesign.body.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 14,
+                            runSpacing: 8,
+                            children: [
+                              _PlanMeta(
+                                icon: Icons.schedule_rounded,
+                                label: '约 $minutes 分钟',
+                              ),
+                              _PlanMeta(
+                                icon: Icons.repeat_rounded,
+                                label: plan.maxEffectiveTurns == 0
+                                    ? '开放轮次'
+                                    : '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -204,14 +261,12 @@ class _PlanMeta extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: PreparationDesign.inkTertiary),
+        Icon(icon, size: 16, color: Colors.white70),
         const SizedBox(width: 4),
         Flexible(
           child: Text(
             label,
-            style: PreparationDesign.meta.copyWith(
-              color: PreparationDesign.inkTertiary,
-            ),
+            style: PreparationDesign.meta.copyWith(color: Colors.white70),
           ),
         ),
       ],

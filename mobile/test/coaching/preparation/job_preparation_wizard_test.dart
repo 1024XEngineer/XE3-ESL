@@ -279,6 +279,65 @@ void main() {
     expect(catalogController.selectedScene, isNull);
   });
 
+  testWidgets('saves a switched role for an open-turn interview', (
+    tester,
+  ) async {
+    final client = _WizardClient(initialPlan: _openPlan);
+    final controller = _controller(client);
+    final catalogController = PreparationController(
+      client: _WizardCatalogClient(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(catalogController.dispose);
+    expect(await controller.openSavedPlan(_openPlan.id), isTrue);
+    await catalogController.loadIfNeeded();
+    await catalogController.selectScene(_scene);
+    catalogController.selectRole(_role);
+    catalogController.selectOption(_option);
+    expect(catalogController.roles, hasLength(2));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: JobPreparationWizard(
+          controller: controller,
+          catalogController: catalogController,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('job-plan-advanced-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('开放轮次'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('job-plan-role-selector')));
+    await tester.pumpAndSettle();
+    expect(find.text('选择面试官视角'), findsOneWidget);
+    await tester.tap(find.text('Recruiter').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Recruiting focus'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('save-job-plan-revision')));
+    await tester.pumpAndSettle();
+
+    expect(
+      client.revisedInput,
+      isA<RevisePreparationPlanInput>()
+          .having(
+            (input) => input.selectedRoleIds,
+            'selectedRoleIds',
+            const <String>[_recruiterRoleId],
+          )
+          .having(
+            (input) => input.practiceOptionId,
+            'practiceOptionId',
+            _recruiterOptionId,
+          )
+          .having((input) => input.maxEffectiveTurns, 'maxEffectiveTurns', 0),
+    );
+    expect(find.text('Recruiter · 开放轮次'), findsOneWidget);
+  });
+
   testWidgets('temporary parse failure keeps job context and can be skipped', (
     tester,
   ) async {
@@ -561,12 +620,14 @@ JobPreparationController _controller(
 }
 
 final class _WizardClient implements JobPreparationClient {
-  _WizardClient({this.failPlan = false});
+  _WizardClient({this.failPlan = false, PracticePlan? initialPlan})
+    : _planValue = initialPlan;
 
   final bool failPlan;
   JobTarget? _target;
   PreparationSnapshot? _snapshotValue;
   PracticePlan? _planValue;
+  RevisePreparationPlanInput? revisedInput;
   int sessionCalls = 0;
   int snapshotCalls = 0;
 
@@ -697,11 +758,15 @@ final class _WizardClient implements JobPreparationClient {
     required RevisePreparationPlanInput input,
     required String idempotencyKey,
   }) async {
+    revisedInput = input;
     final current = _planValue ?? _plan;
     _planValue = _planFrom(
       snapshot: current.preparationSnapshot,
       context: current.agentContext,
       revision: input.expectedPlanRevision + 1,
+      selectedRoleId: input.selectedRoleIds.single,
+      practiceOptionId: input.practiceOptionId,
+      sessionPolicy: current.sessionPolicy,
     );
     return _planValue!;
   }
@@ -726,7 +791,10 @@ final class _WizardCatalogClient implements SceneClient {
   Future<List<SceneDefinition>> listScenes() async => [_scene];
 
   @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) async => [_role];
+  Future<List<RoleDefinition>> listRoles(String sceneId) async => [
+    _role,
+    _recruiterRole,
+  ];
 }
 
 ResumeItem _wizardResume(
@@ -916,6 +984,9 @@ PracticePlan _planFrom({
   required PreparationSnapshot snapshot,
   required AgentPracticeContext? context,
   required int revision,
+  String selectedRoleId = _roleId,
+  String practiceOptionId = _optionId,
+  PreparationSessionPolicy sessionPolicy = _policy,
 }) => PracticePlan(
   id: _planId,
   userId: _userId,
@@ -930,10 +1001,10 @@ PracticePlan _planFrom({
   preparationSnapshot: snapshot,
   sceneSelection: SceneSelectionSnapshot(
     scene: _scene,
-    selectedRoleIds: const <String>[_roleId],
-    practiceOptionId: _optionId,
+    selectedRoleIds: <String>[selectedRoleId],
+    practiceOptionId: practiceOptionId,
   ),
-  sessionPolicy: _policy,
+  sessionPolicy: sessionPolicy,
   practiceObjectives: _objectives,
   revision: revision,
   status: PracticePlanStatus.ready,
@@ -978,8 +1049,8 @@ final _scene = testScene(
   name: 'Technical interview',
   version: 1,
   prompt: _prompt,
-  roles: [_role],
-  practiceOptions: [_option],
+  roles: [_role, _recruiterRole],
+  practiceOptions: [_fullOption, _option, _recruiterOption],
 );
 
 const _prompt = ScenePrompt(
@@ -1010,6 +1081,31 @@ final _option = testPracticeOption(
   roleId: _roleId,
 );
 
+final _fullOption = testPracticeOption(
+  id: 'option-full',
+  sceneId: _sceneId,
+  mode: PracticeMode.fullSimulation,
+  displayName: 'Full simulation',
+);
+
+final _recruiterRole = testRole(
+  id: _recruiterRoleId,
+  sceneId: _sceneId,
+  type: 'RECRUITER',
+  displayName: 'Recruiter',
+  responsibilities: 'Probe motivation and communication.',
+  style: 'Conversational',
+  practiceObjectiveIds: ['system_design'],
+);
+
+final _recruiterOption = testPracticeOption(
+  id: _recruiterOptionId,
+  sceneId: _sceneId,
+  mode: PracticeMode.focus,
+  displayName: 'Recruiting focus',
+  roleId: _recruiterRoleId,
+);
+
 const _objectives = [
   PracticeObjective(
     id: 'system_design',
@@ -1031,7 +1127,28 @@ const _policy = PreparationSessionPolicy(
   speechFeedbackAllowed: true,
 );
 
+const _openPolicy = PreparationSessionPolicy(
+  completionMode: PreparationCompletionMode.userControlled,
+  suggestedDurationSeconds: 900,
+  minEffectiveTurns: 1,
+  maxEffectiveTurns: 0,
+  coverageCheckpointTurn: 1,
+  maxFollowUpsPerQuestion: 2,
+  earlyCompletionRule: 'USER_ENDS_SESSION',
+  retryAllowed: false,
+  questionTranslationAllowed: true,
+  questionTipsAllowed: true,
+  avatarAllowed: true,
+  speechFeedbackAllowed: true,
+);
+
 final _plan = _planWithRevision(1);
+final _openPlan = _planFrom(
+  snapshot: _snapshot,
+  context: const AgentPracticeContext(threadId: _threadId, goalId: _goalId),
+  revision: 1,
+  sessionPolicy: _openPolicy,
+);
 
 final _bootstrap = PreparationPracticeBootstrap(
   session: PreparationPracticeSession(
@@ -1061,3 +1178,5 @@ const _goalId = 'goal-1';
 const _sceneId = 'scene-1';
 const _roleId = 'role-1';
 const _optionId = 'option-1';
+const _recruiterRoleId = 'role-2';
+const _recruiterOptionId = 'option-2';
