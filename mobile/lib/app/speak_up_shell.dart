@@ -121,6 +121,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   AgentConversationFeedbackPresenter? _feedbackPresenter;
   bool _practiceRouteInFlight = false;
   bool _agentHandoffInFlight = false;
+  bool _conversationDrawerOpen = false;
   int _navigationGeneration = 0;
 
   @override
@@ -552,6 +553,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           : Colors.transparent,
       drawer: _ConversationDrawer(
         controller: widget.conversationController,
+        onOpenProfile: () => _selectDestination(3),
         hiddenThreadIds: {
           ?widget
               .preparationLaunchController
@@ -559,13 +561,20 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               ?.currentPracticeThreadId,
         },
       ),
+      onDrawerChanged: (open) {
+        if (_conversationDrawerOpen != open) {
+          setState(() => _conversationDrawerOpen = open);
+        }
+      },
       drawerScrimColor: const Color(0x52000000),
       body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: PlatformNavigationBar(
-        destinations: _destinations,
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectDestinationFromNavigation,
-      ),
+      bottomNavigationBar: _conversationDrawerOpen
+          ? null
+          : PlatformNavigationBar(
+              destinations: _destinations,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: _selectDestinationFromNavigation,
+            ),
     );
   }
 
@@ -580,10 +589,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.controller,
+    required this.onOpenProfile,
     this.hiddenThreadIds = const <String>{},
   });
 
   final ConversationController controller;
+  final VoidCallback onOpenProfile;
   final Set<String> hiddenThreadIds;
 
   @override
@@ -706,28 +717,55 @@ class _ConversationDrawer extends StatelessWidget {
                   ),
                   Positioned(
                     left: 16,
+                    right: 16,
                     bottom: 16,
-                    child: FilledButton.icon(
-                      key: const Key('new-conversation-button'),
-                      onPressed: busy
-                          ? null
-                          : () async {
-                              final created = await controller.createThread();
-                              if (!context.mounted || !created) {
-                                return;
-                              }
-                              Navigator.of(context).pop();
-                            },
-                      icon: const Icon(Icons.edit_outlined, size: 22),
-                      label: const Text('聊天'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 48),
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        backgroundColor: SpeakUpDesign.primary,
-                        foregroundColor: SpeakUpDesign.canvas,
-                        shape: const StadiumBorder(),
-                        textStyle: SpeakUpDesign.cardTitle,
-                      ),
+                    child: Row(
+                      children: [
+                        FilledButton.icon(
+                          key: const Key('new-conversation-button'),
+                          onPressed: busy
+                              ? null
+                              : () async {
+                                  final created = await controller
+                                      .createThread();
+                                  if (!context.mounted || !created) {
+                                    return;
+                                  }
+                                  Navigator.of(context).pop();
+                                },
+                          icon: const Icon(Icons.edit_outlined, size: 22),
+                          label: const Text('聊天'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            backgroundColor: SpeakUpDesign.primary,
+                            foregroundColor: SpeakUpDesign.canvas,
+                            shape: const StadiumBorder(),
+                            textStyle: SpeakUpDesign.cardTitle,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          key: const Key('drawer-profile-button'),
+                          tooltip: '打开我的页面',
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            onOpenProfile();
+                          },
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 48,
+                            height: 48,
+                          ),
+                          icon: const CircleAvatar(
+                            radius: 24,
+                            backgroundColor: SpeakUpDesign.surfaceMuted,
+                            backgroundImage: AssetImage(
+                              'assets/images/scenes/profile-avatar-alex.png',
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
