@@ -78,14 +78,14 @@ final class PracticePlanHandoffCard extends StatelessWidget {
                         ],
                       ),
               ),
-              const SizedBox(width: 12),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 22,
-                color: onConfirm == null
-                    ? SpeakUpDesign.tertiary
-                    : SpeakUpDesign.secondary,
-              ),
+              if (onConfirm != null) ...[
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: SpeakUpDesign.secondary,
+                ),
+              ],
             ],
           ),
         ),

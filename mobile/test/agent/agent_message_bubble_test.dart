@@ -468,6 +468,22 @@ void main() {
         '10000000-0000-4000-8000-000000000004-1',
       ),
     );
+    final entry = tester.widget<InkWell>(
+      find.byKey(
+        const Key(
+          'confirm-practice-plan-'
+          '10000000-0000-4000-8000-000000000004-1',
+        ),
+      ),
+    );
+    expect(entry.onTap, isNull);
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.byIcon(Icons.chevron_right_rounded),
+      ),
+      findsNothing,
+    );
     for (final hidden in const <String>[
       '练前跟练',
       '不计分',
