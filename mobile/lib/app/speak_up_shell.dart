@@ -872,67 +872,114 @@ class _ProfilePage extends StatelessWidget {
             140,
           ),
           children: [
-            const SpeakUpDisplayTitle(
-              key: Key('profile-page-title'),
-              title: 'Profile',
-              semanticLabel: '我的',
-            ),
-            const SizedBox(height: SpeakUpDesign.space24),
-            Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: SpeakUpDesign.space16,
-                  vertical: SpeakUpDesign.space8,
-                ),
-                leading: CircleAvatar(
-                  backgroundColor: SpeakUpDesign.primaryMuted,
-                  foregroundColor: SpeakUpDesign.primary,
-                  child: Text(
-                    _profileInitial(profile?.displayName),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                title: Text(
-                  profile?.displayName ?? (user == null ? '本地界面预览' : '尚未设置昵称'),
-                ),
-                subtitle: Text(user?.email ?? '尚未连接正式账号'),
-                trailing: user == null
-                    ? null
-                    : Row(
+            Stack(
+              children: [
+                Center(
+                  child: Column(
+                    children: [
+                      Container(
+                        key: const Key('profile-avatar'),
+                        width: 132,
+                        height: 132,
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: SpeakUpDesign.surface,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Color(0x14000000),
+                              blurRadius: 20,
+                              offset: Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: const CircleAvatar(
+                          backgroundColor: SpeakUpDesign.surfaceMuted,
+                          backgroundImage: AssetImage(
+                            'assets/images/scenes/profile-avatar-alex.png',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: SpeakUpDesign.space20),
+                      Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            key: const Key('profile-edit-display-name'),
-                            tooltip: '编辑昵称',
-                            onPressed:
-                                profileSaving || onSaveDisplayName == null
-                                ? null
-                                : () => _editDisplayName(context),
-                            icon: const Icon(Icons.edit_rounded),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 220),
+                            child: Text(
+                              profile?.displayName ??
+                                  (user == null ? '本地界面预览' : '尚未设置昵称'),
+                              key: const Key('profile-display-name'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: SpeakUpDesign.pageTitle.copyWith(
+                                fontSize: 28,
+                              ),
+                            ),
                           ),
-                          IconButton(
-                            key: const Key('profile-logout-button'),
-                            tooltip: '退出登录',
-                            onPressed: onLogout,
-                            icon: const Icon(Icons.logout_rounded),
-                          ),
+                          if (user != null)
+                            IconButton(
+                              key: const Key('profile-edit-display-name'),
+                              tooltip: '编辑昵称',
+                              onPressed:
+                                  profileSaving || onSaveDisplayName == null
+                                  ? null
+                                  : () => _editDisplayName(context),
+                              icon: Icon(
+                                Icons.edit_rounded,
+                                size: 18,
+                                color: profileSaving
+                                    ? SpeakUpDesign.tertiary
+                                    : SpeakUpDesign.secondary,
+                              ),
+                            ),
                         ],
                       ),
-              ),
+                      const SizedBox(height: SpeakUpDesign.space4),
+                      Text(
+                        user?.email ?? '尚未连接正式账号',
+                        textAlign: TextAlign.center,
+                        style: SpeakUpDesign.body.copyWith(
+                          color: SpeakUpDesign.tertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (user != null)
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: PopupMenuButton<String>(
+                      key: const Key('profile-account-menu'),
+                      tooltip: '账号菜单',
+                      enabled: onLogout != null,
+                      icon: const Icon(Icons.more_horiz_rounded),
+                      onSelected: (_) => onLogout?.call(),
+                      itemBuilder: (_) => const [
+                        PopupMenuItem<String>(
+                          key: Key('profile-logout-button'),
+                          value: 'logout',
+                          child: Text('退出登录'),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
             if (profileErrorMessage != null) ...[
-              const SizedBox(height: SpeakUpDesign.space8),
+              const SizedBox(height: SpeakUpDesign.space16),
               Text(
                 profileErrorMessage!,
+                textAlign: TextAlign.center,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
-            const SizedBox(height: SpeakUpDesign.space16),
+            const SizedBox(height: SpeakUpDesign.space32),
             CurrentIeltsAbilityProfile(
               historyController: reviewHistoryController,
             ),
             if (resumeController != null) ...[
-              const SizedBox(height: SpeakUpDesign.space16),
+              const SizedBox(height: 72),
               ResumeSummaryCard(controller: resumeController!),
             ],
           ],
@@ -1033,11 +1080,4 @@ class _DisplayNameDialogState extends State<_DisplayNameDialog> {
     }
     Navigator.of(context).pop(true);
   }
-}
-
-String _profileInitial(String? displayName) {
-  if (displayName == null || displayName.isEmpty) {
-    return '我';
-  }
-  return String.fromCharCode(displayName.runes.first).toUpperCase();
 }

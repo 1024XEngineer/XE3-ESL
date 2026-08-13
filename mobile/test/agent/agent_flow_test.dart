@@ -175,6 +175,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('learner@example.com'), findsOneWidget);
 
+      await tester.tap(find.byKey(const Key('profile-account-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profile-logout-button')));
       await tester.pumpAndSettle();
 

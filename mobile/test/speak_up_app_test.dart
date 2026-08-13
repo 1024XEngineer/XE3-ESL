@@ -205,7 +205,9 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
-    expect(find.text('Profile'), findsOneWidget);
+    expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
+    expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
+    expect(find.text('个人能力'), findsOneWidget);
     expect(find.text('管理账号与练习身份。'), findsNothing);
     await _tapPrimaryDestination(
       tester,
