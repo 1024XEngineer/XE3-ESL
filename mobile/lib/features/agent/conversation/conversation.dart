@@ -139,8 +139,9 @@ class ConversationPage extends StatefulWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final titleSize = width < 350 ? 27.0 : 30.0;
-    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.325)
-        .clamp(180.0, 274.0);
+    final emptyHomeActionGap =
+        (MediaQuery.sizeOf(context).height * 0.325).clamp(180.0, 274.0) +
+        (onContinuePractice == null ? 52.0 : 0.0);
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
