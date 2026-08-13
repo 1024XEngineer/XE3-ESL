@@ -617,6 +617,20 @@ func TestRunLoopReturnsDeterministicIELTSClarification(t *testing.T) {
 			want:     "没问题，你想先练 Part 1、Part 2、Part 3，还是直接来一场完整模考？",
 		},
 		{
+			name:     "IELTS preparation statement asks scope only",
+			messages: routingMessages("记记一下，我现在准备。嗯。备战雅思。"),
+			want:     "没问题，你想先练 Part 1、Part 2、Part 3，还是直接来一场完整模考？",
+		},
+		{
+			name: "random topic without Part still asks scope",
+			messages: routingConversation(
+				"记记一下，我现在准备。嗯。备战雅思。",
+				"请选择 Part 和话题类型。",
+				"呃，你随便给我选一个吧。",
+			),
+			want: "没问题，你想先练 Part 1、Part 2、Part 3，还是直接来一场完整模考？",
+		},
+		{
 			name:     "missing category",
 			messages: routingMessages("帮我创建一场 IELTS Part 1"),
 			want:     "好，那就先练 Part 1：你想聊人物、地点、事物还是经历，还是让我随机选一个？",
@@ -652,6 +666,37 @@ func TestRunLoopReturnsDeterministicIELTSClarification(t *testing.T) {
 				t.Fatalf("result = %#v, model calls = %d", result, generator.CallCount())
 			}
 		})
+	}
+}
+
+func TestIELTSModelDecisionDoesNotStreamBeforeFinalAuthority(t *testing.T) {
+	generator := newScriptedGenerator(finalLoopResult("好的，已取消。"))
+	service := newLoopTestService(t, generator)
+	observer := &countingDeltaObserver{delegate: &recordingStreamObserver{}}
+
+	result, err := service.generateObserved(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		TextRequest{Messages: routingConversation(
+			"我想练一场雅思口语",
+			"想练哪个部分？",
+			"算了，先不练了",
+		)},
+		observer,
+	)
+	if err != nil {
+		t.Fatalf("generateObserved() error = %v", err)
+	}
+	if result.Content != "好的，已取消。" || observer.count != 0 ||
+		generator.CallCount() != 1 {
+		t.Fatalf(
+			"result = %#v, streamed bytes = %d, model calls = %d",
+			result,
+			observer.count,
+			generator.CallCount(),
+		)
 	}
 }
 
@@ -807,6 +852,7 @@ func TestIELTSNaturalRandomSelection(t *testing.T) {
 	for _, input := range []string{
 		"呃你给我随便挑一个。",
 		"呃随便帮我挑一个。",
+		"呃，你随便给我选一个吧。",
 		"你来选吧",
 	} {
 		topic, found := parseIELTSTopicChoice(input)

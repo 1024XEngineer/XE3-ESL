@@ -922,7 +922,8 @@ func (service *Service) generateObserved(
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		modelObserver := deltaObserver
-		if guardWarmUpAnswer {
+		if guardWarmUpAnswer ||
+			ieltsRouting.active && request.ToolChoice.Mode != ToolChoiceNone {
 			modelObserver = nil
 		}
 		result, err := service.generateModel(loopCtx, request, modelObserver)
