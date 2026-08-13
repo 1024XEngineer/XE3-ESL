@@ -3,16 +3,19 @@ import '../../support/scene_fixtures.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
@@ -696,7 +699,12 @@ void main() {
   });
 
   testWidgets('reads and stops an assistant message inline', (tester) async {
-    final controller = await _scenarioController();
+    final mediaClient = _TrackingPracticeMediaClient();
+    final audioPlayer = _TrackingPracticeAudioPlayer();
+    final controller = await _scenarioController(
+      mediaClient: mediaClient,
+      audioPlayer: audioPlayer,
+    );
     addTearDown(controller.dispose);
     final speaker = _ControlledPromptSpeaker();
     final question = controller.currentQuestion!;
@@ -715,6 +723,8 @@ void main() {
     await tester.pump();
 
     expect(speaker.spokenTexts, <String>[question.text]);
+    expect(mediaClient.questionSpeechLoads, 0);
+    expect(audioPlayer.playCalls, 0);
     expect(find.text('停止朗读'), findsOneWidget);
 
     await tester.tap(button);
@@ -813,6 +823,8 @@ void main() {
 Future<PracticeController> _scenarioController({
   PracticeClient? practiceClient,
   SceneDefinition? selectedScene,
+  PracticeMediaClient? mediaClient,
+  PracticeAudioPlayer? audioPlayer,
 }) async {
   final scene =
       selectedScene ??
@@ -837,7 +849,11 @@ Future<PracticeController> _scenarioController({
         practiceExperience: scene.experience,
         sceneCategory: scene.category,
       );
-  final controller = PracticeController(client: resolvedPracticeClient);
+  final controller = PracticeController(
+    client: resolvedPracticeClient,
+    mediaClient: mediaClient,
+    audioPlayer: audioPlayer,
+  );
   await controller.activateCreatedPractice(
     scene: scene,
     sessionId: _scenarioSessionId,
@@ -1308,6 +1324,51 @@ final class _ControlledPromptSpeaker implements PracticePromptSpeaker {
 
   @override
   Future<void> dispose() => stop();
+}
+
+final class _TrackingPracticeMediaClient implements PracticeMediaClient {
+  int questionSpeechLoads = 0;
+
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) async {
+    questionSpeechLoads++;
+    return Uint8List(44);
+  }
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) async => Uint8List(44);
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _TrackingPracticeAudioPlayer implements PracticeAudioPlayer {
+  final StreamController<void> _completions =
+      StreamController<void>.broadcast();
+  int playCalls = 0;
+
+  @override
+  Stream<void> get onComplete => _completions.stream;
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {
+    playCalls++;
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() => _completions.close();
 }
 
 final class _FailingPromptSpeaker implements PracticePromptSpeaker {

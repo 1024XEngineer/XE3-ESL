@@ -224,16 +224,6 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       return;
     }
 
-    if (current && controller.canPlayQuestionAudio) {
-      _questionNarrationGeneration++;
-      await _stopQuestionSpeakerSafely();
-      if (mounted) {
-        setState(() => _questionNarrationErrorId = null);
-      }
-      await controller.toggleQuestionAudio();
-      return;
-    }
-
     await _stopQuestionNarration();
     final generation = ++_questionNarrationGeneration;
     if (!mounted) {

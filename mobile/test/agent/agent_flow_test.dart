@@ -1,4 +1,6 @@
 import '../support/scene_fixtures.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
@@ -17,6 +19,7 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -267,6 +270,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('interview questions use immediate system narration controls', (
+    tester,
+  ) async {
+    final harness = await _startedHarness();
+    final speaker = _ControlledPracticePromptSpeaker();
+    addTearDown(harness.dispose);
+    final question = harness.practice.currentQuestion!;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: InterviewPracticePage(
+          practiceController: harness.practice,
+          practicePromptSpeaker: speaker,
+        ),
+      ),
+    );
+
+    final button = find.byKey(
+      ValueKey('practice-question-audio-${question.id}'),
+    );
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(speaker.spokenTexts, <String>[question.text]);
+    expect(find.text('停止朗读'), findsOneWidget);
+    expect(harness.practice.isQuestionAudioLoading, isFalse);
+
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(speaker.stopCalls, greaterThanOrEqualTo(2));
+    expect(find.text('朗读'), findsOneWidget);
+  });
+
   testWidgets('completion does not replace a newer route', (tester) async {
     final harness = await _startedHarness();
     addTearDown(harness.dispose);
@@ -378,6 +415,32 @@ final class _AgentHarness {
     conversation.dispose();
     practice.dispose();
   }
+}
+
+final class _ControlledPracticePromptSpeaker implements PracticePromptSpeaker {
+  final List<String> spokenTexts = <String>[];
+  Completer<void>? _activeSpeech;
+  int stopCalls = 0;
+
+  @override
+  Future<void> speak(String text) {
+    spokenTexts.add(text);
+    _activeSpeech = Completer<void>();
+    return _activeSpeech!.future;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+    final speech = _activeSpeech;
+    if (speech != null && !speech.isCompleted) {
+      speech.complete();
+    }
+    _activeSpeech = null;
+  }
+
+  @override
+  Future<void> dispose() => stop();
 }
 
 final class _AuthenticatedIdentityClient implements IdentityClient {

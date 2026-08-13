@@ -77,6 +77,10 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
   int _recordingSeconds = 0;
   bool _speechFeedbackRebuildScheduled = false;
   bool _interviewReportRouteActive = false;
+  String? _playingQuestionId;
+  String? _questionNarrationErrorId;
+  int _questionNarrationGeneration = 0;
+  PracticePromptSpeaker? _ownedQuestionSpeaker;
   PracticePromptSpeaker? _ownedTipSpeaker;
 
   @override
@@ -126,6 +130,9 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
     _textAnswerController.dispose();
     _textAnswerFocusNode.dispose();
     unawaited(widget.practiceController?.stopPracticeAudio(notify: false));
+    if (_ownedQuestionSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     if (_ownedTipSpeaker case final speaker?) {
       unawaited(speaker.dispose());
     }
@@ -374,6 +381,7 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
     if (controller == null) {
       return;
     }
+    await _stopQuestionNarration();
     final submitted = await controller.submitPracticeText(
       _textAnswerController.text,
     );
@@ -436,6 +444,10 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
 
   Future<void> _requestExit() async {
     if (!mounted || _exitInFlight || _exitApproved) {
+      return;
+    }
+    await _stopQuestionNarration();
+    if (!mounted) {
       return;
     }
     final callback = widget.onExitRequested;
@@ -516,6 +528,9 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
                         speechFeedbackController:
                             widget.speechFeedbackController,
                         onRepractice: _startSpeechFeedbackRetry,
+                        playingQuestionId: _playingQuestionId,
+                        narrationErrorQuestionId: _questionNarrationErrorId,
+                        onPlayQuestion: _playQuestion,
                       ),
                     ),
                     _RecordingPanel(
@@ -528,12 +543,65 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
                       recordingSeconds: _recordingSeconds,
                       onOpenReport: _openInterviewReport,
                       onShowTip: _showQuestionTip,
+                      onBeforeStartRecording: _stopQuestionNarration,
                     ),
                   ],
                 ),
         ),
       ),
     );
+  }
+
+  PracticePromptSpeaker get _questionSpeaker =>
+      widget.practicePromptSpeaker ??
+      (_ownedQuestionSpeaker ??= SystemPracticePromptSpeaker());
+
+  Future<void> _playQuestion(PracticeMessage message) async {
+    if (_playingQuestionId == message.id) {
+      await _stopQuestionNarration();
+      return;
+    }
+    final generation = ++_questionNarrationGeneration;
+    await _stopQuestionSpeakerSafely();
+    if (!mounted || generation != _questionNarrationGeneration) {
+      return;
+    }
+    setState(() {
+      _playingQuestionId = message.id;
+      _questionNarrationErrorId = null;
+    });
+    try {
+      await _questionSpeaker.speak(message.text);
+    } on Object {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _questionNarrationErrorId = message.id);
+      }
+    } finally {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _playingQuestionId = null);
+      }
+    }
+  }
+
+  Future<void> _stopQuestionNarration() async {
+    _questionNarrationGeneration++;
+    await widget.practiceController?.stopPracticeAudio();
+    await _stopQuestionSpeakerSafely();
+    if (mounted && _playingQuestionId != null) {
+      setState(() => _playingQuestionId = null);
+    }
+  }
+
+  Future<void> _stopQuestionSpeakerSafely() async {
+    final speaker = widget.practicePromptSpeaker ?? _ownedQuestionSpeaker;
+    if (speaker == null) {
+      return;
+    }
+    try {
+      await speaker.stop();
+    } on Object {
+      // Recording and navigation remain usable when platform TTS degrades.
+    }
   }
 }
 
@@ -604,6 +672,9 @@ class _SceneConversationMessageList extends StatelessWidget {
     required this.scrollController,
     required this.previewMode,
     required this.onRepractice,
+    required this.playingQuestionId,
+    required this.narrationErrorQuestionId,
+    required this.onPlayQuestion,
     this.speechFeedbackController,
   });
 
@@ -611,6 +682,9 @@ class _SceneConversationMessageList extends StatelessWidget {
   final ScrollController scrollController;
   final bool previewMode;
   final ValueChanged<SpeechFeedbackItem> onRepractice;
+  final String? playingQuestionId;
+  final String? narrationErrorQuestionId;
+  final ValueChanged<PracticeMessage> onPlayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
 
   @override
@@ -639,11 +713,13 @@ class _SceneConversationMessageList extends StatelessWidget {
               onFeedbackRepractice: controller.canStartSpeechFeedbackRetry
                   ? onRepractice
                   : null,
-              actions:
-                  message.role == PracticeMessageRole.assistant &&
-                      message.id == controller.questionId &&
-                      controller.canPlayQuestionAudio
-                  ? _QuestionAudioAction(controller: controller)
+              actions: message.role == PracticeMessageRole.assistant
+                  ? _QuestionAudioAction(
+                      messageId: message.id,
+                      playing: playingQuestionId == message.id,
+                      playbackFailed: narrationErrorQuestionId == message.id,
+                      onPressed: () => onPlayQuestion(message),
+                    )
                   : null,
             ),
             const SizedBox(height: 14),
@@ -718,29 +794,34 @@ class _SceneAIThinkingBubble extends StatelessWidget {
 }
 
 class _QuestionAudioAction extends StatelessWidget {
-  const _QuestionAudioAction({required this.controller});
+  const _QuestionAudioAction({
+    required this.messageId,
+    required this.playing,
+    required this.playbackFailed,
+    required this.onPressed,
+  });
 
-  final PracticeController controller;
+  final String messageId;
+  final bool playing;
+  final bool playbackFailed;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
-      key: const Key('practice-question-audio'),
-      onPressed: controller.canUsePracticeAudio
-          ? controller.toggleQuestionAudio
-          : null,
-      icon: controller.isQuestionAudioLoading
-          ? const SizedBox.square(
-              dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(
-              controller.isQuestionAudioPlaying
-                  ? Icons.stop_circle_outlined
-                  : Icons.volume_up_outlined,
-              size: 19,
-            ),
-      label: Text(controller.isQuestionAudioPlaying ? '停止播放' : '重听问题'),
+      key: ValueKey('practice-question-audio-$messageId'),
+      onPressed: onPressed,
+      icon: Icon(
+        playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+        size: 19,
+      ),
+      label: Text(
+        playing
+            ? '停止朗读'
+            : playbackFailed
+            ? '重试朗读'
+            : '朗读',
+      ),
     );
   }
 }
@@ -756,6 +837,7 @@ class _RecordingPanel extends StatefulWidget {
     required this.recordingSeconds,
     required this.onOpenReport,
     required this.onShowTip,
+    required this.onBeforeStartRecording,
   });
 
   final PracticeController controller;
@@ -767,6 +849,7 @@ class _RecordingPanel extends StatefulWidget {
   final int recordingSeconds;
   final VoidCallback onOpenReport;
   final VoidCallback onShowTip;
+  final Future<void> Function() onBeforeStartRecording;
 
   @override
   State<_RecordingPanel> createState() => _RecordingPanelState();
@@ -827,7 +910,10 @@ class _RecordingPanelState extends State<_RecordingPanel> {
     return VoiceCaptureControl(
       phase: capturePhase,
       enabled: captureEnabled,
-      onStart: widget.controller.startRecording,
+      onStart: () async {
+        await widget.onBeforeStartRecording();
+        await widget.controller.startRecording();
+      },
       onSendVoice: _sendVoice,
       onConvertToText: _convertToText,
       onCancel: _cancel,
