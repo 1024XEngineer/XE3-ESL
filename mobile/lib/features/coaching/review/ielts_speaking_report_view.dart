@@ -45,8 +45,11 @@ class IeltsSpeakingReportScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final titleParts = title == 'IELTS 口语模考报告'
-        ? const ('IELTS', '口语模考报告')
+    const fullMockTitle = 'IELTS 口语模考报告';
+    final isFullMockTitle =
+        title == fullMockTitle || title.startsWith('$fullMockTitle · ');
+    final titleParts = isFullMockTitle
+        ? ('IELTS', '口语模考报告${title.substring(fullMockTitle.length)}')
         : (title, '');
     return Scaffold(
       backgroundColor: _reportCanvas,
@@ -80,14 +83,19 @@ class IeltsSpeakingReportScaffold extends StatelessWidget {
                 ),
               ),
               if (titleParts.$2.isNotEmpty)
-                Text(
-                  titleParts.$2,
-                  style: const TextStyle(
-                    color: SpeakUpDesign.ink,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    height: 1.2,
-                    letterSpacing: 0.1,
+                FittedBox(
+                  alignment: Alignment.centerLeft,
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    titleParts.$2,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: SpeakUpDesign.ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                      letterSpacing: 0.1,
+                    ),
                   ),
                 ),
             ],

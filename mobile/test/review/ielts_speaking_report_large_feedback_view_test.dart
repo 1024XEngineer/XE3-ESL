@@ -163,4 +163,34 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'keeps an insufficient full-mock title in the two-line hierarchy',
+    (tester) async {
+      tester.view.physicalSize = const Size(640, 1440);
+      tester.view.devicePixelRatio = 2;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: IeltsSpeakingReportScaffold(
+            title: 'IELTS 口语模考报告 · 证据不足',
+            child: SizedBox.shrink(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('IELTS'), findsOneWidget);
+      expect(find.text('口语模考报告 · 证据不足'), findsOneWidget);
+      expect(find.text('IELTS 口语模考报告 · 证据不足'), findsNothing);
+
+      final firstLine = tester.getRect(find.text('IELTS'));
+      final secondLine = tester.getRect(find.text('口语模考报告 · 证据不足'));
+      expect(secondLine.top, greaterThanOrEqualTo(firstLine.bottom));
+      expect(secondLine.right, lessThanOrEqualTo(320));
+    },
+  );
 }
