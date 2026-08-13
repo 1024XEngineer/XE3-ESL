@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const (
@@ -114,14 +115,14 @@ func (provider *TextSpeechFeedbackProvider) GenerateSpeechFeedback(
 
 const speechFeedbackSystemPrompt = `You return cautious English-learning feedback for one confirmed transcript.
 Return one JSON object only with this exact shape: {"items":[...]}.
-Every item must contain exactly three non-empty string fields: kind, explanation, suggested_text.
-The only allowed kinds are CORRECTION and RECOMMENDED_EXPRESSION.
+The only allowed kinds are CORRECTION, RECOMMENDED_EXPRESSION, and STRENGTH.
 The user payload contains english_text that was deterministically extracted from the confirmed transcript. Use only english_text. Never reconstruct, translate, or infer omitted non-English text.
-Always return exactly one RECOMMENDED_EXPRESSION. Its suggested_text must contain the complete polished English expression, preserve the meaning, and add no new facts.
-If and only if english_text contains a clear grammar or word-choice error, also return exactly one CORRECTION before RECOMMENDED_EXPRESSION. CORRECTION fixes the error and explains it briefly. Never label a merely less-natural expression as CORRECTION.
+Return CORRECTION if and only if english_text contains a clear grammar or word-choice error. It must contain exactly kind, explanation, and suggested_text. CORRECTION fixes the error and explains it briefly. Never label a merely less-natural expression as CORRECTION.
+Return RECOMMENDED_EXPRESSION only when its complete suggested_text meaningfully improves naturalness or completeness, preserves the meaning, adds no new facts, and differs from english_text. It must contain exactly kind, explanation, and suggested_text. Do not rewrite merely to make the output different.
+When neither correction nor meaningful improvement is needed, return exactly one STRENGTH with kind and explanation only, using this shape: {"items":[{"kind":"STRENGTH","explanation":"The expression is already natural."}]}.
+Never combine STRENGTH with another item.
 Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in english_text.
-When no correction is needed, follow this example shape exactly: {"items":[{"kind":"RECOMMENDED_EXPRESSION","explanation":"More natural wording.","suggested_text":"Complete polished English expression."}]}.
-Return at most 2 items and no unknown fields. Never omit suggested_text.`
+Return at most 2 items and no unknown fields. Never omit suggested_text from CORRECTION or RECOMMENDED_EXPRESSION.`
 
 type SpeechFeedbackDraftItem struct {
 	Kind           SpeechFeedbackItemKind
@@ -210,7 +211,22 @@ func normalizeSpeechFeedbackProviderResult(
 		return nil, err
 	}
 	seen := make(map[string]struct{}, len(envelope.Items))
+	englishText := speechFeedbackEnglishReferenceText(input.ConfirmedText)
 	for _, generated := range envelope.Items {
+		switch generated.Kind {
+		case SpeechFeedbackItemCorrection,
+			SpeechFeedbackItemRecommendedExpression:
+			if generated.SuggestedText != nil &&
+				equalSpeechFeedbackText(*generated.SuggestedText, englishText) {
+				return nil, ErrInvalidSpeechFeedback
+			}
+		case SpeechFeedbackItemStrength:
+			if len(envelope.Items) != 1 {
+				return nil, ErrInvalidSpeechFeedback
+			}
+		default:
+			return nil, ErrInvalidSpeechFeedback
+		}
 		repractice := SpeechFeedbackRepracticeNone
 		if generated.Kind != SpeechFeedbackItemStrength {
 			switch input.Source.SourceKind {
@@ -255,6 +271,14 @@ func normalizeSpeechFeedbackProviderResult(
 		normalized = append(normalized, item)
 	}
 	return normalized, nil
+}
+
+func equalSpeechFeedbackText(left, right string) bool {
+	const edgeCharacters = " \t\r\n,;:!?-."
+	return strings.EqualFold(
+		strings.Join(strings.Fields(strings.Trim(left, edgeCharacters)), " "),
+		strings.Join(strings.Fields(strings.Trim(right, edgeCharacters)), " "),
+	)
 }
 
 func speechFeedbackAnchorForInput(

@@ -25,6 +25,7 @@ class InlineLanguageFeedback extends StatefulWidget {
     this.trailing,
     this.correction,
     this.polish,
+    this.feedbackNotice,
     this.correctionFooter,
     this.polishFooter,
     this.onSpeakSuggestion,
@@ -41,6 +42,7 @@ class InlineLanguageFeedback extends StatefulWidget {
   final Widget? trailing;
   final InlineLanguageSuggestion? correction;
   final InlineLanguageSuggestion? polish;
+  final String? feedbackNotice;
   final Widget? correctionFooter;
   final Widget? polishFooter;
   final ValueChanged<String>? onSpeakSuggestion;
@@ -61,7 +63,9 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
   @override
   void didUpdateWidget(covariant InlineLanguageFeedback oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.correction == null && widget.polish == null) {
+    if (widget.correction == null &&
+        widget.polish == null &&
+        widget.feedbackNotice == null) {
       _expanded = false;
     }
   }
@@ -74,7 +78,10 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
 
   @override
   Widget build(BuildContext context) {
-    final hasFeedback = widget.correction != null || widget.polish != null;
+    final hasFeedback =
+        widget.correction != null ||
+        widget.polish != null ||
+        widget.feedbackNotice != null;
     final spokenSuggestion = widget.polish ?? widget.correction;
     final actions = <Widget>[
       if (widget.leading != null) widget.leading!,
@@ -114,6 +121,12 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
         ),
         if (_expanded && hasFeedback) ...[
           const SizedBox(height: SpeakUpDesign.space8),
+          if (widget.feedbackNotice case final notice?)
+            Text(
+              notice,
+              key: const Key('inline-language-feedback-notice'),
+              style: SpeakUpDesign.body.copyWith(color: widget.textColor),
+            ),
           if (widget.correction case final correction?) ...[
             _InlineFeedbackHeading(label: '纠错', color: widget.foregroundColor),
             const SizedBox(height: SpeakUpDesign.space4),

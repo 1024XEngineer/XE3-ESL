@@ -32,6 +32,7 @@ class InlineSpeechFeedback extends StatelessWidget {
             SpeechFeedbackScoreabilityStatus.insufficient;
     final correction = visible ? feedback!.items.correction : null;
     final polish = visible ? feedback!.items.polish : null;
+    final strength = visible ? feedback!.items.strength : null;
     return InlineLanguageFeedback(
       leading: leading,
       trailing: trailing,
@@ -48,6 +49,7 @@ class InlineSpeechFeedback extends StatelessWidget {
               text: polish!.suggestedText!,
               explanation: polish.explanation,
             ),
+      feedbackNotice: strength == null ? null : '表达已经很自然，无需润色',
       correctionFooter: correction == null || onRepractice == null
           ? null
           : TextButton.icon(

@@ -230,6 +230,42 @@ func TestNormalizeSpeechFeedbackProviderResultBuildsConversationAnchor(
 	}
 }
 
+func TestNormalizeSpeechFeedbackProviderResultRejectsUnchangedSuggestion(
+	t *testing.T,
+) {
+	t.Parallel()
+	input := SpeechFeedbackProviderInput{
+		SchemaVersion: SpeechFeedbackSchemaVersion,
+		PromptVersion: SpeechFeedbackPromptVersion,
+		Source: SpeechFeedbackSource{
+			SourceKind:         SpeechFeedbackSourceConversationTurn,
+			PracticeSessionID:  "practice-1",
+			TurnID:             "turn-1",
+			InputRevision:      1,
+			EvidenceSnapshotID: "evaluation_snapshot_1",
+		},
+		EvidenceRefID: "evaluation_evidence_1",
+		ConfirmedText: "This expression is already natural.",
+	}
+	if _, err := normalizeSpeechFeedbackProviderResult(
+		input,
+		SpeechFeedbackProviderResult{
+			Payload: json.RawMessage(`{
+				"items": [{
+					"kind": "RECOMMENDED_EXPRESSION",
+					"explanation": "This is already natural.",
+					"suggested_text": " this expression is already natural. "
+				}]
+			}`),
+			Provider:  "qianwen",
+			Model:     "qwen-plus",
+			RequestID: "request-1",
+		},
+	); err == nil {
+		t.Fatal("unchanged recommendation was accepted")
+	}
+}
+
 func TestNormalizeSpeechFeedbackProviderResultCapsItemsAtEight(
 	t *testing.T,
 ) {

@@ -37,6 +37,8 @@ abstract interface class ConversationMessageFeedbackPresenter
   InlineLanguageSuggestion? correctionFor(AgentMessage message);
 
   InlineLanguageSuggestion? polishFor(AgentMessage message);
+
+  String? feedbackNoticeFor(AgentMessage message);
 }
 
 class ConversationPage extends StatefulWidget {
@@ -1006,6 +1008,7 @@ class _MessageList extends StatelessWidget {
               onRefreshImage: onRefreshImage,
               correction: feedbackPresenter?.correctionFor(message),
               polish: feedbackPresenter?.polishFor(message),
+              feedbackNotice: feedbackPresenter?.feedbackNoticeFor(message),
             ),
       ],
     );

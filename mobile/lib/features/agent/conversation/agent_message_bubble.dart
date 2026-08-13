@@ -20,6 +20,7 @@ final class AgentMessageBubble extends StatefulWidget {
     this.onRefreshImage,
     this.correction,
     this.polish,
+    this.feedbackNotice,
     super.key,
   });
 
@@ -31,6 +32,7 @@ final class AgentMessageBubble extends StatefulWidget {
   onRefreshImage;
   final InlineLanguageSuggestion? correction;
   final InlineLanguageSuggestion? polish;
+  final String? feedbackNotice;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -51,7 +53,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   void didUpdateWidget(covariant AgentMessageBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.message.id != widget.message.id ||
-        (widget.correction == null && widget.polish == null)) {
+        (widget.correction == null &&
+            widget.polish == null &&
+            widget.feedbackNotice == null)) {
       _languageFeedbackExpanded = false;
     }
     if (oldWidget.messageAudioController != widget.messageAudioController) {
@@ -303,6 +307,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
           correction: widget.correction,
           polish: widget.polish,
+          feedbackNotice: widget.feedbackNotice,
           optimizeIconOnly: true,
           onExpandedChanged: (expanded) {
             if (_languageFeedbackExpanded == expanded) {

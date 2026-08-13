@@ -118,6 +118,15 @@ final class SpeechFeedbackItem {
 }
 
 extension SpeechFeedbackItemsPresentation on Iterable<SpeechFeedbackItem> {
+  SpeechFeedbackItem? get strength {
+    for (final item in this) {
+      if (item.kind == SpeechFeedbackItemKind.strength) {
+        return item;
+      }
+    }
+    return null;
+  }
+
   SpeechFeedbackItem? get correction {
     for (final item in this) {
       if (item.kind == SpeechFeedbackItemKind.correction &&
