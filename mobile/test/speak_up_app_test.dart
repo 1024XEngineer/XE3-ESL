@@ -964,6 +964,36 @@ void main() {
     );
   });
 
+  testWidgets('conversation drawer avatar opens the Profile page', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SpeakUpApp.preview());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('conversation-menu-button')));
+    await tester.pumpAndSettle();
+
+    final profileButton = find.byKey(const Key('drawer-profile-button'));
+    final chatButton = find.byKey(const Key('new-conversation-button'));
+    expect(profileButton, findsOneWidget);
+    expect(find.byTooltip('打开我的页面'), findsOneWidget);
+    expect(find.byKey(const Key('primary-navigation')), findsNothing);
+    expect(
+      tester.getRect(profileButton).right,
+      tester.getRect(find.byType(Drawer)).right - 16,
+    );
+    expect(
+      tester.getRect(profileButton).center.dy,
+      tester.getRect(chatButton).center.dy,
+    );
+
+    await tester.tap(profileButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Drawer), findsNothing);
+    expect(find.byKey(const Key('profile-page')), findsOneWidget);
+  });
+
   testWidgets('conversation drawer excludes practice-owned Threads', (
     tester,
   ) async {
