@@ -1525,9 +1525,6 @@ class _ReviewDimensions extends StatelessWidget {
         dimensions.every(
           (dimension) => dimension.scale == dimensions.first.scale,
         );
-    final displayedDimensions = showsRadar
-        ? const <EvaluationReportDimension>[]
-        : dimensions;
     return Card(
       key: const Key('review-detail-dimensions'),
       child: Padding(
@@ -1555,17 +1552,13 @@ class _ReviewDimensions extends StatelessWidget {
                 semanticsPrefix: '通用评估四维雷达图',
               ),
             ],
-            for (
-              var index = 0;
-              index < displayedDimensions.length;
-              index++
-            ) ...[
-              if (index > 0) ...[
+            for (var index = 0; index < dimensions.length; index++) ...[
+              if (showsRadar || index > 0) ...[
                 const SizedBox(height: 16),
                 const Divider(height: 1),
                 const SizedBox(height: 16),
               ],
-              _ReviewDimensionRow(dimension: displayedDimensions[index]),
+              _ReviewDimensionRow(dimension: dimensions[index]),
             ],
           ],
         ),
@@ -1637,10 +1630,21 @@ class _ReviewFindings extends StatelessWidget {
           children: [
             Text('下一步先练', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 14),
-            Text(
-              primary.suggestion ?? primary.message,
+            Column(
               key: Key('review-feedback-${primary.id}'),
-              style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  primary.message,
+                  style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+                ),
+                if (primary.suggestion case final suggestion?) ...[
+                  if (suggestion != primary.message) ...[
+                    const SizedBox(height: 6),
+                    Text('建议：$suggestion', style: SpeakUpDesign.body),
+                  ],
+                ],
+              ],
             ),
             if (remaining.isNotEmpty) ...[
               const SizedBox(height: SpeakUpDesign.space8),
@@ -1664,12 +1668,20 @@ class _ReviewFindings extends StatelessWidget {
                         padding: const EdgeInsets.only(
                           bottom: SpeakUpDesign.space12,
                         ),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            finding.suggestion ?? finding.message,
-                            style: SpeakUpDesign.body,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(finding.message, style: SpeakUpDesign.body),
+                            if (finding.suggestion case final suggestion?) ...[
+                              if (suggestion != finding.message) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  '建议：$suggestion',
+                                  style: SpeakUpDesign.body,
+                                ),
+                              ],
+                            ],
+                          ],
                         ),
                       ),
                   ],

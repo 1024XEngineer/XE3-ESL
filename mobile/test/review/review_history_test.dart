@@ -898,16 +898,18 @@ void main() {
     expect(find.text('82 / 100'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
     expect(find.text('下一步先练'), findsOneWidget);
+    expect(find.text('I responsible for the migration.'), findsOneWidget);
     expect(
-      find.textContaining('I was responsible for the migration.'),
+      find.text('建议：I was responsible for the migration.'),
       findsOneWidget,
     );
     expect(find.text('查看其余 1 条建议'), findsOneWidget);
     expect(find.text('Name the time saved after the migration.'), findsNothing);
     await tester.tap(find.text('查看其余 1 条建议'));
     await tester.pumpAndSettle();
+    expect(find.text('Add one measurable outcome.'), findsOneWidget);
     expect(
-      find.text('Name the time saved after the migration.'),
+      find.text('建议：Name the time saved after the migration.'),
       findsOneWidget,
     );
     expect(find.textContaining('面试复盘 ·'), findsNothing);
@@ -1000,18 +1002,18 @@ void main() {
 
     expect(find.byKey(const Key('review-generic-score-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-summary')), findsNothing);
-    expect(find.textContaining('/ 100'), findsNothing);
+    expect(find.textContaining('/ 100'), findsNWidgets(4));
     expect(
       find.text('The response advances the communication goal.'),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.byKey(const Key('review-dimension-TASK_ACHIEVEMENT')),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.byKey(const Key('review-dimension-CLARITY_COHERENCE')),
-      findsNothing,
+      findsOneWidget,
     );
   });
 
