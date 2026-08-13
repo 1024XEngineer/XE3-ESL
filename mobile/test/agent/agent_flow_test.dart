@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
@@ -350,7 +349,7 @@ _AgentHarness _agentHarness({PracticeClient? practiceClient}) {
     conversation: conversation,
     composer: ComposerController(
       conversationController: conversation,
-      voiceInputClient: FakeAgentVoiceInputClient(),
+      voiceClient: voiceClient,
     ),
     messageAudio: messageAudio,
     practice: PracticeController(
