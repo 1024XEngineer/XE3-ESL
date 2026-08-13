@@ -364,6 +364,25 @@ func (application *SessionApplication) QuestionSpeech(
 	return application.orchestrator.SynthesizeQuestion(ctx, question.Content)
 }
 
+func (application *SessionApplication) QuestionText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	questionID string,
+) (string, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil ||
+		strings.TrimSpace(questionID) == "" {
+		return "", ErrInvalidRequest
+	}
+	question, err := application.questions.GetQuestion(ctx, actor, questionID)
+	if err != nil {
+		return "", err
+	}
+	if question.ID != questionID || strings.TrimSpace(question.Content) == "" {
+		return "", ErrInvalidContext
+	}
+	return strings.TrimSpace(question.Content), nil
+}
+
 func (application *SessionApplication) state(
 	ctx context.Context,
 	actor requestcontext.Actor,

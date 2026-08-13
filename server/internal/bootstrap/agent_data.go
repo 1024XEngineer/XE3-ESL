@@ -535,6 +535,7 @@ func buildIdentityAgentComposition(
 				RecordedReadTimeout: voiceConfigurations[0].RecordedAudioReadTimeout,
 				SameQuestionRetry:   sameQuestionRetry,
 				AudioAssets:         audioAssets,
+				RealtimeSpeech:      voiceConfigurations[0].AssistantSpeech,
 			},
 			errorRenderer,
 		)

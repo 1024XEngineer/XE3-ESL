@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
@@ -76,17 +77,23 @@ type Application interface {
 	) (practicevoice.QuestionTipResult, error)
 }
 
+type questionTextApplication interface {
+	QuestionText(context.Context, requestcontext.Actor, string) (string, error)
+}
+
 type Options struct {
 	RealtimeReadTimeout time.Duration
 	RecordedReadTimeout time.Duration
 	SameQuestionRetry   *practicevoice.SameQuestionRetryApplication
 	AudioAssets         AudioAssetHTTPService
+	RealtimeSpeech      agentconversation.AssistantSpeechSynthesizer
 }
 
 type Handler struct {
 	application         Application
 	retry               *practicevoice.SameQuestionRetryApplication
 	audioAssets         AudioAssetHTTPService
+	realtimeSpeech      agentconversation.AssistantSpeechSynthesizer
 	realtimeReadTimeout time.Duration
 	recordedReadTimeout time.Duration
 	errors              *httpresponse.Renderer
@@ -114,6 +121,7 @@ func NewHandler(
 		application:         application,
 		retry:               options.SameQuestionRetry,
 		audioAssets:         options.AudioAssets,
+		realtimeSpeech:      options.RealtimeSpeech,
 		realtimeReadTimeout: options.RealtimeReadTimeout,
 		recordedReadTimeout: options.RecordedReadTimeout,
 		errors:              errorRenderer,
@@ -150,6 +158,12 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		handler.confirmCandidate,
 	)
 	routes.GET("/v1/voice-questions/:question_id/speech", handler.questionSpeech)
+	if handler.realtimeSpeech != nil {
+		routes.GET(
+			"/v1/voice-questions/:question_id/speech/realtime",
+			handler.questionSpeechRealtime,
+		)
+	}
 	routes.GET(
 		"/v1/voice-questions/:question_id/translation",
 		handler.questionTranslation,

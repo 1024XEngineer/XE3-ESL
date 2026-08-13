@@ -343,6 +343,10 @@ ProductionAppDependencies createProductionAppDependencies({
     recorder: practiceRecorder ?? IosPracticeRecorder(),
     mediaClient: resolvedPracticeMediaClient,
     audioPlayer: resolvedPracticeAudioPlayer,
+    questionSpeechPlayer:
+        resolvedPracticeMediaClient is PracticeQuestionSpeechClient
+        ? MethodChannelPracticePCMStreamPlayer()
+        : null,
   );
   final reviewHistoryController = ReviewHistoryController(
     client: WireReviewHistoryClient(
