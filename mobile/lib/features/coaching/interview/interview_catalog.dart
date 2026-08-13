@@ -178,8 +178,9 @@ class _PlanCard extends StatelessWidget {
                     ),
                     _PlanMeta(
                       icon: Icons.repeat_rounded,
-                      label:
-                          '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
+                      label: plan.maxEffectiveTurns == 0
+                          ? '开放轮次'
+                          : '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
                     ),
                   ],
                 ),

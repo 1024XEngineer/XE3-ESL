@@ -959,9 +959,9 @@ List<PracticePlanSummary> _decodePracticePlanList(String body) {
           utf8.encode(jobTitleValue).length > 512) {
         throw _invalidResponse();
       }
-      int positiveInt(String key) {
+      int integerAtLeast(String key, int minimum) {
         final value = object[key];
-        if (value is! int || value < 1) {
+        if (value is! int || value < minimum) {
           throw _invalidResponse();
         }
         return value;
@@ -984,9 +984,12 @@ List<PracticePlanSummary> _decodePracticePlanList(String body) {
           objectiveValues.map((item) => _text(item, maxBytes: 2048)),
         ),
         resumeUsed: object['resume_used']! as bool,
-        suggestedDurationSeconds: positiveInt('suggested_duration_seconds'),
-        minEffectiveTurns: positiveInt('min_effective_turns'),
-        maxEffectiveTurns: positiveInt('max_effective_turns'),
+        suggestedDurationSeconds: integerAtLeast(
+          'suggested_duration_seconds',
+          1,
+        ),
+        minEffectiveTurns: integerAtLeast('min_effective_turns', 1),
+        maxEffectiveTurns: integerAtLeast('max_effective_turns', 0),
         createdAt: _dateTime(object['created_at']),
         updatedAt: _dateTime(object['updated_at']),
       );
