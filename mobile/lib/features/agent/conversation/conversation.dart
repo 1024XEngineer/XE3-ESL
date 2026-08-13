@@ -139,9 +139,8 @@ class ConversationPage extends StatefulWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final titleSize = width < 350 ? 27.0 : 30.0;
-    final emptyHomeActionGap =
-        (MediaQuery.sizeOf(context).height * 0.325).clamp(180.0, 274.0) +
-        (onContinuePractice == null ? 52.0 : 0.0);
+    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.325)
+        .clamp(180.0, 274.0);
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
@@ -872,13 +871,6 @@ class _QuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <_QuickActionButton>[
-      if (onContinuePractice != null)
-        _QuickActionButton(
-          actionKey: const Key('quick-action-continue-practice'),
-          icon: Icons.play_circle_outline_rounded,
-          label: '继续上次练习',
-          onPressed: onContinuePractice,
-        ),
       _QuickActionButton(
         actionKey: const Key('quick-action-create-plan'),
         icon: Icons.work_outline_rounded,
@@ -901,6 +893,20 @@ class _QuickActions extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Visibility(
+          visible: onContinuePractice != null,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: _QuickActionButton(
+            actionKey: onContinuePractice == null
+                ? null
+                : const Key('quick-action-continue-practice'),
+            icon: Icons.play_circle_outline_rounded,
+            label: '继续上次练习',
+            onPressed: onContinuePractice,
+          ),
+        ),
         for (var index = 0; index < actions.length; index++) ...[
           actions[index],
           if (index != actions.length - 1) const SizedBox.shrink(),
