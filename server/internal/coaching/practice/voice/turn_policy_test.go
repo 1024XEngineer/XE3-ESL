@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -247,7 +248,6 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 	bootstrap := turnPolicySessionBootstrap(
 		practice.InterviewProjectDeepDiveTurnPolicy,
 	)
-
 	mapped, err := mapPracticeSession(bootstrap, "user-1")
 	if err != nil {
 		t.Fatalf("mapPracticeSession: %v", err)
@@ -263,6 +263,109 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 		"user-1",
 	); !errors.Is(err, ErrInvalidContext) {
 		t.Fatalf("unknown TurnPolicyRef error = %v", err)
+	}
+}
+
+func TestMapPracticeSessionUsesFrozenSelectedInterviewRole(t *testing.T) {
+	t.Parallel()
+	bootstrap := turnPolicySessionBootstrap(
+		practice.InterviewProjectDeepDiveTurnPolicy,
+	)
+	bootstrap.Snapshot.SceneSelection.Scene.PracticeOptions[0].Mode =
+		practice.PracticeModeFocus
+	bootstrap.Session.PracticeMode = practice.PracticeModeFocus
+	bootstrap.Snapshot.PracticeMode = practice.PracticeModeFocus
+	role := &bootstrap.Snapshot.SceneSelection.Scene.Roles[0]
+	role.DisplayName = "招聘专员"
+	role.Responsibilities = "Explore motivation and communication clarity."
+	role.Style = "Warm and structured."
+	role.PracticeObjectives = []practice.PracticeObjectiveDefinition{
+		{ID: "motivation", Description: "Explain authentic motivation."},
+		{ID: "communication", Description: "Communicate ideas clearly."},
+	}
+	bootstrap.Snapshot.Participants[0].RoleSnapshot = role
+
+	mapped, err := mapPracticeSession(bootstrap, "user-1")
+	if err != nil {
+		t.Fatalf("mapPracticeSession: %v", err)
+	}
+	if mapped.Prompt.AIRole != "招聘专员" ||
+		!strings.Contains(mapped.Prompt.PersonaSummary, "Warm and structured") ||
+		len(mapped.Prompt.FocusAreas) != 2 ||
+		mapped.Prompt.FocusAreas[0] != "Explain authentic motivation." ||
+		len(mapped.Prompt.TurnBlueprints) != 2 ||
+		!strings.Contains(mapped.Prompt.TurnBlueprints[1], "Communicate ideas clearly") {
+		t.Fatalf("selected role prompt = %#v", mapped.Prompt)
+	}
+	request, err := questionGenerationRequest(mapped, 1)
+	if err != nil {
+		t.Fatalf("questionGenerationRequest: %v", err)
+	}
+	if !strings.Contains(request.SystemPrompt, "You are 招聘专员") ||
+		!strings.Contains(request.UserPrompt, "Explain authentic motivation") ||
+		strings.Contains(request.UserPrompt, "Probe impact") {
+		t.Fatalf("selected role generation request = %#v", request)
+	}
+}
+
+func TestSelectedInterviewRoleKeepsFullSimulationBlueprint(t *testing.T) {
+	t.Parallel()
+	prompt := sessionFixture().Prompt
+	wantBlueprints := append([]string(nil), prompt.TurnBlueprints...)
+	role := practice.RoleDefinition{
+		ID:               "role-recruiter",
+		DisplayName:      "招聘专员",
+		Responsibilities: "Explore motivation and communication clarity.",
+		Style:            "Warm and structured.",
+		PracticeObjectives: []practice.PracticeObjectiveDefinition{{
+			ID:          "motivation",
+			Description: "Explain authentic motivation.",
+		}},
+	}
+
+	if !applySelectedInterviewRole(
+		&prompt,
+		role,
+		practice.PracticeModeFullSimulation,
+	) {
+		t.Fatal("applySelectedInterviewRole rejected a valid role")
+	}
+	if prompt.AIRole != "招聘专员" ||
+		!reflect.DeepEqual(prompt.TurnBlueprints, wantBlueprints) {
+		t.Fatalf("full simulation prompt = %#v", prompt)
+	}
+}
+
+func TestMapPracticeSessionKeepsMultiRoleInterviewCompatible(t *testing.T) {
+	t.Parallel()
+	bootstrap := turnPolicySessionBootstrap(
+		practice.InterviewProjectDeepDiveTurnPolicy,
+	)
+	role := bootstrap.Snapshot.SceneSelection.Scene.Roles[0]
+	role.ID = "role-2"
+	bootstrap.Snapshot.SceneSelection.Scene.Roles = append(
+		bootstrap.Snapshot.SceneSelection.Scene.Roles,
+		role,
+	)
+	bootstrap.Snapshot.SceneSelection.SelectedRoleIDs = append(
+		bootstrap.Snapshot.SceneSelection.SelectedRoleIDs,
+		role.ID,
+	)
+	bootstrap.Snapshot.Participants = append(
+		bootstrap.Snapshot.Participants,
+		practice.Participant{
+			ID:               "facilitator-2",
+			SessionID:        "session-1",
+			Role:             "FACILITATOR",
+			SubjectRef:       practice.SubjectRef{Namespace: "speakup.role", SubjectID: role.ID},
+			RoleDefinitionID: role.ID,
+			RoleSnapshot:     &role,
+			Order:            3,
+		},
+	)
+
+	if _, err := mapPracticeSession(bootstrap, "user-1"); err != nil {
+		t.Fatalf("mapPracticeSession multi-role interview: %v", err)
 	}
 }
 
@@ -335,7 +438,17 @@ func TestMapPracticeSessionCopiesFrozenScenarioPreparation(t *testing.T) {
 func turnPolicySessionBootstrap(
 	turnPolicyRef string,
 ) practice.SessionBootstrap {
-	role := practice.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
+	role := practice.RoleDefinition{
+		ID:               "role-1",
+		SceneID:          "scene-1",
+		DisplayName:      "技术面试官",
+		Responsibilities: "Probe technical depth and trade-offs.",
+		Style:            "Precise and evidence seeking.",
+		PracticeObjectives: []practice.PracticeObjectiveDefinition{{
+			ID:          "technical_tradeoff",
+			Description: "Compare technical options and justify the trade-off.",
+		}},
+	}
 	definition := practice.SceneDefinition{
 		ID:         "scene-1",
 		Experience: practice.PracticeExperienceInterview,

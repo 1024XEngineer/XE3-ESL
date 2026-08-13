@@ -200,6 +200,42 @@ void main() {
     },
   );
 
+  test('revises a user-controlled plan with an open turn limit', () async {
+    final revised = _planJson()..['plan_revision'] = 2;
+    final policy = revised['session_policy']! as Map<String, Object?>;
+    policy
+      ..['completion_mode'] = 'USER_CONTROLLED'
+      ..['min_effective_turns'] = 1
+      ..['max_effective_turns'] = 0
+      ..['coverage_checkpoint_turn'] = 1;
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(HttpStatus.ok, revised),
+    ]);
+
+    final plan = await _client(transport).revisePlan(
+      planId: _planId,
+      input: const RevisePreparationPlanInput(
+        expectedPlanRevision: 1,
+        selectedRoleIds: <String>[_roleId],
+        practiceOptionId: _optionId,
+        maxEffectiveTurns: 0,
+      ),
+      idempotencyKey: 'open-plan-revision-key',
+    );
+
+    expect(
+      plan.sessionPolicy.completionMode,
+      PreparationCompletionMode.userControlled,
+    );
+    expect(plan.sessionPolicy.maxEffectiveTurns, 0);
+    expect(jsonDecode(transport.calls.single.body!), <String, Object?>{
+      'expected_plan_revision': 1,
+      'selected_role_ids': <String>[_roleId],
+      'practice_option_id': _optionId,
+      'max_effective_turns': 0,
+    });
+  });
+
   test('lists a user-controlled plan with an open turn limit', () async {
     final summary = <String, Object?>{
       'practice_plan_id': _planId,

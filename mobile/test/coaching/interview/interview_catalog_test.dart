@@ -24,6 +24,11 @@ void main() {
     expect(find.text('技术深挖'), findsOneWidget);
     expect(find.text('约 15 分钟'), findsOneWidget);
     expect(find.text('1–3 轮'), findsOneWidget);
+    expect(find.text('模拟面试'), findsOneWidget);
+    expect(
+      find.byKey(const Key('interview-plan-cover-plan-1')),
+      findsOneWidget,
+    );
     expect(find.textContaining('技术深挖 ·'), findsNothing);
 
     await tester.tap(find.byKey(const Key('interview-plan-plan-1')));
@@ -92,10 +97,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(content, findsOneWidget);
     }
-    expect(
-      find.byKey(const Key('delete-interview-plan-plan-1')).hitTestable(),
-      findsOneWidget,
-    );
+    final deleteButton = find.byKey(const Key('delete-interview-plan-plan-1'));
+    await tester.ensureVisible(deleteButton);
+    await tester.pumpAndSettle();
+    expect(deleteButton.hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
