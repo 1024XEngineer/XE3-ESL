@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
@@ -21,16 +23,35 @@ final class ComposerController extends ChangeNotifier {
     required this.conversationController,
     this.imageClient,
     this.imagePicker,
-    AgentVoiceInputClient? voiceInputClient,
+    AgentVoiceClient? voiceClient,
     AgentVoiceRecorder? voiceRecorder,
+    AgentAudioPlayer? draftAudioPlayer,
+    this.onAssistantCommitted,
+    this.onAssistantStreamStarted,
+    this.onAssistantStreamDelta,
+    this.onAssistantStreamCompleted,
+    this.onAssistantStreamFailed,
     ComposerClientIdFactory? clientIdFactory,
   }) : _clientIdFactory = clientIdFactory ?? _createSecureComposerId {
-    if (voiceInputClient != null) {
-      _voiceController = AgentVoiceInputController(
-        client: voiceInputClient,
-        recorder: voiceRecorder ?? FakeAgentVoiceStreamingRecorder(),
+    if (voiceClient != null) {
+      if ((voiceRecorder == null) != (draftAudioPlayer == null)) {
+        throw ArgumentError(
+          'Agent voice recorder and audio player must be injected together.',
+        );
+      }
+      _voiceController = AgentVoiceController(
+        client: voiceClient,
+        recorder: voiceRecorder ?? FakeAgentVoiceRecorder(),
+        audioPlayer: draftAudioPlayer ?? FakeAgentAudioPlayer(),
+        onMessagesCommitted: conversationController.commitComposerMessages,
+        onStreamMessageChanged:
+            conversationController.changeComposerStreamMessage,
+        onAssistantCommitted: onAssistantCommitted,
+        onAssistantStreamStarted: onAssistantStreamStarted,
+        onAssistantStreamDelta: onAssistantStreamDelta,
+        onAssistantStreamCompleted: onAssistantStreamCompleted,
+        onAssistantStreamFailed: onAssistantStreamFailed,
         idFactory: _newId,
-        submitTranscript: sendText,
       )..addListener(_relayVoiceState);
     }
     conversationController.addListener(_syncConversationState);
@@ -40,9 +61,14 @@ final class ComposerController extends ChangeNotifier {
   final ConversationController conversationController;
   final AgentImageClient? imageClient;
   final AgentImagePicker? imagePicker;
+  final AgentVoiceAssistantCommitted? onAssistantCommitted;
+  final AgentVoiceAssistantStreamStarted? onAssistantStreamStarted;
+  final AgentVoiceAssistantStreamDelta? onAssistantStreamDelta;
+  final AgentVoiceAssistantStreamCompleted? onAssistantStreamCompleted;
+  final AgentVoiceAssistantStreamFailed? onAssistantStreamFailed;
   final ComposerClientIdFactory _clientIdFactory;
 
-  AgentVoiceInputController? _voiceController;
+  AgentVoiceController? _voiceController;
   List<AgentPendingImage> _pendingImages = const <AgentPendingImage>[];
   String? _imageErrorMessage;
   bool _imageSelectionInFlight = false;
@@ -53,7 +79,7 @@ final class ComposerController extends ChangeNotifier {
   bool _departureInFlight = false;
   String? _boundThreadId;
 
-  AgentVoiceInputController? get voiceController => _voiceController;
+  AgentVoiceController? get voiceController => _voiceController;
   bool get supportsAgentVoice => _voiceController != null;
   bool get supportsAgentImages => imageClient != null && imagePicker != null;
   List<AgentPendingImage> get pendingImages =>
@@ -119,7 +145,7 @@ final class ComposerController extends ChangeNotifier {
   }
 
   Future<void> _startAgentVoiceRecording(
-    AgentVoiceInputController voice,
+    AgentVoiceController voice,
     int generation,
   ) async {
     await conversationController.initialize();
@@ -410,8 +436,14 @@ final class ComposerController extends ChangeNotifier {
       if (voice == null) {
         return true;
       }
-      if (voice.state != AgentVoiceInputState.idle) {
-        await voice.cancel();
+      switch (voice.state) {
+        case AgentVoiceComposerState.confirming ||
+            AgentVoiceComposerState.awaitingAssistant:
+          return false;
+        case AgentVoiceComposerState.idle:
+          break;
+        default:
+          await voice.cancel();
       }
       return !_disposed && !voice.hasActiveWorkflow;
     } finally {
@@ -433,7 +465,7 @@ final class ComposerController extends ChangeNotifier {
       notifyListeners();
     }
     await Future.wait([
-      if (_voiceController case final AgentVoiceInputController voice)
+      if (_voiceController case final AgentVoiceController voice)
         voice.clearPrivateState(),
       for (final asset in stagedAssets)
         imageClient?.deleteImage(imageAssetId: asset.id).catchError((_) {}) ??
@@ -454,7 +486,7 @@ final class ComposerController extends ChangeNotifier {
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
 
-  bool _isVoiceStartCurrent(AgentVoiceInputController voice, int generation) =>
+  bool _isVoiceStartCurrent(AgentVoiceController voice, int generation) =>
       !_disposed &&
       !_departureInFlight &&
       generation == _voiceStartGeneration &&

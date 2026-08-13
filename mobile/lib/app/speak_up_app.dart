@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_message_image_client.dart';
@@ -245,9 +244,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     final previewVoiceClient = widget.allowFakePreview
         ? FakeAgentVoiceClient()
         : null;
-    final previewVoiceInputClient = widget.allowFakePreview
-        ? FakeAgentVoiceInputClient()
-        : null;
     final injectedController = widget.conversationController;
     if (injectedController == null && !widget.allowFakePreview) {
       throw StateError(
@@ -287,7 +283,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         injectedComposerController ??
         ComposerController(
           conversationController: _conversationController,
-          voiceInputClient: previewVoiceInputClient,
+          voiceClient: previewVoiceClient,
+          onAssistantCommitted: _messageAudioController?.playCommittedAssistant,
         );
     final injectedPracticeController = widget.practiceController;
     if (injectedPracticeController == null && !widget.allowFakePreview) {

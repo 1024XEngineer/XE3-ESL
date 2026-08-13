@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/design/voice_composer_dock.dart';
-import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 
 class AgentComposerVoiceDock extends StatelessWidget {
   const AgentComposerVoiceDock({
@@ -46,9 +46,6 @@ class AgentComposerVoiceDock extends StatelessWidget {
       onShowText: onShowText,
       liveTranscript: liveTranscript,
       liveTranscriptKey: const Key('agent-voice-live-transcript'),
-      tapRecordingLabel: '点击转文字 · 上滑取消',
-      holdRecordingLabel: '上滑取消 · 松开转文字',
-      capturingSemanticsLabel: '停止录音并转文字',
       leading: IconButton(
         key: const Key('agent-image-picker-button'),
         tooltip: '添加图片',
@@ -73,7 +70,7 @@ class AgentComposerVoiceStatusDock extends StatelessWidget {
     super.key,
   });
 
-  final AgentVoiceInputState state;
+  final AgentVoiceComposerState state;
   final String message;
   final bool canCancel;
   final bool canRetry;
@@ -82,7 +79,7 @@ class AgentComposerVoiceStatusDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final failed = state == AgentVoiceInputState.failed;
+    final failed = state == AgentVoiceComposerState.failed;
     if (!failed) {
       return SizedBox(
         height: 48,
@@ -171,11 +168,13 @@ class AgentComposerVoiceStatusDock extends StatelessWidget {
   }
 }
 
-String agentComposerVoiceStateLabel(AgentVoiceInputState state) {
+String agentComposerVoiceStateLabel(AgentVoiceComposerState state) {
   return switch (state) {
-    AgentVoiceInputState.starting => '正在打开麦克风…',
-    AgentVoiceInputState.completing => '正在整理识别文字…',
-    AgentVoiceInputState.submitting => '正在发送…',
+    AgentVoiceComposerState.starting => '正在打开麦克风…',
+    AgentVoiceComposerState.uploading => '正在处理语音…',
+    AgentVoiceComposerState.transcribing => '正在转写…',
+    AgentVoiceComposerState.confirming => '已识别，SpeakUp 正在回复…',
+    AgentVoiceComposerState.awaitingAssistant => 'SpeakUp 正在回复…',
     _ => '正在处理…',
   };
 }
