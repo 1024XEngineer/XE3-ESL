@@ -4,6 +4,23 @@ import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 
 void main() {
+  testWidgets('inline feedback reports when no polish is needed', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: InlineLanguageFeedback(feedbackNotice: '表达已经很自然，无需润色'),
+        ),
+      ),
+    );
+
+    expect(find.text('表达已经很自然，无需润色'), findsNothing);
+    await tester.tap(find.byKey(const Key('inline-language-optimize')));
+    await tester.pump();
+    expect(find.text('表达已经很自然，无需润色'), findsOneWidget);
+  });
+
   testWidgets('shared recording composer shows the live transcript', (
     tester,
   ) async {
