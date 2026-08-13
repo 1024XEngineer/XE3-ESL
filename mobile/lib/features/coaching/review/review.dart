@@ -778,7 +778,10 @@ class ReviewReportDetailPage extends StatelessWidget {
     final findings = report.dimensions
         .expand((dimension) => dimension.improvements)
         .toList(growable: false);
-    final priorityFeedback = _ieltsPriorityFeedback(report);
+    final priorityFeedback =
+        report.scoreability == EvaluationReportScoreability.insufficient
+        ? null
+        : _ieltsPriorityFeedback(report, sectionDetail);
     return Scaffold(
       key: const Key('review-detail-page'),
       appBar: AppBar(
@@ -808,14 +811,15 @@ class ReviewReportDetailPage extends StatelessWidget {
                 body: report.summary,
               ),
             ],
-            if (report.scoreability ==
-                EvaluationReportScoreability.insufficient) ...[
+            if (!isIeltsSectionReport &&
+                report.scoreability ==
+                    EvaluationReportScoreability.insufficient) ...[
               const SizedBox(height: 12),
               const _ReviewStatusNotice(),
             ],
-            if (isIeltsSectionReport && report.dimensions.isNotEmpty) ...[
+            if (isIeltsSectionReport) ...[
               const SizedBox(height: 12),
-              _IeltsSectionPerformance(dimensions: report.dimensions),
+              _IeltsSectionPerformance(report: report),
             ],
             if (isIeltsSectionReport && priorityFeedback != null) ...[
               const SizedBox(height: 12),
@@ -823,25 +827,27 @@ class ReviewReportDetailPage extends StatelessWidget {
             ],
             if (sectionDetail != null) ...[
               const SizedBox(height: 12),
-              _IeltsSectionReport(report: report, detail: sectionDetail),
+              _IeltsSectionReport(
+                report: report,
+                detail: sectionDetail,
+                excludedFindingId: priorityFeedback?.finding.id,
+              ),
             ] else if (expectsSectionDetail) ...[
               const SizedBox(height: 12),
               const _ReviewDetailSection(
                 key: Key('ielts-section-detail-invalid'),
                 title: '分段复盘暂不可用',
-                body: '专项报告的分段数据无法识别，下方仍保留本次练习的通用反馈。',
+                body: '专项报告的逐题数据无法识别，请稍后重试。',
               ),
+            ] else if (isIeltsSectionReport && findings.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _IeltsDetailedFeedback(findings: findings),
             ],
             if (!isIeltsSectionReport && report.dimensions.isNotEmpty) ...[
               const SizedBox(height: 12),
               _ReviewDimensions(dimensions: report.dimensions),
             ],
-            if (isIeltsSectionReport &&
-                sectionDetail == null &&
-                findings.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _IeltsDetailedFeedback(findings: findings),
-            ] else if (!isIeltsSectionReport && findings.isNotEmpty) ...[
+            if (!isIeltsSectionReport && findings.isNotEmpty) ...[
               const SizedBox(height: 12),
               _ReviewFindings(report: report, findings: findings),
             ],
@@ -890,15 +896,22 @@ class _ReviewDetailHeader extends StatelessWidget {
 }
 
 class _IeltsSectionPerformance extends StatelessWidget {
-  const _IeltsSectionPerformance({required this.dimensions});
+  const _IeltsSectionPerformance({required this.report});
 
-  final List<EvaluationReportDimension> dimensions;
+  final EvaluationReport report;
 
   @override
   Widget build(BuildContext context) {
-    final usesIeltsBandScale = dimensions.every(
-      (dimension) => dimension.scale == EvaluationReportScoreScale.ieltsBand,
-    );
+    final dimensions = report.dimensions;
+    final usesIeltsBandScale =
+        dimensions.isNotEmpty &&
+        dimensions.every(
+          (dimension) =>
+              dimension.scale == EvaluationReportScoreScale.ieltsBand,
+        );
+    final showsRadar =
+        dimensions.isNotEmpty &&
+        report.scoreability != EvaluationReportScoreability.insufficient;
     final byKey = {
       for (final dimension in dimensions) dimension.key: dimension,
     };
@@ -918,6 +931,12 @@ class _IeltsSectionPerformance extends StatelessWidget {
     final labels = usesIeltsBandScale
         ? const ['流利与连贯', '发音', '语法', '词汇']
         : const ['任务达成', '清晰与连贯', '语言运用', '互动表现'];
+    final status =
+        report.scoreability == EvaluationReportScoreability.insufficient
+        ? '本次录音不足以判断，暂不形成 Band 结论。'
+        : usesIeltsBandScale
+        ? '本次回答已达到可评分条件；以上 Band 仅为本次表现估分。'
+        : '本次回答已达到可评分条件；本报告仅反映本次表现。';
     return Card(
       key: const Key('review-detail-dimensions'),
       child: Padding(
@@ -925,19 +944,23 @@ class _IeltsSectionPerformance extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('口语能力', style: SpeakUpDesign.sectionTitle),
-            const SizedBox(height: SpeakUpDesign.space20),
-            FourAxisScoreRadar(
-              axes: <FourAxisRadarAxis>[
-                FourAxisRadarAxis(label: labels[0], value: ordered[0]?.score),
-                FourAxisRadarAxis(label: labels[1], value: ordered[1]?.score),
-                FourAxisRadarAxis(label: labels[2], value: ordered[2]?.score),
-                FourAxisRadarAxis(label: labels[3], value: ordered[3]?.score),
-              ],
-              maximum: usesIeltsBandScale ? 9 : 100,
-              semanticsKey: const Key('review-section-score-radar'),
-              semanticsPrefix: '专项练习四维雷达图',
-            ),
+            Text('本次表现', style: SpeakUpDesign.sectionTitle),
+            if (showsRadar) ...[
+              const SizedBox(height: SpeakUpDesign.space16),
+              FourAxisScoreRadar(
+                axes: <FourAxisRadarAxis>[
+                  FourAxisRadarAxis(label: labels[0], value: ordered[0]?.score),
+                  FourAxisRadarAxis(label: labels[1], value: ordered[1]?.score),
+                  FourAxisRadarAxis(label: labels[2], value: ordered[2]?.score),
+                  FourAxisRadarAxis(label: labels[3], value: ordered[3]?.score),
+                ],
+                maximum: usesIeltsBandScale ? 9 : 100,
+                semanticsKey: const Key('review-section-score-radar'),
+                semanticsPrefix: '专项练习四维雷达图',
+              ),
+            ],
+            const SizedBox(height: SpeakUpDesign.space16),
+            Text(status, style: SpeakUpDesign.body),
           ],
         ),
       ),
@@ -948,9 +971,20 @@ class _IeltsSectionPerformance extends StatelessWidget {
 typedef _IeltsPriorityFeedback = ({
   String dimensionKey,
   EvaluationReportFinding finding,
+  EvaluationReportEvidence evidence,
 });
 
-_IeltsPriorityFeedback? _ieltsPriorityFeedback(EvaluationReport report) {
+_IeltsPriorityFeedback? _ieltsPriorityFeedback(
+  EvaluationReport report,
+  IeltsPracticeReportDetail? sectionDetail,
+) {
+  final needsTrustedEvidence =
+      report.detailSchema == _ieltsSpeakingPracticeReportSchema;
+  final questionByTurnId = <String, IeltsPracticeReportQuestion>{};
+  for (final question in sectionDetail?.questions ?? const []) {
+    final turnId = question.responseTurnId;
+    if (turnId != null) questionByTurnId[turnId] = question;
+  }
   for (final action in report.priorityActions) {
     for (final dimension in report.dimensions) {
       if (dimension.key != action.dimensionKey) continue;
@@ -959,7 +993,21 @@ _IeltsPriorityFeedback? _ieltsPriorityFeedback(EvaluationReport report) {
         ...dimension.recommendedExamples,
       ]) {
         if (finding.id == action.findingId) {
-          return (dimensionKey: dimension.key, finding: finding);
+          final evidence = finding.evidence.where((item) {
+            if (!needsTrustedEvidence) return true;
+            final question = questionByTurnId[item.turnId];
+            final transcript = question?.confirmedTranscript;
+            return _englishWordCount(item.originalExcerpt) >= 1 &&
+                transcript != null &&
+                _englishWordCount(transcript) >= 3 &&
+                question!.evidenceRefIds.contains(item.evidenceRefId);
+          }).firstOrNull;
+          if (evidence == null) continue;
+          return (
+            dimensionKey: dimension.key,
+            finding: finding,
+            evidence: evidence,
+          );
         }
       }
     }
@@ -975,8 +1023,8 @@ class _IeltsPriorityFocus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final finding = feedback.finding;
-    final suggestion = finding.suggestion;
-    final evidence = finding.evidence.firstOrNull?.originalExcerpt;
+    final suggestion = _userFacingIeltsSuggestion(finding.suggestion);
+    final evidence = feedback.evidence.originalExcerpt;
     return Container(
       key: const Key('review-detail-priority-focus'),
       padding: const EdgeInsets.all(SpeakUpDesign.space20),
@@ -987,28 +1035,28 @@ class _IeltsPriorityFocus extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('下一步先练这个', style: SpeakUpDesign.cardTitle),
+          Text('最该先改的一点', style: SpeakUpDesign.cardTitle),
           const SizedBox(height: SpeakUpDesign.space16),
           Text(
             _dimensionLabel(feedback.dimensionKey),
             style: SpeakUpDesign.label.copyWith(color: SpeakUpDesign.secondary),
           ),
+          const SizedBox(height: SpeakUpDesign.space16),
+          Text('报告依据的原句', style: SpeakUpDesign.label),
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text('“$evidence”', style: SpeakUpDesign.body),
+          const SizedBox(height: SpeakUpDesign.space16),
+          Text('为什么要先改', style: SpeakUpDesign.label),
           const SizedBox(height: SpeakUpDesign.space4),
           Text(
             finding.message,
             style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
           ),
           if (suggestion != null && suggestion != finding.message) ...[
+            const Divider(height: SpeakUpDesign.space32),
+            Text('下一步练习', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: SpeakUpDesign.space16),
-            Text('下次这样说', style: SpeakUpDesign.label),
-            const SizedBox(height: SpeakUpDesign.space4),
             Text(suggestion, style: SpeakUpDesign.body),
-          ],
-          if (evidence != null) ...[
-            const SizedBox(height: SpeakUpDesign.space16),
-            Text('本次回答', style: SpeakUpDesign.label),
-            const SizedBox(height: SpeakUpDesign.space4),
-            Text('“$evidence”', style: SpeakUpDesign.body),
           ],
         ],
       ),
@@ -1114,26 +1162,31 @@ bool _matchesParts(
 }
 
 class _IeltsSectionReport extends StatelessWidget {
-  const _IeltsSectionReport({required this.report, required this.detail});
+  const _IeltsSectionReport({
+    required this.report,
+    required this.detail,
+    required this.excludedFindingId,
+  });
 
   final EvaluationReport report;
   final IeltsPracticeReportDetail detail;
+  final String? excludedFindingId;
 
   @override
   Widget build(BuildContext context) {
-    final strengths = <String, EvaluationReportFinding>{
+    final strengths = <String, _IeltsFindingFeedback>{
       for (final dimension in report.dimensions)
-        for (final finding in dimension.strengths) finding.id: finding,
+        for (final finding in dimension.strengths)
+          finding.id: (dimensionKey: dimension.key, finding: finding),
     };
-    final improvements = <String, EvaluationReportFinding>{
+    final improvements = <String, _IeltsFindingFeedback>{
       for (final dimension in report.dimensions)
-        for (final finding in dimension.improvements) finding.id: finding,
+        for (final finding in dimension.improvements)
+          finding.id: (dimensionKey: dimension.key, finding: finding),
     };
-    final examples = <String, EvaluationReportFinding>{
-      for (final dimension in report.dimensions)
-        for (final finding in dimension.recommendedExamples)
-          finding.id: finding,
-    };
+    final answered = detail.questions
+        .where((question) => question.confirmedTranscript != null)
+        .length;
     return Card(
       key: const Key('ielts-section-report'),
       clipBehavior: Clip.antiAlias,
@@ -1148,8 +1201,11 @@ class _IeltsSectionReport extends StatelessWidget {
           SpeakUpDesign.space20,
           SpeakUpDesign.space20,
         ),
-        title: Text('详细反馈', style: SpeakUpDesign.cardTitle),
-        subtitle: Text('评分依据与本次回答', style: SpeakUpDesign.meta),
+        title: Text('逐题反馈', style: SpeakUpDesign.cardTitle),
+        subtitle: Text(
+          '$answered/${detail.questions.length} 题已回答 · 点开查看原句与建议',
+          style: SpeakUpDesign.meta,
+        ),
         children: [
           for (
             var index = 0;
@@ -1167,7 +1223,7 @@ class _IeltsSectionReport extends StatelessWidget {
                   .toList(growable: false),
               strengths: strengths,
               improvements: improvements,
-              examples: examples,
+              excludedFindingId: excludedFindingId,
             ),
           ],
         ],
@@ -1197,9 +1253,9 @@ class _IeltsDetailedFeedback extends StatelessWidget {
           SpeakUpDesign.space20,
           SpeakUpDesign.space20,
         ),
-        title: Text('详细反馈', style: SpeakUpDesign.cardTitle),
+        title: Text('查看全部评分依据', style: SpeakUpDesign.cardTitle),
         subtitle: Text(
-          '查看全部 ${findings.length} 条建议',
+          '查看其余 ${findings.length} 条分项反馈',
           style: SpeakUpDesign.meta,
         ),
         children: [
@@ -1210,10 +1266,11 @@ class _IeltsDetailedFeedback extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(findings[index].message, style: SpeakUpDesign.body),
-                if (findings[index].suggestion case final suggestion?) ...[
+                if (_userFacingIeltsSuggestion(findings[index].suggestion)
+                    case final suggestion?) ...[
                   if (suggestion != findings[index].message) ...[
                     const SizedBox(height: SpeakUpDesign.space8),
-                    Text('建议：$suggestion', style: SpeakUpDesign.body),
+                    Text('练习方法：$suggestion', style: SpeakUpDesign.body),
                   ],
                 ],
               ],
@@ -1231,14 +1288,14 @@ class _IeltsSectionCard extends StatelessWidget {
     required this.questions,
     required this.strengths,
     required this.improvements,
-    required this.examples,
+    required this.excludedFindingId,
   });
 
   final IeltsPracticeSectionReview section;
   final List<IeltsPracticeReportQuestion> questions;
-  final Map<String, EvaluationReportFinding> strengths;
-  final Map<String, EvaluationReportFinding> improvements;
-  final Map<String, EvaluationReportFinding> examples;
+  final Map<String, _IeltsFindingFeedback> strengths;
+  final Map<String, _IeltsFindingFeedback> improvements;
+  final String? excludedFindingId;
 
   @override
   Widget build(BuildContext context) {
@@ -1264,49 +1321,23 @@ class _IeltsSectionCard extends StatelessWidget {
               ),
             ],
           ),
-          if (section.strengthFindingIds.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _SectionFindingGroup(
-              title: '做得好',
-              ids: section.strengthFindingIds,
-              findings: strengths,
-            ),
-          ],
-          if (section.improvementFindingIds.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _SectionFindingGroup(
-              title: '可改进',
-              ids: section.improvementFindingIds,
-              findings: improvements,
-            ),
-          ],
-          if (section.upgradeExampleFindingIds.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _SectionFindingGroup(
-              title: '提升表达',
-              ids: section.upgradeExampleFindingIds,
-              findings: examples,
-            ),
-          ],
-          const SizedBox(height: 16),
-          const Divider(height: 1),
-          const SizedBox(height: 14),
-          Text('本段题目', style: SpeakUpDesign.label),
           for (final question in questions) ...[
-            const SizedBox(height: 10),
-            Text(
-              '${question.index}. ${question.questionText}',
-              style: SpeakUpDesign.body,
-            ),
-            if (question.confirmedTranscript case final transcript?) ...[
-              const SizedBox(height: 3),
-              Text(
-                transcript,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: SpeakUpDesign.meta,
+            const Divider(height: 1),
+            _IeltsQuestionFeedbackTile(
+              question: question,
+              strengths: _questionFindings(
+                question,
+                section.strengthFindingIds,
+                strengths,
+                excludedFindingId: excludedFindingId,
               ),
-            ],
+              improvements: _questionFindings(
+                question,
+                section.improvementFindingIds,
+                improvements,
+                excludedFindingId: excludedFindingId,
+              ),
+            ),
           ],
         ],
       ),
@@ -1314,33 +1345,159 @@ class _IeltsSectionCard extends StatelessWidget {
   }
 }
 
-class _SectionFindingGroup extends StatelessWidget {
-  const _SectionFindingGroup({
-    required this.title,
-    required this.ids,
-    required this.findings,
+typedef _IeltsFindingFeedback = ({
+  String dimensionKey,
+  EvaluationReportFinding finding,
+});
+
+typedef _IeltsQuestionFinding = ({
+  String dimensionKey,
+  EvaluationReportFinding finding,
+  EvaluationReportEvidence evidence,
+});
+
+List<_IeltsQuestionFinding> _questionFindings(
+  IeltsPracticeReportQuestion question,
+  List<String> findingIds,
+  Map<String, _IeltsFindingFeedback> findings, {
+  String? excludedFindingId,
+}) {
+  final transcript = question.confirmedTranscript;
+  final turnId = question.responseTurnId;
+  if (transcript == null ||
+      turnId == null ||
+      _englishWordCount(transcript) < 3) {
+    return const [];
+  }
+  final matches = <_IeltsQuestionFinding>[];
+  for (final id in findingIds) {
+    if (id == excludedFindingId) continue;
+    final feedback = findings[id];
+    if (feedback == null) continue;
+    final evidence = feedback.finding.evidence.where((item) {
+      return item.turnId == turnId &&
+          question.evidenceRefIds.contains(item.evidenceRefId) &&
+          _englishWordCount(item.originalExcerpt) >= 1;
+    }).firstOrNull;
+    if (evidence != null) {
+      matches.add((
+        dimensionKey: feedback.dimensionKey,
+        finding: feedback.finding,
+        evidence: evidence,
+      ));
+    }
+  }
+  return matches;
+}
+
+class _IeltsQuestionFeedbackTile extends StatelessWidget {
+  const _IeltsQuestionFeedbackTile({
+    required this.question,
+    required this.strengths,
+    required this.improvements,
   });
 
-  final String title;
-  final List<String> ids;
-  final Map<String, EvaluationReportFinding> findings;
+  final IeltsPracticeReportQuestion question;
+  final List<_IeltsQuestionFinding> strengths;
+  final List<_IeltsQuestionFinding> improvements;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title, style: SpeakUpDesign.label),
-        for (final id in ids) ...[
-          const SizedBox(height: 5),
-          Text('• ${findings[id]!.message}', style: SpeakUpDesign.body),
-          if (findings[id]!.suggestion case final suggestion?)
-            Padding(
-              padding: const EdgeInsets.only(left: 13, top: 3),
-              child: Text('建议：$suggestion', style: SpeakUpDesign.meta),
+    final transcript = question.confirmedTranscript;
+    return ExpansionTile(
+      key: Key('ielts-question-feedback-${question.questionId}'),
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: SpeakUpDesign.space16),
+      title: Text(
+        'Q${question.index}. ${question.questionText}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: SpeakUpDesign.body.copyWith(
+          color: SpeakUpDesign.ink,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: transcript == null
+          ? Text('未回答', style: SpeakUpDesign.meta)
+          : Text(
+              '我的回答：$transcript',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: SpeakUpDesign.meta,
             ),
+      children: [
+        for (var index = 0; index < strengths.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space16),
+          _IeltsQuestionFindingBlock(
+            title: '做得好',
+            feedback: strengths[index],
+            transcript: transcript,
+          ),
         ],
+        if (strengths.isNotEmpty && improvements.isNotEmpty)
+          const SizedBox(height: SpeakUpDesign.space16),
+        for (var index = 0; index < improvements.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space16),
+          _IeltsQuestionFindingBlock(
+            title: '待改进',
+            feedback: improvements[index],
+            transcript: transcript,
+            showSuggestion: true,
+          ),
+        ],
+        if (strengths.isEmpty && improvements.isEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text('这道题暂无单独反馈。', style: SpeakUpDesign.meta),
+          ),
       ],
+    );
+  }
+}
+
+class _IeltsQuestionFindingBlock extends StatelessWidget {
+  const _IeltsQuestionFindingBlock({
+    required this.title,
+    required this.feedback,
+    required this.transcript,
+    this.showSuggestion = false,
+  });
+
+  final String title;
+  final _IeltsQuestionFinding feedback;
+  final String? transcript;
+  final bool showSuggestion;
+
+  @override
+  Widget build(BuildContext context) {
+    final suggestion = showSuggestion
+        ? _userFacingIeltsSuggestion(feedback.finding.suggestion)
+        : null;
+    final excerpt = feedback.evidence.originalExcerpt;
+    final showExcerpt =
+        showSuggestion &&
+        _normalizedText(excerpt) != _normalizedText(transcript);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$title · ${_dimensionLabel(feedback.dimensionKey)}',
+            style: SpeakUpDesign.label.copyWith(color: SpeakUpDesign.secondary),
+          ),
+          if (showExcerpt) ...[
+            const SizedBox(height: SpeakUpDesign.space4),
+            Text('“$excerpt”', style: SpeakUpDesign.body),
+          ],
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text(feedback.finding.message, style: SpeakUpDesign.body),
+          if (suggestion != null && suggestion != feedback.finding.message) ...[
+            const SizedBox(height: SpeakUpDesign.space8),
+            Text('怎么练：$suggestion', style: SpeakUpDesign.meta),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1519,8 +1676,27 @@ String _dimensionLabel(String key) {
         'CLARITY_COHERENCE': '清晰度与连贯性',
         'LANGUAGE_CONTROL': '语言运用',
         'INTERACTION': '互动表现',
+        'IELTS_FC': '流利与连贯',
+        'IELTS_LR': '词汇资源',
+        'IELTS_GRA': '语法范围与准确性',
+        'IELTS_PR': '发音',
       }[key] ??
-      key.toLowerCase().replaceAll('_', ' ');
+      '未识别评分维度';
+}
+
+int _englishWordCount(String value) =>
+    RegExp(r"[A-Za-z]+(?:['’-][A-Za-z]+)*").allMatches(value).length;
+
+String _normalizedText(String? value) =>
+    (value ?? '').trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+String? _userFacingIeltsSuggestion(String? value) {
+  if (value == null) return null;
+  const providerDetailMarker = '结合本次原句，还可以这样调整：';
+  final markerIndex = value.indexOf(providerDetailMarker);
+  final visible = (markerIndex < 0 ? value : value.substring(0, markerIndex))
+      .trim();
+  return visible.isEmpty ? null : visible;
 }
 
 String _compactDateLabel(DateTime value) {

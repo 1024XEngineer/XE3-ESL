@@ -47,7 +47,7 @@ void main() {
 
     expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
-    await tester.tap(find.text('详细反馈'));
+    await tester.tap(find.text('逐题反馈'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('ielts-section-part2')), findsOneWidget);
     expect(find.byKey(const Key('ielts-section-part3')), findsOneWidget);
@@ -128,8 +128,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('已完成'), findsNothing);
-      expect(find.text('本次表现'), findsNothing);
-      expect(find.text(item.report.summary), findsNothing);
+      expect(find.text('本次表现'), findsOneWidget);
       expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
       expect(
         find.byKey(const Key('review-section-score-radar')),
@@ -139,6 +138,7 @@ void main() {
       expect(find.byType(LinearProgressIndicator), findsNothing);
       expect(find.text('任务达成'), findsWidgets);
       expect(find.text('5'), findsOneWidget);
+      expect(find.textContaining('本报告仅反映本次表现'), findsOneWidget);
       expect(find.textContaining('非 IELTS'), findsNothing);
       await tester.drag(
         find.byKey(const Key('review-detail-content')),
@@ -149,7 +149,10 @@ void main() {
         find.byKey(const Key('review-detail-priority-focus')),
         findsOneWidget,
       );
-      expect(find.text('下一步先练这个'), findsOneWidget);
+      expect(find.text('最该先改的一点'), findsOneWidget);
+      expect(find.text('报告依据的原句'), findsOneWidget);
+      expect(find.text('为什么要先改'), findsOneWidget);
+      expect(find.text('下一步练习'), findsOneWidget);
       expect(find.text('State the intended outcome first.'), findsOneWidget);
       expect(find.text('“I think maybe...”'), findsOneWidget);
       await tester.drag(
@@ -232,6 +235,12 @@ void main() {
     expect(find.text('7'), findsOneWidget);
     expect(find.text('8'), findsOneWidget);
     expect(find.text('9'), findsOneWidget);
+    expect(find.byType(FourAxisScoreRadar), findsOneWidget);
+    expect(find.text('IELTS_FC'), findsNothing);
+    expect(find.text('IELTS_LR'), findsNothing);
+    expect(find.text('IELTS_GRA'), findsNothing);
+    expect(find.text('IELTS_PR'), findsNothing);
+    expect(find.textContaining('以上 Band 仅为本次表现估分'), findsOneWidget);
     expect(find.text('任务达成'), findsNothing);
   });
 
@@ -262,12 +271,22 @@ void main() {
       id: 'general-finding:part1.improvement-v1',
       message: 'Connect the answer to one clear reason.',
       suggestion: 'Add a short reason after the direct answer.',
-      evidence: <EvaluationReportEvidence>[],
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 11,
+          originalExcerpt: 'answer one',
+        ),
+      ],
     );
     final item = _item(
       practiceMode: 'PART_1',
       detailSchema: 'ielts-speaking-practice-report/v1',
-      detail: _part1SectionDetail(finding.id),
+      detail: _part1SectionDetail(<String>[
+        finding.id,
+      ], confirmedTranscript: 'This is answer one.'),
       dimensions: const <EvaluationReportDimension>[
         EvaluationReportDimension(
           key: 'TASK_ACHIEVEMENT',
@@ -291,11 +310,199 @@ void main() {
 
     expect(find.byKey(const Key('ielts-section-detail-invalid')), findsNothing);
     expect(find.byKey(const Key('ielts-section-report')), findsOneWidget);
-    await tester.ensureVisible(find.text('详细反馈'));
-    await tester.tap(find.text('详细反馈'));
+    await tester.ensureVisible(find.text('逐题反馈'));
+    await tester.tap(find.text('逐题反馈'));
+    await tester.pumpAndSettle();
+    final questionTile = find.byKey(
+      const Key('ielts-question-feedback-question_1'),
+    );
+    await tester.drag(
+      find.byKey(const Key('review-detail-content')),
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(questionTile);
     await tester.pumpAndSettle();
     expect(find.textContaining(finding.message), findsOneWidget);
-    expect(find.text('Answer 1.'), findsOneWidget);
+    expect(find.textContaining('This is answer one.'), findsOneWidget);
+  });
+
+  testWidgets('Part 1 keeps all trusted non-priority question findings', (
+    tester,
+  ) async {
+    const priority = EvaluationReportFinding(
+      id: 'finding_priority',
+      message: 'Priority feedback.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    const lexical = EvaluationReportFinding(
+      id: 'finding_lexical',
+      message: 'Use more precise vocabulary.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    const grammar = EvaluationReportFinding(
+      id: 'finding_grammar',
+      message: 'Use a wider range of sentence structures.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    final item = _item(
+      practiceMode: 'PART_1',
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      detail: _part1SectionDetail(const <String>[
+        'finding_priority',
+        'finding_lexical',
+        'finding_grammar',
+      ], confirmedTranscript: 'This is answer one.'),
+      dimensions: const <EvaluationReportDimension>[
+        EvaluationReportDimension(
+          key: 'IELTS_LR',
+          score: 5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>['evidence_1'],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[priority, lexical, grammar],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+      ],
+      priorityActions: const <EvaluationReportPriorityAction>[
+        EvaluationReportPriorityAction(
+          dimensionKey: 'IELTS_LR',
+          findingId: 'finding_priority',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('逐题反馈'),
+      300,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('review-detail-content')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(find.text('逐题反馈'));
+    await tester.pumpAndSettle();
+    final questionTile = find.byKey(
+      const Key('ielts-question-feedback-question_1'),
+    );
+    await tester.drag(
+      find.byKey(const Key('review-detail-content')),
+      const Offset(0, -150),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(questionTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text(priority.message), findsOneWidget);
+    expect(find.text(lexical.message), findsOneWidget);
+    expect(find.text(grammar.message), findsOneWidget);
+  });
+
+  testWidgets('Part 1 skips untrusted old priority evidence', (tester) async {
+    const untrusted = EvaluationReportFinding(
+      id: 'finding_untrusted',
+      message: '这条结论不应展示。',
+      suggestion: '先直接回答。',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: '问题啊得很',
+        ),
+      ],
+    );
+    const trusted = EvaluationReportFinding(
+      id: 'finding_trusted',
+      message: '补充一个具体信息，让回答更容易理解。',
+      suggestion: '先说结论，再补一个细节。结合本次原句，还可以这样调整：Use a stronger phrase.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 6,
+          endUtf8Byte: 38,
+          originalExcerpt: 'looking for specific information',
+        ),
+      ],
+    );
+    final item = _item(
+      practiceMode: 'PART_1',
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      detail: _part1SectionDetail(const <String>[
+        'finding_trusted',
+      ], confirmedTranscript: 'I was looking for specific information.'),
+      dimensions: const <EvaluationReportDimension>[
+        EvaluationReportDimension(
+          key: 'IELTS_LR',
+          score: 5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>['evidence_1'],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[untrusted, trusted],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+      ],
+      priorityActions: const <EvaluationReportPriorityAction>[
+        EvaluationReportPriorityAction(
+          dimensionKey: 'IELTS_LR',
+          findingId: 'finding_untrusted',
+        ),
+        EvaluationReportPriorityAction(
+          dimensionKey: 'IELTS_LR',
+          findingId: 'finding_trusted',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('review-detail-priority-focus')),
+    );
+
+    expect(find.text('这条结论不应展示。'), findsNothing);
+    expect(find.text('“问题啊得很”'), findsNothing);
+    expect(find.text('“looking for specific information”'), findsOneWidget);
+    expect(find.text('先说结论，再补一个细节。'), findsOneWidget);
+    expect(find.textContaining('Use a stronger phrase.'), findsNothing);
   });
 
   testWidgets(
@@ -435,29 +642,38 @@ Map<String, Object?> _sectionDetail() => <String, Object?>{
   ],
 };
 
-Map<String, Object?> _part1SectionDetail(String improvementFindingId) =>
+Map<String, Object?> _part1SectionDetail(
+  List<String> improvementFindingIds, {
+  String? confirmedTranscript,
+}) => <String, Object?>{
+  'schema_version': 'ielts-speaking-practice-report/v1',
+  'report_scope': 'PART_1',
+  'available_sections': <Object?>['PART_1'],
+  'questions': <Object?>[
+    _sectionQuestion(
+      part: 'PART_1',
+      index: 1,
+      confirmedTranscript: confirmedTranscript,
+    ),
+  ],
+  'section_reviews': <Object?>[
     <String, Object?>{
-      'schema_version': 'ielts-speaking-practice-report/v1',
-      'report_scope': 'PART_1',
-      'available_sections': <Object?>['PART_1'],
-      'questions': <Object?>[_sectionQuestion(part: 'PART_1', index: 1)],
-      'section_reviews': <Object?>[
-        <String, Object?>{
-          ..._sectionReview(part: 'PART_1', index: 1),
-          'improvement_finding_ids': <Object?>[improvementFindingId],
-        },
-      ],
-    };
+      ..._sectionReview(part: 'PART_1', index: 1),
+      'improvement_finding_ids': improvementFindingIds,
+    },
+  ],
+};
 
 Map<String, Object?> _sectionQuestion({
   required String part,
   required int index,
+  String? confirmedTranscript,
 }) => <String, Object?>{
   'question_id': 'question_$index',
   'part_id': part,
   'index': index,
   'question_text': 'Question $index?',
-  'confirmed_transcript': 'Answer $index.',
+  'confirmed_transcript': confirmedTranscript ?? 'Answer $index.',
   'response_turn_id': 'turn_$index',
   'evidence_ref_ids': <Object?>['evidence_$index'],
 };
