@@ -871,13 +871,6 @@ class _QuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <_QuickActionButton>[
-      if (onContinuePractice != null)
-        _QuickActionButton(
-          actionKey: const Key('quick-action-continue-practice'),
-          icon: Icons.play_circle_outline_rounded,
-          label: '继续上次练习',
-          onPressed: onContinuePractice,
-        ),
       _QuickActionButton(
         actionKey: const Key('quick-action-create-plan'),
         icon: Icons.work_outline_rounded,
@@ -900,6 +893,20 @@ class _QuickActions extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Visibility(
+          visible: onContinuePractice != null,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: _QuickActionButton(
+            actionKey: onContinuePractice == null
+                ? null
+                : const Key('quick-action-continue-practice'),
+            icon: Icons.play_circle_outline_rounded,
+            label: '继续上次练习',
+            onPressed: onContinuePractice,
+          ),
+        ),
         for (var index = 0; index < actions.length; index++) ...[
           actions[index],
           if (index != actions.length - 1) const SizedBox.shrink(),

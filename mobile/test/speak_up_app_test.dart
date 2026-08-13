@@ -920,6 +920,33 @@ void main() {
     expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
   });
 
+  testWidgets('keeps three and four Agent actions on the same bottom edge', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(402, 874);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(const MaterialApp(home: ConversationPage()));
+    await tester.pumpAndSettle();
+    final threeActionBottom = tester
+        .getRect(find.byKey(const Key('quick-action-recent-review')))
+        .bottom;
+
+    await tester.pumpWidget(
+      MaterialApp(home: ConversationPage(onContinuePractice: () {})),
+    );
+    await tester.pumpAndSettle();
+    final fourActionBottom = tester
+        .getRect(find.byKey(const Key('quick-action-recent-review')))
+        .bottom;
+
+    expect(threeActionBottom, closeTo(fourActionBottom, 0.01));
+  });
+
   testWidgets('conversation drawer exposes bounded Thread actions only', (
     tester,
   ) async {
