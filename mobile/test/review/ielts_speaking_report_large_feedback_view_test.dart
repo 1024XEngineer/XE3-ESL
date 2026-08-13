@@ -62,13 +62,12 @@ void main() {
       find.byType(FourAxisScoreRadar),
     );
     expect(radar.maximum, 9);
-    expect(radar.cornerLabels, isTrue);
     expect(radar.height, 300);
     expect(radar.axes.map((axis) => axis.label), <String>[
       '流利性与连贯性',
-      '词汇丰富度',
       '发音',
       '语法多样性及准确性',
+      '词汇丰富度',
     ]);
     for (final criterion in IeltsSpeakingCriterionId.values) {
       expect(

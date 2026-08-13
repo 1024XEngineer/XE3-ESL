@@ -612,26 +612,6 @@ String _reviewImage(ReviewHistoryItem item) {
   return candidates[hash % candidates.length];
 }
 
-class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: SpeakUpDesign.primaryMuted,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        child: Text(label, style: SpeakUpDesign.meta),
-      ),
-    );
-  }
-}
-
 class _HistoryLoading extends StatelessWidget {
   const _HistoryLoading();
 
@@ -799,15 +779,7 @@ class ReviewReportDetailPage extends StatelessWidget {
           key: const Key('review-detail-content'),
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
           children: [
-            if (!isIeltsSectionReport) ...[
-              _ReviewDetailHeader(item: item),
-              const SizedBox(height: 12),
-              _ReviewDetailSection(
-                key: const Key('review-detail-summary'),
-                title: '整体表现',
-                body: report.summary,
-              ),
-            ],
+            if (!isIeltsSectionReport) ...[_ReviewDetailHeader(item: item)],
             if (!isIeltsSectionReport &&
                 report.scoreability ==
                     EvaluationReportScoreability.insufficient) ...[
@@ -862,35 +834,48 @@ class _ReviewDetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: SpeakUpDesign.primaryMuted,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              children: [
-                _StatusLabel(label: _statusLabel(item.report)),
-                Text(
-                  _detailDateLabel(item.completedAt),
-                  style: SpeakUpDesign.meta,
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
+    final summary = _visibleReviewSummary(item.report.summary);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: SpeakUpDesign.space8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            item.review.title,
+            key: const Key('review-detail-title'),
+            style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
+          ),
+          const SizedBox(height: SpeakUpDesign.space4),
+          Text(
+            '${_detailDateLabel(item.completedAt)} · ${_statusLabel(item.report)}',
+            style: SpeakUpDesign.meta,
+          ),
+          if (summary != null) ...[
+            const SizedBox(height: SpeakUpDesign.space12),
             Text(
-              item.review.title,
-              key: const Key('review-detail-title'),
-              style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
+              summary,
+              key: const Key('review-detail-summary'),
+              style: SpeakUpDesign.body,
             ),
           ],
-        ),
+        ],
       ),
     );
   }
 }
+
+String? _visibleReviewSummary(String summary) =>
+    const <String>{
+      '本次练习已形成场景沟通评估，可按优先行动继续复练。',
+      '本次练习已形成面试表达评估，可按优先行动继续复练。',
+      '本次练习已形成 IELTS 口语评估，可按优先行动继续复练。',
+      '本次练习已形成面试表达评估。',
+      '本次回答已经形成可复盘的文本反馈。',
+      '当前回答不足以形成可靠结论。',
+      '本次练习的有效证据不足，暂不形成能力结论。',
+    }.contains(summary)
+    ? null
+    : summary;
 
 class _IeltsSectionPerformance extends StatelessWidget {
   const _IeltsSectionPerformance({required this.report});
@@ -1534,6 +1519,12 @@ class _ReviewDimensions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showsRadar =
+        dimensions.length == 4 &&
+        dimensions.every((dimension) => dimension.score != null) &&
+        dimensions.every(
+          (dimension) => dimension.scale == dimensions.first.scale,
+        );
     return Card(
       key: const Key('review-detail-dimensions'),
       child: Padding(
@@ -1543,8 +1534,26 @@ class _ReviewDimensions extends StatelessWidget {
           children: [
             Text('分项表现', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 14),
+            if (showsRadar) ...[
+              FourAxisScoreRadar(
+                axes: [
+                  for (final dimension in dimensions)
+                    FourAxisRadarAxis(
+                      label: _dimensionLabel(dimension.key),
+                      value: dimension.score,
+                    ),
+                ],
+                maximum:
+                    dimensions.first.scale ==
+                        EvaluationReportScoreScale.ieltsBand
+                    ? 9
+                    : 100,
+                semanticsKey: const Key('review-generic-score-radar'),
+                semanticsPrefix: '通用评估四维雷达图',
+              ),
+            ],
             for (var index = 0; index < dimensions.length; index++) ...[
-              if (index > 0) ...[
+              if (showsRadar || index > 0) ...[
                 const SizedBox(height: 16),
                 const Divider(height: 1),
                 const SizedBox(height: 16),
@@ -1606,6 +1615,12 @@ class _ReviewFindings extends StatelessWidget {
     final priorityIds = report.priorityActions
         .map((item) => item.findingId)
         .toSet();
+    final ordered = <EvaluationReportFinding>[
+      ...findings.where((finding) => priorityIds.contains(finding.id)),
+      ...findings.where((finding) => !priorityIds.contains(finding.id)),
+    ];
+    final primary = ordered.first;
+    final remaining = ordered.skip(1).toList(growable: false);
     return Card(
       key: const Key('review-detail-feedback'),
       child: Padding(
@@ -1613,26 +1628,64 @@ class _ReviewFindings extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('改进建议', style: SpeakUpDesign.cardTitle),
+            Text('下一步先练', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 14),
-            for (var index = 0; index < findings.length; index++) ...[
-              if (index > 0) const Divider(height: 24),
-              Column(
-                key: Key('review-feedback-${findings[index].id}'),
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (priorityIds.contains(findings[index].id))
-                    const _StatusLabel(label: '优先练习'),
-                  if (priorityIds.contains(findings[index].id))
-                    const SizedBox(height: 8),
-                  Text(findings[index].message, style: SpeakUpDesign.body),
-                  if (findings[index].suggestion case final suggestion?) ...[
-                    if (suggestion != findings[index].message) ...[
-                      const SizedBox(height: 6),
-                      Text('建议：$suggestion', style: SpeakUpDesign.body),
-                    ],
+            Column(
+              key: Key('review-feedback-${primary.id}'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  primary.message,
+                  style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+                ),
+                if (primary.suggestion case final suggestion?) ...[
+                  if (suggestion != primary.message) ...[
+                    const SizedBox(height: 6),
+                    Text('建议：$suggestion', style: SpeakUpDesign.body),
                   ],
                 ],
+              ],
+            ),
+            if (remaining.isNotEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space8),
+              Theme(
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: const Key('review-feedback-more'),
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(
+                    '查看其余 ${remaining.length} 条建议',
+                    style: SpeakUpDesign.label,
+                  ),
+                  children: [
+                    for (final finding in remaining)
+                      Padding(
+                        key: Key('review-feedback-${finding.id}'),
+                        padding: const EdgeInsets.only(
+                          bottom: SpeakUpDesign.space12,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(finding.message, style: SpeakUpDesign.body),
+                            if (finding.suggestion case final suggestion?) ...[
+                              if (suggestion != finding.message) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  '建议：$suggestion',
+                                  style: SpeakUpDesign.body,
+                                ),
+                              ],
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ],
           ],
