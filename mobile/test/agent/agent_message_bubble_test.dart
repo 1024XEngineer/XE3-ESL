@@ -315,12 +315,13 @@ void main() {
       ),
     );
 
-    expect(find.text('Java Interview Practice'), findsOneWidget);
+    expect(find.text('项目经历深挖'), findsOneWidget);
+    expect(find.text('Java Interview Practice'), findsNothing);
     expect(find.text('已为你准备好'), findsOneWidget);
-    expect(find.text('围绕项目难点完成三轮追问'), findsNothing);
-    expect(find.text('面试官、候选人'), findsOneWidget);
+    expect(find.text('面试官、候选人 · Interviewer'), findsOneWidget);
     expect(find.text('约 12 分钟'), findsOneWidget);
-    expect(find.text('3–5 个问题'), findsOneWidget);
+    expect(find.text('围绕项目难点完成三轮追问'), findsOneWidget);
+    expect(find.bySemanticsLabel('面试官场景图'), findsOneWidget);
     expect(find.text('开始练习'), findsOneWidget);
     expect(find.text('确认并开始练习'), findsNothing);
     expect(find.text('场景：项目经历深挖'), findsNothing);
@@ -337,6 +338,44 @@ void main() {
       ),
     );
     expect(selected, same(handoff));
+  });
+
+  testWidgets('renders the interview self-introduction recording sample', (
+    tester,
+  ) async {
+    const handoff = ConfirmPracticePlanHandoff(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000006',
+      planRevision: 1,
+      target: '说清背景、优势和岗位匹配，并自然回应一到两个追问。',
+      sceneName: '英文自我介绍',
+      practiceExperience: 'INTERVIEW',
+      sceneCategory: 'INTERVIEW_RECRUITER',
+      practiceMode: 'FOCUS',
+      roles: <String>['招聘方'],
+      practiceScope: '重点练习',
+      suggestedDuration: Duration(minutes: 8),
+      minEffectiveTurns: 3,
+      maxEffectiveTurns: 8,
+      executableStatus: 'ready',
+      confirmationPrompt: '确认后将创建练习会话；确认前不会开始练习。',
+    );
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-interview-self-introduction',
+        role: AgentMessageRole.assistant,
+        text: '我们从自我介绍开始。',
+        handoffs: <AgentHandoff>[handoff],
+      ),
+    );
+
+    expect(find.text('英文自我介绍'), findsOneWidget);
+    expect(find.text('招聘方 · Interviewer'), findsOneWidget);
+    expect(find.text('约 8 分钟'), findsOneWidget);
+    expect(find.text('重点练习'), findsOneWidget);
+    expect(find.bySemanticsLabel('面试官场景图'), findsOneWidget);
+    expect(find.text('开始练习'), findsOneWidget);
   });
 
   testWidgets('renders an unscored IELTS warm-up without a handoff', (
