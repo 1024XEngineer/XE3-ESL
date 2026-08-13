@@ -1325,13 +1325,13 @@ class _IeltsSectionCard extends StatelessWidget {
             const Divider(height: 1),
             _IeltsQuestionFeedbackTile(
               question: question,
-              strength: _questionFinding(
+              strengths: _questionFindings(
                 question,
                 section.strengthFindingIds,
                 strengths,
                 excludedFindingId: excludedFindingId,
               ),
-              improvement: _questionFinding(
+              improvements: _questionFindings(
                 question,
                 section.improvementFindingIds,
                 improvements,
@@ -1356,7 +1356,7 @@ typedef _IeltsQuestionFinding = ({
   EvaluationReportEvidence evidence,
 });
 
-_IeltsQuestionFinding? _questionFinding(
+List<_IeltsQuestionFinding> _questionFindings(
   IeltsPracticeReportQuestion question,
   List<String> findingIds,
   Map<String, _IeltsFindingFeedback> findings, {
@@ -1367,8 +1367,9 @@ _IeltsQuestionFinding? _questionFinding(
   if (transcript == null ||
       turnId == null ||
       _englishWordCount(transcript) < 3) {
-    return null;
+    return const [];
   }
+  final matches = <_IeltsQuestionFinding>[];
   for (final id in findingIds) {
     if (id == excludedFindingId) continue;
     final feedback = findings[id];
@@ -1379,26 +1380,26 @@ _IeltsQuestionFinding? _questionFinding(
           _englishWordCount(item.originalExcerpt) >= 1;
     }).firstOrNull;
     if (evidence != null) {
-      return (
+      matches.add((
         dimensionKey: feedback.dimensionKey,
         finding: feedback.finding,
         evidence: evidence,
-      );
+      ));
     }
   }
-  return null;
+  return matches;
 }
 
 class _IeltsQuestionFeedbackTile extends StatelessWidget {
   const _IeltsQuestionFeedbackTile({
     required this.question,
-    required this.strength,
-    required this.improvement,
+    required this.strengths,
+    required this.improvements,
   });
 
   final IeltsPracticeReportQuestion question;
-  final _IeltsQuestionFinding? strength;
-  final _IeltsQuestionFinding? improvement;
+  final List<_IeltsQuestionFinding> strengths;
+  final List<_IeltsQuestionFinding> improvements;
 
   @override
   Widget build(BuildContext context) {
@@ -1425,22 +1426,26 @@ class _IeltsQuestionFeedbackTile extends StatelessWidget {
               style: SpeakUpDesign.meta,
             ),
       children: [
-        if (strength != null)
+        for (var index = 0; index < strengths.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space16),
           _IeltsQuestionFindingBlock(
             title: '做得好',
-            feedback: strength!,
+            feedback: strengths[index],
             transcript: transcript,
           ),
-        if (strength != null && improvement != null)
+        ],
+        if (strengths.isNotEmpty && improvements.isNotEmpty)
           const SizedBox(height: SpeakUpDesign.space16),
-        if (improvement != null)
+        for (var index = 0; index < improvements.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space16),
           _IeltsQuestionFindingBlock(
             title: '待改进',
-            feedback: improvement!,
+            feedback: improvements[index],
             transcript: transcript,
             showSuggestion: true,
           ),
-        if (strength == null && improvement == null)
+        ],
+        if (strengths.isEmpty && improvements.isEmpty)
           Align(
             alignment: Alignment.centerLeft,
             child: Text('这道题暂无单独反馈。', style: SpeakUpDesign.meta),

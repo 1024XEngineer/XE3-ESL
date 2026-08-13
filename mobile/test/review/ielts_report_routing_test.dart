@@ -284,10 +284,9 @@ void main() {
     final item = _item(
       practiceMode: 'PART_1',
       detailSchema: 'ielts-speaking-practice-report/v1',
-      detail: _part1SectionDetail(
+      detail: _part1SectionDetail(<String>[
         finding.id,
-        confirmedTranscript: 'This is answer one.',
-      ),
+      ], confirmedTranscript: 'This is answer one.'),
       dimensions: const <EvaluationReportDimension>[
         EvaluationReportDimension(
           key: 'TASK_ACHIEVEMENT',
@@ -328,6 +327,108 @@ void main() {
     expect(find.textContaining('This is answer one.'), findsOneWidget);
   });
 
+  testWidgets('Part 1 keeps all trusted non-priority question findings', (
+    tester,
+  ) async {
+    const priority = EvaluationReportFinding(
+      id: 'finding_priority',
+      message: 'Priority feedback.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    const lexical = EvaluationReportFinding(
+      id: 'finding_lexical',
+      message: 'Use more precise vocabulary.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    const grammar = EvaluationReportFinding(
+      id: 'finding_grammar',
+      message: 'Use a wider range of sentence structures.',
+      evidence: <EvaluationReportEvidence>[
+        EvaluationReportEvidence(
+          evidenceRefId: 'evidence_1',
+          turnId: 'turn_1',
+          startUtf8Byte: 0,
+          endUtf8Byte: 6,
+          originalExcerpt: 'answer one',
+        ),
+      ],
+    );
+    final item = _item(
+      practiceMode: 'PART_1',
+      detailSchema: 'ielts-speaking-practice-report/v1',
+      detail: _part1SectionDetail(const <String>[
+        'finding_priority',
+        'finding_lexical',
+        'finding_grammar',
+      ], confirmedTranscript: 'This is answer one.'),
+      dimensions: const <EvaluationReportDimension>[
+        EvaluationReportDimension(
+          key: 'IELTS_LR',
+          score: 5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>['evidence_1'],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[priority, lexical, grammar],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+      ],
+      priorityActions: const <EvaluationReportPriorityAction>[
+        EvaluationReportPriorityAction(
+          dimensionKey: 'IELTS_LR',
+          findingId: 'finding_priority',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('逐题反馈'),
+      300,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('review-detail-content')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(find.text('逐题反馈'));
+    await tester.pumpAndSettle();
+    final questionTile = find.byKey(
+      const Key('ielts-question-feedback-question_1'),
+    );
+    await tester.drag(
+      find.byKey(const Key('review-detail-content')),
+      const Offset(0, -150),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(questionTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text(priority.message), findsOneWidget);
+    expect(find.text(lexical.message), findsOneWidget);
+    expect(find.text(grammar.message), findsOneWidget);
+  });
+
   testWidgets('Part 1 skips untrusted old priority evidence', (tester) async {
     const untrusted = EvaluationReportFinding(
       id: 'finding_untrusted',
@@ -360,10 +461,9 @@ void main() {
     final item = _item(
       practiceMode: 'PART_1',
       detailSchema: 'ielts-speaking-practice-report/v1',
-      detail: _part1SectionDetail(
-        trusted.id,
-        confirmedTranscript: 'I was looking for specific information.',
-      ),
+      detail: _part1SectionDetail(const <String>[
+        'finding_trusted',
+      ], confirmedTranscript: 'I was looking for specific information.'),
       dimensions: const <EvaluationReportDimension>[
         EvaluationReportDimension(
           key: 'IELTS_LR',
@@ -543,7 +643,7 @@ Map<String, Object?> _sectionDetail() => <String, Object?>{
 };
 
 Map<String, Object?> _part1SectionDetail(
-  String improvementFindingId, {
+  List<String> improvementFindingIds, {
   String? confirmedTranscript,
 }) => <String, Object?>{
   'schema_version': 'ielts-speaking-practice-report/v1',
@@ -559,7 +659,7 @@ Map<String, Object?> _part1SectionDetail(
   'section_reviews': <Object?>[
     <String, Object?>{
       ..._sectionReview(part: 'PART_1', index: 1),
-      'improvement_finding_ids': <Object?>[improvementFindingId],
+      'improvement_finding_ids': improvementFindingIds,
     },
   ],
 };
