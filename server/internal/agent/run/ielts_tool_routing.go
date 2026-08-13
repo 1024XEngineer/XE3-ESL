@@ -397,7 +397,7 @@ func isIELTSPracticeCreation(input string) bool {
 	if containsIELTSPracticeCancellation(normalized) || containsAny(normalized,
 		"怎么回答", "如何回答", "怎么答", "如何答", "评分规则", "评分标准",
 		"怎么练", "如何练", "怎么安排", "如何安排", "是什么", "有什么区别", "分析一下", "讲解一下",
-		"怎么样", "示例", "范例", "例子", "技巧", "建议", "方法",
+		"怎么备战", "如何备战", "怎么样", "示例", "范例", "例子", "技巧", "建议", "方法",
 	) {
 		return false
 	}
@@ -412,7 +412,7 @@ func isIELTSPracticeCreation(input string) bool {
 		}
 	}
 	if containsAny(normalized,
-		"想练", "想要练", "创建", "建立", "安排", "专项",
+		"想练", "想要练", "创建", "建立", "安排", "专项", "备战",
 		"来一场", "给我一场", "做一场", "准备一场",
 		"want to practice", "want to practise", "create", "set up",
 	) {
@@ -526,7 +526,8 @@ func containsNaturalRandomSelection(input string) bool {
 	}
 	return containsAny(normalized,
 		"随便帮我挑一个", "随便给我挑一个", "给我随便挑一个",
-		"帮我随便挑一个", "随便挑一个", "你来选", "你帮我选",
+		"帮我随便挑一个", "随便帮我选一个", "随便给我选一个",
+		"给我随便选一个", "帮我随便选一个", "随便挑一个", "你来选", "你帮我选",
 		"帮我选一个", "帮我挑一个",
 	)
 }
