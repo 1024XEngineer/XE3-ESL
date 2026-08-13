@@ -196,11 +196,15 @@ class ConversationComposerCapsule extends StatelessWidget {
       constraints: BoxConstraints(minHeight: minHeight),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
-        color: SpeakUpDesign.primaryMuted.withValues(alpha: 0.9),
+        color: SpeakUpDesign.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: SpeakUpDesign.surface.withValues(alpha: 0.72),
-        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 18,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
       child: child,
     );
