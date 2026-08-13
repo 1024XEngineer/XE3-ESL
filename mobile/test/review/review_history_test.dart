@@ -859,7 +859,14 @@ void main() {
           reasonCodes: <String>['ASR_CONFIDENCE_UNAVAILABLE'],
           evidenceRefIds: <String>['evidence_2'],
           strengths: <EvaluationReportFinding>[],
-          improvements: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[
+            EvaluationReportFinding(
+              id: 'correction_2',
+              message: 'Add one measurable outcome.',
+              suggestion: 'Name the time saved after the migration.',
+              evidence: <EvaluationReportEvidence>[],
+            ),
+          ],
           recommendedExamples: <EvaluationReportFinding>[],
         ),
       ],
@@ -890,9 +897,17 @@ void main() {
     expect(find.text('回答结构'), findsOneWidget);
     expect(find.text('82 / 100'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
-    expect(find.text('优先练习'), findsOneWidget);
+    expect(find.text('下一步先练'), findsOneWidget);
     expect(
       find.textContaining('I was responsible for the migration.'),
+      findsOneWidget,
+    );
+    expect(find.text('查看其余 1 条建议'), findsOneWidget);
+    expect(find.text('Name the time saved after the migration.'), findsNothing);
+    await tester.tap(find.text('查看其余 1 条建议'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Name the time saved after the migration.'),
       findsOneWidget,
     );
     expect(find.textContaining('面试复盘 ·'), findsNothing);
@@ -938,6 +953,66 @@ void main() {
 
     expect(find.byKey(const Key('review-detail-status-notice')), findsNothing);
     expect(find.text('7.5 / 9'), findsOneWidget);
+  });
+
+  testWidgets('generic four-dimension report renders the shared radar', (
+    tester,
+  ) async {
+    final dimensions = <EvaluationReportDimension>[
+      for (final entry in const <String, double>{
+        'TASK_ACHIEVEMENT': 5,
+        'CLARITY_COHERENCE': 10,
+        'LANGUAGE_CONTROL': 15,
+        'INTERACTION': 5,
+      }.entries)
+        EvaluationReportDimension(
+          key: entry.key,
+          score: entry.value,
+          scale: EvaluationReportScoreScale.percentage100,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: const <String>[],
+          evidenceRefIds: const <String>[],
+          strengths: entry.key == 'TASK_ACHIEVEMENT'
+              ? const <EvaluationReportFinding>[
+                  EvaluationReportFinding(
+                    id: 'strength-task',
+                    message: 'The response advances the communication goal.',
+                    evidence: <EvaluationReportEvidence>[],
+                  ),
+                ]
+              : const <EvaluationReportFinding>[],
+          improvements: const <EvaluationReportFinding>[],
+          recommendedExamples: const <EvaluationReportFinding>[],
+        ),
+    ];
+    final item = _sceneItem(
+      id: 'review-v2-workplace-radar',
+      sceneType: EvaluationReportSceneType.overseasWorkplace,
+      scoreability: EvaluationReportScoreability.provisional,
+      dimensions: dimensions,
+      detailSchema: 'general-scene-evaluation/v1',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+
+    expect(find.byKey(const Key('review-generic-score-radar')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-summary')), findsNothing);
+    expect(find.textContaining('/ 100'), findsNothing);
+    expect(
+      find.text('The response advances the communication goal.'),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('review-dimension-TASK_ACHIEVEMENT')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('review-dimension-CLARITY_COHERENCE')),
+      findsNothing,
+    );
   });
 
   testWidgets('four scene families keep their history card and report route', (

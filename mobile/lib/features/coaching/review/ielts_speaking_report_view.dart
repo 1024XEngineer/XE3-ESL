@@ -1,17 +1,14 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
-const _profileAbilityAccent = Color(0xFF34363A);
 const _profileAbilityScore = Color(0xFF34363A);
-const _profileAbilityGrid = Color(0xFFDDE1E7);
-const _reportAccent = Color(0xFF2F72F5);
-const _reportCanvas = Color(0xFFF7F8FC);
+const _reportAccent = SpeakUpDesign.ink;
+const _reportCanvas = SpeakUpDesign.canvas;
 const _reportBorder = Color(0xFFE9ECF2);
 const _reportMuted = Color(0xFF727987);
 const _reportBodyStyle = TextStyle(
@@ -254,11 +251,6 @@ class _ReportFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: SpeakUpDesign.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-        side: const BorderSide(color: _profileAbilityGrid),
-      ),
       key: const Key('ielts-speaking-report-failed'),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -493,7 +485,6 @@ class IeltsSpeakingScoreOverview extends StatelessWidget {
           criteria: criteria,
           semanticsKey: radarSemanticsKey,
           height: 300,
-          cornerLabels: true,
         ),
       ),
     );
@@ -647,7 +638,6 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
     this.semanticsKey = const Key('ielts-speaking-score-radar'),
     this.height = 320,
     this.profileMode = false,
-    this.cornerLabels = false,
     super.key,
   });
 
@@ -655,16 +645,15 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
   final Key semanticsKey;
   final double height;
   final bool profileMode;
-  final bool cornerLabels;
 
   @override
   Widget build(BuildContext context) {
     final byId = {for (final item in criteria) item.id: item};
     final ordered = [
       byId[IeltsSpeakingCriterionId.fluencyAndCoherence],
-      byId[IeltsSpeakingCriterionId.lexicalResource],
       byId[IeltsSpeakingCriterionId.pronunciation],
       byId[IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy],
+      byId[IeltsSpeakingCriterionId.lexicalResource],
     ];
     final values = ordered
         .map((item) => item?.estimatedBand?.toDouble())
@@ -675,13 +664,13 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
           label: profileMode ? '流利度与连贯性' : '流利性与连贯性',
           value: values[0],
         ),
-        FourAxisRadarAxis(
-          label: profileMode ? '词汇资源' : '词汇丰富度',
-          value: values[1],
-        ),
-        FourAxisRadarAxis(label: '发音', value: values[2]),
+        FourAxisRadarAxis(label: '发音', value: values[1]),
         FourAxisRadarAxis(
           label: profileMode ? '语法多样性与准确性' : '语法多样性及准确性',
+          value: values[2],
+        ),
+        FourAxisRadarAxis(
+          label: profileMode ? '词汇资源' : '词汇丰富度',
           value: values[3],
         ),
       ],
@@ -690,7 +679,6 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
       semanticsPrefix: 'IELTS 口语四维雷达图',
       height: height,
       emphasized: profileMode,
-      cornerLabels: cornerLabels,
     );
   }
 }
@@ -710,7 +698,6 @@ class FourAxisScoreRadar extends StatelessWidget {
     required this.semanticsPrefix,
     this.height = 300,
     this.emphasized = false,
-    this.cornerLabels = false,
     super.key,
   }) : assert(axes.length == 4),
        assert(maximum > 0);
@@ -721,7 +708,6 @@ class FourAxisScoreRadar extends StatelessWidget {
   final String semanticsPrefix;
   final double height;
   final bool emphasized;
-  final bool cornerLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -736,154 +722,43 @@ class FourAxisScoreRadar extends StatelessWidget {
       label: '$semanticsPrefix，$semanticLabel',
       child: SizedBox(
         height: height,
-        child: cornerLabels
-            ? FittedBox(
-                fit: BoxFit.contain,
-                child: SizedBox(
-                  width: 337,
-                  height: 300,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        left: 107,
-                        top: 74,
-                        child: SizedBox.square(
-                          dimension: 123,
-                          child: CustomPaint(
-                            painter: _IeltsReportRadarPainter(
-                              axes
-                                  .map((axis) => axis.value)
-                                  .toList(growable: false),
-                              maximum: maximum,
-                            ),
-                          ),
-                        ),
-                      ),
-                      _FourAxisRadarCornerLabel(
-                        axis: axes[0],
-                        color: const Color(0xFF4285F4),
-                        left: 0,
-                        top: 58,
-                      ),
-                      _FourAxisRadarCornerLabel(
-                        axis: axes[1],
-                        color: const Color(0xFF5C9BFA),
-                        right: 0,
-                        top: 58,
-                      ),
-                      _FourAxisRadarCornerLabel(
-                        axis: axes[2],
-                        color: const Color(0xFF625DEF),
-                        right: 0,
-                        top: 218,
-                      ),
-                      _FourAxisRadarCornerLabel(
-                        axis: axes[3],
-                        color: const Color(0xFF2CAFE8),
-                        left: 0,
-                        top: 218,
-                      ),
-                    ],
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 72,
+                  vertical: 56,
+                ),
+                child: CustomPaint(
+                  painter: _FourAxisRadarPainter(
+                    axes.map((axis) => axis.value).toList(growable: false),
+                    maximum: maximum,
+                    emphasized: emphasized,
                   ),
                 ),
-              )
-            : Stack(
-                alignment: Alignment.center,
-                children: [
-                  Positioned.fill(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 72,
-                        vertical: 56,
-                      ),
-                      child: CustomPaint(
-                        painter: _FourAxisRadarPainter(
-                          axes
-                              .map((axis) => axis.value)
-                              .toList(growable: false),
-                          maximum: maximum,
-                          emphasized: emphasized,
-                        ),
-                      ),
-                    ),
-                  ),
-                  _FourAxisRadarLabel(
-                    alignment: Alignment.topCenter,
-                    axis: axes[0],
-                    emphasized: emphasized,
-                  ),
-                  _FourAxisRadarLabel(
-                    alignment: Alignment.centerRight,
-                    axis: axes[1],
-                    emphasized: emphasized,
-                  ),
-                  _FourAxisRadarLabel(
-                    alignment: Alignment.bottomCenter,
-                    axis: axes[2],
-                    emphasized: emphasized,
-                  ),
-                  _FourAxisRadarLabel(
-                    alignment: Alignment.centerLeft,
-                    axis: axes[3],
-                    emphasized: emphasized,
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-}
-
-class _FourAxisRadarCornerLabel extends StatelessWidget {
-  const _FourAxisRadarCornerLabel({
-    required this.axis,
-    required this.color,
-    required this.top,
-    this.left,
-    this.right,
-  });
-
-  final FourAxisRadarAxis axis;
-  final Color color;
-  final double top;
-  final double? left;
-  final double? right;
-
-  @override
-  Widget build(BuildContext context) {
-    final isRightSide = right != null;
-    return Positioned(
-      top: top,
-      left: left,
-      right: right,
-      child: SizedBox(
-        width: 100,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: isRightSide
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            Text(
-              axis.value == null ? '--' : _radarScoreLabel(axis.value!),
-              style: SpeakUpDesign.cardTitle.copyWith(
-                color: color,
-                fontSize: 21,
-                height: 1,
               ),
             ),
-            const SizedBox(height: 5),
-            Text(
-              axis.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: isRightSide ? TextAlign.right : TextAlign.left,
-              style: SpeakUpDesign.meta.copyWith(
-                color: _reportMuted,
-                fontSize: axis.label.length > 8 ? 9 : 11,
-                fontWeight: FontWeight.w500,
-                height: 1.2,
-              ),
+            _FourAxisRadarLabel(
+              alignment: Alignment.topCenter,
+              axis: axes[0],
+              emphasized: emphasized,
+            ),
+            _FourAxisRadarLabel(
+              alignment: Alignment.centerRight,
+              axis: axes[1],
+              emphasized: emphasized,
+            ),
+            _FourAxisRadarLabel(
+              alignment: Alignment.bottomCenter,
+              axis: axes[2],
+              emphasized: emphasized,
+            ),
+            _FourAxisRadarLabel(
+              alignment: Alignment.centerLeft,
+              axis: axes[3],
+              emphasized: emphasized,
             ),
           ],
         ),
@@ -908,7 +783,7 @@ class _FourAxisRadarLabel extends StatelessWidget {
     final score = Text(
       axis.value == null ? '--' : _radarScoreLabel(axis.value!),
       style: SpeakUpDesign.cardTitle.copyWith(
-        color: emphasized ? _profileAbilityScore : const Color(0xFF3679F5),
+        color: SpeakUpDesign.ink,
         fontSize: 22,
         height: 1,
       ),
@@ -919,7 +794,6 @@ class _FourAxisRadarLabel extends StatelessWidget {
       textAlign: TextAlign.center,
       style: SpeakUpDesign.label.copyWith(
         color: SpeakUpDesign.ink,
-        fontSize: emphasized ? 12 : null,
         fontWeight: FontWeight.w500,
       ),
     );
@@ -993,158 +867,6 @@ String _radarCriterionLabel(IeltsSpeakingCriterionId criterion) =>
       IeltsSpeakingCriterionId.pronunciation => '发音',
     };
 
-class _IeltsReportRadarPainter extends CustomPainter {
-  const _IeltsReportRadarPainter(this.values, {required this.maximum});
-
-  final List<double?> values;
-  final double maximum;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scale = math.min(size.width, size.height) / 274;
-    final bounds = Offset.zero & size;
-    final grid = Paint()
-      ..color = const Color(0xFFE9EEF6)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2 * scale;
-    canvas.drawRect(
-      bounds,
-      Paint()
-        ..color = const Color(0xFFFAFBFE)
-        ..style = PaintingStyle.fill,
-    );
-    canvas.drawRect(bounds.deflate(scale), grid);
-    canvas
-      ..drawLine(bounds.topLeft, bounds.bottomRight, grid)
-      ..drawLine(bounds.topRight, bounds.bottomLeft, grid);
-
-    final normalized = values
-        .map(
-          (value) => value == null ? null : (value / maximum).clamp(0.0, 1.0),
-        )
-        .toList(growable: false);
-    if (normalized.any((value) => value == null)) {
-      return;
-    }
-
-    final center = size.center(Offset.zero);
-    final radius = math.min(size.width, size.height) / 2;
-    final scales = normalized.whereType<double>().toList(growable: false);
-    final points = <Offset>[
-      Offset(center.dx - radius * scales[0], center.dy - radius * scales[0]),
-      Offset(center.dx + radius * scales[1], center.dy - radius * scales[1]),
-      Offset(center.dx + radius * scales[2], center.dy + radius * scales[2]),
-      Offset(center.dx - radius * scales[3], center.dy + radius * scales[3]),
-    ];
-    final segments = <Path>[
-      _curvedSegment(points[0], points[1], _RadarCurveSide.top),
-      _curvedSegment(points[1], points[2], _RadarCurveSide.right),
-      _curvedSegment(points[2], points[3], _RadarCurveSide.bottom),
-      _curvedSegment(points[3], points[0], _RadarCurveSide.left),
-    ];
-    final dataPath = Path()..moveTo(points[0].dx, points[0].dy);
-    for (var index = 0; index < points.length; index++) {
-      final controls = _curveControls(
-        points[index],
-        points[(index + 1) % points.length],
-        _RadarCurveSide.values[index],
-      );
-      dataPath.cubicTo(
-        controls.$1.dx,
-        controls.$1.dy,
-        controls.$2.dx,
-        controls.$2.dy,
-        points[(index + 1) % points.length].dx,
-        points[(index + 1) % points.length].dy,
-      );
-    }
-    dataPath.close();
-    canvas.drawPath(
-      dataPath,
-      Paint()
-        ..color = const Color(0xFF6DB7FF).withValues(alpha: 0.24)
-        ..style = PaintingStyle.fill,
-    );
-
-    const markerColors = <Color>[
-      Color(0xFF3F86F8),
-      Color(0xFF64A7FA),
-      Color(0xFF6869EE),
-      Color(0xFF2DB5E6),
-    ];
-    for (var index = 0; index < segments.length; index++) {
-      canvas.drawPath(
-        segments[index],
-        Paint()
-          ..shader = ui.Gradient.linear(
-            points[index],
-            points[(index + 1) % points.length],
-            <Color>[
-              markerColors[index],
-              markerColors[(index + 1) % markerColors.length],
-            ],
-          )
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 6 * scale
-          ..strokeCap = StrokeCap.round,
-      );
-    }
-    for (var index = 0; index < points.length; index++) {
-      canvas.drawCircle(
-        points[index],
-        15 * scale,
-        Paint()
-          ..color = Colors.white
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawCircle(
-        points[index],
-        11 * scale,
-        Paint()
-          ..color = markerColors[index]
-          ..style = PaintingStyle.fill,
-      );
-    }
-  }
-
-  Path _curvedSegment(Offset start, Offset end, _RadarCurveSide side) {
-    final controls = _curveControls(start, end, side);
-    return Path()
-      ..moveTo(start.dx, start.dy)
-      ..cubicTo(
-        controls.$1.dx,
-        controls.$1.dy,
-        controls.$2.dx,
-        controls.$2.dy,
-        end.dx,
-        end.dy,
-      );
-  }
-
-  (Offset, Offset) _curveControls(
-    Offset start,
-    Offset end,
-    _RadarCurveSide side,
-  ) {
-    const depth = 10.0;
-    final first = Offset.lerp(start, end, 0.34)!;
-    final second = Offset.lerp(start, end, 0.66)!;
-    final inward = switch (side) {
-      _RadarCurveSide.top => const Offset(0, depth),
-      _RadarCurveSide.right => const Offset(-depth, 0),
-      _RadarCurveSide.bottom => const Offset(0, -depth),
-      _RadarCurveSide.left => const Offset(depth, 0),
-    };
-    return (first + inward, second + inward);
-  }
-
-  @override
-  bool shouldRepaint(covariant _IeltsReportRadarPainter oldDelegate) =>
-      oldDelegate.values != values || oldDelegate.maximum != maximum;
-}
-
-enum _RadarCurveSide { top, right, bottom, left }
-
 class _FourAxisRadarPainter extends CustomPainter {
   const _FourAxisRadarPainter(
     this.values, {
@@ -1160,9 +882,8 @@ class _FourAxisRadarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
     final radius = math.min(size.width, size.height) / 2;
-    final accent = emphasized ? _profileAbilityAccent : const Color(0xFF3679F5);
     final grid = Paint()
-      ..color = emphasized ? _profileAbilityGrid : const Color(0xFFDCE3F1)
+      ..color = SpeakUpDesign.border
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1;
     final levels = <double>[1, 0.75, 0.5, 0.25];
@@ -1177,9 +898,7 @@ class _FourAxisRadarPainter extends CustomPainter {
         point,
         3,
         Paint()
-          ..color = emphasized
-              ? const Color(0xFFC9B8AE)
-              : const Color(0xFFB8C5DC)
+          ..color = SpeakUpDesign.tertiary
           ..style = PaintingStyle.fill,
       );
     }
@@ -1197,13 +916,15 @@ class _FourAxisRadarPainter extends CustomPainter {
       canvas.drawPath(
         dataPath,
         Paint()
-          ..color = accent.withValues(alpha: emphasized ? 0.16 : 0.14)
+          ..color = SpeakUpDesign.ink.withValues(
+            alpha: emphasized ? 0.10 : 0.07,
+          )
           ..style = PaintingStyle.fill,
       );
       canvas.drawPath(
         dataPath,
         Paint()
-          ..color = accent
+          ..color = SpeakUpDesign.ink.withValues(alpha: 0.72)
           ..style = PaintingStyle.stroke
           ..strokeWidth = emphasized ? 2.8 : 2.4,
       );
@@ -1225,7 +946,7 @@ class _FourAxisRadarPainter extends CustomPainter {
         point,
         emphasized ? 3.2 : 2.8,
         Paint()
-          ..color = accent
+          ..color = SpeakUpDesign.ink
           ..style = PaintingStyle.fill,
       );
     }
