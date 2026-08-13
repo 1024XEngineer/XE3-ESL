@@ -1,16 +1,79 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 import '../../support/practice_fixtures.dart';
 import '../../support/scene_fixtures.dart';
 
 void main() {
+  testWidgets(
+    'automatically streams each daily business and interview question',
+    (tester) async {
+      for (final scenario in <(PracticeExperience, SceneCategory)>[
+        (PracticeExperience.lifeAndTravel, SceneCategory.lifeDaily),
+        (PracticeExperience.workplace, SceneCategory.workplaceGeneral),
+        (PracticeExperience.interview, SceneCategory.interviewProfessional),
+      ]) {
+        final scene = testScene(
+          id: 'auto-${scenario.$1.name}',
+          experience: scenario.$1,
+          category: scenario.$2,
+        );
+        final snapshot = PracticeSessionSnapshot(
+          sessionId: 'session-${scenario.$1.name}',
+          planId: 'plan-${scenario.$1.name}',
+          practiceExperience: scenario.$1,
+          sceneCategory: scenario.$2,
+          practiceMode: PracticeMode.fullSimulation,
+          capabilities: testPracticeCapabilities,
+          sessionVersion: 1,
+          completedTurns: 0,
+          turnLimit: scenario.$1 == PracticeExperience.interview ? 0 : 3,
+          completionMode: scenario.$1 == PracticeExperience.interview
+              ? PracticeCompletionMode.userControlled
+              : PracticeCompletionMode.turnLimited,
+          sessionCompleted: false,
+          currentQuestion: PracticeQuestion(
+            id: 'question-${scenario.$1.name}',
+            sessionId: 'session-${scenario.$1.name}',
+            text: 'Please answer this question.',
+          ),
+        );
+        final media = _RealtimeQuestionMediaClient();
+        final streamPlayer = _PCMStreamPlayer();
+        final controller = PracticeController(
+          client: _ActivationPracticeClient(snapshot: snapshot),
+          mediaClient: media,
+          audioPlayer: _SilentPracticeAudioPlayer(),
+          questionSpeechPlayer: streamPlayer,
+        );
+
+        await controller.activateCreatedPractice(
+          scene: scene,
+          sessionId: snapshot.sessionId,
+          planId: snapshot.planId,
+          practiceMode: snapshot.practiceMode,
+          turnLimit: snapshot.turnLimit,
+          clientOperationId: 'activate-${scenario.$1.name}',
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(media.questionIds, <String>['question-${scenario.$1.name}']);
+        expect(streamPlayer.events, <String>['start', 'append:4', 'finish']);
+        controller.dispose();
+      }
+    },
+  );
+
   test(
     'activates only the exact formal Session with the frozen turn limit',
     () async {
@@ -399,3 +462,73 @@ final _scene = testScene(
     turnBlueprints: <String>['Ask one technical interview question.'],
   ),
 );
+
+final class _RealtimeQuestionMediaClient
+    implements PracticeMediaClient, PracticeQuestionSpeechClient {
+  final List<String> questionIds = <String>[];
+
+  @override
+  Stream<Uint8List> streamQuestionSpeech(String questionId) async* {
+    questionIds.add(questionId);
+    yield Uint8List.fromList(<int>[1, 2, 3, 4]);
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) =>
+      throw UnimplementedError();
+}
+
+final class _PCMStreamPlayer implements PracticePCMStreamPlayer {
+  final List<String> events = <String>[];
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) async {
+    events.add('append:${bytes.length}');
+  }
+
+  @override
+  Future<void> disposePCMStream() async {}
+
+  @override
+  Future<void> finishPCMStream() async {
+    events.add('finish');
+  }
+
+  @override
+  Future<void> startPCMStream() async {
+    events.add('start');
+  }
+
+  @override
+  Future<void> stopPCMStream() async {}
+}
+
+final class _SilentPracticeAudioPlayer implements PracticeAudioPlayer {
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {}
+
+  @override
+  Future<void> stop() async {}
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speak-up.top/api/schemas/websocket/practice-question-speech.schema.json",
+  "title": "Practice Question realtime speech",
+  "description": "Server text events surrounding binary PCM chunks for one authenticated, Actor-owned Practice Question.",
+  "$defs": {
+    "ServerEvent": {
+      "oneOf": [
+        { "$ref": "#/$defs/StreamReady" },
+        { "$ref": "#/$defs/StreamCompleted" },
+        { "$ref": "#/$defs/StreamFailed" }
+      ]
+    },
+    "StreamReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "stream.ready" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "content_type",
+            "sample_rate",
+            "channel_count",
+            "bits_per_sample"
+          ],
+          "properties": {
+            "content_type": { "const": "audio/pcm" },
+            "sample_rate": { "const": 24000 },
+            "channel_count": { "const": 1 },
+            "bits_per_sample": { "const": 16 }
+          }
+        }
+      }
+    },
+    "StreamCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "stream.completed" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      }
+    },
+    "StreamFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "stream.failed" },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "retryable"],
+          "properties": {
+            "kind": { "const": "synthesis_failed" },
+            "retryable": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

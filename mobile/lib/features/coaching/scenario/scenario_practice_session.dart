@@ -342,6 +342,12 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return;
     }
     _autoHandledQuestionId = question.id;
+    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
+      // The shared Practice controller starts cloud PCM as soon as the new
+      // question is presented. Do not replace it with the avatar's slower
+      // complete-WAV path or the two players would race each other.
+      return;
+    }
     await _speakQuestion(question);
   }
 
@@ -563,6 +569,10 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       await _interruptForUserTurn();
       return;
     }
+    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
+      await widget.practiceController.toggleQuestionAudio();
+      return;
+    }
     final question = widget.practiceController.currentQuestion;
     if (question != null) {
       await _speakQuestion(question, replay: true);
@@ -619,12 +629,14 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
             : SizedBox.expand(key: widget.surfaceKey),
         statusLabel: _avatarStatusLabel,
         interruptForUserTurn: _interruptForUserTurn,
-        onReplayQuestion:
-            widget.practiceController.currentQuestion?.speechPath == null
+        onReplayQuestion: !widget.practiceController.canPlayQuestionAudio
             ? null
             : _replayQuestion,
-        replayLoading: _replayLoading,
-        replayPlaying: _isAvatarSpeaking,
+        replayLoading:
+            _replayLoading || widget.practiceController.isQuestionAudioLoading,
+        replayPlaying:
+            _isAvatarSpeaking ||
+            widget.practiceController.isQuestionAudioPlaying,
       ),
     );
   }

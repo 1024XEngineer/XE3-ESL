@@ -319,6 +319,77 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-questions/{question_id}/speech/realtime:
+    get:
+      tags:
+        - Practice
+      summary: Stream the persisted Question as synthesized PCM
+      description: |
+        Authenticates the Actor and resolves the Actor-owned persisted Question
+        before upgrading. The server emits `stream.ready`, then binary mono
+        24 kHz signed 16-bit little-endian PCM chunks as synthesis progresses,
+        followed by exactly one `stream.completed` or `stream.failed` event.
+        The client supplies only the Question identity and cannot provide or
+        replace the text sent to the speech provider.
+      operationId: streamVoiceQuestionSpeech
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required realtime Practice Question speech subprotocol.
+          schema:
+            type: string
+            const: speakup.practice-question-speech.v1
+      responses:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated Practice Question speech protocol.
+              schema:
+                type: string
+                const: speakup.practice-question-speech.v1
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+      x-websocket-event-schema:
+        $ref: ../websocket/practice-question-speech.schema.json#/$defs/ServerEvent
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - subprotocol
+            - upgrade
+          authentication_failure:
+            http_status: 401
+            error_code: authentication_required
+          resource_not_visible:
+            http_status: 404
+            error_code: resource_not_found
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: question_id
+          target_switch_allowed: false
+        subprotocol:
+          allowed:
+            - speakup.practice-question-speech.v1
+          carries_credentials: false
   /v1/voice-questions/{question_id}/translation:
     get:
       tags:

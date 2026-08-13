@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -200,6 +201,54 @@ func TestPracticeRealtimeVoiceInputRejectsUnauthorizedOrNonCurrentQuestion(
 	}
 }
 
+func TestPracticeQuestionSpeechStreamsTrustedQuestionPCM(t *testing.T) {
+	application := &practiceRealtimeHTTPApplication{
+		questionText: "Could you introduce yourself?",
+	}
+	synthesizer := &practiceQuestionSpeechSynthesizer{}
+	server := httptest.NewServer(
+		newPracticeRealtimeHTTPRouterWithOptions(
+			t,
+			application,
+			Options{RealtimeSpeech: synthesizer},
+		),
+	)
+	defer server.Close()
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/v1/voice-questions/question-1/speech/realtime"
+	connection, response, err := (&websocket.Dialer{
+		Subprotocols: []string{practiceQuestionSpeechWebSocketProtocol},
+	}).Dial(
+		endpoint,
+		http.Header{"Authorization": []string{"Bearer voice-token-a"}},
+	)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial status = %d: %v", response.StatusCode, err)
+		}
+		t.Fatalf("dial realtime question speech: %v", err)
+	}
+	defer connection.Close()
+	_, ready, err := connection.ReadMessage()
+	if err != nil || !strings.Contains(string(ready), `"type":"stream.ready"`) {
+		t.Fatalf("ready = %q, err = %v", ready, err)
+	}
+	messageType, audio, err := connection.ReadMessage()
+	if err != nil || messageType != websocket.BinaryMessage ||
+		string(audio) != "\x01\x02\x03\x04" {
+		t.Fatalf("audio = (%d, %v), err = %v", messageType, audio, err)
+	}
+	_, completed, err := connection.ReadMessage()
+	if err != nil || !strings.Contains(string(completed), `"type":"stream.completed"`) {
+		t.Fatalf("completed = %q, err = %v", completed, err)
+	}
+	if application.questionID != "question-1" ||
+		application.questionActor != "user-a" ||
+		synthesizer.text != application.questionText {
+		t.Fatalf("application = %#v, speech text = %q", application, synthesizer.text)
+	}
+}
+
 func TestPracticeRealtimeFailureUsesStableSafeCategory(t *testing.T) {
 	providerFailure := practicevoice.NewProviderError(
 		practicevoice.ProviderOperationTranscription,
@@ -243,10 +292,18 @@ func newPracticeRealtimeHTTPRouter(
 	t *testing.T,
 	application Application,
 ) http.Handler {
+	return newPracticeRealtimeHTTPRouterWithOptions(t, application, Options{})
+}
+
+func newPracticeRealtimeHTTPRouterWithOptions(
+	t *testing.T,
+	application Application,
+	options Options,
+) http.Handler {
 	t.Helper()
 	handler, err := NewHandler(
 		application,
-		Options{},
+		options,
 		httpresponse.NewRenderer(
 			func() string { return "corr_practice_voice_realtime" },
 		),
@@ -279,6 +336,22 @@ type practiceRealtimeHTTPApplication struct {
 	streamKey        string
 	streamBytes      int
 	streamSampleRate int
+	questionText     string
+	questionID       string
+	questionActor    string
+}
+
+func (application *practiceRealtimeHTTPApplication) QuestionText(
+	_ context.Context,
+	actor requestcontext.Actor,
+	questionID string,
+) (string, error) {
+	if actor.UserID != "user-a" || questionID != "question-1" {
+		return "", practicevoice.ErrNotFound
+	}
+	application.questionID = questionID
+	application.questionActor = actor.UserID
+	return application.questionText, nil
 }
 
 func (application *practiceRealtimeHTTPApplication) Start(
@@ -389,3 +462,31 @@ func (application *practiceRealtimeHTTPApplication) EnsureQuestionTip(
 }
 
 var _ Application = (*practiceRealtimeHTTPApplication)(nil)
+
+type practiceQuestionSpeechSynthesizer struct {
+	text string
+}
+
+func (synthesizer *practiceQuestionSpeechSynthesizer) OpenAssistantSpeech(
+	_ context.Context,
+	onAudio func([]byte) error,
+) (agentconversation.AssistantSpeechSession, error) {
+	return &practiceQuestionSpeechSession{
+		synthesizer: synthesizer,
+		onAudio:     onAudio,
+	}, nil
+}
+
+type practiceQuestionSpeechSession struct {
+	synthesizer *practiceQuestionSpeechSynthesizer
+	onAudio     func([]byte) error
+}
+
+func (session *practiceQuestionSpeechSession) AppendText(text string) error {
+	session.synthesizer.text = text
+	return session.onAudio([]byte{1, 2, 3, 4})
+}
+
+func (*practiceQuestionSpeechSession) Finish() error { return nil }
+
+func (*practiceQuestionSpeechSession) Close() error { return nil }

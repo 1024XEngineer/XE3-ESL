@@ -39,6 +39,83 @@ void main() {
   });
 
   test(
+    'question realtime TTS yields the first PCM chunk before completion',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final releaseCompletion = Completer<void>();
+      final handled = Completer<void>();
+      server.listen((request) async {
+        expect(
+          request.uri.path,
+          '/v1/voice-questions/question-1/speech/realtime',
+        );
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer sess_practice-media',
+        );
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (protocols) {
+            expect(protocols, contains('speakup.practice-question-speech.v1'));
+            return 'speakup.practice-question-speech.v1';
+          },
+        );
+        socket.add(
+          jsonEncode(const <String, Object>{
+            'type': 'stream.ready',
+            'data': <String, Object>{
+              'content_type': 'audio/pcm',
+              'sample_rate': 24000,
+              'channel_count': 1,
+              'bits_per_sample': 16,
+            },
+          }),
+        );
+        socket.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
+        await releaseCompletion.future;
+        socket.add(
+          jsonEncode(const <String, Object>{
+            'type': 'stream.completed',
+            'data': <String, Object>{},
+          }),
+        );
+        await socket.close();
+        handled.complete();
+      });
+      final client = WirePracticeMediaClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => const AuthSessionCredential(
+          sessionToken: 'sess_practice-media',
+          generation: 1,
+        ),
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        apiTransport: _Transport(const <_Response>[]),
+        signedAudioTransport: _Transport(const <_Response>[]),
+      );
+      addTearDown(client.dispose);
+      final stream = StreamIterator<Uint8List>(
+        client.streamQuestionSpeech('question-1'),
+      );
+      addTearDown(stream.cancel);
+
+      expect(
+        await stream.moveNext().timeout(const Duration(seconds: 2)),
+        isTrue,
+      );
+      expect(stream.current, <int>[1, 2, 3, 4]);
+      expect(releaseCompletion.isCompleted, isFalse);
+      releaseCompletion.complete();
+      expect(await stream.moveNext(), isFalse);
+      await handled.future;
+    },
+  );
+
+  test(
     'recording metadata is protected but signed WAV fetch has no Bearer',
     () async {
       final signedUri = Uri.parse(
