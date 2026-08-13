@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/composer/image/agent_image_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_input_controller.dart';
@@ -87,6 +89,43 @@ void main() {
       composerController.voiceController?.state,
       AgentVoiceComposerState.idle,
     );
+  });
+
+  testWidgets('staged images disable voice capture and remain staged', (
+    tester,
+  ) async {
+    final conversationController = ConversationController(
+      client: FakeAgentClient(),
+    );
+    final composerController = ComposerController(
+      conversationController: conversationController,
+      imageClient: FakeAgentImageClient(),
+      imagePicker: _SingleImagePicker(),
+      voiceClient: FakeAgentVoiceClient(),
+    );
+    addTearDown(() {
+      composerController.dispose();
+      conversationController.dispose();
+    });
+    await tester.pumpWidget(
+      SpeakUpApp.preview(
+        conversationController: conversationController,
+        composerController: composerController,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await composerController.pickAgentImages();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+
+    expect(composerController.pendingImages, hasLength(1));
+    expect(
+      composerController.voiceController?.state,
+      AgentVoiceComposerState.idle,
+    );
+    expect(conversationController.messages, isEmpty);
   });
 
   test(
@@ -553,6 +592,28 @@ final class _TrackingStreamingRecorder
     clearAccountStateCalls++;
     await discardCurrent();
   }
+}
+
+final class _SingleImagePicker implements AgentImagePicker {
+  @override
+  Future<List<AgentLocalImage>> pickFromGallery({required int limit}) async =>
+      <AgentLocalImage>[
+        AgentLocalImage(
+          name: 'fixture.png',
+          contentType: 'image/png',
+          bytes: base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+            '+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          ),
+        ),
+      ];
+
+  @override
+  Future<List<AgentLocalImage>> recoverLostImages() async =>
+      const <AgentLocalImage>[];
+
+  @override
+  Future<AgentLocalImage?> takePhoto() async => null;
 }
 
 final class _ControlledVoiceInputClient implements AgentVoiceInputClient {

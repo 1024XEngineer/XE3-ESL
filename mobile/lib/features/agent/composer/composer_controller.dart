@@ -128,6 +128,7 @@ final class ComposerController extends ChangeNotifier {
     final voice = _voiceController;
     if (voice == null ||
         _disposed ||
+        _pendingImages.isNotEmpty ||
         voice.hasActiveWorkflow ||
         _departureInFlight ||
         _voiceStartFuture != null) {

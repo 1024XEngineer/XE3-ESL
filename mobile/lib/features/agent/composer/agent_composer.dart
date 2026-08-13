@@ -377,6 +377,7 @@ class _AgentComposerState extends State<AgentComposer> {
         starting ||
         recording ||
         (widget.onStartVoice != null &&
+            widget.pendingImages.isEmpty &&
             widget.voiceEnabled &&
             widget.enabled &&
             !widget.isBusy);
