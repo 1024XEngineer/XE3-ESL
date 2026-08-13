@@ -283,6 +283,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         ? audioController?.errorMessage
         : null;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(

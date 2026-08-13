@@ -89,20 +89,26 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
           onPressed: _toggle,
         ),
     ];
+    final actionWrap = Wrap(
+      spacing: SpeakUpDesign.space4,
+      runSpacing: SpeakUpDesign.space4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: actions,
+    );
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          mainAxisSize: widget.trailing == null
+              ? MainAxisSize.min
+              : MainAxisSize.max,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Wrap(
-                spacing: SpeakUpDesign.space4,
-                runSpacing: SpeakUpDesign.space4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: actions,
-              ),
-            ),
+            if (widget.trailing == null)
+              actionWrap
+            else
+              Expanded(child: actionWrap),
             if (widget.trailing != null) widget.trailing!,
           ],
         ),
