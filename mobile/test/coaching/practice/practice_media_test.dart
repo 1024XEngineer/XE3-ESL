@@ -115,6 +115,70 @@ void main() {
     },
   );
 
+  test('question realtime TTS preserves retryable synthesis failure', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final handled = Completer<void>();
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (_) => 'speakup.practice-question-speech.v1',
+      );
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.ready',
+          'data': <String, Object>{
+            'content_type': 'audio/pcm',
+            'sample_rate': 24000,
+            'channel_count': 1,
+            'bits_per_sample': 16,
+          },
+        }),
+      );
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.failed',
+          'data': <String, Object>{
+            'kind': 'synthesis_failed',
+            'retryable': true,
+          },
+        }),
+      );
+      await socket.close();
+      handled.complete();
+    });
+    final client = WirePracticeMediaClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => const AuthSessionCredential(
+        sessionToken: 'sess_practice-media',
+        generation: 1,
+      ),
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+      apiTransport: _Transport(const <_Response>[]),
+      signedAudioTransport: _Transport(const <_Response>[]),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.streamQuestionSpeech('question-1'),
+      emitsError(
+        isA<PracticeClientException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              PracticeClientFailureKind.network,
+            )
+            .having((error) => error.errorCode, 'errorCode', 'synthesis_failed')
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+    await handled.future;
+  });
+
   test(
     'recording metadata is protected but signed WAV fetch has no Bearer',
     () async {

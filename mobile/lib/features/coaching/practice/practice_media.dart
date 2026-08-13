@@ -798,19 +798,51 @@ void _requirePracticeSpeechEvent(dynamic message, String expected) {
     );
   }
   final decoded = jsonDecode(message);
-  if (decoded is! Map<String, dynamic> || decoded['type'] != expected) {
+  if (decoded is! Map<String, dynamic> ||
+      decoded.keys.toSet().difference(const <String>{
+        'type',
+        'data',
+      }).isNotEmpty ||
+      !decoded.containsKey('type') ||
+      !decoded.containsKey('data')) {
     throw const PracticeClientException(
       kind: PracticeClientFailureKind.invalidResponse,
     );
   }
+  final type = decoded['type'];
   final data = decoded['data'];
   if (data is! Map<String, dynamic>) {
     throw const PracticeClientException(
       kind: PracticeClientFailureKind.invalidResponse,
     );
   }
+  if (type == 'stream.failed') {
+    final kind = data['kind'];
+    final retryable = data['retryable'];
+    if (data.length != 2 ||
+        kind is! String ||
+        kind.isEmpty ||
+        kind.length > 64 ||
+        kind.trim() != kind ||
+        retryable is! bool) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidResponse,
+      );
+    }
+    throw PracticeClientException(
+      kind: PracticeClientFailureKind.network,
+      errorCode: kind,
+      retryable: retryable,
+    );
+  }
+  if (type != expected || (type == 'stream.completed' && data.isNotEmpty)) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
   if (expected == 'stream.ready' &&
       (data['content_type'] != 'audio/pcm' ||
+          data.length != 4 ||
           data['sample_rate'] != 24000 ||
           data['channel_count'] != 1 ||
           data['bits_per_sample'] != 16)) {
