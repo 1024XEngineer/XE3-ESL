@@ -1086,6 +1086,67 @@ void main() {
     }
   });
 
+  testWidgets('history filters keep all four scene families available', (
+    tester,
+  ) async {
+    const cases = [
+      (
+        id: 'filter-interview',
+        sceneType: EvaluationReportSceneType.interview,
+        label: '面试',
+      ),
+      (
+        id: 'filter-ielts',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        label: '雅思',
+      ),
+      (
+        id: 'filter-daily-life',
+        sceneType: EvaluationReportSceneType.overseasDailyLife,
+        label: '日常英语',
+      ),
+      (
+        id: 'filter-workplace',
+        sceneType: EvaluationReportSceneType.overseasWorkplace,
+        label: '职场英语',
+      ),
+    ];
+    final items = [
+      for (final testCase in cases)
+        _sceneItem(
+          id: testCase.id,
+          sceneType: testCase.sceneType,
+          scoreability: EvaluationReportScoreability.provisional,
+          dimensions: const <EvaluationReportDimension>[],
+        ),
+    ];
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(items),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final testCase in cases) {
+      expect(find.text(testCase.label), findsOneWidget);
+    }
+
+    for (final selectedCase in cases) {
+      await tester.tap(find.text(selectedCase.label));
+      await tester.pumpAndSettle();
+
+      for (final testCase in cases) {
+        expect(
+          find.byKey(Key('review-history-${testCase.id}')),
+          testCase == selectedCase ? findsOneWidget : findsNothing,
+        );
+      }
+    }
+  });
+
   testWidgets('insufficient evidence never renders a zero score', (
     tester,
   ) async {
