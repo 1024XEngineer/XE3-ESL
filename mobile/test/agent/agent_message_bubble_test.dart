@@ -230,7 +230,7 @@ void main() {
     const message = AgentMessage(
       id: 'user-voice-spacing',
       role: AgentMessageRole.user,
-      text: 'Can you help me study knowledge about AI?',
+      text: '嗯。',
       modality: AgentMessageModality.voice,
       audio: AgentMessageAudio(
         id: 'audio-spacing',
@@ -277,6 +277,7 @@ void main() {
     );
     expect(tester.getSize(playback), const Size.square(44));
     expect(tester.getSize(optimize), const Size.square(40));
+    expect(tester.getSize(bubble).width, lessThan(340));
   });
 
   testWidgets('renders and dispatches a practice plan handoff', (tester) async {
