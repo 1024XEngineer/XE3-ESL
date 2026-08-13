@@ -122,32 +122,39 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       ),
       AgentMessageModality.text => _buildTextMessage(),
     };
-    return ConversationBubbleSurface(
+    final bubble = ConversationBubbleSurface(
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
-      margin: const EdgeInsets.only(bottom: 7),
+      margin: message.handoffs.isEmpty
+          ? const EdgeInsets.only(bottom: 7)
+          : EdgeInsets.zero,
       padding: isUser && message.modality == AgentMessageModality.voice
           ? EdgeInsets.fromLTRB(14, 11, 12, voiceNeedsBottomInset ? 11 : 0)
           : null,
-      child: message.handoffs.isEmpty
-          ? primaryContent
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                primaryContent,
-                const SizedBox(height: 10),
-                for (final handoff in message.handoffs)
-                  switch (handoff) {
-                    ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
-                      handoff: handoff,
-                      onConfirm: widget.onHandoff == null
-                          ? null
-                          : () => widget.onHandoff!(handoff),
-                    ),
-                  },
-              ],
-            ),
+      child: primaryContent,
+    );
+    if (message.handoffs.isEmpty) {
+      return bubble;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          bubble,
+          const SizedBox(height: 10),
+          for (final handoff in message.handoffs)
+            switch (handoff) {
+              ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
+                handoff: handoff,
+                onConfirm: widget.onHandoff == null
+                    ? null
+                    : () => widget.onHandoff!(handoff),
+              ),
+            },
+        ],
+      ),
     );
   }
 
