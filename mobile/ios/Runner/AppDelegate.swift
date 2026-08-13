@@ -100,6 +100,14 @@ private final class NativeTabBarView: NSObject, FlutterPlatformView, UITabBarDel
     }
     tabBar.tintColor = .label
     tabBar.unselectedItemTintColor = .secondaryLabel
+    let appearance = UITabBarAppearance()
+    appearance.configureWithTransparentBackground()
+    appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
+    appearance.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.56)
+    appearance.shadowColor = UIColor.separator.withAlphaComponent(0.2)
+    tabBar.standardAppearance = appearance
+    tabBar.scrollEdgeAppearance = appearance
+    tabBar.isTranslucent = true
     select(index: values?["selectedIndex"] as? Int ?? 0)
     tabBar.delegate = self
 

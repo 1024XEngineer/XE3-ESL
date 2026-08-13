@@ -7,7 +7,9 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
-const _abilityBlue = Color(0xFF2563EB);
+const _profileAbilityAccent = Color(0xFF34363A);
+const _profileAbilityScore = Color(0xFF34363A);
+const _profileAbilityGrid = Color(0xFFDDE1E7);
 const _reportAccent = Color(0xFF2F72F5);
 const _reportCanvas = Color(0xFFF7F8FC);
 const _reportBorder = Color(0xFFE9ECF2);
@@ -252,6 +254,11 @@ class _ReportFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      color: SpeakUpDesign.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+        side: const BorderSide(color: _profileAbilityGrid),
+      ),
       key: const Key('ielts-speaking-report-failed'),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -577,7 +584,7 @@ class _AbilitySummary extends StatelessWidget {
                   band?.toStringAsFixed(1) ?? '--',
                   key: const Key('review-ability-overall-band'),
                   style: SpeakUpDesign.sectionTitle.copyWith(
-                    color: _abilityBlue,
+                    color: _profileAbilityScore,
                     fontSize: 28,
                     height: 1,
                   ),
@@ -664,10 +671,19 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
         .toList(growable: false);
     return FourAxisScoreRadar(
       axes: <FourAxisRadarAxis>[
-        FourAxisRadarAxis(label: '流利性与连贯性', value: values[0]),
-        FourAxisRadarAxis(label: '词汇丰富度', value: values[1]),
+        FourAxisRadarAxis(
+          label: profileMode ? '流利度与连贯性' : '流利性与连贯性',
+          value: values[0],
+        ),
+        FourAxisRadarAxis(
+          label: profileMode ? '词汇资源' : '词汇丰富度',
+          value: values[1],
+        ),
         FourAxisRadarAxis(label: '发音', value: values[2]),
-        FourAxisRadarAxis(label: '语法多样性及准确性', value: values[3]),
+        FourAxisRadarAxis(
+          label: profileMode ? '语法多样性与准确性' : '语法多样性及准确性',
+          value: values[3],
+        ),
       ],
       maximum: 9,
       semanticsKey: semanticsKey,
@@ -794,18 +810,22 @@ class FourAxisScoreRadar extends StatelessWidget {
                   _FourAxisRadarLabel(
                     alignment: Alignment.topCenter,
                     axis: axes[0],
+                    emphasized: emphasized,
                   ),
                   _FourAxisRadarLabel(
                     alignment: Alignment.centerRight,
                     axis: axes[1],
+                    emphasized: emphasized,
                   ),
                   _FourAxisRadarLabel(
                     alignment: Alignment.bottomCenter,
                     axis: axes[2],
+                    emphasized: emphasized,
                   ),
                   _FourAxisRadarLabel(
                     alignment: Alignment.centerLeft,
                     axis: axes[3],
+                    emphasized: emphasized,
                   ),
                 ],
               ),
@@ -873,34 +893,40 @@ class _FourAxisRadarCornerLabel extends StatelessWidget {
 }
 
 class _FourAxisRadarLabel extends StatelessWidget {
-  const _FourAxisRadarLabel({required this.alignment, required this.axis});
+  const _FourAxisRadarLabel({
+    required this.alignment,
+    required this.axis,
+    required this.emphasized,
+  });
 
   final Alignment alignment;
   final FourAxisRadarAxis axis;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
     final score = Text(
       axis.value == null ? '--' : _radarScoreLabel(axis.value!),
       style: SpeakUpDesign.cardTitle.copyWith(
-        color: const Color(0xFF3679F5),
+        color: emphasized ? _profileAbilityScore : const Color(0xFF3679F5),
         fontSize: 22,
         height: 1,
       ),
     );
     final label = Text(
       axis.label,
-      maxLines: 1,
+      maxLines: 2,
       textAlign: TextAlign.center,
       style: SpeakUpDesign.label.copyWith(
         color: SpeakUpDesign.ink,
+        fontSize: emphasized ? 12 : null,
         fontWeight: FontWeight.w500,
       ),
     );
     return Align(
       alignment: alignment,
       child: SizedBox(
-        width: 92,
+        width: emphasized ? 108 : 92,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [label, const SizedBox(height: 7), score],
@@ -1134,8 +1160,9 @@ class _FourAxisRadarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
     final radius = math.min(size.width, size.height) / 2;
+    final accent = emphasized ? _profileAbilityAccent : const Color(0xFF3679F5);
     final grid = Paint()
-      ..color = const Color(0xFFDCE3F1)
+      ..color = emphasized ? _profileAbilityGrid : const Color(0xFFDCE3F1)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1;
     final levels = <double>[1, 0.75, 0.5, 0.25];
@@ -1150,7 +1177,9 @@ class _FourAxisRadarPainter extends CustomPainter {
         point,
         3,
         Paint()
-          ..color = const Color(0xFFB8C5DC)
+          ..color = emphasized
+              ? const Color(0xFFC9B8AE)
+              : const Color(0xFFB8C5DC)
           ..style = PaintingStyle.fill,
       );
     }
@@ -1168,15 +1197,13 @@ class _FourAxisRadarPainter extends CustomPainter {
       canvas.drawPath(
         dataPath,
         Paint()
-          ..color = const Color(
-            0xFF3679F5,
-          ).withValues(alpha: emphasized ? 0.18 : 0.14)
+          ..color = accent.withValues(alpha: emphasized ? 0.16 : 0.14)
           ..style = PaintingStyle.fill,
       );
       canvas.drawPath(
         dataPath,
         Paint()
-          ..color = const Color(0xFF3679F5)
+          ..color = accent
           ..style = PaintingStyle.stroke
           ..strokeWidth = emphasized ? 2.8 : 2.4,
       );
@@ -1198,7 +1225,7 @@ class _FourAxisRadarPainter extends CustomPainter {
         point,
         emphasized ? 3.2 : 2.8,
         Paint()
-          ..color = const Color(0xFF3679F5)
+          ..color = accent
           ..style = PaintingStyle.fill,
       );
     }
