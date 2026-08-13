@@ -82,6 +82,9 @@ final class IeltsPracticeAssignment {
       parts.where((part) => part.part == value).firstOrNull;
 
   bool matchesSelection(IeltsPracticeSelection selection) {
+    if (selection.cueCardType != null) {
+      return selection.isValidForCreateMode(mode);
+    }
     final part1Source = part(IeltsSpeakingPart.part1)?.sourceId;
     final topicSource =
         part(IeltsSpeakingPart.part2)?.sourceId ??

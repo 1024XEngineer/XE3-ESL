@@ -328,6 +328,22 @@ final class WireJobPreparationClient implements JobPreparationClient {
       stage: JobPreparationOperationStage.plan,
       decode: _decodePracticePlan,
     );
+    final selection = plan.sceneSelection;
+    final selectedOption = selection.scene.practiceOptions
+        .where((option) => option.id == selection.practiceOptionId)
+        .firstOrNull;
+    final expectedIeltsMode =
+        selection.scene.experience == PracticeExperience.ieltsSpeaking
+        ? selectedOption?.mode
+        : null;
+    final ieltsSelectionMatches = input.ieltsSelection == null
+        ? expectedIeltsMode == null
+              ? plan.ieltsAssignment == null
+              : plan.ieltsAssignment?.mode == expectedIeltsMode
+        : expectedIeltsMode != null &&
+              plan.ieltsAssignment?.mode == expectedIeltsMode &&
+              (plan.ieltsAssignment?.matchesSelection(input.ieltsSelection!) ??
+                  false);
     if (plan.sourceThreadId != input.sourceThreadId ||
         plan.goalSnapshot?.id != input.goalId ||
         plan.preparationSnapshot.id != input.preparationSnapshotId ||
@@ -340,10 +356,7 @@ final class WireJobPreparationClient implements JobPreparationClient {
         plan.sceneSelection.practiceOptionId != input.practiceOptionId ||
         (input.maxEffectiveTurns != null &&
             plan.sessionPolicy.maxEffectiveTurns != input.maxEffectiveTurns) ||
-        (input.ieltsSelection == null
-            ? plan.ieltsAssignment != null
-            : !(plan.ieltsAssignment?.matchesSelection(input.ieltsSelection!) ??
-                  false)) ||
+        !ieltsSelectionMatches ||
         plan.status != PracticePlanStatus.ready) {
       throw _invalidResponse(JobPreparationOperationStage.plan);
     }
@@ -1599,7 +1612,7 @@ void _requirePlanInput(CreatePreparationPlanInput input) {
     _requireResourceId(roleId);
   }
   if (input.ieltsSelection case final selection?) {
-    if ((selection.part1SetId == null && selection.topicGroupId == null)) {
+    if (!selection.isValidCreateShape) {
       throw const JobPreparationException(
         kind: JobPreparationFailureKind.invalidRequest,
         stage: JobPreparationOperationStage.plan,

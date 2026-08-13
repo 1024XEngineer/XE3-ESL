@@ -34,6 +34,7 @@ type RoutingCase struct {
 	ExpectedToolNames []string
 	ForbiddenTools    []string
 	ExpectedArgs      map[string]map[string]any
+	ForbiddenArgs     map[string][]string
 }
 
 func BaselineCases() []RoutingCase {
@@ -107,6 +108,121 @@ func BaselineCases() []RoutingCase {
 			},
 		},
 		{
+			Name:             "ielts_missing_part_clarifies",
+			Messages:         userOnly("我想练一场雅思口语"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
+			Name:             "ielts_part1_missing_topic_choice_clarifies",
+			Messages:         userOnly("帮我创建一场 IELTS Part 1"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
+			Name:              "ielts_part1_random_warmup",
+			Messages:          userOnly("帮我创建一场 IELTS Part 1，随机安排"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.IELTSWarmUpToolName},
+			ForbiddenTools:    []string{preparationcapability.PracticePreviewToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.IELTSWarmUpToolName: {
+					"ielts_practice_mode": "PART_1",
+					"ielts_topic_choice":  "random",
+				},
+			},
+		},
+		{
+			Name:              "ielts_part2_person_warmup",
+			Messages:          userOnly("创建雅思 Part 2 人物类专项练习"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.IELTSWarmUpToolName},
+			ForbiddenTools:    []string{preparationcapability.PracticePreviewToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.IELTSWarmUpToolName: {
+					"ielts_practice_mode": "PART_2",
+					"ielts_topic_choice":  "person",
+				},
+			},
+		},
+		{
+			Name:              "ielts_part3_place_warmup",
+			Messages:          userOnly("给我一场 IELTS Part 3 地点类练习"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.IELTSWarmUpToolName},
+			ForbiddenTools:    []string{preparationcapability.PracticePreviewToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.IELTSWarmUpToolName: {
+					"ielts_practice_mode": "PART_3",
+					"ielts_topic_choice":  "place",
+				},
+			},
+		},
+		{
+			Name:              "ielts_part1_direct_start_preview",
+			Messages:          userOnly("创建 IELTS Part 1 随机专项，直接开始"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
+			ForbiddenTools:    []string{preparationcapability.IELTSWarmUpToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.PracticePreviewToolName: {
+					"ielts_practice_mode": "PART_1",
+					"ielts_topic_choice":  "random",
+				},
+			},
+		},
+		{
+			Name: "ielts_warmup_answer_creates_preview",
+			Messages: []EvalMessage{
+				{Role: "user", Content: "创建雅思 Part 2 人物类专项练习"},
+				{Role: "assistant", Content: "可以。最近有没有谁让你印象挺深？用一两句英语说说。"},
+				{Role: "user", Content: "I'd like to talk about my high school teacher."},
+			},
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
+			ForbiddenTools:    []string{preparationcapability.IELTSWarmUpToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.PracticePreviewToolName: {
+					"ielts_practice_mode": "PART_2",
+					"ielts_topic_choice":  "person",
+				},
+			},
+		},
+		{
+			Name: "ielts_warmup_direct_start_creates_preview",
+			Messages: []EvalMessage{
+				{Role: "user", Content: "给我一场 IELTS Part 3 经历类练习"},
+				{Role: "assistant", Content: "可以。最近有没有哪次经历让你印象挺深？用一两句英语说说。"},
+				{Role: "user", Content: "直接开始"},
+			},
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
+			ForbiddenTools:    []string{preparationcapability.IELTSWarmUpToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.PracticePreviewToolName: {
+					"ielts_practice_mode": "PART_3",
+					"ielts_topic_choice":  "experience",
+				},
+			},
+		},
+		{
+			Name:              "ielts_full_mock_preview",
+			Messages:          userOnly("帮我创建一场雅思口语完整模考，随机安排"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
+			ForbiddenTools:    []string{preparationcapability.IELTSWarmUpToolName},
+			ExpectedArgs: map[string]map[string]any{
+				preparationcapability.PracticePreviewToolName: {
+					"ielts_practice_mode": "FULL_MOCK",
+				},
+			},
+			ForbiddenArgs: map[string][]string{
+				preparationcapability.PracticePreviewToolName: {
+					"ielts_topic_choice",
+				},
+			},
+		},
+		{
 			Name:             "practice_start_requires_confirmation",
 			Messages:         userOnly("开始练习"),
 			ExpectedDecision: DecisionClarify,
@@ -121,6 +237,12 @@ func BaselineCases() []RoutingCase {
 		{
 			Name:              "latest_practice_report",
 			Messages:          userOnly("看看我刚完成练习的最新报告"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{evaluationcapability.LatestPracticeReportToolName},
+		},
+		{
+			Name:              "latest_ielts_practice_report",
+			Messages:          userOnly("看看我刚完成的 IELTS Part 1 报告"),
 			ExpectedDecision:  DecisionToolCall,
 			ExpectedToolNames: []string{evaluationcapability.LatestPracticeReportToolName},
 		},
@@ -193,6 +315,7 @@ func allToolNames() []string {
 	return []string{
 		goalcapability.GoalCreateCapabilityName,
 		goalcapability.GoalSearchCapabilityName,
+		preparationcapability.IELTSWarmUpToolName,
 		preparationcapability.PracticePreviewToolName,
 		evaluationcapability.LatestPracticeReportToolName,
 		reviewcapability.ReviewSearchToolName,

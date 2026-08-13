@@ -654,6 +654,35 @@ assert.equal(
   64,
   'Practice Plan requests must share the runtime turn safety limit.',
 );
+const ieltsPracticeSelectionSchema = schemas.IELTSPracticeSelection;
+assert.deepEqual(
+  sorted(Object.keys(ieltsPracticeSelectionSchema?.properties ?? {})),
+  ['cue_card_type', 'part_1_set_id', 'topic_group_id'],
+);
+assert.deepEqual(
+  ieltsPracticeSelectionSchema?.properties?.cue_card_type?.enum,
+  ['person', 'place', 'thing', 'experience'],
+);
+assert.equal(
+  ieltsPracticeSelectionSchema?.oneOf?.length,
+  4,
+  'IELTS selection must support exact ids or one category-only strategy.',
+);
+const updatePracticePlanRequestSchema = schemas.UpdatePracticePlanRequest;
+assert.equal(
+  updatePracticePlanRequestSchema?.properties?.ielts_selection?.$ref,
+  '#/components/schemas/IELTSPracticeExactSelection',
+);
+const ieltsPracticeExactSelectionSchema = schemas.IELTSPracticeExactSelection;
+assert.deepEqual(
+  sorted(Object.keys(ieltsPracticeExactSelectionSchema?.properties ?? {})),
+  ['part_1_set_id', 'topic_group_id'],
+);
+assert.equal(
+  ieltsPracticeExactSelectionSchema?.oneOf?.length,
+  3,
+  'IELTS updates must accept exact ids only.',
+);
 for (const contextField of ['source_thread_id', 'goal_id']) {
   assert.equal(
     createPracticePlanRequestSchema?.properties?.[contextField]?.$ref,

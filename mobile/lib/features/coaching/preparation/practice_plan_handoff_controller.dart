@@ -3,10 +3,14 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 typedef HandoffPracticePlanReader =
     Future<PracticePlan> Function(String planId);
@@ -18,10 +22,13 @@ typedef HandoffPracticePlanConfirmer =
     });
 typedef HandoffIdFactory = String Function(String scope);
 
+enum PracticePlanHandoffFailure { localExistingPractice, serverActivePractice }
+
 final class PracticePlanHandoffController extends ChangeNotifier {
   PracticePlanHandoffController({
     required this.conversationController,
     required this.practiceController,
+    required this.ieltsPreparationController,
     required this.workspaceController,
     required this.readPlan,
     required this.confirmPlan,
@@ -30,21 +37,27 @@ final class PracticePlanHandoffController extends ChangeNotifier {
 
   final ConversationController conversationController;
   final PracticeController practiceController;
+  final IeltsPreparationController ieltsPreparationController;
   final PracticeWorkspaceController workspaceController;
   final HandoffPracticePlanReader readPlan;
   final HandoffPracticePlanConfirmer confirmPlan;
   final HandoffIdFactory _idFactory;
 
   _ConfirmationAttempt? _attempt;
+  PracticePlanHandoffFailure? _failure;
   String? _errorMessage;
   bool _busy = false;
   bool _disposed = false;
   int _generation = 0;
 
   bool get isBusy => _busy;
+  PracticePlanHandoffFailure? get failure => _failure;
   String? get errorMessage => _errorMessage;
 
-  Future<bool> confirm(ConfirmPracticePlanHandoff handoff) async {
+  Future<bool> confirm(
+    ConfirmPracticePlanHandoff handoff, {
+    bool replaceCurrentPractice = false,
+  }) async {
     if (_disposed || _busy) {
       return false;
     }
@@ -60,6 +73,7 @@ final class PracticePlanHandoffController extends ChangeNotifier {
           );
     _attempt = attempt;
     _busy = true;
+    _failure = null;
     _errorMessage = null;
     notifyListeners();
     try {
@@ -67,16 +81,24 @@ final class PracticePlanHandoffController extends ChangeNotifier {
       if (!_isCurrent(generation) || !_matchesPlan(handoff, plan)) {
         throw const _HandoffConflict();
       }
+      final ieltsSelection = _exactIeltsSelection(plan);
       if (attempt.lease == null) {
         if (plan.sourceThreadId == null ||
             conversationController.threadId != plan.sourceThreadId) {
           throw const _HandoffConflict();
         }
       }
-      final lease = await workspaceController.acquireThread(
-        attempt.workspaceOperationId,
-      );
+      final lease = attempt.lease == null && replaceCurrentPractice
+          ? await workspaceController.replaceCurrentPractice(
+              attempt.workspaceOperationId,
+            )
+          : await workspaceController.acquireThread(
+              attempt.workspaceOperationId,
+            );
       if (!_isCurrent(generation) || lease == null) {
+        if (_isCurrent(generation) && workspaceController.hasResumable) {
+          throw const _HandoffExistingPractice();
+        }
         throw const _HandoffUnavailable();
       }
       attempt = attempt.withLease(lease);
@@ -111,32 +133,67 @@ final class PracticePlanHandoffController extends ChangeNotifier {
         turnLimit: bootstrap.maxEffectiveTurns,
         clientOperationId: attempt.voiceKey,
       );
+      if (ieltsSelection != null) {
+        await ieltsPreparationController.beginSession(
+          bootstrap.session.id,
+          bootstrap.session.practiceMode,
+          ieltsSelection,
+        );
+      }
       if (!_isCurrent(generation)) {
         return false;
       }
       _attempt = null;
+      _failure = null;
       _errorMessage = null;
       return true;
+    } on _HandoffExistingPractice {
+      if (_isCurrent(generation)) {
+        _failure = PracticePlanHandoffFailure.localExistingPractice;
+        _errorMessage = '当前已有进行中的练习。';
+      }
+      return false;
     } on _HandoffConflict {
+      final recovered = await _discardPendingAttempt(attempt);
       if (_isCurrent(generation)) {
         _attempt = null;
-        _errorMessage = '练习方案已经变化，请让 Agent 重新生成后再确认。';
+        _failure = null;
+        _errorMessage = recovered
+            ? '练习方案已经变化，请让 Agent 重新生成后再确认。'
+            : workspaceController.errorMessage ?? '练习方案已失效，且暂时无法返回原对话。';
       }
       return false;
     } on PreparationLaunchException catch (error) {
       if (_isCurrent(generation)) {
         if (_isStaleHandoffFailure(error)) {
+          final recovered = await _discardPendingAttempt(attempt);
+          if (!_isCurrent(generation)) {
+            return false;
+          }
           _attempt = null;
-          _errorMessage = '练习方案已经变化，请让 Agent 重新生成后再确认。';
+          _failure = null;
+          _errorMessage = recovered
+              ? '练习方案已经变化，请让 Agent 重新生成后再确认。'
+              : workspaceController.errorMessage ?? '练习方案已失效，且暂时无法返回原对话。';
         } else if (error.errorCode == 'active_session_conflict') {
-          _errorMessage = '当前已有进行中的练习，请先完成或结束后再确认。';
+          final recovered = await _discardPendingAttempt(attempt);
+          if (!_isCurrent(generation)) {
+            return false;
+          }
+          _attempt = null;
+          _failure = PracticePlanHandoffFailure.serverActivePractice;
+          _errorMessage = recovered
+              ? '服务端还有一场未完成的练习，当前设备无法直接替换。请先回到原练习结束后再试。'
+              : workspaceController.errorMessage ?? '服务端还有一场未完成的练习，请先处理后再试。';
         } else {
+          _failure = null;
           _errorMessage = '练习暂时无法开始，请重试当前确认。';
         }
       }
       return false;
     } on Object {
       if (_isCurrent(generation)) {
+        _failure = null;
         _errorMessage = workspaceController.errorMessage ?? '练习暂时无法开始，请重试当前确认。';
       }
       return false;
@@ -151,6 +208,7 @@ final class PracticePlanHandoffController extends ChangeNotifier {
   Future<void> clearAccountState() async {
     _generation++;
     _attempt = null;
+    _failure = null;
     _errorMessage = null;
     _busy = false;
     if (!_disposed) {
@@ -160,12 +218,40 @@ final class PracticePlanHandoffController extends ChangeNotifier {
 
   bool _isCurrent(int generation) => !_disposed && generation == _generation;
 
+  Future<bool> _discardPendingAttempt(_ConfirmationAttempt attempt) {
+    final lease = attempt.lease;
+    return lease == null
+        ? Future<bool>.value(true)
+        : workspaceController.discardPendingPractice(lease);
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _generation++;
     super.dispose();
   }
+}
+
+IeltsPracticeSelection? _exactIeltsSelection(PracticePlan plan) {
+  if (plan.sceneSelection.scene.experience !=
+      PracticeExperience.ieltsSpeaking) {
+    return null;
+  }
+  final assignment = plan.ieltsAssignment;
+  if (assignment == null || assignment.mode != plan.practiceOption.mode) {
+    throw const _HandoffConflict();
+  }
+  final selection = IeltsPracticeSelection(
+    part1SetId: assignment.part(IeltsSpeakingPart.part1)?.sourceId,
+    topicGroupId:
+        assignment.part(IeltsSpeakingPart.part2)?.sourceId ??
+        assignment.part(IeltsSpeakingPart.part3)?.sourceId,
+  );
+  if (!selection.isValidForMode(assignment.mode)) {
+    throw const _HandoffConflict();
+  }
+  return selection;
 }
 
 bool _isStaleHandoffFailure(PreparationLaunchException error) =>
@@ -230,6 +316,10 @@ final class _HandoffConflict implements Exception {
 
 final class _HandoffUnavailable implements Exception {
   const _HandoffUnavailable();
+}
+
+final class _HandoffExistingPractice implements Exception {
+  const _HandoffExistingPractice();
 }
 
 final _handoffRandom = Random.secure();

@@ -67,8 +67,14 @@ func (port *ServicePort) PreviewPractice(
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
 	input.BackgroundSummary = strings.TrimSpace(input.BackgroundSummary)
+	if input.IELTSPracticeMode != "" {
+		input.BackgroundSummary = previewIELTSBackgroundSummary(input)
+	}
 
 	candidateQuery := input.SceneQuery
+	if input.IELTSPracticeMode != "" && input.SceneID == "" {
+		candidateQuery = "IELTS"
+	}
 	if strings.TrimSpace(candidateQuery) == "" && input.SceneID != "" {
 		candidateQuery = input.SceneID
 	}
@@ -130,7 +136,7 @@ func (port *ServicePort) PreviewPractice(
 			SelectedRoleIDs:       append([]string(nil), input.SelectedRoleIDs...),
 			PracticeOptionID:      input.PracticeOptionID,
 			MaxEffectiveTurns:     input.MaxEffectiveTurns,
-			IELTSSelection:        cloneIELTSQuestionSelection(input.IELTSSelection),
+			IELTSSelection:        previewIELTSQuestionSelection(input),
 		},
 	)
 	if err != nil {
@@ -242,7 +248,16 @@ func enrichPreviewInput(
 	if len(input.SelectedRoleIDs) == 0 {
 		input.SelectedRoleIDs = append([]string(nil), candidate.DefaultRoleIDs...)
 	}
-	if input.PracticeOptionID == "" {
+	if candidate.PracticeExperience ==
+		string(scene.PracticeExperienceIELTSSpeaking) {
+		if optionID, found := previewOptionForMode(
+			candidate,
+			scene.PracticeMode(input.IELTSPracticeMode),
+		); found {
+			input.PracticeOptionID = optionID
+		}
+		input.MaxEffectiveTurns = 0
+	} else if input.PracticeOptionID == "" {
 		input.PracticeOptionID = candidate.DefaultPracticeOptionID
 	}
 	return input
@@ -270,18 +285,40 @@ func previewMissingFields(
 	if input.PracticeOptionID == "" {
 		missing = append(missing, "practice_option")
 	}
-	if input.MaxEffectiveTurns < 1 {
-		missing = append(missing, "max_effective_turns")
-	}
-	if mode, isIELTS := previewIELTSMode(
+	mode, isIELTS := previewIELTSMode(
 		input.SceneID,
 		input.PracticeOptionID,
 		candidates,
-	); isIELTS &&
-		!validPreviewIELTSSelection(mode, input.IELTSSelection) {
-		missing = append(missing, "ielts_selection")
+	)
+	if isIELTS {
+		requestedMode := scene.PracticeMode(input.IELTSPracticeMode)
+		if !validPreviewIELTSMode(requestedMode) || requestedMode != mode {
+			missing = append(missing, "ielts_practice_mode")
+		}
+		if !validPreviewIELTSTopicChoice(requestedMode, input.IELTSTopicChoice) {
+			missing = append(missing, "ielts_topic_choice")
+		}
+	} else {
+		if input.MaxEffectiveTurns < 1 {
+			missing = append(missing, "max_effective_turns")
+		}
+		if input.IELTSPracticeMode != "" || input.IELTSTopicChoice != "" {
+			missing = append(missing, "ielts_practice_mode")
+		}
 	}
 	return missing
+}
+
+func previewOptionForMode(
+	candidate CatalogCandidate,
+	mode scene.PracticeMode,
+) (string, bool) {
+	for _, option := range candidate.PracticeOptions {
+		if scene.PracticeMode(option.Mode) == mode {
+			return option.ID, true
+		}
+	}
+	return "", false
 }
 
 func containsPreviewScene(candidates []CatalogCandidate, sceneID string) bool {
@@ -328,36 +365,70 @@ func previewIELTSMode(
 	return "", false
 }
 
-func validPreviewIELTSSelection(
-	mode scene.PracticeMode,
-	selection *preparation.IELTSQuestionSelection,
-) bool {
+func validPreviewIELTSMode(mode scene.PracticeMode) bool {
 	switch mode {
-	case scene.PracticeModeFullMock:
-		return selection == nil
-	case scene.PracticeModePart1:
-		if selection == nil {
-			return false
-		}
-		return selection.Part1SetID != "" && selection.TopicGroupID == ""
-	case scene.PracticeModePart2, scene.PracticeModePart3:
-		if selection == nil {
-			return false
-		}
-		return selection.Part1SetID == "" && selection.TopicGroupID != ""
+	case scene.PracticeModeFullMock,
+		scene.PracticeModePart1,
+		scene.PracticeModePart2,
+		scene.PracticeModePart3:
+		return true
 	default:
 		return false
 	}
 }
 
-func cloneIELTSQuestionSelection(
-	source *preparation.IELTSQuestionSelection,
+func validPreviewIELTSTopicChoice(
+	mode scene.PracticeMode,
+	choice string,
+) bool {
+	if mode == scene.PracticeModeFullMock {
+		return choice == ""
+	}
+	if mode != scene.PracticeModePart1 &&
+		mode != scene.PracticeModePart2 &&
+		mode != scene.PracticeModePart3 {
+		return false
+	}
+	switch choice {
+	case "random", "person", "place", "thing", "experience":
+		return true
+	default:
+		return false
+	}
+}
+
+func previewIELTSQuestionSelection(
+	input PreviewInput,
 ) *preparation.IELTSQuestionSelection {
-	if source == nil {
+	if input.IELTSTopicChoice == "" || input.IELTSTopicChoice == "random" {
 		return nil
 	}
-	result := *source
-	return &result
+	return &preparation.IELTSQuestionSelection{
+		CueCardType: input.IELTSTopicChoice,
+	}
+}
+
+func previewIELTSBackgroundSummary(input PreviewInput) string {
+	mode := scene.PracticeMode(input.IELTSPracticeMode)
+	if !validPreviewIELTSMode(mode) {
+		return ""
+	}
+	if mode == scene.PracticeModeFullMock {
+		return "User requested an IELTS Speaking full mock."
+	}
+	if input.IELTSTopicChoice == "" {
+		return "User requested IELTS Speaking " + string(mode) + "."
+	}
+	if !validPreviewIELTSTopicChoice(mode, input.IELTSTopicChoice) {
+		return ""
+	}
+	choice := input.IELTSTopicChoice
+	if choice == "random" {
+		choice = "a random published topic"
+	} else {
+		choice += " topic"
+	}
+	return "User requested IELTS Speaking " + string(mode) + " with " + choice + "."
 }
 
 func mapPreparationToolError(err error) error {

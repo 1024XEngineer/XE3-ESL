@@ -226,6 +226,31 @@ func TestIELTSSpeakingPracticeBandRuntimeMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSSportsTeamCategoryMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	up := readMigration(t, "000094_ielts_sports_team_category.up.sql")
+	for _, required := range []string{
+		"WHERE BANK_ID = 'IELTS-SPEAKING-2026-05-08-MAINLAND'\n  AND TOPIC_ID = 'P1-TOPIC-019'",
+		"SET CUE_CARD_TYPE = 'EXPERIENCE'",
+		"CUE_CARD_TYPE = 'PERSON'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("IELTS sports-team category migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000094_ielts_sports_team_category.down.sql")
+	for _, required := range []string{
+		"WHERE BANK_ID = 'IELTS-SPEAKING-2026-05-08-MAINLAND'\n  AND TOPIC_ID = 'P1-TOPIC-019'",
+		"SET CUE_CARD_TYPE = 'PERSON'",
+		"CUE_CARD_TYPE = 'EXPERIENCE'",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("IELTS sports-team category rollback is missing %q", required)
+		}
+	}
+}
+
 func TestProviderQualifiedModelIDsMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 

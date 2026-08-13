@@ -326,6 +326,107 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 	}
 }
 
+func TestRunLoopExecutesOnlyIELTSWarmUpFromMixedToolBatch(t *testing.T) {
+	warmUp := &loopCountingTool{name: ieltsWarmUpToolName}
+	preview := &loopCountingTool{name: loopPracticePreviewToolName}
+	generator := newScriptedGenerator(
+		TextResult{
+			ID:           "fake-completion-ielts-tools",
+			Provider:     "fake",
+			Model:        "configured-model",
+			FinishReason: "tool_calls",
+			ToolCalls: []ModelToolCall{
+				{
+					ID:        "call-ielts-warm-up",
+					Name:      ieltsWarmUpToolName,
+					Arguments: json.RawMessage(`{}`),
+				},
+				{
+					ID:        "call-practice-preview",
+					Name:      loopPracticePreviewToolName,
+					Arguments: json.RawMessage(`{}`),
+				},
+			},
+			Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		},
+		finalLoopResult("Answer the warm-up when you are ready."),
+	)
+	service := newLoopTestService(t, generator)
+	setLoopTools(t, service, capabilityfixture.NewStore(), warmUp, preview)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("先热身再开始 IELTS Part 1"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if result.Content != "Answer the warm-up when you are ready." ||
+		warmUp.calls != 1 || preview.calls != 0 {
+		t.Fatalf(
+			"result = %#v, warm-up calls = %d, preview calls = %d",
+			result,
+			warmUp.calls,
+			preview.calls,
+		)
+	}
+	requests := generator.Requests()
+	if len(requests) != 2 ||
+		requests[1].ToolChoice.Mode != ToolChoiceNone {
+		t.Fatalf("model requests = %#v", requests)
+	}
+	assistant := requests[1].Messages[len(requests[1].Messages)-2]
+	if len(assistant.ToolCalls) != 1 ||
+		assistant.ToolCalls[0].Name != ieltsWarmUpToolName {
+		t.Fatalf("executed assistant tool calls = %#v", assistant.ToolCalls)
+	}
+}
+
+func TestRunLoopDoesNotExecuteToolAfterSuccessfulIELTSWarmUp(t *testing.T) {
+	warmUp := &loopCountingTool{name: ieltsWarmUpToolName}
+	preview := &loopCountingTool{name: loopPracticePreviewToolName}
+	generator := newScriptedGenerator(
+		toolLoopResult("call-ielts-warm-up", ieltsWarmUpToolName, `{}`),
+		toolLoopResult(
+			"call-practice-preview",
+			loopPracticePreviewToolName,
+			`{}`,
+		),
+		finalLoopResult("This response must not be reached."),
+	)
+	service := newLoopTestService(t, generator)
+	setLoopTools(t, service, capabilityfixture.NewStore(), warmUp, preview)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("给我一个 IELTS Part 1 热身"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != loopPracticePreviewToolName {
+		t.Fatalf("terminal model result = %#v", result)
+	}
+	requests := generator.Requests()
+	if len(requests) != 2 ||
+		requests[1].ToolChoice.Mode != ToolChoiceNone ||
+		warmUp.calls != 1 || preview.calls != 0 {
+		t.Fatalf(
+			"requests = %#v, warm-up calls = %d, preview calls = %d",
+			requests,
+			warmUp.calls,
+			preview.calls,
+		)
+	}
+}
+
 func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -657,9 +758,67 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 	if first != replayed {
 		t.Fatalf("idempotent Tool Result changed: first=%s replayed=%s", first, replayed)
 	}
-	if got, want := toolCallRequestID("run-1", "call-create-stable"),
+	if got, want := toolCallRequestID(
+		Run{ID: "run-1"},
+		ModelToolCall{ID: "call-create-stable"},
+	),
 		"run-1-call-create-stable"; got != want {
 		t.Fatalf("toolCallRequestID() = %q, want %q", got, want)
+	}
+}
+
+func TestRunLoopReusesPracticePreviewIdempotencyIDAcrossRetryRuns(t *testing.T) {
+	preview := &loopRequestIDTool{name: loopPracticePreviewToolName}
+	inputMessageID := "40000000-0000-4000-8000-000000000001"
+	runs := []struct {
+		run    Run
+		callID string
+	}{
+		{
+			run: Run{
+				ID:             "run-original",
+				OwnerID:        "user-1",
+				ThreadID:       "thread-1",
+				InputMessageID: inputMessageID,
+			},
+			callID: "call-preview-original",
+		},
+		{
+			run: Run{
+				ID:             "run-retry",
+				OwnerID:        "user-1",
+				ThreadID:       "thread-1",
+				InputMessageID: inputMessageID,
+				RetryOfRunID:   "run-original",
+			},
+			callID: "call-preview-retry",
+		},
+	}
+	for _, test := range runs {
+		generator := newScriptedGenerator(
+			toolLoopResult(
+				test.callID,
+				loopPracticePreviewToolName,
+				`{"ielts_practice_mode":"PART_1","ielts_topic_choice":"person"}`,
+			),
+			finalLoopResult("Ready."),
+		)
+		service := newLoopTestService(t, generator)
+		setLoopTools(t, service, capabilityfixture.NewStore(), preview)
+		if _, err := service.generate(
+			context.Background(),
+			loopActor(),
+			test.run,
+			agentcontext.Manifest{},
+			loopRequest("创建 IELTS Part 1 人物专项，直接开始"),
+		); err != nil {
+			t.Fatalf("generate() run %q error = %v", test.run.ID, err)
+		}
+	}
+
+	want := inputMessageID + "-" + loopPracticePreviewToolName
+	if got := preview.requestIDs; !reflect.DeepEqual(got, []string{want, want}) {
+		t.Fatalf("practice preview request ids = %#v, want stable %q", got, want)
 	}
 }
 
@@ -953,7 +1112,70 @@ func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
 
 const loopConditionalToolName = "conditional.write.v1"
 
+const loopPracticePreviewToolName = "practice.preview.v1"
+
 const loopSensitiveSourceToolName = "sensitive.source.read.v1"
+
+type loopCountingTool struct {
+	name  string
+	calls int
+}
+
+type loopRequestIDTool struct {
+	name       string
+	requestIDs []string
+}
+
+func (tool *loopRequestIDTool) Definition() capability.Definition {
+	inputSchema := capability.ObjectSchema(map[string]any{}, nil)
+	if tool.name == loopPracticePreviewToolName {
+		inputSchema = capability.ObjectSchema(map[string]any{
+			"ielts_practice_mode": capability.StringEnumSchema(
+				"Selected IELTS practice mode.",
+				"FULL_MOCK", "PART_1", "PART_2", "PART_3",
+			),
+			"ielts_topic_choice": capability.StringEnumSchema(
+				"Selected IELTS topic category.",
+				"random", "person", "place", "thing", "experience",
+			),
+		}, nil)
+	}
+	return capability.Definition{
+		Name:        tool.name,
+		Description: "Record guarded Agent loop request ids.",
+		InputSchema: inputSchema,
+		ReadOnly:    false,
+		Risk:        capability.RiskLowRiskWrite,
+	}
+}
+
+func (tool *loopRequestIDTool) Execute(
+	_ context.Context,
+	call capability.CallContext,
+	_ json.RawMessage,
+) (capability.Result, error) {
+	tool.requestIDs = append(tool.requestIDs, call.RequestID)
+	return capability.Result{Content: map[string]any{"ok": true}}, nil
+}
+
+func (tool *loopCountingTool) Definition() capability.Definition {
+	return capability.Definition{
+		Name:        tool.name,
+		Description: "Count guarded Agent loop calls.",
+		InputSchema: capability.ObjectSchema(map[string]any{}, nil),
+		ReadOnly:    true,
+		Risk:        capability.RiskReadOnly,
+	}
+}
+
+func (tool *loopCountingTool) Execute(
+	context.Context,
+	capability.CallContext,
+	json.RawMessage,
+) (capability.Result, error) {
+	tool.calls++
+	return capability.Result{Content: map[string]any{"ok": true}}, nil
+}
 
 type loopSensitiveSourceTool struct{}
 

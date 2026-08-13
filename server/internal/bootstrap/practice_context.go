@@ -384,6 +384,11 @@ func newIdentityAgentAndPracticeComposition(
 		); err != nil {
 			return nil, err
 		}
+		if err := base.productionTools.Register(
+			preparationagentcapability.NewIELTSWarmUpTool(),
+		); err != nil {
+			return nil, err
+		}
 	}
 	practiceHTTP, err := practiceapi.NewHandler(practiceApplication)
 	if err != nil {

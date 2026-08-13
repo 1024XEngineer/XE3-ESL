@@ -346,10 +346,9 @@ func (s *PlanService) RevisePlan(
 	if err != nil {
 		return PracticePlan{}, false, err
 	}
-	selection, ieltsAssignment, err := freezeIELTSAssignment(
-		ctx,
-		s.ielts,
+	ieltsAssignment, err := preserveIELTSAssignment(
 		selection,
+		current.IELTSAssignment,
 		request.IELTSSelection,
 	)
 	if err != nil {
@@ -498,7 +497,7 @@ func validRevisePlanRequest(request RevisePlanRequest) bool {
 		validPlanResourceID(request.PracticeOptionID) &&
 		request.MaxEffectiveTurns > 0 &&
 		(request.IELTSSelection == nil ||
-			validIELTSSelectionShape(*request.IELTSSelection))
+			validIELTSExactSelectionShape(*request.IELTSSelection))
 }
 
 func ValidRevisePlanRequest(request RevisePlanRequest) bool {
@@ -564,10 +563,20 @@ func freezeIELTSAssignment(
 	var resolved ielts.ResolvedQuestionSet
 	var effectiveSelection IELTSQuestionSelection
 	if request == nil {
-		if option.Mode != scene.PracticeModeFullMock {
+		resolved, err = questions.AssignQuestionSet(ctx, mode, "")
+		if err == nil {
+			effectiveSelection = ieltsSelectionFromResolved(resolved)
+		}
+	} else if request.CueCardType != "" {
+		if option.Mode == scene.PracticeModeFullMock ||
+			!validIELTSQuestionSelection(option.Mode, *request) {
 			return scene.SelectionSnapshot{}, nil, ErrPlanInvalid
 		}
-		resolved, err = questions.AssignQuestionSet(ctx, mode)
+		resolved, err = questions.AssignQuestionSet(
+			ctx,
+			mode,
+			request.CueCardType,
+		)
 		if err == nil {
 			effectiveSelection = ieltsSelectionFromResolved(resolved)
 		}
@@ -606,13 +615,16 @@ func freezeIELTSAssignment(
 		Parts:  make([]IELTSAssignmentPartSnapshot, len(resolved.Parts)),
 	}
 	for index, part := range resolved.Parts {
-		assignment.Parts[index] = IELTSAssignmentPartSnapshot{
+		snapshot := IELTSAssignmentPartSnapshot{
 			Part:           scene.PracticeMode(part.Part),
 			SourceID:       part.SourceID,
-			TopicTitle:     part.TopicTitle,
 			CueCard:        part.CueCard,
 			TurnBlueprints: clonePlanStrings(part.TurnBlueprints),
 		}
+		if part.Part != ielts.PracticeModePart1 {
+			snapshot.TopicTitle = part.TopicTitle
+		}
+		assignment.Parts[index] = snapshot
 	}
 	selection = clonePlanSceneSelection(selection)
 	selection.Scene.Prompt.TurnBlueprints = clonePlanStrings(
@@ -627,6 +639,26 @@ func freezeIELTSAssignment(
 	return selection, assignment, nil
 }
 
+func preserveIELTSAssignment(
+	selection scene.SelectionSnapshot,
+	current *IELTSAssignmentSnapshot,
+	request *IELTSQuestionSelection,
+) (*IELTSAssignmentSnapshot, error) {
+	if selection.Scene.Experience != scene.PracticeExperienceIELTSSpeaking {
+		if request != nil {
+			return nil, ErrPlanInvalid
+		}
+		return nil, nil
+	}
+	if !validPlanIELTSAssignment(selection, current) {
+		return nil, ErrPlanConflict
+	}
+	if request != nil && *request != ieltsSelectionFromAssignment(*current) {
+		return nil, ErrPlanConflict
+	}
+	return current, nil
+}
+
 func ieltsSelectionFromResolved(
 	resolved ielts.ResolvedQuestionSet,
 ) IELTSQuestionSelection {
@@ -636,6 +668,21 @@ func ieltsSelectionFromResolved(
 		case ielts.PracticeModePart1:
 			selection.Part1SetID = part.SourceID
 		case ielts.PracticeModePart2, ielts.PracticeModePart3:
+			selection.TopicGroupID = part.SourceID
+		}
+	}
+	return selection
+}
+
+func ieltsSelectionFromAssignment(
+	assignment IELTSAssignmentSnapshot,
+) IELTSQuestionSelection {
+	var selection IELTSQuestionSelection
+	for _, part := range assignment.Parts {
+		switch part.Part {
+		case scene.PracticeModePart1:
+			selection.Part1SetID = part.SourceID
+		case scene.PracticeModePart2, scene.PracticeModePart3:
 			selection.TopicGroupID = part.SourceID
 		}
 	}
@@ -658,6 +705,17 @@ func validIELTSQuestionSelection(
 	mode scene.PracticeMode,
 	selection IELTSQuestionSelection,
 ) bool {
+	if selection.CueCardType != "" {
+		switch mode {
+		case scene.PracticeModePart1,
+			scene.PracticeModePart2,
+			scene.PracticeModePart3:
+			return validIELTSCueCardType(selection.CueCardType) &&
+				selection.Part1SetID == "" && selection.TopicGroupID == ""
+		default:
+			return false
+		}
+	}
 	switch mode {
 	case scene.PracticeModeFullMock:
 		return validPlanResourceID(selection.Part1SetID) &&
@@ -674,12 +732,25 @@ func validIELTSQuestionSelection(
 }
 
 func validIELTSSelectionShape(selection IELTSQuestionSelection) bool {
+	if selection.CueCardType != "" {
+		return validIELTSCueCardType(selection.CueCardType) &&
+			selection.Part1SetID == "" && selection.TopicGroupID == ""
+	}
 	part1Valid := selection.Part1SetID == "" ||
 		validPlanResourceID(selection.Part1SetID)
 	topicValid := selection.TopicGroupID == "" ||
 		validPlanResourceID(selection.TopicGroupID)
 	return part1Valid && topicValid &&
 		(selection.Part1SetID != "" || selection.TopicGroupID != "")
+}
+
+func validIELTSExactSelectionShape(selection IELTSQuestionSelection) bool {
+	return selection.CueCardType == "" && validIELTSSelectionShape(selection)
+}
+
+func validIELTSCueCardType(value string) bool {
+	return value == "person" || value == "place" || value == "thing" ||
+		value == "experience"
 }
 
 func validResolvedIELTSQuestionSet(
@@ -694,13 +765,16 @@ func validResolvedIELTSQuestionSet(
 	}
 	parts := make([]IELTSAssignmentPartSnapshot, len(resolved.Parts))
 	for index, part := range resolved.Parts {
-		parts[index] = IELTSAssignmentPartSnapshot{
+		snapshot := IELTSAssignmentPartSnapshot{
 			Part:           scene.PracticeMode(part.Part),
 			SourceID:       part.SourceID,
-			TopicTitle:     part.TopicTitle,
 			CueCard:        part.CueCard,
 			TurnBlueprints: part.TurnBlueprints,
 		}
+		if part.Part != ielts.PracticeModePart1 {
+			snapshot.TopicTitle = part.TopicTitle
+		}
+		parts[index] = snapshot
 	}
 	if !validIELTSAssignmentParts(mode, parts) {
 		return false
@@ -846,7 +920,7 @@ func ieltsAssignmentSceneBrief(assignment IELTSAssignmentSnapshot) string {
 	case scene.PracticeModeFullMock:
 		return "完成冻结的 Part 1 套题，并继续同主题 Part 2 与 Part 3。"
 	case scene.PracticeModePart1:
-		return "完成冻结的三个熟悉话题和八道 Part 1 问题。"
+		return "完成冻结的 Part 1 熟悉话题问答。"
 	case scene.PracticeModePart2:
 		return "完成“" + topicTitle + "”题卡，并可继续同主题 Part 3。"
 	case scene.PracticeModePart3:

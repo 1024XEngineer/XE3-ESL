@@ -493,8 +493,10 @@ class _ConversationPageState extends State<ConversationPage> {
 
     final previousLast = oldWidget.messages.lastOrNull;
     final currentLast = widget.messages.lastOrNull;
+    final handoffFootprintChanged =
+        previousLast?.handoffs.length != currentLast?.handoffs.length;
     if (previousLast?.id == currentLast?.id &&
-        previousLast?.text != currentLast?.text) {
+        (previousLast?.text != currentLast?.text || handoffFootprintChanged)) {
       if (_isNearLatest()) {
         _scheduleScrollToLatest();
       } else {

@@ -6,21 +6,21 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 )
 
 const PracticePreviewToolName = "practice.preview.v1"
 
 type PreviewInput struct {
-	SceneQuery        string                              `json:"scene_query,omitempty"`
-	BackgroundSummary string                              `json:"background_summary,omitempty"`
-	GoalID            string                              `json:"goal_id,omitempty"`
-	SceneID           string                              `json:"scene_id,omitempty"`
-	SceneVersion      int                                 `json:"scene_version,omitempty"`
-	SelectedRoleIDs   []string                            `json:"selected_role_ids,omitempty"`
-	PracticeOptionID  string                              `json:"practice_option_id,omitempty"`
-	MaxEffectiveTurns int                                 `json:"max_effective_turns,omitempty"`
-	IELTSSelection    *preparation.IELTSQuestionSelection `json:"ielts_selection,omitempty"`
+	SceneQuery        string   `json:"scene_query,omitempty"`
+	BackgroundSummary string   `json:"background_summary,omitempty"`
+	GoalID            string   `json:"goal_id,omitempty"`
+	SceneID           string   `json:"scene_id,omitempty"`
+	SceneVersion      int      `json:"scene_version,omitempty"`
+	SelectedRoleIDs   []string `json:"selected_role_ids,omitempty"`
+	PracticeOptionID  string   `json:"practice_option_id,omitempty"`
+	MaxEffectiveTurns int      `json:"max_effective_turns,omitempty"`
+	IELTSPracticeMode string   `json:"ielts_practice_mode,omitempty"`
+	IELTSTopicChoice  string   `json:"ielts_topic_choice,omitempty"`
 }
 
 type CatalogCandidate struct {
@@ -75,7 +75,7 @@ func (value PreviewTool) Definition() capability.Definition {
 	}
 	return capability.Definition{
 		Name:        PracticePreviewToolName,
-		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use when the user wants to configure an English practice after identifying a Scene. Pass background_summary using only facts the user already provided; Preparation creates the Profile and immutable Snapshot internally. IELTS specialty practice requires an explicit ielts_selection; IELTS full mock omits it so the server assembles a published question set. Missing user-facing details return needs_input without creating a Plan. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession. Do not use for creating a Goal, starting practice, or claiming that the user confirmed.",
+		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use after any optional IELTS warm-up is complete, when the user skips warm-up, or when arranging a full mock. For non-IELTS practice, pass background_summary using only facts the user already provided; Preparation creates the Profile and immutable Snapshot internally. For IELTS, pass ielts_practice_mode and, for PART_1/PART_2/PART_3, exactly one ielts_topic_choice; the server derives the preparation background from those choices. The server selects and freezes questions from the current published bank; never invent or request question ids. Omit max_effective_turns for IELTS because the frozen questions determine it. FULL_MOCK must omit ielts_topic_choice and never reveals questions before practice. Missing user-facing details return needs_input without creating a Plan; never say a practice was created or is ready unless this tool actually returns preview_ready. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession. Do not use for creating a Goal, starting practice, or claiming that the user confirmed.",
 		InputSchema: capability.ObjectSchema(map[string]any{
 			"scene_query": capability.TextSchema(
 				"Natural-language catalog query used only to return or resolve official Scene candidates.",
@@ -99,18 +99,18 @@ func (value PreviewTool) Definition() capability.Definition {
 				"Exact official Practice option id.",
 			),
 			"max_effective_turns": capability.IntegerRangeSchema(
-				"Maximum effective turns for this Practice Plan.",
+				"Maximum effective turns for a non-IELTS Practice Plan. Omit for IELTS.",
 				1,
 				100,
 			),
-			"ielts_selection": capability.ObjectSchema(map[string]any{
-				"part_1_set_id": capability.IdentifierSchema(
-					"Exact published Part 1 set id.",
-				),
-				"topic_group_id": capability.IdentifierSchema(
-					"Exact published Part 2/3 topic-group id.",
-				),
-			}, nil),
+			"ielts_practice_mode": capability.StringEnumSchema(
+				"IELTS Speaking mode requested by the user.",
+				"FULL_MOCK", "PART_1", "PART_2", "PART_3",
+			),
+			"ielts_topic_choice": capability.StringEnumSchema(
+				"For an IELTS specialty Part, the user's topic choice. random lets the server choose from the published bank.",
+				"random", "person", "place", "thing", "experience",
+			),
 		}, nil),
 		ReadOnly: false,
 		Risk:     capability.RiskLowRiskWrite,
@@ -124,7 +124,7 @@ func (value PreviewTool) ClassifyInvocationEffect(
 	if err != nil {
 		return 0, err
 	}
-	if parsed.BackgroundSummary != "" && parsed.MaxEffectiveTurns > 0 {
+	if parsed.BackgroundSummary != "" || parsed.IELTSPracticeMode != "" {
 		return capability.InvocationEffectMayWrite, nil
 	}
 	return capability.InvocationEffectReadOnly, nil
@@ -158,22 +158,13 @@ func parsePreviewInput(input json.RawMessage) (PreviewInput, error) {
 }
 
 func previewToolResult(preview PreviewResult) capability.Result {
-	content := map[string]any{
-		"status":                  preview.Status,
-		"required_missing_fields": preview.RequiredMissingFields,
-		"catalog_candidates":      preview.Candidates,
-	}
+	content := map[string]any{"status": preview.Status}
 	if preview.Status == "preview_ready" {
-		content["target"] = preview.Handoff.Target
-		content["scene_name"] = preview.Handoff.SceneName
-		content["roles"] = preview.Handoff.Roles
-		content["practice_scope"] = preview.Handoff.PracticeScope
-		content["suggested_duration_seconds"] =
-			preview.Handoff.SuggestedDurationSeconds
-		content["min_effective_turns"] = preview.Handoff.MinEffectiveTurns
-		content["max_effective_turns"] = preview.Handoff.MaxEffectiveTurns
 		content["confirmation_required"] = true
 		content["replayed"] = preview.Replayed
+	} else {
+		content["required_missing_fields"] = preview.RequiredMissingFields
+		content["catalog_candidates"] = preview.Candidates
 	}
 	handoffs := []agenthandoff.Item(nil)
 	if preview.Status == "preview_ready" {

@@ -15,6 +15,12 @@ final class PracticePlanHandoffCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final minutes = (handoff.suggestedDuration.inSeconds / 60).ceil();
+    final isIELTS = handoff.practiceExperience == 'IELTS_SPEAKING';
+    final practiceSummary = <String>[
+      handoff.sceneName,
+      if (!isIELTS) handoff.roles.join('、'),
+      handoff.practiceScope,
+    ].join(' · ');
     return Container(
       key: Key(
         'agent-handoff-practice-plan-'
@@ -29,20 +35,21 @@ final class PracticePlanHandoffCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(handoff.target, style: SpeakUpDesign.cardTitle),
-          const SizedBox(height: 8),
-          Text('场景：${handoff.sceneName}', style: SpeakUpDesign.body),
-          Text('角色：${handoff.roles.join('、')}', style: SpeakUpDesign.body),
-          Text('范围：${handoff.practiceScope}', style: SpeakUpDesign.body),
           Text(
-            handoff.maxEffectiveTurns == 0
-                ? '预计 $minutes 分钟'
-                : '预计 $minutes 分钟 · '
-                      '${handoff.minEffectiveTurns}–${handoff.maxEffectiveTurns} 轮',
-            style: SpeakUpDesign.meta,
+            isIELTS ? practiceSummary : handoff.target,
+            style: SpeakUpDesign.cardTitle,
           ),
-          const SizedBox(height: 8),
-          Text(handoff.confirmationPrompt, style: SpeakUpDesign.meta),
+          if (!isIELTS) ...[
+            const SizedBox(height: 6),
+            Text(
+              practiceSummary,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: SpeakUpDesign.body,
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text('约 $minutes 分钟', style: SpeakUpDesign.meta),
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
@@ -52,7 +59,7 @@ final class PracticePlanHandoffCard extends StatelessWidget {
                 '${handoff.practicePlanId}-${handoff.planRevision}',
               ),
               onPressed: onConfirm,
-              child: Text(handoff.label),
+              child: const Text('开始练习'),
             ),
           ),
         ],

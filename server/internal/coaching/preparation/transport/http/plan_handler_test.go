@@ -250,6 +250,23 @@ func TestPlanHTTPReadAndReviseUseActorOwnedPlan(t *testing.T) {
 	}
 }
 
+func TestPlanHTTPUpdateRejectsIELTSCategorySelection(t *testing.T) {
+	actor := profileHTTPActor()
+	router := newPlanHTTPTestRouter(t, planHTTPApplicationStub{})
+	response := serveProfileHTTPRequest(
+		router,
+		http.MethodPut,
+		"/v1/practice-plans/plan-1",
+		`{"expected_plan_revision":2,"selected_role_ids":["role-2"],`+
+			`"practice_option_id":"option-2","max_effective_turns":3,`+
+			`"ielts_selection":{"cue_card_type":"person"}}`,
+		"application/json",
+		"plan-revise-key",
+		&actor,
+	)
+	assertProfileHTTPError(t, response, http.StatusBadRequest, "invalid_request")
+}
+
 func TestPlanHTTPRejectsPartialAndReplacedInputs(t *testing.T) {
 	actor := profileHTTPActor()
 	router := newPlanHTTPTestRouter(t, planHTTPApplicationStub{})

@@ -42,6 +42,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		reviewagentcapability.ReviewSearchToolName:             true,
 		reviewagentcapability.ReviewGetToolName:                true,
 		preparationagentcapability.PracticePreviewToolName:     true,
+		preparationagentcapability.IELTSWarmUpToolName:         true,
 		evaluationagentcapability.LatestPracticeReportToolName: true,
 	}
 	if composition.productionTools == nil {

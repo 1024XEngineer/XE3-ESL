@@ -248,6 +248,7 @@ func (bootstrapTestIELTSQuestionBank) ResolveQuestionSet(
 func (bootstrapTestIELTSQuestionBank) AssignQuestionSet(
 	context.Context,
 	ielts.PracticeMode,
+	string,
 ) (ielts.ResolvedQuestionSet, error) {
 	return ielts.ResolvedQuestionSet{}, errors.New("unexpected IELTS assignment")
 }

@@ -47,6 +47,7 @@ func TestEvaluationRegistryContainsInterviewMainlineTools(t *testing.T) {
 	want := map[string]bool{
 		goalcapability.GoalCreateCapabilityName:           true,
 		goalcapability.GoalSearchCapabilityName:           true,
+		preparationcapability.IELTSWarmUpToolName:         true,
 		preparationcapability.PracticePreviewToolName:     true,
 		evaluationcapability.LatestPracticeReportToolName: true,
 		reviewcapability.ReviewSearchToolName:             true,
@@ -79,6 +80,7 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 	}
 	for _, name := range []string{
 		goalcapability.GoalSearchCapabilityName,
+		preparationcapability.IELTSWarmUpToolName,
 		evaluationcapability.LatestPracticeReportToolName,
 		reviewcapability.ReviewSearchToolName,
 	} {

@@ -17,7 +17,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
-const DatasetVersion = "agent-routing-eval-v3"
+const DatasetVersion = "agent-routing-eval-v5"
 
 type EvaluationResult struct {
 	DatasetVersion      string
@@ -216,6 +216,10 @@ func (DeterministicRouter) Route(
 				}},
 			}
 		}
+	case followsIELTSWarmUp(item.Messages):
+		return routeIELTSPractice(item.Messages, allowed, true)
+	case isIELTSPracticeCreationRequest(input):
+		return routeIELTSPractice(item.Messages, allowed, false)
 	case hasAny(input, "刚完成", "刚练完", "最新报告", "latest report"):
 		if containsString(allowed, evaluationcapability.LatestPracticeReportToolName) {
 			return Route{
@@ -326,6 +330,167 @@ func (DeterministicRouter) Route(
 	return Route{Decision: DecisionDirect}
 }
 
+func routeIELTSPractice(
+	messages []EvalMessage,
+	allowed []string,
+	afterWarmUp bool,
+) Route {
+	selection := findIELTSPracticeSelection(messages)
+	if selection.mode == "" {
+		return Route{Decision: DecisionDirect}
+	}
+	arguments := map[string]any{"ielts_practice_mode": selection.mode}
+	if selection.mode != "FULL_MOCK" {
+		if selection.topicChoice == "" {
+			return Route{Decision: DecisionDirect}
+		}
+		arguments["ielts_topic_choice"] = selection.topicChoice
+	}
+
+	toolName := preparationcapability.IELTSWarmUpToolName
+	if selection.mode == "FULL_MOCK" || afterWarmUp ||
+		asksToStartDirectly(normalize(lastUserContent(messages))) {
+		toolName = preparationcapability.PracticePreviewToolName
+	}
+	if !containsString(allowed, toolName) {
+		return Route{Decision: DecisionDirect}
+	}
+	return Route{
+		Decision: DecisionToolCall,
+		ToolCalls: []ToolCall{{
+			Name:  toolName,
+			Input: mustRaw(arguments),
+		}},
+	}
+}
+
+type ieltsPracticeSelection struct {
+	mode        string
+	topicChoice string
+}
+
+func findIELTSPracticeSelection(messages []EvalMessage) ieltsPracticeSelection {
+	start := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == "user" &&
+			hasAny(normalize(messages[index].Content), "雅思", "ielts") {
+			start = index
+			break
+		}
+	}
+	if start < 0 {
+		return ieltsPracticeSelection{}
+	}
+
+	selection := ieltsPracticeSelection{}
+	for _, message := range messages[start:] {
+		if message.Role != "user" {
+			continue
+		}
+		input := normalize(message.Content)
+		if mode := parseIELTSPracticeMode(input); mode != "" {
+			selection.mode = mode
+		}
+		if choice := parseIELTSTopicChoice(input); choice != "" {
+			selection.topicChoice = choice
+		}
+	}
+	return selection
+}
+
+func parseIELTSPracticeMode(input string) string {
+	switch {
+	case hasAny(input, "完整模考", "full mock"):
+		return "FULL_MOCK"
+	case hasAny(input, "part 1", "part one"):
+		return "PART_1"
+	case hasAny(input, "part 2", "part two"):
+		return "PART_2"
+	case hasAny(input, "part 3", "part three"):
+		return "PART_3"
+	default:
+		return ""
+	}
+}
+
+func parseIELTSTopicChoice(input string) string {
+	switch {
+	case hasAny(input, "随机", "random"):
+		return "random"
+	case hasAny(input, "人物", "person"):
+		return "person"
+	case hasAny(input, "地点", "place"):
+		return "place"
+	case hasAny(input, "事物", "thing"):
+		return "thing"
+	case hasAny(input, "经历", "experience"):
+		return "experience"
+	default:
+		return ""
+	}
+}
+
+func followsIELTSWarmUp(messages []EvalMessage) bool {
+	input := normalize(lastUserContent(messages))
+	if hasAny(
+		input,
+		"报告",
+		"评价",
+		"复盘",
+		"feedback",
+		"review",
+		"取消",
+		"cancel",
+	) {
+		return false
+	}
+	latestUserIndex := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == "user" {
+			latestUserIndex = index
+			break
+		}
+	}
+	for index := latestUserIndex - 1; index >= 0; index-- {
+		switch messages[index].Role {
+		case "assistant":
+			content := normalize(messages[index].Content)
+			return hasAny(content, "用一两句英语说说", "直接回答", "问我要提示")
+		case "user":
+			return false
+		}
+	}
+	return false
+}
+
+func asksToStartDirectly(input string) bool {
+	return hasAny(
+		input,
+		"跳过",
+		"直接开始",
+		"马上开始",
+		"skip",
+		"start directly",
+		"start now",
+	)
+}
+
+func isIELTSPracticeCreationRequest(input string) bool {
+	return hasAny(input, "雅思", "ielts") &&
+		!hasAny(input, "报告", "评价", "复盘", "feedback", "review") &&
+		hasAny(
+			input,
+			"创建",
+			"安排",
+			"想练",
+			"练习",
+			"模考",
+			"给我",
+			"practice",
+			"mock",
+		)
+}
+
 func registeredToolNames(registry *capability.Registry) []string {
 	if registry == nil {
 		return nil
@@ -387,6 +552,20 @@ func validateCase(item RoutingCase, result CaseResult) []string {
 						actual[field],
 						expectedValue,
 					),
+				)
+			}
+		}
+	}
+	for toolName, forbidden := range item.ForbiddenArgs {
+		actual, ok := result.ToolInputs[toolName]
+		if !ok {
+			continue
+		}
+		for _, field := range forbidden {
+			if _, found := actual[field]; found {
+				failures = append(
+					failures,
+					fmt.Sprintf("%s includes forbidden arg %s", toolName, field),
 				)
 			}
 		}

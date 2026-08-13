@@ -96,6 +96,26 @@ async function waitForRun(baseUrl, token, run) {
   throw new Error(`run ${run.run_id} did not reach a terminal state`);
 }
 
+async function assistantMessageForRun(baseUrl, token, threadId, runId) {
+  const response = await request(
+    baseUrl,
+    `/v1/agent-threads/${encodeURIComponent(threadId)}/messages?page_size=20`,
+    { token, expected: [200] },
+  );
+  const messages = Array.isArray(response.payload.messages)
+    ? response.payload.messages
+    : [];
+  const message = messages.find(
+    (item) =>
+      item?.role === "assistant" && item?.produced_by_run_id === runId,
+  );
+  if (!message || typeof message.message_id !== "string" ||
+      typeof message.content !== "string") {
+    throw new Error(`run ${runId} has no persisted assistant message`);
+  }
+  return message;
+}
+
 async function createIdentity(baseUrl) {
   const suffix = `${Date.now()}-${process.pid}`;
   const email = `agent-routing-benchmark-${suffix}@example.com`;
@@ -137,6 +157,9 @@ async function executeCase(baseUrl, token, testCase, index) {
   }
 
   const targetRun = runs.at(-1);
+  const targetMessage = targetRun.status === "completed"
+    ? await assistantMessageForRun(baseUrl, token, threadId, targetRun.run_id)
+    : null;
   return {
     name: testCase.name,
     thread_id: threadId,
@@ -144,6 +167,8 @@ async function executeCase(baseUrl, token, testCase, index) {
     target_run_id: targetRun.run_id,
     status: targetRun.status,
     http_ok: true,
+    assistant_message_id: targetMessage?.message_id ?? "",
+    assistant_response: targetMessage?.content ?? "",
     provider: targetRun.requested_provider ?? "",
     model: targetRun.requested_model ?? "",
     failure: targetRun.failure ?? null,

@@ -341,7 +341,7 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 		manifest.RequestedProvider != testRunConfiguration.Provider ||
 		manifest.RequestedModel != testRunConfiguration.Model ||
 		manifest.MaxOutputTokens != testRunConfiguration.MaxOutputTokens ||
-		manifest.InstructionVersion != "speakup_text_v1" ||
+		manifest.InstructionVersion != "speakup_text_v2" ||
 		manifest.MemoryExtractionBarrierPolicyVersion !=
 			agentcontext.MemoryExtractionBarrierPolicyV1 ||
 		manifest.MemoryExtractionBarrierStatus != "ready" ||
