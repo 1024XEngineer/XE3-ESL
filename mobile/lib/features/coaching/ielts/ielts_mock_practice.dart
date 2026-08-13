@@ -4008,16 +4008,7 @@ class _CompletedReportPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-          child: child,
-        ),
-      ),
-    );
+    return IeltsSpeakingReportScaffold(title: title, child: child);
   }
 }
 

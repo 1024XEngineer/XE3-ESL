@@ -57,10 +57,11 @@ void main() {
       find.byKey(const Key('ielts-speaking-band-grammaticalRangeAndAccuracy')),
       findsOneWidget,
     );
-    expect(find.text('本次模考'), findsOneWidget);
-    expect(find.textContaining('Part 2&3'), findsOneWidget);
-    expect(find.textContaining('共 14/14 题'), findsOneWidget);
-    expect(find.textContaining('缺少可信发音工件'), findsOneWidget);
+    expect(find.text('本次模考'), findsNothing);
+    expect(find.textContaining('Part 2&3'), findsNothing);
+    expect(find.textContaining('共 14/14 题'), findsNothing);
+    expect(find.textContaining('缺少可信发音工件'), findsNothing);
+    expect(find.textContaining('定性反馈，不提供完整 Band'), findsNothing);
     expect(
       find.byKey(const Key('ielts-speaking-overall-unavailable')),
       findsOneWidget,
@@ -72,13 +73,18 @@ void main() {
       isA<Card>(),
     );
     expect(find.text('暂不可用'), findsOneWidget);
-    expect(find.textContaining('非 IELTS 官方成绩'), findsOneWidget);
-    expect(find.textContaining('距目标差值'), findsOneWidget);
+    expect(find.text('评分标准'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-overall-explanation')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('非 IELTS 官方成绩'), findsNothing);
+    expect(find.textContaining('距目标差值'), findsNothing);
     expect(find.byKey(const Key('ielts-speaking-score-radar')), findsOneWidget);
     expect(find.byType(FourAxisScoreRadar), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-speaking-evidence-standard')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('部分练习报告'), findsNothing);
     expect(find.text('分 Part 复盘'), findsNothing);

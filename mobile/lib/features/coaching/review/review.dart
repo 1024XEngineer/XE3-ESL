@@ -751,15 +751,10 @@ class _IeltsReportDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return IeltsSpeakingReportScaffold(
       key: const Key('ielts-speaking-report-detail-page'),
-      appBar: AppBar(title: const Text('IELTS 口语模考报告')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
-          child: IeltsSpeakingReadyReportView(report: report),
-        ),
-      ),
+      title: 'IELTS 口语模考报告',
+      child: IeltsSpeakingReadyReportView(report: report),
     );
   }
 }
