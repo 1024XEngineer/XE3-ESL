@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -7,6 +8,108 @@ import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
 const _abilityBlue = Color(0xFF2563EB);
+const _reportAccent = Color(0xFF2F72F5);
+const _reportCanvas = Color(0xFFF7F8FC);
+const _reportBorder = Color(0xFFE9ECF2);
+const _reportMuted = Color(0xFF727987);
+const _reportBodyStyle = TextStyle(
+  color: _reportMuted,
+  fontSize: 13,
+  fontWeight: FontWeight.w400,
+  height: 1.55,
+);
+
+class _ReportCard extends Card {
+  const _ReportCard({required super.child, super.key})
+    : super(
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        color: SpeakUpDesign.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(16)),
+          side: BorderSide(color: _reportBorder),
+        ),
+      );
+}
+
+class IeltsSpeakingReportScaffold extends StatelessWidget {
+  const IeltsSpeakingReportScaffold({
+    required this.title,
+    required this.child,
+    super.key,
+  });
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final titleParts = title == 'IELTS 口语模考报告'
+        ? const ('IELTS', '口语模考报告')
+        : (title, '');
+    return Scaffold(
+      backgroundColor: _reportCanvas,
+      appBar: AppBar(
+        backgroundColor: _reportCanvas,
+        foregroundColor: SpeakUpDesign.ink,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        toolbarHeight: 76,
+        titleSpacing: 0,
+        title: Semantics(
+          header: true,
+          label: title,
+          excludeSemantics: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                titleParts.$1,
+                style: const TextStyle(
+                  color: _reportAccent,
+                  fontFamily: 'Georgia',
+                  fontFamilyFallback: ['serif'],
+                  fontSize: 23,
+                  fontWeight: FontWeight.w700,
+                  height: 1.05,
+                  letterSpacing: -0.35,
+                ),
+              ),
+              if (titleParts.$2.isNotEmpty)
+                Text(
+                  titleParts.$2,
+                  style: const TextStyle(
+                    color: SpeakUpDesign.ink,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    letterSpacing: 0.1,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          key: const Key('ielts-speaking-report-scroll'),
+          padding: EdgeInsets.fromLTRB(
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space8,
+            SpeakUpDesign.horizontalInset(context),
+            40,
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
 
 class IeltsSpeakingSessionReportPanel extends StatefulWidget {
   const IeltsSpeakingSessionReportPanel({
@@ -222,16 +325,14 @@ class _ReadyReport extends StatelessWidget {
       key: const Key('ielts-speaking-report-ready'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReportHeader(report: report),
-        const SizedBox(height: SpeakUpDesign.space16),
         _OverallScore(report: report),
-        const SizedBox(height: SpeakUpDesign.space16),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const _ReportSectionTitle(title: '评分维度'),
+        const SizedBox(height: SpeakUpDesign.space12),
         IeltsSpeakingScoreOverview(
           key: const Key('ielts-speaking-report-criteria'),
           criteria: report.criteria,
         ),
-        const SizedBox(height: SpeakUpDesign.space12),
-        _EvidenceStandard(report: report),
         const SizedBox(height: SpeakUpDesign.space24),
         const _ReportSectionTitle(title: '评分描述'),
         const SizedBox(height: SpeakUpDesign.space12),
@@ -246,70 +347,6 @@ class _ReadyReport extends StatelessWidget {
       ],
     );
   }
-}
-
-class _ReportHeader extends StatelessWidget {
-  const _ReportHeader({required this.report});
-
-  final IeltsSpeakingReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final summary = report.testSummary;
-    return Semantics(
-      container: true,
-      label: 'IELTS 口语模考报告摘要',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: SpeakUpDesign.surfaceMuted,
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
-          border: Border.all(color: SpeakUpDesign.border),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(SpeakUpDesign.space20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('本次模考', style: SpeakUpDesign.cardTitle),
-              const SizedBox(height: SpeakUpDesign.space12),
-              _SummaryLine(label: 'Part 1', value: summary.part1Topic),
-              const SizedBox(height: SpeakUpDesign.space8),
-              _SummaryLine(label: 'Part 2&3', value: summary.part2Topic),
-              const SizedBox(height: SpeakUpDesign.space12),
-              Text(
-                '共 ${summary.answeredCount}/${summary.questionCount} 题 · '
-                '录音 ${_durationLabel(summary.recordingDurationMs)}',
-                style: SpeakUpDesign.meta,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SummaryLine extends StatelessWidget {
-  const _SummaryLine({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Text.rich(
-    TextSpan(
-      style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
-      children: [
-        TextSpan(
-          text: '$label: ',
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        TextSpan(text: value),
-      ],
-    ),
-    maxLines: 2,
-    overflow: TextOverflow.ellipsis,
-  );
 }
 
 class _InsufficientReport extends StatelessWidget {
@@ -349,37 +386,69 @@ class _OverallScore extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final band = report.speakingOverallBand;
-    return Card(
+    return _ReportCard(
       key: Key(
         band == null
             ? 'ielts-speaking-overall-unavailable'
             : 'ielts-speaking-overall-available',
       ),
       child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const Text('口语总分', style: SpeakUpDesign.cardTitle),
-                const SizedBox(width: SpeakUpDesign.space8),
-                Text(
-                  band == null ? '暂不可用' : _bandLabel(band),
-                  style: SpeakUpDesign.pageTitle.copyWith(
-                    color: SpeakUpDesign.ink,
-                    fontSize: band == null ? 24 : 42,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '口语总分',
+                    style: SpeakUpDesign.label.copyWith(
+                      color: SpeakUpDesign.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                Text('0–9 分练习估分', style: SpeakUpDesign.meta),
-              ],
+                  const SizedBox(width: 10),
+                  Text(
+                    band == null ? '暂不可用' : _bandLabel(band),
+                    style: SpeakUpDesign.pageTitle.copyWith(
+                      color: band == null ? _reportMuted : _reportAccent,
+                      fontSize: band == null ? 22 : 42,
+                      height: 1,
+                      letterSpacing: -0.6,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _reportCanvas,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '评分标准',
+                      style: SpeakUpDesign.meta.copyWith(
+                        color: const Color(0xFF9AA1AE),
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: SpeakUpDesign.space16),
-            const Divider(height: 1),
-            const SizedBox(height: SpeakUpDesign.space16),
-            Text(report.speakingOverallExplanation, style: SpeakUpDesign.body),
+            const SizedBox(height: 20),
+            _ReportParagraphs(
+              text: _displayOverallExplanation(report),
+              key: const Key('ielts-speaking-overall-explanation'),
+              style: _reportBodyStyle.copyWith(fontSize: 14, height: 1.65),
+            ),
           ],
         ),
       ),
@@ -390,32 +459,26 @@ class _OverallScore extends StatelessWidget {
 class IeltsSpeakingScoreOverview extends StatelessWidget {
   const IeltsSpeakingScoreOverview({
     required this.criteria,
-    this.title = '四项评分',
     this.radarSemanticsKey = const Key('ielts-speaking-score-radar'),
     super.key,
   });
 
   final List<IeltsSpeakingCriterion> criteria;
-  final String title;
   final Key radarSemanticsKey;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return _ReportCard(
       child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: SpeakUpDesign.space8),
-            Text('0-9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
-            const SizedBox(height: SpeakUpDesign.space16),
-            IeltsSpeakingScoreRadar(
-              criteria: criteria,
-              semanticsKey: radarSemanticsKey,
-            ),
-          ],
+        padding: const EdgeInsets.symmetric(
+          horizontal: SpeakUpDesign.space12,
+          vertical: SpeakUpDesign.space16,
+        ),
+        child: IeltsSpeakingScoreRadar(
+          criteria: criteria,
+          semanticsKey: radarSemanticsKey,
+          height: 300,
+          cornerLabels: true,
         ),
       ),
     );
@@ -569,6 +632,7 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
     this.semanticsKey = const Key('ielts-speaking-score-radar'),
     this.height = 320,
     this.profileMode = false,
+    this.cornerLabels = false,
     super.key,
   });
 
@@ -576,31 +640,33 @@ class IeltsSpeakingScoreRadar extends StatelessWidget {
   final Key semanticsKey;
   final double height;
   final bool profileMode;
+  final bool cornerLabels;
 
   @override
   Widget build(BuildContext context) {
     final byId = {for (final item in criteria) item.id: item};
     final ordered = [
       byId[IeltsSpeakingCriterionId.fluencyAndCoherence],
+      byId[IeltsSpeakingCriterionId.lexicalResource],
       byId[IeltsSpeakingCriterionId.pronunciation],
       byId[IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy],
-      byId[IeltsSpeakingCriterionId.lexicalResource],
     ];
     final values = ordered
         .map((item) => item?.estimatedBand?.toDouble())
         .toList(growable: false);
     return FourAxisScoreRadar(
       axes: <FourAxisRadarAxis>[
-        FourAxisRadarAxis(label: '流利与连贯', value: values[0]),
-        FourAxisRadarAxis(label: '发音', value: values[1]),
-        FourAxisRadarAxis(label: '语法', value: values[2]),
-        FourAxisRadarAxis(label: '词汇', value: values[3]),
+        FourAxisRadarAxis(label: '流利性与连贯性', value: values[0]),
+        FourAxisRadarAxis(label: '词汇丰富度', value: values[1]),
+        FourAxisRadarAxis(label: '发音', value: values[2]),
+        FourAxisRadarAxis(label: '语法多样性及准确性', value: values[3]),
       ],
       maximum: 9,
       semanticsKey: semanticsKey,
       semanticsPrefix: 'IELTS 口语四维雷达图',
       height: height,
       emphasized: profileMode,
+      cornerLabels: cornerLabels,
     );
   }
 }
@@ -620,6 +686,7 @@ class FourAxisScoreRadar extends StatelessWidget {
     required this.semanticsPrefix,
     this.height = 300,
     this.emphasized = false,
+    this.cornerLabels = false,
     super.key,
   }) : assert(axes.length == 4),
        assert(maximum > 0);
@@ -630,6 +697,7 @@ class FourAxisScoreRadar extends StatelessWidget {
   final String semanticsPrefix;
   final double height;
   final bool emphasized;
+  final bool cornerLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -644,34 +712,151 @@ class FourAxisScoreRadar extends StatelessWidget {
       label: '$semanticsPrefix，$semanticLabel',
       child: SizedBox(
         height: height,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 72,
-                  vertical: 56,
-                ),
-                child: CustomPaint(
-                  painter: _FourAxisRadarPainter(
-                    axes.map((axis) => axis.value).toList(growable: false),
-                    maximum: maximum,
-                    emphasized: emphasized,
+        child: cornerLabels
+            ? FittedBox(
+                fit: BoxFit.contain,
+                child: SizedBox(
+                  width: 337,
+                  height: 300,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: 107,
+                        top: 74,
+                        child: SizedBox.square(
+                          dimension: 123,
+                          child: CustomPaint(
+                            painter: _IeltsReportRadarPainter(
+                              axes
+                                  .map((axis) => axis.value)
+                                  .toList(growable: false),
+                              maximum: maximum,
+                            ),
+                          ),
+                        ),
+                      ),
+                      _FourAxisRadarCornerLabel(
+                        axis: axes[0],
+                        color: const Color(0xFF4285F4),
+                        left: 0,
+                        top: 58,
+                      ),
+                      _FourAxisRadarCornerLabel(
+                        axis: axes[1],
+                        color: const Color(0xFF5C9BFA),
+                        right: 0,
+                        top: 58,
+                      ),
+                      _FourAxisRadarCornerLabel(
+                        axis: axes[2],
+                        color: const Color(0xFF625DEF),
+                        right: 0,
+                        top: 218,
+                      ),
+                      _FourAxisRadarCornerLabel(
+                        axis: axes[3],
+                        color: const Color(0xFF2CAFE8),
+                        left: 0,
+                        top: 218,
+                      ),
+                    ],
                   ),
                 ),
+              )
+            : Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned.fill(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 72,
+                        vertical: 56,
+                      ),
+                      child: CustomPaint(
+                        painter: _FourAxisRadarPainter(
+                          axes
+                              .map((axis) => axis.value)
+                              .toList(growable: false),
+                          maximum: maximum,
+                          emphasized: emphasized,
+                        ),
+                      ),
+                    ),
+                  ),
+                  _FourAxisRadarLabel(
+                    alignment: Alignment.topCenter,
+                    axis: axes[0],
+                  ),
+                  _FourAxisRadarLabel(
+                    alignment: Alignment.centerRight,
+                    axis: axes[1],
+                  ),
+                  _FourAxisRadarLabel(
+                    alignment: Alignment.bottomCenter,
+                    axis: axes[2],
+                  ),
+                  _FourAxisRadarLabel(
+                    alignment: Alignment.centerLeft,
+                    axis: axes[3],
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _FourAxisRadarCornerLabel extends StatelessWidget {
+  const _FourAxisRadarCornerLabel({
+    required this.axis,
+    required this.color,
+    required this.top,
+    this.left,
+    this.right,
+  });
+
+  final FourAxisRadarAxis axis;
+  final Color color;
+  final double top;
+  final double? left;
+  final double? right;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRightSide = right != null;
+    return Positioned(
+      top: top,
+      left: left,
+      right: right,
+      child: SizedBox(
+        width: 100,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: isRightSide
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            Text(
+              axis.value == null ? '--' : _radarScoreLabel(axis.value!),
+              style: SpeakUpDesign.cardTitle.copyWith(
+                color: color,
+                fontSize: 21,
+                height: 1,
               ),
             ),
-            _FourAxisRadarLabel(alignment: Alignment.topCenter, axis: axes[0]),
-            _FourAxisRadarLabel(
-              alignment: Alignment.centerRight,
-              axis: axes[1],
+            const SizedBox(height: 5),
+            Text(
+              axis.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: isRightSide ? TextAlign.right : TextAlign.left,
+              style: SpeakUpDesign.meta.copyWith(
+                color: _reportMuted,
+                fontSize: axis.label.length > 8 ? 9 : 11,
+                fontWeight: FontWeight.w500,
+                height: 1.2,
+              ),
             ),
-            _FourAxisRadarLabel(
-              alignment: Alignment.bottomCenter,
-              axis: axes[2],
-            ),
-            _FourAxisRadarLabel(alignment: Alignment.centerLeft, axis: axes[3]),
           ],
         ),
       ),
@@ -720,6 +905,211 @@ class _FourAxisRadarLabel extends StatelessWidget {
 String _radarScoreLabel(double value) => value == value.roundToDouble()
     ? value.toInt().toString()
     : value.toStringAsFixed(1);
+
+String _displayOverallExplanation(IeltsSpeakingReport report) {
+  const legacy = '口语总分按四项练习估分等权平均，并四舍五入到最近的 0.5 分。';
+  if (report.speakingOverallExplanation != legacy) {
+    return report.speakingOverallExplanation;
+  }
+  final scored = report.criteria
+      .where((criterion) => criterion.estimatedBand != null)
+      .toList(growable: false);
+  if (scored.length != 4) return legacy;
+  final bands = scored.map((criterion) => criterion.estimatedBand!).toList();
+  final minimum = bands.reduce(math.min);
+  final maximum = bands.reduce(math.max);
+  if (minimum == maximum) {
+    return '$legacy四项表现较为均衡，具体表现与改进依据见下方各评分维度。';
+  }
+  final strongest = scored
+      .where((criterion) => criterion.estimatedBand == maximum)
+      .map(
+        (criterion) =>
+            '${_radarCriterionLabel(criterion.id)}（${criterion.estimatedBand} 分）',
+      )
+      .join('、');
+  final priority = scored
+      .where((criterion) => criterion.estimatedBand == minimum)
+      .map(
+        (criterion) =>
+            '${_radarCriterionLabel(criterion.id)}（${criterion.estimatedBand} 分）',
+      )
+      .join('、');
+  final middle = scored
+      .where(
+        (criterion) =>
+            criterion.estimatedBand != minimum &&
+            criterion.estimatedBand != maximum,
+      )
+      .map(
+        (criterion) =>
+            '${_radarCriterionLabel(criterion.id)}（${criterion.estimatedBand} 分）',
+      )
+      .join('、');
+  final middleSummary = middle.isEmpty ? '' : '$middle处于中间水平，可结合维度反馈继续巩固。';
+  return '$legacy$strongest是当前相对优势；$priority是优先提升方向。'
+      '$middleSummary具体表现与改进依据见下方各评分维度。';
+}
+
+String _radarCriterionLabel(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => '流利性与连贯性',
+      IeltsSpeakingCriterionId.lexicalResource => '词汇丰富度',
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => '语法多样性及准确性',
+      IeltsSpeakingCriterionId.pronunciation => '发音',
+    };
+
+class _IeltsReportRadarPainter extends CustomPainter {
+  const _IeltsReportRadarPainter(this.values, {required this.maximum});
+
+  final List<double?> values;
+  final double maximum;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = math.min(size.width, size.height) / 274;
+    final bounds = Offset.zero & size;
+    final grid = Paint()
+      ..color = const Color(0xFFE9EEF6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2 * scale;
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..color = const Color(0xFFFAFBFE)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRect(bounds.deflate(scale), grid);
+    canvas
+      ..drawLine(bounds.topLeft, bounds.bottomRight, grid)
+      ..drawLine(bounds.topRight, bounds.bottomLeft, grid);
+
+    final normalized = values
+        .map(
+          (value) => value == null ? null : (value / maximum).clamp(0.0, 1.0),
+        )
+        .toList(growable: false);
+    if (normalized.any((value) => value == null)) {
+      return;
+    }
+
+    final center = size.center(Offset.zero);
+    final radius = math.min(size.width, size.height) / 2;
+    final scales = normalized.whereType<double>().toList(growable: false);
+    final points = <Offset>[
+      Offset(center.dx - radius * scales[0], center.dy - radius * scales[0]),
+      Offset(center.dx + radius * scales[1], center.dy - radius * scales[1]),
+      Offset(center.dx + radius * scales[2], center.dy + radius * scales[2]),
+      Offset(center.dx - radius * scales[3], center.dy + radius * scales[3]),
+    ];
+    final segments = <Path>[
+      _curvedSegment(points[0], points[1], _RadarCurveSide.top),
+      _curvedSegment(points[1], points[2], _RadarCurveSide.right),
+      _curvedSegment(points[2], points[3], _RadarCurveSide.bottom),
+      _curvedSegment(points[3], points[0], _RadarCurveSide.left),
+    ];
+    final dataPath = Path()..moveTo(points[0].dx, points[0].dy);
+    for (var index = 0; index < points.length; index++) {
+      final controls = _curveControls(
+        points[index],
+        points[(index + 1) % points.length],
+        _RadarCurveSide.values[index],
+      );
+      dataPath.cubicTo(
+        controls.$1.dx,
+        controls.$1.dy,
+        controls.$2.dx,
+        controls.$2.dy,
+        points[(index + 1) % points.length].dx,
+        points[(index + 1) % points.length].dy,
+      );
+    }
+    dataPath.close();
+    canvas.drawPath(
+      dataPath,
+      Paint()
+        ..color = const Color(0xFF6DB7FF).withValues(alpha: 0.24)
+        ..style = PaintingStyle.fill,
+    );
+
+    const markerColors = <Color>[
+      Color(0xFF3F86F8),
+      Color(0xFF64A7FA),
+      Color(0xFF6869EE),
+      Color(0xFF2DB5E6),
+    ];
+    for (var index = 0; index < segments.length; index++) {
+      canvas.drawPath(
+        segments[index],
+        Paint()
+          ..shader = ui.Gradient.linear(
+            points[index],
+            points[(index + 1) % points.length],
+            <Color>[
+              markerColors[index],
+              markerColors[(index + 1) % markerColors.length],
+            ],
+          )
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 6 * scale
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+    for (var index = 0; index < points.length; index++) {
+      canvas.drawCircle(
+        points[index],
+        15 * scale,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        points[index],
+        11 * scale,
+        Paint()
+          ..color = markerColors[index]
+          ..style = PaintingStyle.fill,
+      );
+    }
+  }
+
+  Path _curvedSegment(Offset start, Offset end, _RadarCurveSide side) {
+    final controls = _curveControls(start, end, side);
+    return Path()
+      ..moveTo(start.dx, start.dy)
+      ..cubicTo(
+        controls.$1.dx,
+        controls.$1.dy,
+        controls.$2.dx,
+        controls.$2.dy,
+        end.dx,
+        end.dy,
+      );
+  }
+
+  (Offset, Offset) _curveControls(
+    Offset start,
+    Offset end,
+    _RadarCurveSide side,
+  ) {
+    const depth = 10.0;
+    final first = Offset.lerp(start, end, 0.34)!;
+    final second = Offset.lerp(start, end, 0.66)!;
+    final inward = switch (side) {
+      _RadarCurveSide.top => const Offset(0, depth),
+      _RadarCurveSide.right => const Offset(-depth, 0),
+      _RadarCurveSide.bottom => const Offset(0, -depth),
+      _RadarCurveSide.left => const Offset(depth, 0),
+    };
+    return (first + inward, second + inward);
+  }
+
+  @override
+  bool shouldRepaint(covariant _IeltsReportRadarPainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.maximum != maximum;
+}
+
+enum _RadarCurveSide { top, right, bottom, left }
 
 class _FourAxisRadarPainter extends CustomPainter {
   const _FourAxisRadarPainter(
@@ -836,62 +1226,64 @@ class _FourAxisRadarPainter extends CustomPainter {
       oldDelegate.emphasized != emphasized;
 }
 
-class _EvidenceStandard extends StatelessWidget {
-  const _EvidenceStandard({required this.report});
-
-  final IeltsSpeakingReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final pronunciation = report.criteria.firstWhere(
-      (item) => item.id == IeltsSpeakingCriterionId.pronunciation,
-    );
-    final acousticSamples =
-        (pronunciation.coverage * report.testSummary.questionCount).round();
-    return Card(
-      key: const Key('ielts-speaking-evidence-standard'),
-      child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('评分依据', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: SpeakUpDesign.space12),
-            Text(
-              '语音证据 · $acousticSamples/${report.testSummary.questionCount} 道回答通过声学验真；累计有效英文语音不少于 3 秒才进入发音评分。',
-              style: SpeakUpDesign.body,
-            ),
-            const SizedBox(height: SpeakUpDesign.space8),
-            const Text(
-              '文字证据 · 仅使用已确认的英文转写，按整场回答评估衔接、词汇和语法，不按单个错误机械扣分。',
-              style: SpeakUpDesign.body,
-            ),
-            const SizedBox(height: SpeakUpDesign.space8),
-            const Text(
-              '中英混合 · 中文片段不计入英文词汇、语法或发音证据，也不会被标成英文错误；只评估其中可确认的英文表达。',
-              style: SpeakUpDesign.body,
-            ),
-            const SizedBox(height: SpeakUpDesign.space12),
-            Text(
-              report.disclaimer,
-              key: const Key('ielts-speaking-report-disclaimer'),
-              style: SpeakUpDesign.meta,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ReportSectionTitle extends StatelessWidget {
   const _ReportSectionTitle({required this.title});
 
   final String title;
 
   @override
-  Widget build(BuildContext context) =>
-      Text(title, style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24));
+  Widget build(BuildContext context) => Semantics(
+    header: true,
+    child: Row(
+      children: [
+        Container(
+          width: 3,
+          height: 15,
+          decoration: BoxDecoration(
+            color: _reportAccent,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: SpeakUpDesign.space8),
+        Text(title, style: SpeakUpDesign.cardTitle.copyWith(fontSize: 16)),
+      ],
+    ),
+  );
+}
+
+class _ReportParagraphs extends StatelessWidget {
+  const _ReportParagraphs({required this.text, required this.style, super.key});
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    final paragraphs = _splitReportParagraphs(text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < paragraphs.length; index++) ...[
+          if (index > 0) const SizedBox(height: SpeakUpDesign.space8),
+          Text(paragraphs[index], style: style),
+        ],
+      ],
+    );
+  }
+}
+
+List<String> _splitReportParagraphs(String text) {
+  final paragraphs = <String>[];
+  var start = 0;
+  for (var index = 0; index < text.length; index++) {
+    if (!'。！？!?'.contains(text[index])) continue;
+    paragraphs.add(text.substring(start, index + 1).trim());
+    start = index + 1;
+  }
+  if (start < text.length) {
+    paragraphs.add(text.substring(start).trim());
+  }
+  return paragraphs.where((paragraph) => paragraph.isNotEmpty).toList();
 }
 
 class _CriterionFeedback extends StatelessWidget {
@@ -902,17 +1294,13 @@ class _CriterionFeedback extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final findings = <({String label, IeltsSpeakingFinding finding})>[
-      for (final finding in criterion.strengths)
-        (label: '做得好', finding: finding),
-      for (final finding in criterion.improvements)
-        (label: '可改进', finding: finding),
       for (final finding in criterion.upgradeExamples)
         (label: '提升表达', finding: finding),
     ];
-    return Card(
+    return _ReportCard(
       key: Key('ielts-speaking-criterion-${criterion.id.name}'),
       child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        padding: const EdgeInsets.all(SpeakUpDesign.space16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -920,16 +1308,39 @@ class _CriterionFeedback extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Column(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        _criterionChineseLabel(criterion.id),
-                        style: SpeakUpDesign.cardTitle,
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: const EdgeInsets.only(top: 6),
+                        decoration: const BoxDecoration(
+                          color: _reportAccent,
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                      Text(
-                        _criterionEnglishLabel(criterion.id),
-                        style: SpeakUpDesign.meta,
+                      const SizedBox(width: SpeakUpDesign.space8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _criterionChineseLabel(criterion.id),
+                              style: SpeakUpDesign.cardTitle.copyWith(
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              _criterionEnglishLabel(criterion.id),
+                              style: SpeakUpDesign.meta.copyWith(
+                                color: const Color(0xFF9AA1AE),
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -940,7 +1351,8 @@ class _CriterionFeedback extends StatelessWidget {
                     key: Key('ielts-speaking-band-${criterion.id.name}'),
                     style: SpeakUpDesign.pageTitle.copyWith(
                       color: _criterionColor(criterion.id),
-                      fontSize: 38,
+                      fontSize: 21,
+                      height: 1,
                     ),
                   )
                 else
@@ -953,39 +1365,33 @@ class _CriterionFeedback extends StatelessWidget {
               ],
             ),
             const SizedBox(height: SpeakUpDesign.space16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(SpeakUpDesign.space16),
-              decoration: BoxDecoration(
-                color: SpeakUpDesign.canvas,
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
-                ),
-                border: Border.all(color: SpeakUpDesign.border),
-              ),
-              child: Text(criterion.explanation, style: SpeakUpDesign.body),
+            _ReportParagraphs(
+              text: criterion.explanation,
+              key: Key('ielts-speaking-explanation-${criterion.id.name}'),
+              style: _reportBodyStyle,
             ),
-            if (findings.isEmpty) ...[
+            for (final item in findings) ...[
+              const SizedBox(height: SpeakUpDesign.space16),
+              Container(height: 1, color: const Color(0xFFF1F2F5)),
               const SizedBox(height: SpeakUpDesign.space12),
               Text(
-                _unscoredCriterionLabel(criterion),
-                style: SpeakUpDesign.meta,
+                item.label,
+                style: SpeakUpDesign.label.copyWith(fontSize: 12),
               ),
-            ],
-            for (final item in findings) ...[
-              const SizedBox(height: SpeakUpDesign.space12),
-              Text(item.label, style: SpeakUpDesign.label),
               const SizedBox(height: SpeakUpDesign.space4),
-              Text(item.finding.message, style: SpeakUpDesign.body),
+              Text(item.finding.message, style: _reportBodyStyle),
               if (item.finding.suggestion case final suggestion?) ...[
                 const SizedBox(height: SpeakUpDesign.space4),
-                Text('建议：$suggestion', style: SpeakUpDesign.body),
+                Text('建议：$suggestion', style: _reportBodyStyle),
               ],
               for (final evidence in item.finding.evidence) ...[
                 const SizedBox(height: SpeakUpDesign.space4),
                 Text(
                   '原句：“${evidence.originalExcerpt}”',
-                  style: SpeakUpDesign.meta,
+                  style: SpeakUpDesign.meta.copyWith(
+                    color: _reportMuted,
+                    height: 1.45,
+                  ),
                 ),
               ],
             ],
@@ -1003,29 +1409,30 @@ class _TargetPlan extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      key: const Key('ielts-speaking-target-not-configured'),
+    return _ReportCard(
+      key: const Key('ielts-speaking-target-plan'),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(SpeakUpDesign.space16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('优先练习建议', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 6),
-            Text('尚未配置目标 Band，因此不显示“距目标差值”。', style: SpeakUpDesign.meta),
+            Text(
+              '优先练习建议',
+              style: SpeakUpDesign.cardTitle.copyWith(fontSize: 14),
+            ),
             if (report.priorityActions.isEmpty) ...[
               const SizedBox(height: 10),
-              Text('现有证据不足以生成优先建议。', style: SpeakUpDesign.body),
+              Text('现有证据不足以生成优先建议。', style: _reportBodyStyle),
             ],
             for (
               var index = 0;
               index < report.priorityActions.length;
               index++
             ) ...[
-              const SizedBox(height: 10),
-              Text(
-                '${index + 1}. ${_actionText(report, report.priorityActions[index])}',
-                style: SpeakUpDesign.body,
+              const SizedBox(height: SpeakUpDesign.space12),
+              _NumberedRecommendation(
+                number: index + 1,
+                text: _actionText(report, report.priorityActions[index]),
               ),
             ],
           ],
@@ -1035,23 +1442,38 @@ class _TargetPlan extends StatelessWidget {
   }
 }
 
+class _NumberedRecommendation extends StatelessWidget {
+  const _NumberedRecommendation({required this.number, required this.text});
+
+  final int number;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 22,
+        child: Text(
+          '$number.',
+          style: SpeakUpDesign.label.copyWith(
+            color: _reportAccent,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      Expanded(child: Text(text, style: _reportBodyStyle)),
+    ],
+  );
+}
+
 String _actionText(
   IeltsSpeakingReport report,
   IeltsSpeakingPriorityAction action,
 ) {
   final finding = report.finding(action.findingId)!;
   return finding.suggestion ?? finding.message;
-}
-
-String _unscoredCriterionLabel(IeltsSpeakingCriterion criterion) {
-  if (criterion.id == IeltsSpeakingCriterionId.pronunciation) {
-    return '未评估：缺少可信发音工件';
-  }
-  if (criterion.scoreabilityStatus ==
-      IeltsSpeakingReportScoreabilityStatus.insufficient) {
-    return '证据不足，不显示 Band';
-  }
-  return '定性反馈，不提供完整 Band';
 }
 
 String _criterionChineseLabel(IeltsSpeakingCriterionId criterion) =>
@@ -1071,14 +1493,7 @@ String _criterionEnglishLabel(IeltsSpeakingCriterionId criterion) =>
       IeltsSpeakingCriterionId.pronunciation => 'Pronunciation',
     };
 
-Color _criterionColor(IeltsSpeakingCriterionId _) => SpeakUpDesign.ink;
-
-String _durationLabel(int durationMs) {
-  final totalSeconds = durationMs ~/ 1000;
-  final minutes = totalSeconds ~/ 60;
-  final seconds = totalSeconds % 60;
-  return '$minutes分${seconds.toString().padLeft(2, '0')}秒';
-}
+Color _criterionColor(IeltsSpeakingCriterionId _) => _reportAccent;
 
 String _bandLabel(double band) => band == band.roundToDouble()
     ? band.toInt().toString()
