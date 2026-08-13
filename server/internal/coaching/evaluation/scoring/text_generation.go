@@ -10,10 +10,11 @@ const (
 )
 
 type TextGenerationRequest struct {
-	SystemPrompt    string
-	UserPrompt      string
-	OutputContract  TextGenerationOutputContract
-	OutputCriterion IELTSCriterion
+	SystemPrompt         string
+	UserPrompt           string
+	OutputContract       TextGenerationOutputContract
+	OutputCriterion      IELTSCriterion
+	OutputRubricRequired bool
 }
 
 type TextGenerationResult struct {

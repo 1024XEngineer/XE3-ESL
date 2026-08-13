@@ -291,7 +291,7 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 	repository := &ieltsShadowRuntimeRepositoryStub{
 		claim:      claim,
 		acquired:   true,
-		failStatus: IELTSSpeakingShadowRuntimeFailed,
+		failStatus: IELTSSpeakingShadowRuntimePending,
 	}
 	worker, err := NewIELTSSpeakingShadowWorker(
 		repository,
@@ -321,7 +321,8 @@ func TestIELTSSpeakingShadowWorkerLogsSafeSemanticRejectionStage(
 		t.Fatalf("ProcessPending: %v", err)
 	}
 	logged := output.String()
-	if sweep.Failed != 1 ||
+	if sweep.Retried != 1 ||
+		!repository.failure.Retryable ||
 		!strings.Contains(logged, `"failure_code":"provider_invalid_response"`) ||
 		!strings.Contains(logged, `"rejection_stage":"semantic_validation"`) ||
 		!strings.Contains(logged, `"criterion_id":"IELTS_FC"`) ||
@@ -353,7 +354,17 @@ func TestClassifyIELTSSpeakingShadowFailureUsesStableProviderCodes(
 			code:  "provider_schema_mismatch",
 		},
 		{
-			name:  "semantic response rejection",
+			name: "semantic response rejection",
+			cause: newIELTSCriterionProviderRejection(
+				"semantic_validation",
+				"no_primary_findings",
+				errIELTSProviderNoPrimaryFindings,
+			),
+			code:      "provider_invalid_response",
+			retryable: true,
+		},
+		{
+			name:  "internal result validation",
 			cause: ErrInvalidIELTSSpeakingShadow,
 			code:  "provider_invalid_response",
 		},

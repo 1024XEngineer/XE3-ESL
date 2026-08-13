@@ -16,7 +16,17 @@ const ieltsSpeakingCriterionToolName = "ielts.speaking.criterion.v3"
 // or dynamic evidence identity; the local validator owns those rules.
 func ieltsSpeakingCriterionToolSchema(
 	criterion scoring.IELTSCriterion,
+	rubricRequired bool,
 ) map[string]any {
+	required := []string{
+		"criterion_id",
+		"strengths",
+		"improvements",
+		"upgrade_examples",
+	}
+	if rubricRequired {
+		required = append(required, "rubric_descriptor")
+	}
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -35,12 +45,7 @@ func ieltsSpeakingCriterionToolSchema(
 				"items": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
-					"required": []string{
-						"criterion_id",
-						"strengths",
-						"improvements",
-						"upgrade_examples",
-					},
+					"required":             required,
 					"properties": map[string]any{
 						"criterion_id": map[string]any{
 							"type": "string",
@@ -56,16 +61,19 @@ func ieltsSpeakingCriterionToolSchema(
 							criterion,
 							"strength",
 							false,
+							true,
 						),
 						"improvements": ieltsSpeakingFindingArraySchema(
 							criterion,
 							"improvement",
 							true,
+							false,
 						),
 						"upgrade_examples": ieltsSpeakingFindingArraySchema(
 							criterion,
 							"upgrade",
 							true,
+							false,
 						),
 					},
 				},
@@ -78,6 +86,7 @@ func ieltsSpeakingFindingArraySchema(
 	criterion scoring.IELTSCriterion,
 	kind string,
 	allowSuggestion bool,
+	requireFinding bool,
 ) map[string]any {
 	properties := map[string]any{
 		"template_id": map[string]any{
@@ -118,7 +127,7 @@ func ieltsSpeakingFindingArraySchema(
 			"type": "string", "minLength": 1, "maxLength": 512,
 		}
 	}
-	return map[string]any{
+	result := map[string]any{
 		"type":     "array",
 		"maxItems": 3,
 		"items": map[string]any{
@@ -128,6 +137,10 @@ func ieltsSpeakingFindingArraySchema(
 			"properties":           properties,
 		},
 	}
+	if requireFinding {
+		result["minItems"] = 1
+	}
+	return result
 }
 
 func ieltsSpeakingRubricDescriptorIDs(
@@ -217,6 +230,7 @@ func (generator *EvaluationScoringGenerator) Generate(
 				"criterion.",
 			InputSchema: ieltsSpeakingCriterionToolSchema(
 				request.OutputCriterion,
+				request.OutputRubricRequired,
 			),
 		}}
 		providerRequest.ToolChoice = protocol.ToolChoice{
@@ -230,6 +244,7 @@ func (generator *EvaluationScoringGenerator) Generate(
 			Strict: true,
 			Schema: ieltsSpeakingCriterionToolSchema(
 				request.OutputCriterion,
+				request.OutputRubricRequired,
 			),
 		}
 	}

@@ -105,10 +105,11 @@ func (provider *ieltsSpeakingShadowTextProvider) AnalyzeIELTSCriterion(
 	generated, err := provider.generator.Generate(
 		generationContext,
 		TextGenerationRequest{
-			SystemPrompt:    IELTSSpeakingShadowSystemContract,
-			UserPrompt:      string(evidenceJSON),
-			OutputContract:  TextGenerationOutputIELTSSpeakingCriterionV3,
-			OutputCriterion: request.Input.AssessableCriteria[0],
+			SystemPrompt:         IELTSSpeakingShadowSystemContract,
+			UserPrompt:           string(evidenceJSON),
+			OutputContract:       TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion:      request.Input.AssessableCriteria[0],
+			OutputRubricRequired: len(request.Input.RubricDescriptors) == 1,
 		},
 	)
 	if err != nil {

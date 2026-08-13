@@ -182,7 +182,8 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		request.UserPrompt == request.SystemPrompt ||
 		request.OutputContract !=
 			TextGenerationOutputIELTSSpeakingCriterionV3 ||
-		request.OutputCriterion != IELTSCriterionLR {
+		request.OutputCriterion != IELTSCriterionLR ||
+		!request.OutputRubricRequired {
 		t.Fatalf("request = %#v", request)
 	}
 	for _, required := range []string{

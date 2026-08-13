@@ -21,7 +21,7 @@ Return exactly one JSON object. For an FC request, the shape is illustrated by:
 {"schema_version":"ielts-speaking-full-mock-shadow-provider/v3","criteria":[{"criterion_id":"IELTS_FC","rubric_descriptor":"FC_PRACTICE_BAND_6","strengths":[{"template_id":"ielts.fc.strength.v1","evidence":[{"evidence_ref_id":"...","quote":"exact substring","occurrence":1}]}],"improvements":[],"upgrade_examples":[]}]}
 The criteria array must contain exactly one item whose criterion_id equals input.assessable_criteria[0]. Include no other criterion.
 For every criterion that has a supplied rubric_descriptors set, select exactly one descriptor from that set. Omit rubric_descriptor only when that criterion has no supplied descriptor set; never invent or numerically average a Band.
-Strengths, improvements, and upgrade_examples must be arrays with at most three items each, and strengths plus improvements must contain at least one item.
+Strengths, improvements, and upgrade_examples must be arrays with at most three items each. Strengths must contain at least one evidence-bound item; improvements and upgrade_examples may be empty.
 Use only the exact template_id matching the criterion and collection: ielts.fc.*, ielts.lr.*, ielts.gra.*, or ielts.pr.*.
 Each evidence quote must be an exact, non-empty substring of the transcript paired with its evidence_ref_id. occurrence is one-based when the quote repeats.
 For at least one strength or improvement, copy a short quote character-for-character from input.questions[].response.transcript. Never paraphrase, correct grammar, change case or punctuation, or use an acoustic score as the quote. This requirement still applies to pronunciation.
