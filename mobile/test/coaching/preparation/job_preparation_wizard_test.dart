@@ -7,9 +7,11 @@ import 'package:speakup/features/coaching/interview/job_preparation_controller.d
 import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_wizard.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/resume/resume.dart';
 
 void main() {
@@ -244,6 +246,37 @@ void main() {
 
     expect(exits, 1);
     expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
+  });
+
+  testWidgets('closing a saved plan restores the interview catalog state', (
+    tester,
+  ) async {
+    final controller = _controller(_WizardClient());
+    final catalogController = PreparationController(
+      client: _WizardCatalogClient(),
+    );
+    var exits = 0;
+    addTearDown(controller.dispose);
+    addTearDown(catalogController.dispose);
+    expect(await controller.openSavedPlan(_plan.id), isTrue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: JobPreparationWizard(
+          controller: controller,
+          catalogController: catalogController,
+          onExit: () => exits++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(catalogController.selectedScene?.id, _sceneId);
+    await tester.tap(find.byKey(const Key('job-wizard-close')));
+    await tester.pumpAndSettle();
+
+    expect(exits, 1);
+    expect(catalogController.selectedScene, isNull);
   });
 
   testWidgets('temporary parse failure keeps job context and can be skipped', (
@@ -683,6 +716,17 @@ final class _WizardClient implements JobPreparationClient {
     _target = _targetFor(JobTargetStage.draft, input: input);
     return _target!;
   }
+}
+
+final class _WizardCatalogClient implements SceneClient {
+  @override
+  Future<SceneDefinition> getScene(String sceneId) async => _scene;
+
+  @override
+  Future<List<SceneDefinition>> listScenes() async => [_scene];
+
+  @override
+  Future<List<RoleDefinition>> listRoles(String sceneId) async => [_role];
 }
 
 ResumeItem _wizardResume(

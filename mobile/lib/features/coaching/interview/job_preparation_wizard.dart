@@ -139,6 +139,8 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     final candidate = widget.controller.candidate;
     if (!mounted ||
         _practiceStarted ||
+        _exitInFlight ||
+        _exitApproved ||
         catalog == null ||
         candidate == null ||
         _catalogSyncing) {
@@ -149,6 +151,8 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       await catalog.loadIfNeeded();
       if (!mounted ||
           _practiceStarted ||
+          _exitInFlight ||
+          _exitApproved ||
           widget.controller.candidate != candidate) {
         return;
       }
@@ -164,6 +168,8 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       }
       if (!mounted ||
           _practiceStarted ||
+          _exitInFlight ||
+          _exitApproved ||
           widget.controller.candidate != candidate) {
         if (_practiceStarted && catalog.selectedScene != null) {
           catalog.showSceneList();
@@ -380,6 +386,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       return;
     }
     _exitApproved = true;
+    widget.catalogController?.showSceneList();
     setState(() {});
     await WidgetsBinding.instance.endOfFrame;
     if (mounted) {
