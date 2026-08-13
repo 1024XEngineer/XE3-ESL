@@ -316,9 +316,12 @@ void main() {
     );
 
     expect(find.text('Java Interview Practice'), findsOneWidget);
-    expect(find.text('项目经历深挖 · 面试官、候选人 · 围绕项目难点完成三轮追问'), findsOneWidget);
+    expect(find.text('已为你准备好'), findsOneWidget);
+    expect(find.text('围绕项目难点完成三轮追问'), findsNothing);
+    expect(find.text('面试官、候选人'), findsOneWidget);
     expect(find.text('约 12 分钟'), findsOneWidget);
-    expect(find.text('开始练习'), findsNothing);
+    expect(find.text('3–5 个问题'), findsOneWidget);
+    expect(find.text('开始练习'), findsOneWidget);
     expect(find.text('确认并开始练习'), findsNothing);
     expect(find.text('场景：项目经历深挖'), findsNothing);
     expect(find.text('角色：面试官、候选人'), findsNothing);
@@ -406,14 +409,28 @@ void main() {
     expect(markdown, isNot(contains('卡片')));
     expect(markdown, isNot(contains('Part 1')));
     expect(markdown, isNot(contains('练前跟练')));
-    expect(find.text('IELTS 口语 · Part 1   约 5 分钟'), findsOneWidget);
+    expect(find.text('IELTS Speaking · Part 1'), findsOneWidget);
     expect(find.text(handoff.target), findsNothing);
+    expect(find.text('IELTS 口语考官 · IELTS Examiner'), findsOneWidget);
+    expect(find.text('约 5 分钟'), findsOneWidget);
+    expect(find.text('3 个问题'), findsOneWidget);
+    expect(find.bySemanticsLabel('IELTS 考官头像'), findsOneWidget);
+    final card = find.byKey(
+      const Key(
+        'agent-handoff-practice-plan-'
+        '10000000-0000-4000-8000-000000000003-1',
+      ),
+    );
+    expect(
+      tester.getCenter(card).dx,
+      tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
+    );
     expect(find.text('场景：IELTS 口语'), findsNothing);
     expect(find.text('角色：IELTS 口语考官'), findsNothing);
     expect(find.text('范围：Part 1'), findsNothing);
     expect(find.textContaining('3–3 轮'), findsNothing);
     expect(find.text(handoff.confirmationPrompt), findsNothing);
-    expect(find.text('开始练习'), findsNothing);
+    expect(find.text('开始练习'), findsOneWidget);
 
     await tester.tap(
       find.byKey(
@@ -461,7 +478,9 @@ void main() {
       'assistant-ielts-full-mock',
     ).map(_selectablePlainText).join(' ');
     expect(markdown, '好。');
-    expect(find.text('IELTS 口语 · 完整模考   约 14 分钟'), findsOneWidget);
+    expect(find.text('IELTS Speaking · 完整模考'), findsOneWidget);
+    expect(find.text('约 14 分钟'), findsOneWidget);
+    expect(find.text('14 个问题'), findsOneWidget);
     final card = find.byKey(
       const Key(
         'agent-handoff-practice-plan-'
