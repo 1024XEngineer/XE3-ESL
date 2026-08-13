@@ -756,14 +756,25 @@ final class ConversationController extends ChangeNotifier {
     _setBusy(true);
     if (operation.imageAssetIds.isEmpty && client is AgentStreamingTextClient) {
       final streamingClient = client as AgentStreamingTextClient;
-      final localUserID = 'pending-user-${operation.clientMessageId}';
+      final committedUserMessageID = operation.committedUserMessageID;
+      final reuseCommittedUser =
+          committedUserMessageID != null &&
+          _messages.any(
+            (message) =>
+                message.id == committedUserMessageID &&
+                message.role == AgentMessageRole.user,
+          );
+      final localUserID = reuseCommittedUser
+          ? committedUserMessageID
+          : 'pending-user-${operation.clientMessageId}';
       final localAssistantID = 'pending-assistant-${operation.clientMessageId}';
       _appendMessages([
-        AgentMessage(
-          id: localUserID,
-          role: AgentMessageRole.user,
-          text: operation.text,
-        ),
+        if (!reuseCommittedUser)
+          AgentMessage(
+            id: localUserID,
+            role: AgentMessageRole.user,
+            text: operation.text,
+          ),
         AgentMessage(
           id: localAssistantID,
           role: AgentMessageRole.assistant,
@@ -879,6 +890,7 @@ final class ConversationController extends ChangeNotifier {
         }
         switch (event) {
           case AgentInputCommitted(:final userMessage):
+            operation.committedUserMessageID = userMessage.id;
             final pendingUser = _messages
                 .where((message) => message.id == localUserID)
                 .firstOrNull;
@@ -1630,7 +1642,7 @@ final class _RestoreRetry extends _ConversationRetry {
 }
 
 final class _TextRetry extends _ConversationRetry {
-  const _TextRetry({
+  _TextRetry({
     required this.text,
     required this.clientMessageId,
     this.imageAssetIds = const <String>[],
@@ -1639,6 +1651,7 @@ final class _TextRetry extends _ConversationRetry {
   final String text;
   final String clientMessageId;
   final List<String> imageAssetIds;
+  String? committedUserMessageID;
 }
 
 final Random _clientIdRandom = Random.secure();

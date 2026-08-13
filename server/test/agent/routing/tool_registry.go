@@ -15,6 +15,7 @@ func newEvaluationRegistry() (*capability.Registry, error) {
 	ports := evaluationPorts{}
 	tools = append(
 		tools,
+		preparationcapability.NewIELTSWarmUpTool(),
 		preparationcapability.NewPreviewTool(ports),
 		evaluationcapability.NewLatestPracticeReportTool(ports),
 	)

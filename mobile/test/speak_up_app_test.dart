@@ -12,6 +12,7 @@ import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/review/interview_report.dart';
@@ -681,6 +682,125 @@ void main() {
     },
   );
 
+  testWidgets('keeps an appended Handoff above the composer near latest', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var messages = _ieltsPart1HandoffConversation(includeHandoff: false);
+    AgentHandoff? selected;
+    late StateSetter update;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onMessageHandoff: (handoff) => selected = handoff,
+              onSubmitText: (_) async => true,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    update(() {
+      messages = _ieltsPart1HandoffConversation(includeHandoff: true);
+    });
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(
+      const Key(
+        'agent-handoff-practice-plan-'
+        '10000000-0000-4000-8000-000000000005-1',
+      ),
+    );
+    final confirm = find.byKey(
+      const Key(
+        'confirm-practice-plan-'
+        '10000000-0000-4000-8000-000000000005-1',
+      ),
+    );
+    final composerTop = tester
+        .getRect(find.byKey(const Key('agent-composer-overlay')))
+        .top;
+
+    expect(tester.getRect(card).bottom, lessThanOrEqualTo(composerTop - 15));
+    expect(confirm.hitTestable(), findsOneWidget);
+    expect(find.byKey(const Key('agent-jump-to-latest')), findsNothing);
+
+    await tester.tap(confirm);
+    expect(selected, same(_ieltsPart1ScrollHandoff));
+  });
+
+  testWidgets('preserves reading position when an appended Handoff arrives', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var messages = _ieltsPart1HandoffConversation(includeHandoff: false);
+    late StateSetter update;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onMessageHandoff: (_) {},
+              onSubmitText: (_) async => true,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scroll = find.byKey(const Key('agent-conversation-scroll'));
+    final scrollController = tester
+        .widget<SingleChildScrollView>(scroll)
+        .controller!;
+    await tester.drag(scroll, const Offset(0, 320));
+    await tester.pumpAndSettle();
+    final pixelsBeforeHandoff = scrollController.position.pixels;
+    expect(
+      scrollController.position.maxScrollExtent - pixelsBeforeHandoff,
+      greaterThan(120),
+    );
+
+    update(() {
+      messages = _ieltsPart1HandoffConversation(includeHandoff: true);
+    });
+    await tester.pumpAndSettle();
+
+    expect(scrollController.position.pixels, closeTo(pixelsBeforeHandoff, 0.1));
+    final jumpToLatest = find.byKey(const Key('agent-jump-to-latest'));
+    expect(jumpToLatest, findsOneWidget);
+
+    await tester.tap(jumpToLatest);
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(
+      const Key(
+        'agent-handoff-practice-plan-'
+        '10000000-0000-4000-8000-000000000005-1',
+      ),
+    );
+    final composerTop = tester
+        .getRect(find.byKey(const Key('agent-composer-overlay')))
+        .top;
+    expect(tester.getRect(card).bottom, lessThanOrEqualTo(composerTop - 15));
+    expect(find.byKey(const Key('agent-jump-to-latest')), findsNothing);
+  });
+
   testWidgets('keeps the first message below the top overlay', (tester) async {
     tester.view.physicalSize = const Size(390, 700);
     tester.view.devicePixelRatio = 1;
@@ -1227,6 +1347,63 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+}
+
+const _ieltsPart1ScrollHandoff = ConfirmPracticePlanHandoff(
+  label: '确认并开始练习',
+  practicePlanId: '10000000-0000-4000-8000-000000000005',
+  planRevision: 1,
+  target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
+  sceneName: 'IELTS 口语',
+  practiceExperience: 'IELTS_SPEAKING',
+  sceneCategory: 'IELTS_SPEAKING',
+  practiceMode: 'PART_1',
+  roles: <String>['IELTS 口语考官'],
+  practiceScope: 'Part 1',
+  suggestedDuration: Duration(minutes: 5),
+  minEffectiveTurns: 3,
+  maxEffectiveTurns: 3,
+  executableStatus: 'ready',
+  confirmationPrompt: '确认后进入正式练习。',
+);
+
+List<AgentMessage> _ieltsPart1HandoffConversation({
+  required bool includeHandoff,
+}) {
+  return <AgentMessage>[
+    for (var index = 0; index < 8; index++)
+      AgentMessage(
+        id: 'earlier-handoff-message-$index',
+        role: index.isEven ? AgentMessageRole.user : AgentMessageRole.assistant,
+        text:
+            'Earlier conversation message $index has enough detail to keep '
+            'the Agent history scrollable.',
+      ),
+    const AgentMessage(
+      id: 'assistant-ielts-warmup',
+      role: AgentMessageRole.assistant,
+      text:
+          '好，我们先用「老师」热个身，不计分。\n\n'
+          '请用两句英语聊聊「老师」：先说说自己的情况，再补一个理由或例子。\n\n'
+          '可以这样开头：For me, ...\n\n'
+          '直接回答就好；想马上开始就说“直接开始”。',
+    ),
+    const AgentMessage(
+      id: 'user-ielts-warmup-answer',
+      role: AgentMessageRole.user,
+      text:
+          'For me, my high school teacher is unforgettable. '
+          'She made every class encouraging and practical.',
+    ),
+    AgentMessage(
+      id: 'assistant-ielts-confirmation',
+      role: AgentMessageRole.assistant,
+      text: '正式练习已准备好。',
+      handoffs: includeHandoff
+          ? const <AgentHandoff>[_ieltsPart1ScrollHandoff]
+          : const <AgentHandoff>[],
+    ),
+  ];
 }
 
 const _primaryTabKeys = [

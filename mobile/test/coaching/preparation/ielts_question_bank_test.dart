@@ -6,6 +6,32 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart'
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 void main() {
+  test('category selection is create-only and serializes the public field', () {
+    const selection = IeltsPracticeSelection(cueCardType: 'person');
+
+    expect(selection.isValidCreateShape, isTrue);
+    expect(selection.isValidForCreateMode(PracticeMode.part1), isTrue);
+    expect(selection.isValidForCreateMode(PracticeMode.part2), isTrue);
+    expect(selection.isValidForCreateMode(PracticeMode.part3), isTrue);
+    expect(selection.isValidForCreateMode(PracticeMode.fullMock), isFalse);
+    expect(selection.isValidForMode(PracticeMode.part1), isFalse);
+    expect(selection.toJson(), <String, Object>{'cue_card_type': 'person'});
+  });
+
+  test('category selection cannot be combined with exact ids', () {
+    expect(
+      () => IeltsPracticeSelection(
+        part1SetId: 'p1-topic-001',
+        cueCardType: 'person',
+      ),
+      throwsA(isA<AssertionError>()),
+    );
+    expect(
+      const IeltsPracticeSelection(cueCardType: 'unknown').isValidCreateShape,
+      isFalse,
+    );
+  });
+
   test('Part 2 and Part 3 progress is separate and survives restore', () async {
     final history = MemoryIeltsPracticeHistoryStore();
     final first = IeltsPreparationController(

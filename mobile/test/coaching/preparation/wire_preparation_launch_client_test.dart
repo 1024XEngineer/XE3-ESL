@@ -570,6 +570,43 @@ void main() {
     });
   });
 
+  test('accepts a server-assigned random IELTS Part 1 plan', () async {
+    final planJson = _ieltsPart1PlanJson(_ieltsPart1RandomSelection);
+    final transport = _QueueTransport([_response(planJson)]);
+    final client = _client(transport);
+
+    final plan = await client.createPlan(
+      input: _planInput(selection: _ieltsPart1RandomSelection),
+      idempotencyKey: 'plan-ielts-part1-random-key',
+    );
+
+    expect(plan.ieltsAssignment?.mode, PracticeMode.part1);
+    expect(plan.ieltsAssignment?.parts.single.sourceId, 'p1-002');
+    expect(
+      jsonDecode(transport.calls.single.body!),
+      isNot(contains('ielts_selection')),
+    );
+  });
+
+  test('sends and accepts an IELTS broad category selection', () async {
+    final planJson = _ieltsPart1PlanJson(_ieltsPart1PersonSelection);
+    final transport = _QueueTransport([_response(planJson)]);
+    final client = _client(transport);
+
+    final plan = await client.createPlan(
+      input: _planInput(selection: _ieltsPart1PersonSelection),
+      idempotencyKey: 'plan-ielts-part1-person-key',
+    );
+
+    expect(plan.ieltsAssignment?.mode, PracticeMode.part1);
+    expect(
+      jsonDecode(transport.calls.single.body!),
+      containsPair('ielts_selection', <String, Object?>{
+        'cue_card_type': 'person',
+      }),
+    );
+  });
+
   test(
     'rejects Session IELTS data that differs from its frozen Plan',
     () async {
@@ -970,6 +1007,28 @@ Map<String, Object?> _ieltsAssignmentJson() => <String, Object?>{
   ],
 };
 
+Map<String, Object?> _ieltsPart1PlanJson(PreparationLaunchSelection selection) {
+  final plan = _planJson(selection: selection);
+  const blueprints = <String>['Question 1', 'Question 2', 'Question 3'];
+  final sceneSelection = plan['scene_selection']! as Map<String, Object?>;
+  final scene = sceneSelection['scene']! as Map<String, Object?>;
+  final prompt = scene['prompt']! as Map<String, Object?>;
+  prompt['turn_blueprints'] = blueprints;
+  plan['ielts_assignment'] = <String, Object?>{
+    'bank_id': 'ielts-2026-05-08',
+    'season': '2026-05-08',
+    'mode': 'PART_1',
+    'parts': <Object?>[
+      <String, Object?>{
+        'part': 'PART_1',
+        'source_id': 'p1-002',
+        'turn_blueprints': blueprints,
+      },
+    ],
+  };
+  return plan;
+}
+
 Map<String, Object?> _ieltsAssignmentPart(
   Map<String, Object?> assignment,
   int index,
@@ -1047,6 +1106,7 @@ const _optionId = 'option-1';
 const _fullOptionId = 'option-full';
 const _ieltsSceneId = 'scn_ielts_speaking_test';
 const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
+const _ieltsPart1OptionId = 'option_ielts_speaking_part_1';
 const _background = 'Backend engineer preparing a technical interview.';
 const _scenarioContext = ScenarioPreparationContext(
   situation: _background,
@@ -1161,7 +1221,7 @@ const _ieltsFullOption = PracticeOption(
 );
 
 const _ieltsPart1Option = PracticeOption(
-  id: 'option_ielts_speaking_part_1',
+  id: _ieltsPart1OptionId,
   sceneId: _ieltsSceneId,
   mode: PracticeMode.part1,
   displayName: 'Part 1',
@@ -1226,4 +1286,17 @@ const _ieltsFullSelection = PreparationLaunchSelection(
     part1SetId: 'p1-002',
     topicGroupId: 'p23-new-001',
   ),
+);
+
+const _ieltsPart1RandomSelection = PreparationLaunchSelection(
+  scene: _ieltsScene,
+  selectedRoleIds: <String>[_roleId],
+  practiceOptionId: _ieltsPart1OptionId,
+);
+
+const _ieltsPart1PersonSelection = PreparationLaunchSelection(
+  scene: _ieltsScene,
+  selectedRoleIds: <String>[_roleId],
+  practiceOptionId: _ieltsPart1OptionId,
+  ieltsSelection: IeltsPracticeSelection(cueCardType: 'person'),
 );

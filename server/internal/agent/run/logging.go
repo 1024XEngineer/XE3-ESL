@@ -47,6 +47,8 @@ func toolCallNames(calls []ModelToolCall) []string {
 
 func reasonSummary(reasonCode string, decision string) string {
 	switch reasonCode {
+	case reasonIELTSCreationRouting:
+		return "完整的雅思练习创建状态要求模型调用指定工具。"
 	case reasonModelToolSelection:
 		if decision == "tool_call" {
 			return "模型根据全量工具描述自主选择了工具。"

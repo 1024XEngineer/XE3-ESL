@@ -39,6 +39,15 @@ func TestPostgresIELTSResolverProducesPlanCompatibleAssignments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPostgresStore: %v", err)
 	}
+	part1, err := resolver.AssignQuestionSet(
+		context.Background(),
+		ielts.PracticeModePart1,
+		"person",
+	)
+	if err != nil || len(part1.Parts) != 1 ||
+		part1.Parts[0].TopicTitle != "老师" {
+		t.Fatalf("resolve Part 1 topic title = (%#v, %v)", part1, err)
+	}
 
 	topicGroupID := document.TopicGroups[0].ID
 	assertCompatible := func(
@@ -66,6 +75,15 @@ func TestPostgresIELTSResolverProducesPlanCompatibleAssignments(t *testing.T) {
 	t.Run("full mock assignment", func(t *testing.T) {
 		assertCompatible(t, scene.PracticeModeFullMock, nil)
 	})
+	for _, mode := range []scene.PracticeMode{
+		scene.PracticeModePart1,
+		scene.PracticeModePart2,
+		scene.PracticeModePart3,
+	} {
+		t.Run(string(mode)+" random assignment", func(t *testing.T) {
+			assertCompatible(t, mode, nil)
+		})
+	}
 	for _, topic := range document.Part1Topics {
 		t.Run("Part 1 topic/"+topic.ID, func(t *testing.T) {
 			assertCompatible(
@@ -94,6 +112,68 @@ func TestPostgresIELTSResolverProducesPlanCompatibleAssignments(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertCompatible(t, test.mode, &test.request)
 		})
+	}
+
+	for _, cueCardType := range []string{
+		"person",
+		"place",
+		"thing",
+		"experience",
+	} {
+		for _, mode := range []scene.PracticeMode{
+			scene.PracticeModePart1,
+			scene.PracticeModePart2,
+			scene.PracticeModePart3,
+		} {
+			t.Run(string(mode)+"/"+cueCardType, func(t *testing.T) {
+				selection := planIELTSSelectionFixture()
+				selection.Scene.PracticeOptions[0].Mode = mode
+				frozen, assignment, err := freezeIELTSAssignment(
+					context.Background(),
+					resolver,
+					selection,
+					&IELTSQuestionSelection{CueCardType: cueCardType},
+				)
+				if err != nil {
+					t.Fatalf("freezeIELTSAssignment: %v", err)
+				}
+				if !ValidPlanIELTSAssignment(frozen, assignment) {
+					t.Fatalf("invalid category assignment: %#v", assignment)
+				}
+				if mode == scene.PracticeModePart1 &&
+					assignment.Parts[0].TopicTitle != "" {
+					t.Fatalf(
+						"Part 1 assignment persisted topic title %q",
+						assignment.Parts[0].TopicTitle,
+					)
+				}
+				var assignedType string
+				sourceID := assignment.Parts[0].SourceID
+				table := "ielts_part23_groups"
+				idColumn := "topic_group_id"
+				if mode == scene.PracticeModePart1 {
+					table = "ielts_part1_topics"
+					idColumn = "topic_id"
+				}
+				query := "SELECT cue_card_type FROM " + table +
+					" WHERE bank_id=$1 AND " + idColumn + "=$2"
+				if err := pool.QueryRow(
+					context.Background(),
+					query,
+					assignment.BankID,
+					sourceID,
+				).Scan(&assignedType); err != nil {
+					t.Fatalf("read assigned Cue Card type: %v", err)
+				}
+				if assignedType != cueCardType {
+					t.Fatalf(
+						"assigned Cue Card type = %q, want %q",
+						assignedType,
+						cueCardType,
+					)
+				}
+			})
+		}
 	}
 }
 

@@ -75,9 +75,14 @@ func (store *PostgresStore) ResolveQuestionSet(
 func (store *PostgresStore) AssignQuestionSet(
 	ctx context.Context,
 	mode PracticeMode,
+	cueCardType string,
 ) (ResolvedQuestionSet, error) {
 	if store == nil || store.database == nil || ctx == nil {
 		return ResolvedQuestionSet{}, ErrQuestionBankUnavailable
+	}
+	if (cueCardType != "" && !validCueCardType(cueCardType)) ||
+		(mode == PracticeModeFullMock && cueCardType != "") {
+		return ResolvedQuestionSet{}, ErrPracticeModeInvalid
 	}
 	tx, err := store.database.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -102,7 +107,7 @@ func (store *PostgresStore) AssignQuestionSet(
 			ORDER BY random()
 			LIMIT 1
 		`, bankID).Scan(&selection.Part1SetID); err != nil {
-			return ResolvedQuestionSet{}, assignmentLookupError(err)
+			return ResolvedQuestionSet{}, assignmentLookupError(err, "")
 		}
 		if err := tx.QueryRow(ctx, `
 			SELECT topic_group_id
@@ -111,27 +116,29 @@ func (store *PostgresStore) AssignQuestionSet(
 			ORDER BY random()
 			LIMIT 1
 		`, bankID).Scan(&selection.TopicGroupID); err != nil {
-			return ResolvedQuestionSet{}, assignmentLookupError(err)
+			return ResolvedQuestionSet{}, assignmentLookupError(err, "")
 		}
 	case PracticeModePart1:
 		if err := tx.QueryRow(ctx, `
 			SELECT topic_id
 			FROM ielts_part1_topics
 			WHERE bank_id = $1
+			  AND ($2 = '' OR cue_card_type = $2)
 			ORDER BY random()
 			LIMIT 1
-		`, bankID).Scan(&selection.Part1SetID); err != nil {
-			return ResolvedQuestionSet{}, assignmentLookupError(err)
+		`, bankID, cueCardType).Scan(&selection.Part1SetID); err != nil {
+			return ResolvedQuestionSet{}, assignmentLookupError(err, cueCardType)
 		}
 	case PracticeModePart2, PracticeModePart3:
 		if err := tx.QueryRow(ctx, `
 			SELECT topic_group_id
 			FROM ielts_part23_groups
 			WHERE bank_id = $1
+			  AND ($2 = '' OR cue_card_type = $2)
 			ORDER BY random()
 			LIMIT 1
-		`, bankID).Scan(&selection.TopicGroupID); err != nil {
-			return ResolvedQuestionSet{}, assignmentLookupError(err)
+		`, bankID, cueCardType).Scan(&selection.TopicGroupID); err != nil {
+			return ResolvedQuestionSet{}, assignmentLookupError(err, cueCardType)
 		}
 	default:
 		return ResolvedQuestionSet{}, ErrPracticeModeInvalid
@@ -490,7 +497,7 @@ func resolvePart1Topic(
 ) (ResolvedPart, error) {
 	var title string
 	if err := tx.QueryRow(ctx, `
-		SELECT title_en
+		SELECT title_zh
 		FROM ielts_part1_topics
 		WHERE bank_id = $1 AND topic_id = $2
 	`, bankID, topicID).Scan(&title); err != nil {
@@ -506,7 +513,11 @@ func resolvePart1Topic(
 		return ResolvedPart{}, fmt.Errorf("%w: read Part 1 topic: %v", ErrQuestionBankUnavailable, err)
 	}
 	defer rows.Close()
-	part := ResolvedPart{Part: PracticeModePart1, SourceID: topicID}
+	part := ResolvedPart{
+		Part:       PracticeModePart1,
+		SourceID:   topicID,
+		TopicTitle: title,
+	}
 	for rows.Next() {
 		var prompt string
 		if err := rows.Scan(&prompt); err != nil {
@@ -624,8 +635,11 @@ func questionSetLookupError(err error) error {
 	return fmt.Errorf("%w: read question set: %v", ErrQuestionBankUnavailable, err)
 }
 
-func assignmentLookupError(err error) error {
+func assignmentLookupError(err error, cueCardType string) error {
 	if errors.Is(err, pgx.ErrNoRows) {
+		if cueCardType != "" {
+			return ErrQuestionSetNotFound
+		}
 		return ErrQuestionBankUnavailable
 	}
 	return fmt.Errorf("%w: select assignment: %v", ErrQuestionBankUnavailable, err)

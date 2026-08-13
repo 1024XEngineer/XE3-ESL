@@ -434,6 +434,13 @@ PracticePlan _plan(
 }) {
   final plan = decodePracticePlan(value);
   final selection = plan.sceneSelection;
+  final selectedOption = selection.scene.practiceOptions
+      .where((option) => option.id == selection.practiceOptionId)
+      .firstOrNull;
+  final expectedIeltsMode =
+      selection.scene.experience == PracticeExperience.ieltsSpeaking
+      ? selectedOption?.mode
+      : null;
   if (plan.sourceThreadId != expected.sourceThreadId ||
       plan.goalSnapshot?.id != expected.goalId ||
       plan.preparationSnapshot.id != expected.preparationSnapshotId ||
@@ -446,8 +453,7 @@ PracticePlan _plan(
       !_matchesIeltsSelection(
         plan.ieltsAssignment,
         expected.ieltsSelection,
-        allowServerAssignment:
-            selection.scene.experience == PracticeExperience.ieltsSpeaking,
+        expectedServerMode: expectedIeltsMode,
       ) ||
       plan.status != PracticePlanStatus.ready) {
     throw _invalidResponse();
@@ -638,13 +644,16 @@ PreparationPracticeBootstrap _bootstrap(
 bool _matchesIeltsSelection(
   IeltsPracticeAssignment? assignment,
   IeltsPracticeSelection? selection, {
-  required bool allowServerAssignment,
+  required PracticeMode? expectedServerMode,
 }) {
   if (selection == null) {
-    return assignment == null ||
-        (allowServerAssignment && assignment.mode == PracticeMode.fullMock);
+    return expectedServerMode == null
+        ? assignment == null
+        : assignment?.mode == expectedServerMode;
   }
-  return assignment?.matchesSelection(selection) ?? false;
+  return expectedServerMode != null &&
+      assignment?.mode == expectedServerMode &&
+      (assignment?.matchesSelection(selection) ?? false);
 }
 
 void _validateParticipants(
@@ -1001,7 +1010,7 @@ void _requirePlanInput(CreatePreparationPlanInput input) {
     _requireResourceId(roleId);
   }
   if (input.ieltsSelection case final selection?) {
-    if ((selection.part1SetId == null && selection.topicGroupId == null)) {
+    if (!selection.isValidCreateShape) {
       throw const PreparationLaunchException(
         kind: PreparationLaunchFailureKind.invalidRequest,
         stage: PreparationLaunchStage.plan,

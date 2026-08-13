@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	modelToolRoutingVersionV1 = "model-tool-routing-v1"
-	reasonModelToolSelection  = "model_tool_selection"
+	modelToolRoutingVersionV2  = "model-tool-routing-v2"
+	reasonModelToolSelection   = "model_tool_selection"
+	reasonIELTSCreationRouting = "ielts_creation_routing_guard"
 )
 
 type modelToolRouting struct {
@@ -17,15 +18,18 @@ type modelToolRouting struct {
 	ToolChoice  ToolChoice
 }
 
-// buildModelToolRouting 将 Registry 中的全部工具交给模型自主选择。
+// buildModelToolRouting exposes the complete Registry and applies the routing
+// choice already decided at the Run boundary.
 func buildModelToolRouting(
 	registry *capability.Registry,
 	logger *slog.Logger,
 	runID string,
+	choice ToolChoice,
 ) modelToolRouting {
-	routing := modelToolRouting{
-		ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
+	if choice.Mode == "" {
+		choice = ToolChoice{Mode: ToolChoiceAuto}
 	}
+	routing := modelToolRouting{ToolChoice: choice}
 	if registry == nil {
 		return routing
 	}
@@ -46,8 +50,9 @@ func buildModelToolRouting(
 			"run_id", runID,
 			"tools", names,
 			"tool_count", len(names),
-			"routing_version", modelToolRoutingVersionV1,
+			"routing_version", modelToolRoutingVersionV2,
 			"tool_choice_mode", string(routing.ToolChoice.Mode),
+			"tool_choice_name", routing.ToolChoice.Name,
 		)
 	}
 	return routing

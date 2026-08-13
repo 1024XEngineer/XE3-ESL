@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	conversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
@@ -20,6 +22,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
 	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
+	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
@@ -100,9 +103,13 @@ func NewHandler(
 	if err != nil {
 		return nil, err
 	}
-	fixtureRegistry, err := capabilityfixture.NewRegistry(
-		capabilityfixture.NewStore(),
+	fixtureTools := capabilityfixture.Tools(capabilityfixture.NewStore())
+	fixtureTools = append(
+		fixtureTools,
+		preparationcapability.NewIELTSWarmUpTool(),
+		preparationcapability.NewPreviewTool(benchmarkPreviewPort{}),
 	)
+	fixtureRegistry, err := capability.NewRegistry(fixtureTools...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +149,43 @@ func NewHandler(
 		database,
 		[]bootstrap.RouteRegistrar{routes},
 	), nil
+}
+
+type benchmarkPreviewPort struct{}
+
+func (benchmarkPreviewPort) PreviewPractice(
+	_ context.Context,
+	_ capability.CallContext,
+	input preparationcapability.PreviewInput,
+) (preparationcapability.PreviewResult, error) {
+	mode := input.IELTSPracticeMode
+	if mode == "" {
+		mode = "FULL_SIMULATION"
+	}
+	handoff, err := agenthandoff.NewConfirmPracticePlan(agenthandoff.Item{
+		Label:                    "确认并开始练习",
+		PracticePlanID:           "00000000-0000-4000-8000-000000000648",
+		PlanRevision:             1,
+		Target:                   "IELTS Speaking practice",
+		SceneName:                "IELTS Speaking",
+		PracticeExperience:       "IELTS_SPEAKING",
+		SceneCategory:            "IELTS_SPEAKING",
+		PracticeMode:             mode,
+		Roles:                    []string{"IELTS 口语考官"},
+		PracticeScope:            "IELTS Speaking",
+		SuggestedDurationSeconds: 300,
+		MinEffectiveTurns:        1,
+		MaxEffectiveTurns:        3,
+		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+		ConfirmationPrompt:       "确认后开始正式练习。",
+	})
+	if err != nil {
+		return preparationcapability.PreviewResult{}, err
+	}
+	return preparationcapability.PreviewResult{
+		Status:  "preview_ready",
+		Handoff: handoff,
+	}, nil
 }
 
 func newIdentityHandler(

@@ -120,6 +120,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   int _selectedIndex = 0;
   AgentConversationFeedbackPresenter? _feedbackPresenter;
   bool _practiceRouteInFlight = false;
+  bool _agentHandoffInFlight = false;
   int _navigationGeneration = 0;
 
   @override
@@ -260,19 +261,86 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     final controller = widget.practicePlanHandoffController;
     if (handoff is! ConfirmPracticePlanHandoff ||
         controller == null ||
+        _agentHandoffInFlight ||
         controller.isBusy ||
         widget.conversationController.isBusy) {
       return;
     }
-    final confirmed = await controller.confirm(handoff);
-    if (!mounted) {
-      return;
+    _agentHandoffInFlight = true;
+    try {
+      var replaceCurrentPractice = false;
+      if (controller.workspaceController.hasResumable) {
+        if (!controller.workspaceController.resumableHasProgress) {
+          replaceCurrentPractice = true;
+        } else {
+          final action = await _chooseAgentHandoffPracticeAction(
+            controller,
+            handoff,
+          );
+          if (!mounted || action == null) {
+            return;
+          }
+          if (action == ExistingPracticeAction.continuePractice) {
+            await _openPracticeRoute();
+            return;
+          }
+          replaceCurrentPractice = true;
+        }
+      }
+      var confirmed = await controller.confirm(
+        handoff,
+        replaceCurrentPractice: replaceCurrentPractice,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!confirmed &&
+          !replaceCurrentPractice &&
+          controller.failure ==
+              PracticePlanHandoffFailure.localExistingPractice) {
+        final action = await _chooseAgentHandoffPracticeAction(
+          controller,
+          handoff,
+        );
+        if (!mounted || action == null) {
+          return;
+        }
+        if (action == ExistingPracticeAction.continuePractice) {
+          if (controller.workspaceController.hasResumable) {
+            await _openPracticeRoute();
+          }
+          return;
+        }
+        confirmed = await controller.confirm(
+          handoff,
+          replaceCurrentPractice: true,
+        );
+        if (!mounted) {
+          return;
+        }
+      }
+      if (!confirmed) {
+        _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
+        return;
+      }
+      await _openPracticeRoute();
+    } finally {
+      _agentHandoffInFlight = false;
     }
-    if (!confirmed) {
-      _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
-      return;
-    }
-    await _openPracticeRoute();
+  }
+
+  Future<ExistingPracticeAction?> _chooseAgentHandoffPracticeAction(
+    PracticePlanHandoffController controller,
+    ConfirmPracticePlanHandoff handoff,
+  ) {
+    final scope = handoff.practiceScope.trim();
+    return showExistingPracticeActionSheet(
+      context,
+      currentTitle: controller.workspaceController.currentTitle,
+      nextTitle: scope.isEmpty
+          ? handoff.sceneName
+          : '${handoff.sceneName} · $scope',
+    );
   }
 
   Future<void> _openPracticeRoute() async {

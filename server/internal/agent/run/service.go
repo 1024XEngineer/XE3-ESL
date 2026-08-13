@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -28,6 +30,7 @@ const (
 	streamReplayPollInterval = 100 * time.Millisecond
 	toolSchemaVersionV1      = "tool-schema-v1"
 	maxImagesPerMessage      = 4
+	ieltsWarmUpToolName      = "ielts.warmup.v1"
 )
 
 type Service struct {
@@ -741,27 +744,210 @@ func (service *Service) generateObserved(
 
 	input := lastUserContent(request)
 	service.logRunReceived(run, input, request)
-	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
+	ieltsRouting := inspectIELTSCreationRouting(request)
+	previousIELTSTool := priorIELTSToolNone
+	priorIELTSStateResolved := false
+	if !ieltsRouting.active && len(manifest.SelectedMessages) >= 2 &&
+		hasRecentIELTSSetupSignal(request) &&
+		mayContinuePriorIELTSWarmUp(input) {
+		state, err := service.priorAdjacentIELTSToolState(
+			loopCtx,
+			actor,
+			run,
+			manifest,
+		)
+		if err != nil {
+			return TextResult{}, err
+		}
+		if state.tool != priorIELTSToolNone {
+			ieltsRouting = routingFromPriorIELTSToolState(state, input)
+			previousIELTSTool = state.tool
+			priorIELTSStateResolved = true
+		}
+	}
+	if !priorIELTSStateResolved && ieltsRouting.needsPriorToolState() {
+		var err error
+		previousIELTSTool, err = service.priorIELTSToolResult(
+			loopCtx,
+			actor,
+			run,
+			manifest,
+			ieltsRouting,
+		)
+		if err != nil {
+			return TextResult{}, err
+		}
+	}
+	clarification, deterministicClarification := ieltsRouting.clarification()
+	toolChoice := ieltsRouting.toolChoice(previousIELTSTool)
+	if deterministicClarification {
+		toolChoice = ToolChoice{Mode: ToolChoiceNone}
+	}
+	routing := buildModelToolRouting(
+		service.registry,
+		service.logger,
+		run.ID,
+		toolChoice,
+	)
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
 	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
 		return TextResult{}, err
 	}
+	if deterministicClarification {
+		result := TextResult{
+			ID:           "ielts-routing-clarification:" + run.ID,
+			Provider:     service.configuration.Provider,
+			Model:        service.configuration.Model,
+			Content:      clarification,
+			FinishReason: "stop",
+		}
+		service.logRoutingDecision(
+			run,
+			"direct_response",
+			nil,
+			reasonIELTSCreationRouting,
+			reasonSummary(reasonIELTSCreationRouting, "direct_response"),
+			0,
+		)
+		service.logRunCompleted(
+			run,
+			"direct_response",
+			0,
+			0,
+			startedAt,
+			result.Content,
+		)
+		return result, nil
+	}
 	exposed := exposedToolNames(request.Tools)
 	toolCalls := 0
 	writeCalls := 0
 	toolIterations := 0
 	modelIterations := 0
+	previewSucceeded := previousIELTSTool == priorIELTSToolPreview
+	ieltsPreviewCreatedThisTurn := false
 	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
+	routingReason := reasonModelToolSelection
+	if request.ToolChoice.Mode != ToolChoiceAuto {
+		routingReason = reasonIELTSCreationRouting
+	}
+	if request.ToolChoice.Mode == ToolChoiceSpecific {
+		call, ok := ieltsRouting.deterministicToolCall(
+			run.ID,
+			request.ToolChoice.Name,
+		)
+		if !ok || !toolExposed(exposed, call.Name) {
+			return TextResult{}, NewGenerationError(
+				ErrorConfiguration,
+				0,
+				"",
+				"",
+				errors.New("agent: deterministic IELTS tool is unavailable"),
+			)
+		}
+		if service.writeToolCallCount([]ModelToolCall{call}) >
+			service.loopLimits.MaxWriteToolCalls {
+			return TextResult{}, service.stopLoop(
+				run,
+				FailureWriteToolCallBudgetExhausted,
+				[]string{call.Name},
+				0,
+			)
+		}
+		service.logRoutingDecision(
+			run,
+			"tool_call",
+			[]string{call.Name},
+			routingReason,
+			reasonSummary(routingReason, "tool_call"),
+			0,
+		)
+		request.Messages = append(request.Messages, TextMessage{
+			Role:      TextRoleAssistant,
+			ToolCalls: []ModelToolCall{call},
+		})
+		if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
+			return TextResult{}, err
+		}
+		toolMessage, succeeded, previewReady, err := service.executeToolCall(
+			loopCtx,
+			actor,
+			run,
+			call,
+		)
+		if err != nil {
+			return TextResult{}, err
+		}
+		request.Messages = append(request.Messages, toolMessage)
+		toolCalls = 1
+		toolIterations = 1
+		writeCalls = service.writeToolCallCount([]ModelToolCall{call})
+		previewSucceeded = previewSucceeded || previewReady
+		ieltsPreviewCreatedThisTurn = previewReady &&
+			isIELTSPracticePreviewCall(call)
+		seenToolCallIDs[call.ID] = struct{}{}
+		finalDecision = "tool_call_then_response"
+		if succeeded && call.Name == ieltsWarmUpToolName {
+			if prompt, ok := ieltsWarmUpPrompt(toolMessage); ok {
+				return service.completeDirectIELTSResponse(
+					run,
+					prompt,
+					finalDecision,
+					routingReason,
+					0,
+					toolCalls,
+					startedAt,
+				), nil
+			}
+		}
+		if previewReady && (ieltsRouting.currentBypassesWarmUp ||
+			ieltsRouting.mode == ieltsRoutingModeFullMock) {
+			return service.completeDirectIELTSResponse(
+				run,
+				"好。",
+				finalDecision,
+				routingReason,
+				0,
+				toolCalls,
+				startedAt,
+			), nil
+		}
+		request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
+	}
+	guardWarmUpAnswer := ieltsRouting.currentWarmUpAnswer &&
+		ieltsPreviewCreatedThisTurn
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		result, err := service.generateModel(loopCtx, request, deltaObserver)
+		modelObserver := deltaObserver
+		if guardWarmUpAnswer {
+			modelObserver = nil
+		}
+		result, err := service.generateModel(loopCtx, request, modelObserver)
 		if err != nil {
 			return TextResult{}, err
 		}
 		modelIterations++
+		if request.ToolChoice.Mode == ToolChoiceSpecific &&
+			(len(result.ToolCalls) != 1 ||
+				result.ToolCalls[0].Name != request.ToolChoice.Name) {
+			service.logInvalidModelResult(run, result)
+			return TextResult{}, NewGenerationError(
+				ErrorInvalidResponse,
+				0,
+				"",
+				"",
+				errors.New("agent: model violated specific tool choice"),
+			)
+		}
+		for _, call := range result.ToolCalls {
+			if call.Name == ieltsWarmUpToolName {
+				result.ToolCalls = []ModelToolCall{call}
+				break
+			}
+		}
 		if !validLoopTextResult(result) ||
 			result.Provider != service.configuration.Provider ||
 			result.Model != service.configuration.Model ||
@@ -769,13 +955,52 @@ func (service *Service) generateObserved(
 			service.logInvalidModelResult(run, result)
 			return result, nil
 		}
+		if request.ToolChoice.Mode == ToolChoiceSpecific &&
+			!ieltsRouting.matchesToolInput(
+				result.ToolCalls[0].Name,
+				result.ToolCalls[0].Arguments,
+			) {
+			service.logInvalidModelResult(run, result)
+			return TextResult{}, NewGenerationError(
+				ErrorInvalidResponse,
+				0,
+				"",
+				"",
+				errors.New("agent: model violated IELTS routing parameters"),
+			)
+		}
+		if request.ToolChoice.Mode == ToolChoiceNone &&
+			len(result.ToolCalls) > 0 {
+			service.logInvalidModelResult(run, result)
+			return result, nil
+		}
 		if len(result.ToolCalls) == 0 {
+			if guardWarmUpAnswer &&
+				!validIELTSWarmUpAcknowledgement(result.Content, input) {
+				result = service.repairIELTSWarmUpAcknowledgement(
+					loopCtx,
+					run,
+					input,
+				)
+				modelIterations++
+			}
+			if ieltsRouting.active && !previewSucceeded &&
+				claimsIELTSPracticeReady(result.Content) {
+				service.logInvalidModelResult(run, result)
+				return TextResult{}, NewGenerationError(
+					ErrorInvalidResponse,
+					0,
+					"",
+					"",
+					errors.New("agent: IELTS practice readiness requires a successful preview"),
+				)
+			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
 				nil,
-				reasonModelToolSelection,
-				reasonSummary(reasonModelToolSelection, finalDecision),
+				routingReason,
+				reasonSummary(routingReason, finalDecision),
 				modelIterations,
 			)
 			service.logRunCompleted(
@@ -794,8 +1019,8 @@ func (service *Service) generateObserved(
 			run,
 			finalDecision,
 			selected,
-			reasonModelToolSelection,
-			reasonSummary(reasonModelToolSelection, finalDecision),
+			routingReason,
+			reasonSummary(routingReason, finalDecision),
 			modelIterations,
 		)
 		// MaxIterations 表示最多执行多少轮工具；达到上限后仍允许模型生成一次最终回复。
@@ -846,6 +1071,10 @@ func (service *Service) generateObserved(
 		})
 		toolIterations++
 		toolCalls += len(result.ToolCalls)
+		warmUpPrompt := ""
+		warmUpSucceeded := false
+		ieltsPreviewCreated := false
+		forcedSpecific := request.ToolChoice.Mode == ToolChoiceSpecific
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
 			if err := service.saveToolCallProposed(
@@ -886,7 +1115,7 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			toolMessage, err := service.executeToolCall(
+			toolMessage, succeeded, previewReady, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
@@ -896,10 +1125,130 @@ func (service *Service) generateObserved(
 				return TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
+			if succeeded && call.Name == ieltsWarmUpToolName {
+				warmUpSucceeded = true
+				warmUpPrompt, _ = ieltsWarmUpPrompt(toolMessage)
+			}
+			previewSucceeded = previewSucceeded || previewReady
+			ieltsPreviewCreated = ieltsPreviewCreated ||
+				previewReady && isIELTSPracticePreviewCall(call)
 		}
-		request.ToolChoice = ToolChoice{Mode: ToolChoiceAuto}
+		ieltsPreviewCreatedThisTurn = ieltsPreviewCreatedThisTurn ||
+			ieltsPreviewCreated
+		guardWarmUpAnswer = guardWarmUpAnswer ||
+			isEnglishWarmUpAnswerAttempt(input) &&
+				ieltsPreviewCreatedThisTurn
+		if warmUpPrompt != "" {
+			return service.completeDirectIELTSResponse(
+				run,
+				warmUpPrompt,
+				"tool_call_then_response",
+				routingReason,
+				modelIterations,
+				toolCalls,
+				startedAt,
+			), nil
+		}
+		if ieltsPreviewCreated && !guardWarmUpAnswer {
+			return service.completeDirectIELTSResponse(
+				run,
+				"好。",
+				"tool_call_then_response",
+				routingReason,
+				modelIterations,
+				toolCalls,
+				startedAt,
+			), nil
+		}
+		if warmUpSucceeded || forcedSpecific || ieltsPreviewCreated {
+			request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
+		} else {
+			request.ToolChoice = ToolChoice{Mode: ToolChoiceAuto}
+		}
 		finalDecision = "tool_call_then_response"
 	}
+}
+
+func (service *Service) completeDirectIELTSResponse(
+	run Run,
+	content string,
+	decision string,
+	routingReason string,
+	modelIterations int,
+	toolCalls int,
+	startedAt time.Time,
+) TextResult {
+	result := TextResult{
+		ID:           "ielts-runtime-response:" + run.ID,
+		Provider:     service.configuration.Provider,
+		Model:        service.configuration.Model,
+		Content:      content,
+		FinishReason: "stop",
+	}
+	service.logRoutingDecision(
+		run,
+		decision,
+		nil,
+		routingReason,
+		reasonSummary(routingReason, decision),
+		modelIterations,
+	)
+	service.logRunCompleted(
+		run,
+		decision,
+		modelIterations,
+		toolCalls,
+		startedAt,
+		content,
+	)
+	return result
+}
+
+func (service *Service) repairIELTSWarmUpAcknowledgement(
+	ctx context.Context,
+	run Run,
+	input string,
+) TextResult {
+	request := TextRequest{
+		Messages: []TextMessage{
+			{
+				Role: TextRoleSystem,
+				Content: "只回复一句简短、自然的中文反馈，表明你听到了学员刚才说的具体内容。" +
+					"必须原样包含学员输入里的至少一个有意义英文内容词；" +
+					"不要评分、纠错、追问，也不要提练习、计划、准备、卡片、创建或开始。只输出这句话。",
+			},
+			{Role: TextRoleUser, Content: input},
+		},
+		ToolChoice: ToolChoice{Mode: ToolChoiceNone},
+	}
+	result, err := service.generateModel(ctx, request, nil)
+	if err == nil && validLoopTextResult(result) &&
+		result.Provider == service.configuration.Provider &&
+		result.Model == service.configuration.Model &&
+		result.Usage.OutputTokens <= service.configuration.MaxOutputTokens &&
+		validIELTSWarmUpAcknowledgement(result.Content, input) {
+		return result
+	}
+	if err == nil {
+		service.logInvalidModelResult(run, result)
+	}
+	return TextResult{
+		ID:           "ielts-warm-up-ack-fallback:" + run.ID,
+		Provider:     service.configuration.Provider,
+		Model:        service.configuration.Model,
+		Content:      fallbackIELTSWarmUpAcknowledgement(input),
+		FinishReason: "stop",
+	}
+}
+
+func claimsIELTSPracticeReady(content string) bool {
+	normalized := strings.ReplaceAll(strings.TrimSpace(content), " ", "")
+	return strings.Contains(normalized, "正式练习已准备好") ||
+		strings.Contains(normalized, "正式练习已经准备好") ||
+		strings.Contains(normalized, "练习已准备好") ||
+		strings.Contains(normalized, "练习已经准备好") ||
+		strings.Contains(normalized, "卡片就可以开始") ||
+		strings.Contains(normalized, "我们来正式练习")
 }
 
 func (service *Service) generateModel(
@@ -956,10 +1305,10 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, error) {
+) (TextMessage, bool, bool, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
-	requestID := toolCallRequestID(run.ID, call.ID)
+	requestID := toolCallRequestID(run, call)
 	if _, err := service.repository.StartToolCall(
 		toolCtx,
 		actor.UserID,
@@ -967,7 +1316,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, false, false, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -991,10 +1340,10 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, false, false, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), false, false, nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -1008,10 +1357,11 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, false, false, persistErr
 		}
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), false, false, nil
 	}
+	previewReady := practicePreviewReady(call.Name, result)
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
 	if _, err := service.repository.CompleteToolCall(
@@ -1023,13 +1373,23 @@ func (service *Service) executeToolCall(
 		toolSourceRefs(result.SourceRefs),
 		result.Handoffs,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, false, false, err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, nil
+	}, true, previewReady, nil
+}
+
+func practicePreviewReady(name string, result capability.Result) bool {
+	if name != practicePreviewToolName || result.Content["status"] != "preview_ready" ||
+		len(result.Handoffs) != 1 {
+		return false
+	}
+	handoff := result.Handoffs[0]
+	return handoff.Type == agenthandoff.ConfirmPracticePlanType &&
+		handoff.ExecutableStatus == agenthandoff.PracticePlanReadyStatus
 }
 
 func (service *Service) saveToolCallProposed(
@@ -1432,9 +1792,13 @@ func (service *Service) toolDefinition(name string) (capability.Definition, bool
 	return registered.Definition(), true
 }
 
-// toolCallRequestID 在同一 Run 重放同一个 Tool Call 时保持不变，供写工具做幂等去重。
-func toolCallRequestID(runID string, toolCallID string) string {
-	return runID + "-" + toolCallID
+// toolCallRequestID 让练习预览在同一用户输入的跨 Run 重试中保持不变。
+// 其他工具仍只在同一 Run 的同一 Tool Call 内做幂等去重。
+func toolCallRequestID(run Run, call ModelToolCall) string {
+	if call.Name == practicePreviewToolName && run.InputMessageID != "" {
+		return run.InputMessageID + "-" + call.Name
+	}
+	return run.ID + "-" + call.ID
 }
 
 func (service *Service) writeToolCallCount(

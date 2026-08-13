@@ -124,6 +124,93 @@ void main() {
     expect(controller.messages.last.hasFailed, isTrue);
   });
 
+  test('stream retry reuses the committed user message', () async {
+    final client = _StreamingAgentClient();
+    final controller = ConversationController(
+      client: client,
+      clientIdFactory: (_) => 'stream-retry-message',
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    expect(await controller.sendText('Please retry this.'), isTrue);
+    client.events
+      ..add(
+        const AgentInputCommitted(
+          runId: 'run-retry-1',
+          userMessage: AgentMessage(
+            id: 'user-retry-1',
+            role: AgentMessageRole.user,
+            text: 'Please retry this.',
+          ),
+        ),
+      )
+      ..add(
+        const AgentRunFailed(
+          runId: 'run-retry-1',
+          kind: 'provider_unavailable',
+          retryable: true,
+        ),
+      );
+    await client.events.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.canRetry, isTrue);
+    expect(
+      controller.messages.where(
+        (message) => message.role == AgentMessageRole.user,
+      ),
+      hasLength(1),
+    );
+
+    await controller.retryLastOperation();
+
+    expect(client.streamCalls, 2);
+    expect(client.clientMessageIds, <String>[
+      'stream-retry-message',
+      'stream-retry-message',
+    ]);
+    expect(
+      controller.messages.where(
+        (message) => message.role == AgentMessageRole.user,
+      ),
+      hasLength(1),
+    );
+
+    client.events
+      ..add(
+        const AgentInputCommitted(
+          runId: 'run-retry-2',
+          userMessage: AgentMessage(
+            id: 'user-retry-1',
+            role: AgentMessageRole.user,
+            text: 'Please retry this.',
+          ),
+        ),
+      )
+      ..add(const AgentAssistantStarted(runId: 'run-retry-2'))
+      ..add(
+        const AgentAssistantDelta(runId: 'run-retry-2', delta: 'Recovered.'),
+      )
+      ..add(
+        const AgentRunCompleted(
+          runId: 'run-retry-2',
+          assistantMessageId: 'assistant-retry-2',
+        ),
+      );
+    await client.events.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      controller.messages.where(
+        (message) => message.role == AgentMessageRole.user,
+      ),
+      hasLength(1),
+    );
+    expect(controller.messages.first.id, 'user-retry-1');
+    expect(controller.messages.last.id, 'assistant-retry-2');
+  });
+
   test(
     'stops committed assistant speech when the stream fails after completion',
     () async {
@@ -458,15 +545,24 @@ final class _StreamingAgentClient
   _StreamingAgentClient() : delegate = FakeAgentClient();
 
   final FakeAgentClient delegate;
-  final StreamController<AgentTextStreamEvent> events =
+  StreamController<AgentTextStreamEvent> events =
       StreamController<AgentTextStreamEvent>();
+  final List<String> clientMessageIds = <String>[];
+  int streamCalls = 0;
 
   @override
   Stream<AgentTextStreamEvent> sendTextStream({
     required String threadId,
     required String text,
     required String clientMessageId,
-  }) => events.stream;
+  }) {
+    if (streamCalls > 0) {
+      events = StreamController<AgentTextStreamEvent>();
+    }
+    streamCalls++;
+    clientMessageIds.add(clientMessageId);
+    return events.stream;
+  }
 
   @override
   Future<void> clearAccountState() => delegate.clearAccountState();

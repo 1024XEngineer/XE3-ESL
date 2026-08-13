@@ -24,9 +24,84 @@ import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
-enum _ExistingPracticeAction { continuePractice, replace }
+enum ExistingPracticeAction { continuePractice, replace }
 
 typedef PracticeStartedCallback = FutureOr<void> Function();
+
+Future<ExistingPracticeAction?> showExistingPracticeActionSheet(
+  BuildContext context, {
+  required String? currentTitle,
+  required String nextTitle,
+  bool startingFullMock = false,
+}) {
+  final activeTitle = currentTitle ?? '上次练习';
+  return showModalBottomSheet<ExistingPracticeAction>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    builder: (context) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      startingFullMock ? '开始新的模考？' : '开始新的练习？',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      startingFullMock
+                          ? '你还有未完成的“$activeTitle”。可以继续当前进度，'
+                                '或结束它并开始新的完整模考。'
+                          : '你正在练“$activeTitle”。开始“$nextTitle”后，'
+                                '当前进度将结束。',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          FilledButton(
+            key: const Key('continue-existing-practice'),
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(ExistingPracticeAction.continuePractice),
+            child: Text(startingFullMock ? '继续上次练习' : '继续“$activeTitle”'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: const Key('replace-existing-practice'),
+            onPressed: () =>
+                Navigator.of(context).pop(ExistingPracticeAction.replace),
+            child: Text(startingFullMock ? '开始新模考' : '开始“$nextTitle”'),
+          ),
+          const SizedBox(height: 4),
+          TextButton(
+            key: const Key('cancel-existing-practice-action'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
@@ -157,6 +232,13 @@ class _PreparationPageState extends State<PreparationPage> {
       _selectedHub = _PracticeHub.ielts;
     });
     final selection = request.selection;
+    if (selection == null) {
+      await widget.ieltsController?.loadIfNeeded();
+      if (!mounted) {
+        _handlingIeltsNavigation = false;
+        return;
+      }
+    }
     if (selection != null) {
       final scene = ieltsSceneForMode(
         _scenesForHub(controller.scenes, _PracticeHub.ielts),
@@ -291,14 +373,15 @@ class _PreparationPageState extends State<PreparationPage> {
             return;
           }
         }
-        final action = await _chooseExistingPracticeAction(
+        final action = await showExistingPracticeActionSheet(
+          context,
           currentTitle: launch?.resumablePracticeTitle,
           nextTitle: scene.name,
         );
         if (!mounted || action == null) {
           return;
         }
-        if (action == _ExistingPracticeAction.continuePractice) {
+        if (action == ExistingPracticeAction.continuePractice) {
           await _continueCurrentPractice();
           return;
         }
@@ -335,7 +418,8 @@ class _PreparationPageState extends State<PreparationPage> {
   ) async {
     final launch = widget.launchController;
     if (launch?.hasResumablePractice ?? false) {
-      final action = await _chooseExistingPracticeAction(
+      final action = await showExistingPracticeActionSheet(
+        context,
         currentTitle: launch?.resumablePracticeTitle,
         nextTitle: scene.name,
         startingFullMock: true,
@@ -343,7 +427,7 @@ class _PreparationPageState extends State<PreparationPage> {
       if (!mounted || action == null) {
         return;
       }
-      if (action == _ExistingPracticeAction.continuePractice) {
+      if (action == ExistingPracticeAction.continuePractice) {
         await _continueCurrentPractice();
         return;
       }
@@ -359,74 +443,6 @@ class _PreparationPageState extends State<PreparationPage> {
       controller,
       scene,
       practiceMode: PracticeMode.fullMock,
-    );
-  }
-
-  Future<_ExistingPracticeAction?> _chooseExistingPracticeAction({
-    required String? currentTitle,
-    required String nextTitle,
-    bool startingFullMock = false,
-  }) async {
-    final activeTitle = currentTitle ?? '上次练习';
-    return showModalBottomSheet<_ExistingPracticeAction>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        startingFullMock ? '开始新的模考？' : '开始新的练习？',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        startingFullMock
-                            ? '你还有未完成的“$activeTitle”。可以继续当前进度，'
-                                  '或结束它并开始新的完整模考。'
-                            : '你正在练“$activeTitle”。开始“$nextTitle”后，'
-                                  '当前进度将结束。',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              key: const Key('continue-existing-practice'),
-              onPressed: () => Navigator.of(
-                context,
-              ).pop(_ExistingPracticeAction.continuePractice),
-              child: Text(startingFullMock ? '继续上次练习' : '继续“$activeTitle”'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              key: const Key('replace-existing-practice'),
-              onPressed: () =>
-                  Navigator.of(context).pop(_ExistingPracticeAction.replace),
-              child: Text(startingFullMock ? '开始新模考' : '开始“$nextTitle”'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

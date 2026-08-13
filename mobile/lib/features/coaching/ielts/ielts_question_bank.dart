@@ -93,30 +93,61 @@ final class IeltsCueCard {
 }
 
 final class IeltsPracticeSelection {
-  const IeltsPracticeSelection({this.part1SetId, this.topicGroupId});
+  const IeltsPracticeSelection({
+    this.part1SetId,
+    this.topicGroupId,
+    this.cueCardType,
+  }) : assert(
+         cueCardType == null || (part1SetId == null && topicGroupId == null),
+         'cueCardType and exact question ids are mutually exclusive',
+       );
 
   final String? part1SetId;
   final String? topicGroupId;
+  final String? cueCardType;
+
+  bool get isValidCreateShape {
+    if (cueCardType case final value?) {
+      return const {'person', 'place', 'thing', 'experience'}.contains(value) &&
+          part1SetId == null &&
+          topicGroupId == null;
+    }
+    return part1SetId != null || topicGroupId != null;
+  }
 
   bool isValidForMode(PracticeMode mode) => switch (mode) {
-    PracticeMode.fullMock => part1SetId != null && topicGroupId != null,
-    PracticeMode.part1 => part1SetId != null && topicGroupId == null,
-    PracticeMode.part2 ||
-    PracticeMode.part3 => part1SetId == null && topicGroupId != null,
+    PracticeMode.fullMock =>
+      cueCardType == null && part1SetId != null && topicGroupId != null,
+    PracticeMode.part1 =>
+      cueCardType == null && part1SetId != null && topicGroupId == null,
+    PracticeMode.part2 || PracticeMode.part3 =>
+      cueCardType == null && part1SetId == null && topicGroupId != null,
     _ => false,
   };
+
+  bool isValidForCreateMode(PracticeMode mode) {
+    if (cueCardType != null) {
+      return isValidCreateShape &&
+          (mode == PracticeMode.part1 ||
+              mode == PracticeMode.part2 ||
+              mode == PracticeMode.part3);
+    }
+    return isValidForMode(mode);
+  }
 
   Map<String, Object> toJson() => <String, Object>{
     'part_1_set_id': ?part1SetId,
     'topic_group_id': ?topicGroupId,
+    'cue_card_type': ?cueCardType,
   };
 
   @override
   bool operator ==(Object other) =>
       other is IeltsPracticeSelection &&
       other.part1SetId == part1SetId &&
-      other.topicGroupId == topicGroupId;
+      other.topicGroupId == topicGroupId &&
+      other.cueCardType == cueCardType;
 
   @override
-  int get hashCode => Object.hash(part1SetId, topicGroupId);
+  int get hashCode => Object.hash(part1SetId, topicGroupId, cueCardType);
 }

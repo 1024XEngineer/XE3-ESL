@@ -181,7 +181,13 @@ final class IeltsPreparationController extends ChangeNotifier {
       case PracticeMode.fullSimulation || PracticeMode.focus:
         throw ArgumentError.value(mode, 'mode');
     }
-    await _saveHistory();
+    try {
+      await _saveHistory();
+    } on Object {
+      if (!_disposed) {
+        _errorMessage = '练习已开始，但本地题目进度暂时无法保存。';
+      }
+    }
     if (!_disposed) {
       notifyListeners();
     }

@@ -474,6 +474,60 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
   }
 
+  Future<bool> discardPendingPractice(PracticeWorkspaceLease lease) async {
+    if (!_canStartOperation()) {
+      return false;
+    }
+    final current = _current;
+    if (current == null || current.isCommitted || current.lease != lease) {
+      _setError('当前没有可撤销的练习准备。');
+      return false;
+    }
+    final accountId = _accountId!;
+    final accountGeneration = _accountGeneration;
+    final operationGeneration = ++_operationGeneration;
+    _beginOperation();
+    try {
+      if (!await _prepareToLeavePractice() ||
+          !await _restoreReturnFocus(
+            current,
+            preparedToLeave: true,
+            fallbackToEmpty: true,
+          )) {
+        _setErrorIfAbsent('暂时无法返回原来的对话。');
+        return false;
+      }
+      try {
+        await _enqueueStoreWrite(() => recordStore.delete(accountId));
+      } on Object {
+        if (_isCurrentOperation(
+          accountGeneration,
+          operationGeneration,
+          accountId,
+        )) {
+          _setError('已返回原对话，但练习准备记录清理失败。');
+        }
+        return false;
+      }
+      if (!_isCurrentOperation(
+        accountGeneration,
+        operationGeneration,
+        accountId,
+      )) {
+        return false;
+      }
+      _current = null;
+      _errorMessage = null;
+      notifyListeners();
+      return true;
+    } finally {
+      _finishOperation(
+        accountGeneration: accountGeneration,
+        operationGeneration: operationGeneration,
+      );
+    }
+  }
+
   Future<PracticeWorkspaceLease?> replaceCurrentPractice(
     String operationId,
   ) async {

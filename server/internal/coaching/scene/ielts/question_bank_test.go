@@ -28,9 +28,11 @@ func TestCurrentQuestionBankImportDocumentIsValid(t *testing.T) {
 	}
 	part1Questions := 0
 	categoryCounts := map[string]int{}
+	part1Categories := map[string]string{}
 	for _, topic := range document.Part1Topics {
 		part1Questions += len(topic.Questions)
 		categoryCounts[topic.CueCardType]++
+		part1Categories[topic.ID] = topic.CueCardType
 		if len(topic.TagCodes) == 0 {
 			t.Fatalf("Part 1 topic %s has no semantic tag", topic.ID)
 		}
@@ -49,6 +51,10 @@ func TestCurrentQuestionBankImportDocumentIsValid(t *testing.T) {
 	if categoryCounts["person"]+categoryCounts["place"]+
 		categoryCounts["thing"]+categoryCounts["experience"] != 94 {
 		t.Fatalf("category counts = %#v", categoryCounts)
+	}
+	if part1Categories["p1-topic-002"] != "person" ||
+		part1Categories["p1-topic-019"] != "experience" {
+		t.Fatalf("corrected Part 1 categories = %#v", part1Categories)
 	}
 }
 

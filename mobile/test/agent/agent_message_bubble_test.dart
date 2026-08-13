@@ -315,10 +315,15 @@ void main() {
     );
 
     expect(find.text('Java Interview Practice'), findsOneWidget);
-    expect(find.text('场景：项目经历深挖'), findsOneWidget);
-    expect(find.text('角色：面试官、候选人'), findsOneWidget);
-    expect(find.text('预计 12 分钟 · 3–5 轮'), findsOneWidget);
-    expect(find.text('确认并开始练习'), findsOneWidget);
+    expect(find.text('项目经历深挖 · 面试官、候选人 · 围绕项目难点完成三轮追问'), findsOneWidget);
+    expect(find.text('约 12 分钟'), findsOneWidget);
+    expect(find.text('开始练习'), findsOneWidget);
+    expect(find.text('确认并开始练习'), findsNothing);
+    expect(find.text('场景：项目经历深挖'), findsNothing);
+    expect(find.text('角色：面试官、候选人'), findsNothing);
+    expect(find.text('范围：围绕项目难点完成三轮追问'), findsNothing);
+    expect(find.textContaining('3–5 轮'), findsNothing);
+    expect(find.text('请确认是否按此方案开始练习。'), findsNothing);
     await tester.tap(
       find.byKey(
         const Key(
@@ -328,6 +333,154 @@ void main() {
       ),
     );
     expect(selected, same(handoff));
+  });
+
+  testWidgets('renders an unscored IELTS warm-up without a handoff', (
+    tester,
+  ) async {
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-ielts-warm-up',
+        role: AgentMessageRole.assistant,
+        text: '可以。最近有没有谁让你印象挺深？用一两句英语说说。',
+      ),
+    );
+
+    final markdown = _messageSelectableText(
+      tester,
+      'assistant-ielts-warm-up',
+    ).map(_selectablePlainText).join(' ');
+    expect(markdown, contains('最近有没有谁让你印象挺深？'));
+    expect(markdown, contains('用一两句英语说说。'));
+    expect(markdown, isNot(contains('练前跟练')));
+    expect(markdown, isNot(contains('Warm-up')));
+    expect(markdown, isNot(contains('不计分')));
+    expect(markdown, isNot(contains('卡住')));
+    expect(markdown, isNot(contains('提示')));
+    expect(markdown, isNot(contains('直接开始')));
+    expect(find.text('确认并开始练习'), findsNothing);
+    expect(find.text('范围：Part 1'), findsNothing);
+  });
+
+  testWidgets('renders and dispatches the later Part 1 confirmation handoff', (
+    tester,
+  ) async {
+    const handoff = ConfirmPracticePlanHandoff(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000003',
+      planRevision: 1,
+      target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
+      sceneName: 'IELTS 口语',
+      practiceExperience: 'IELTS_SPEAKING',
+      sceneCategory: 'IELTS_SPEAKING',
+      practiceMode: 'PART_1',
+      roles: <String>['IELTS 口语考官'],
+      practiceScope: 'Part 1',
+      suggestedDuration: Duration(minutes: 5),
+      minEffectiveTurns: 3,
+      maxEffectiveTurns: 3,
+      executableStatus: 'ready',
+      confirmationPrompt: '确认后进入正式练习。',
+    );
+    AgentHandoff? selected;
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-ielts-part-1-confirmation',
+        role: AgentMessageRole.assistant,
+        text: '听到了，你是在确认我能不能听见。',
+        handoffs: <AgentHandoff>[handoff],
+      ),
+      onHandoff: (value) => selected = value,
+    );
+
+    final markdown = _messageSelectableText(
+      tester,
+      'assistant-ielts-part-1-confirmation',
+    ).map(_selectablePlainText).join(' ');
+    expect(markdown, contains('听到了，你是在确认我能不能听见。'));
+    expect(markdown, isNot(contains('准备好')));
+    expect(markdown, isNot(contains('开始')));
+    expect(markdown, isNot(contains('卡片')));
+    expect(markdown, isNot(contains('Part 1')));
+    expect(markdown, isNot(contains('练前跟练')));
+    expect(find.text('IELTS 口语 · Part 1'), findsOneWidget);
+    expect(find.text('约 5 分钟'), findsOneWidget);
+    expect(find.text(handoff.target), findsNothing);
+    expect(find.text('场景：IELTS 口语'), findsNothing);
+    expect(find.text('角色：IELTS 口语考官'), findsNothing);
+    expect(find.text('范围：Part 1'), findsNothing);
+    expect(find.textContaining('3–3 轮'), findsNothing);
+    expect(find.text(handoff.confirmationPrompt), findsNothing);
+    expect(find.text('开始练习'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(
+        const Key(
+          'confirm-practice-plan-'
+          '10000000-0000-4000-8000-000000000003-1',
+        ),
+      ),
+    );
+    expect(selected, same(handoff));
+  });
+
+  testWidgets('keeps a full mock handoff free of warm-up and question text', (
+    tester,
+  ) async {
+    const handoff = ConfirmPracticePlanHandoff(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000004',
+      planRevision: 1,
+      target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
+      sceneName: 'IELTS 口语',
+      practiceExperience: 'IELTS_SPEAKING',
+      sceneCategory: 'IELTS_SPEAKING',
+      practiceMode: 'FULL_MOCK',
+      roles: <String>['IELTS 口语考官'],
+      practiceScope: '完整模考',
+      suggestedDuration: Duration(minutes: 14),
+      minEffectiveTurns: 14,
+      maxEffectiveTurns: 14,
+      executableStatus: 'ready',
+      confirmationPrompt: '题目将在正式开始后展示。',
+    );
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-ielts-full-mock',
+        role: AgentMessageRole.assistant,
+        text: '好。',
+        handoffs: <AgentHandoff>[handoff],
+      ),
+    );
+
+    final markdown = _messageSelectableText(
+      tester,
+      'assistant-ielts-full-mock',
+    ).map(_selectablePlainText).join(' ');
+    expect(markdown, '好。');
+    expect(find.text('IELTS 口语 · 完整模考'), findsOneWidget);
+    expect(find.text('约 14 分钟'), findsOneWidget);
+    final card = find.byKey(
+      const Key(
+        'agent-handoff-practice-plan-'
+        '10000000-0000-4000-8000-000000000004-1',
+      ),
+    );
+    for (final hidden in const <String>[
+      '练前跟练',
+      '不计分',
+      'Describe a person',
+      'What I enjoy most is',
+    ]) {
+      expect(markdown, isNot(contains(hidden)));
+      expect(
+        find.descendant(of: card, matching: find.textContaining(hidden)),
+        findsNothing,
+      );
+    }
   });
 
   testWidgets('does not show a round count for an open-ended handoff', (
@@ -365,7 +518,7 @@ void main() {
       ),
     );
 
-    expect(find.text('预计 10 分钟'), findsOneWidget);
+    expect(find.text('约 10 分钟'), findsOneWidget);
     expect(find.textContaining('轮'), findsNothing);
   });
 
@@ -454,10 +607,16 @@ void main() {
   });
 }
 
-Future<void> _pumpMessage(WidgetTester tester, AgentMessage message) async {
+Future<void> _pumpMessage(
+  WidgetTester tester,
+  AgentMessage message, {
+  ValueChanged<AgentHandoff>? onHandoff,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: Scaffold(body: AgentMessageBubble(message: message)),
+      home: Scaffold(
+        body: AgentMessageBubble(message: message, onHandoff: onHandoff),
+      ),
     ),
   );
   await tester.pump();

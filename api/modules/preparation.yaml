@@ -102,7 +102,8 @@ paths:
         Appends a complete immutable revision using the expected current
         revision. The frozen Goal, Preparation Snapshot, and Scene version do
         not change; only the selected roles, option, policy, and objectives are
-        recalculated from the already frozen Scene definition.
+        recalculated from the already frozen Scene definition. IELTS question
+        assignments remain frozen across revisions.
       operationId: updatePracticePlan
       parameters:
         - $ref: '#/components/parameters/PracticePlanId'
@@ -523,7 +524,7 @@ components:
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
         ielts_selection:
-          description: Required for IELTS Part 1/2/3 specialty practice. Omit for FULL_MOCK so the server assembles the published question set.
+          description: Optional exact IELTS question ids, or a cue-card category for specialty practice. Omit for a server-random assignment. FULL_MOCK does not accept a category.
           $ref: '#/components/schemas/IELTSPracticeSelection'
         max_effective_turns:
           type: integer
@@ -549,8 +550,8 @@ components:
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
         ielts_selection:
-          description: Required for IELTS Part 1/2/3 specialty practice. Omit for FULL_MOCK so the server assembles the published question set.
-          $ref: '#/components/schemas/IELTSPracticeSelection'
+          description: Optional exact IELTS question ids matching the current frozen assignment. Omit to preserve that assignment. Category selection is not accepted on update.
+          $ref: '#/components/schemas/IELTSPracticeExactSelection'
         max_effective_turns:
           type: integer
           minimum: 1
@@ -684,6 +685,53 @@ components:
                 type: integer
                 minimum: 1
     IELTSPracticeSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        part_1_set_id:
+          $ref: '#/components/schemas/ResourceId'
+        topic_group_id:
+          $ref: '#/components/schemas/ResourceId'
+        cue_card_type:
+          type: string
+          description: Server-select one question set in this fixed IELTS topic category.
+          enum:
+            - person
+            - place
+            - thing
+            - experience
+      oneOf:
+        - required:
+            - part_1_set_id
+            - topic_group_id
+          not:
+            required:
+              - cue_card_type
+        - required:
+            - part_1_set_id
+          not:
+            anyOf:
+              - required:
+                  - topic_group_id
+              - required:
+                  - cue_card_type
+        - required:
+            - topic_group_id
+          not:
+            anyOf:
+              - required:
+                  - part_1_set_id
+              - required:
+                  - cue_card_type
+        - required:
+            - cue_card_type
+          not:
+            anyOf:
+              - required:
+                  - part_1_set_id
+              - required:
+                  - topic_group_id
+    IELTSPracticeExactSelection:
       type: object
       additionalProperties: false
       properties:

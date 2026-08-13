@@ -100,6 +100,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('returning from practice loads the IELTS catalog', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    final ieltsController = IeltsPreparationController(
+      client: _HubQuestionBankClient(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(ieltsController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: controller,
+          ieltsController: ieltsController,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    ieltsController.requestNavigation(
+      const IeltsPracticeNavigationRequest(mode: PracticeMode.part1),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-browser-search')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-question-bank-retry')), findsNothing);
+  });
+
   testWidgets('opens the English interview module from the hub', (
     tester,
   ) async {

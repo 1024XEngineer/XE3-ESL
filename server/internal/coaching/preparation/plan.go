@@ -73,12 +73,13 @@ type PracticeObjective struct {
 	Description string `json:"description"`
 }
 
-// IELTSQuestionSelection is the explicit question-bank choice required when
-// creating an IELTS Plan. Preparation resolves it once and persists only the
-// resulting immutable assignment.
+// IELTSQuestionSelection either identifies an exact published question set or
+// requests server assignment within one IELTS topic category on create.
+// Revision requests may only omit it or repeat the current exact identifiers.
 type IELTSQuestionSelection struct {
 	Part1SetID   string `json:"part_1_set_id,omitempty"`
 	TopicGroupID string `json:"topic_group_id,omitempty"`
+	CueCardType  string `json:"cue_card_type,omitempty"`
 }
 
 // IELTSAssignmentSnapshot is the complete IELTS question assignment frozen

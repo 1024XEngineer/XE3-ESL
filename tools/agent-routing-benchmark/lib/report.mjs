@@ -15,6 +15,64 @@ function eventsForRun(events, runId) {
   return events.filter((event) => event.run_id === runId);
 }
 
+function nonEmptyParagraphCount(content) {
+  const trimmed = String(content ?? "").trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\r?\n\s*\r?\n+/).filter((value) => value.trim()).length;
+}
+
+function sentenceCount(content) {
+  const normalized = String(content ?? "").replace(/\.{2,}/g, "").trim();
+  if (!normalized) return 0;
+  return normalized
+    .split(/[。！？!?]+|[.](?=\s|$)/u)
+    .filter((value) => value.trim()).length;
+}
+
+function responseContract(testCase, response) {
+  const requiredTerms = testCase.required_response_terms ?? [];
+  const forbiddenTerms = testCase.forbidden_response_terms ?? [];
+  const maxParagraphs = testCase.max_non_empty_paragraphs;
+  const maxSentences = testCase.max_sentences;
+  const checked =
+    requiredTerms.length > 0 ||
+    forbiddenTerms.length > 0 ||
+    Number.isInteger(maxParagraphs) ||
+    Number.isInteger(maxSentences);
+  const normalized = String(response ?? "").toLocaleLowerCase();
+  const missingTerms = requiredTerms.filter(
+    (term) => !normalized.includes(String(term).toLocaleLowerCase()),
+  );
+  const presentForbiddenTerms = forbiddenTerms.filter(
+    (term) => normalized.includes(String(term).toLocaleLowerCase()),
+  );
+  const paragraphCount = nonEmptyParagraphCount(response);
+  const actualSentenceCount = sentenceCount(response);
+  const paragraphsPassed =
+    !Number.isInteger(maxParagraphs) || paragraphCount <= maxParagraphs;
+  const sentencesPassed =
+    !Number.isInteger(maxSentences) || actualSentenceCount <= maxSentences;
+  return {
+    checked,
+    passed:
+      (!checked || String(response ?? "").trim().length > 0) &&
+      missingTerms.length === 0 &&
+      presentForbiddenTerms.length === 0 &&
+      paragraphsPassed &&
+      sentencesPassed,
+    requiredTerms,
+    forbiddenTerms,
+    missingTerms,
+    presentForbiddenTerms,
+    paragraphCount,
+    sentenceCount: actualSentenceCount,
+    maxParagraphs,
+    maxSentences,
+    paragraphsPassed,
+    sentencesPassed,
+  };
+}
+
 export function parseJsonLog(content) {
   const events = [];
   for (const line of content.split(/\r?\n/)) {
@@ -60,6 +118,8 @@ export function evaluateCases(cases, executions, events) {
     );
     const expectedTools = testCase.expected_tools ?? [];
     const forbiddenTools = testCase.forbidden_tools ?? [];
+    const assistantResponse = execution?.assistant_response ?? "";
+    const response = responseContract(testCase, assistantResponse);
     const duplicateTools = unique(startedTools).filter(
       (tool) => startedTools.filter((value) => value === tool).length > 1,
     );
@@ -84,7 +144,8 @@ export function evaluateCases(cases, executions, events) {
       toolSelectionPassed &&
       forbiddenPassed &&
       executionPassed &&
-      duplicatePassed;
+      duplicatePassed &&
+      response.passed;
 
     const reasons = [];
     if (!transportPassed) reasons.push("HTTP 或 Run 未完成");
@@ -93,12 +154,35 @@ export function evaluateCases(cases, executions, events) {
     if (!forbiddenPassed) reasons.push("调用了禁用工具");
     if (!executionPassed) reasons.push("工具执行未全部成功");
     if (!duplicatePassed) reasons.push("存在重复工具调用");
+    if (response.checked && !assistantResponse.trim()) {
+      reasons.push("缺少目标 Assistant 回复");
+    }
+    if (response.missingTerms.length > 0) {
+      reasons.push(`回复缺少：${response.missingTerms.join("、")}`);
+    }
+    if (response.presentForbiddenTerms.length > 0) {
+      reasons.push(
+        `回复包含禁用内容：${response.presentForbiddenTerms.join("、")}`,
+      );
+    }
+    if (!response.paragraphsPassed) {
+      reasons.push(
+        `回复段落数 ${response.paragraphCount} > ${response.maxParagraphs}`,
+      );
+    }
+    if (!response.sentencesPassed) {
+      reasons.push(
+        `回复句数 ${response.sentenceCount} > ${response.maxSentences}`,
+      );
+    }
 
     return {
       name: testCase.name,
       message: testCase.messages.at(-1),
       run_id: runId ?? "",
       thread_id: execution?.thread_id ?? "",
+      assistant_message_id: execution?.assistant_message_id ?? "",
+      assistant_response: assistantResponse,
       expected_decision: testCase.expected_decision,
       actual_decision: actualDecision || "(missing)",
       expected_tools: expectedTools,
@@ -111,6 +195,16 @@ export function evaluateCases(cases, executions, events) {
       forbidden_passed: forbiddenPassed,
       execution_passed: executionPassed,
       duplicate_passed: duplicatePassed,
+      response_contract_checked: response.checked,
+      response_contract_passed: response.passed,
+      required_response_terms: response.requiredTerms,
+      forbidden_response_terms: response.forbiddenTerms,
+      missing_response_terms: response.missingTerms,
+      present_forbidden_response_terms: response.presentForbiddenTerms,
+      response_paragraph_count: response.paragraphCount,
+      response_sentence_count: response.sentenceCount,
+      max_non_empty_paragraphs: response.maxParagraphs,
+      max_sentences: response.maxSentences,
       passed,
       reason: reasons.join("；") || "符合预期",
       provider: execution?.provider ?? "",
@@ -138,6 +232,9 @@ export function calculateMetrics(results) {
   const duplicateCount = results.filter(
     (result) => result.duplicate_tools.length > 0,
   ).length;
+  const responseCases = results.filter(
+    (result) => result.response_contract_checked,
+  );
 
   return {
     overall: ratio(results, (result) => result.passed),
@@ -151,6 +248,10 @@ export function calculateMetrics(results) {
       (result) => result.forbidden_passed,
     ),
     tool_execution: ratio(results, (result) => result.execution_passed),
+    response_contract: ratio(
+      responseCases,
+      (result) => result.response_contract_passed,
+    ),
     duplicate_rate: {
       passed: duplicateCount,
       total: results.length,
@@ -178,7 +279,7 @@ export function renderMarkdown(metadata, results, metrics) {
   const rows = results
     .map(
       (result) =>
-        `| ${result.passed ? "PASS" : "FAIL"} | ${markdownCell(result.name)} | ${markdownCell(result.message)} | ${markdownCell(result.expected_decision)} | ${markdownCell(result.actual_decision)} | ${toolList(result.expected_tools)} | ${toolList(result.actual_tools)} | ${markdownCell(result.reason)} |`,
+        `| ${result.passed ? "PASS" : "FAIL"} | ${markdownCell(result.name)} | ${markdownCell(result.message)} | ${markdownCell(result.assistant_response)} | ${markdownCell(result.expected_decision)} | ${markdownCell(result.actual_decision)} | ${toolList(result.expected_tools)} | ${toolList(result.actual_tools)} | ${markdownCell(result.reason)} |`,
     )
     .join("\n");
 
@@ -199,12 +300,13 @@ export function renderMarkdown(metadata, results, metrics) {
 | 工具选择准确率 | ${percent(metrics.tool_selection)} |
 | 禁用工具安全率 | ${percent(metrics.forbidden_safety)} |
 | 工具执行成功率 | ${percent(metrics.tool_execution)} |
+| 回复契约通过率 | ${percent(metrics.response_contract)} |
 | 重复工具调用率 | ${percent(metrics.duplicate_rate)} |
 
 ## 明细
 
-| 结果 | Case | 用户消息（目标 turn） | 期望决策 | 实际决策 | 期望工具 | 实际工具 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| 结果 | Case | 用户消息（目标 turn） | Assistant 回复 | 期望决策 | 实际决策 | 期望工具 | 实际工具 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows}
 
 ## 审计关联
@@ -234,6 +336,7 @@ export function renderHtml(metadata, results, metrics) {
     ["工具选择准确率", metrics.tool_selection],
     ["禁用工具安全率", metrics.forbidden_safety],
     ["工具执行成功率", metrics.tool_execution],
+    ["回复契约通过率", metrics.response_contract],
     ["重复调用率", metrics.duplicate_rate],
   ]
     .map(
@@ -249,6 +352,7 @@ export function renderHtml(metadata, results, metrics) {
         <td><span class="status ${result.passed ? "pass" : "fail"}">${result.passed ? "PASS" : "FAIL"}</span></td>
         <td><code>${escapeHtml(result.name)}</code></td>
         <td>${escapeHtml(result.message)}</td>
+        <td>${escapeHtml(result.assistant_response)}</td>
         <td>${escapeHtml(result.expected_decision)}</td>
         <td>${escapeHtml(result.actual_decision)}</td>
         <td>${escapeHtml(result.expected_tools.join(", ") || "-")}</td>
@@ -334,7 +438,7 @@ export function renderHtml(metadata, results, metrics) {
     </section>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>结果</th><th>Case</th><th>用户消息</th><th>期望决策</th><th>实际决策</th><th>期望工具</th><th>实际工具</th><th>说明</th></tr></thead>
+        <thead><tr><th>结果</th><th>Case</th><th>用户消息</th><th>Assistant 回复</th><th>期望决策</th><th>实际决策</th><th>期望工具</th><th>实际工具</th><th>说明</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>

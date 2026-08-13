@@ -182,13 +182,8 @@ func TestServicePortCreatesSnapshotBeforeCanonicalPlan(t *testing.T) {
 	}
 }
 
-func TestServicePortIELTSWithoutQuestionSelectionNeedsInput(t *testing.T) {
-	candidate := previewCatalogCandidate()
-	candidate.Scene.Experience = scene.PracticeExperienceIELTSSpeaking
-	candidate.Scene.Category = scene.SceneCategoryIELTSSpeaking
-	candidate.Scene.Name = "IELTS Speaking Part 2"
-	candidate.Scene.PracticeOptions[0].Mode = scene.PracticeModePart2
-	candidate.DefaultOption.Mode = scene.PracticeModePart2
+func TestServicePortIELTSSpecialtyWithoutTopicChoiceNeedsInput(t *testing.T) {
+	candidate := ieltsPreviewCatalogCandidate()
 	plans := &planApplicationStub{}
 	profiles := &profileApplicationStub{}
 	port, err := NewServicePort(plans, previewCatalogStub{
@@ -201,9 +196,7 @@ func TestServicePortIELTSWithoutQuestionSelectionNeedsInput(t *testing.T) {
 		context.Background(),
 		previewCallContext(),
 		PreviewInput{
-			SceneQuery:        candidate.Scene.Name,
-			BackgroundSummary: "Preparing for IELTS Speaking.",
-			MaxEffectiveTurns: 4,
+			IELTSPracticeMode: string(scene.PracticeModePart2),
 		},
 	)
 	if err != nil {
@@ -212,9 +205,160 @@ func TestServicePortIELTSWithoutQuestionSelectionNeedsInput(t *testing.T) {
 	if result.Status != "needs_input" ||
 		!reflect.DeepEqual(
 			result.RequiredMissingFields,
-			[]string{"ielts_selection"},
+			[]string{"ielts_topic_choice"},
 		) || plans.calls != 0 || profiles.profileCalls != 0 ||
 		profiles.snapshotCalls != 0 {
+		t.Fatalf("result = %#v, plans = %#v, profiles = %#v", result, plans, profiles)
+	}
+}
+
+func TestServicePortIELTSMapsSemanticChoicesToOfficialPlan(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        scene.PracticeMode
+		topicChoice string
+		wantOption  string
+		wantCueType string
+	}{
+		{
+			name:        "Part 1 random",
+			mode:        scene.PracticeModePart1,
+			topicChoice: "random",
+			wantOption:  "option-ielts-part-1",
+		},
+		{
+			name:        "Part 2 person",
+			mode:        scene.PracticeModePart2,
+			topicChoice: "person",
+			wantOption:  "option-ielts-part-2",
+			wantCueType: "person",
+		},
+		{
+			name:        "Part 3 place",
+			mode:        scene.PracticeModePart3,
+			topicChoice: "place",
+			wantOption:  "option-ielts-part-3",
+			wantCueType: "place",
+		},
+		{
+			name:       "full mock",
+			mode:       scene.PracticeModeFullMock,
+			wantOption: "option-ielts-full-mock",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := ieltsPreviewCatalogCandidate()
+			profiles := &profileApplicationStub{
+				profile:  preparation.Profile{ID: "profile-1", Version: 1},
+				snapshot: preparation.Snapshot{ID: "snapshot-1", SourceVersion: 1},
+			}
+			plans := &planApplicationStub{
+				plan: ieltsPreviewPlan(candidate, test.mode, test.wantOption),
+			}
+			port, err := NewServicePort(plans, previewCatalogStub{
+				items: []scene.PreviewCatalogCandidate{candidate},
+			}, profiles)
+			if err != nil {
+				t.Fatalf("NewServicePort() error = %v", err)
+			}
+			result, err := port.PreviewPractice(
+				context.Background(),
+				previewCallContext(),
+				PreviewInput{
+					IELTSPracticeMode: string(test.mode),
+					IELTSTopicChoice:  test.topicChoice,
+				},
+			)
+			if err != nil {
+				t.Fatalf("PreviewPractice() error = %v", err)
+			}
+			if result.Status != "preview_ready" || plans.calls != 1 ||
+				profiles.profileRequest.BackgroundSummary == "" ||
+				plans.request.SceneID != candidate.Scene.ID ||
+				plans.request.PracticeOptionID != test.wantOption ||
+				plans.request.MaxEffectiveTurns != 0 {
+				t.Fatalf("result = %#v, request = %#v", result, plans.request)
+			}
+			if test.wantCueType == "" {
+				if plans.request.IELTSSelection != nil {
+					t.Fatalf("IELTS selection = %#v, want nil", plans.request.IELTSSelection)
+				}
+			} else if plans.request.IELTSSelection == nil ||
+				plans.request.IELTSSelection.CueCardType != test.wantCueType ||
+				plans.request.IELTSSelection.Part1SetID != "" ||
+				plans.request.IELTSSelection.TopicGroupID != "" {
+				t.Fatalf("IELTS selection = %#v", plans.request.IELTSSelection)
+			}
+		})
+	}
+}
+
+func TestServicePortIELTSUsesServerDerivedBackground(t *testing.T) {
+	candidate := ieltsPreviewCatalogCandidate()
+	profiles := &profileApplicationStub{
+		profile:  preparation.Profile{ID: "profile-1", Version: 1},
+		snapshot: preparation.Snapshot{ID: "snapshot-1", SourceVersion: 1},
+	}
+	plans := &planApplicationStub{
+		plan: ieltsPreviewPlan(
+			candidate,
+			scene.PracticeModePart2,
+			"option-ielts-part-2",
+		),
+	}
+	port, err := NewServicePort(plans, previewCatalogStub{
+		items: []scene.PreviewCatalogCandidate{candidate},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	result, err := port.PreviewPractice(
+		context.Background(),
+		previewCallContext(),
+		PreviewInput{
+			BackgroundSummary: "Model-supplied background must not be trusted.",
+			IELTSPracticeMode: string(scene.PracticeModePart2),
+			IELTSTopicChoice:  "person",
+		},
+	)
+	if err != nil || result.Status != "preview_ready" {
+		t.Fatalf("PreviewPractice() = (%#v, %v)", result, err)
+	}
+	const want = "User requested IELTS Speaking PART_2 with person topic."
+	if profiles.profileRequest.BackgroundSummary != want {
+		t.Fatalf(
+			"IELTS background = %q, want %q",
+			profiles.profileRequest.BackgroundSummary,
+			want,
+		)
+	}
+}
+
+func TestServicePortIELTSFullMockRejectsTopicChoiceWithoutWriting(t *testing.T) {
+	candidate := ieltsPreviewCatalogCandidate()
+	plans := &planApplicationStub{}
+	profiles := &profileApplicationStub{}
+	port, err := NewServicePort(plans, previewCatalogStub{
+		items: []scene.PreviewCatalogCandidate{candidate},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	result, err := port.PreviewPractice(
+		context.Background(),
+		previewCallContext(),
+		PreviewInput{
+			IELTSPracticeMode: string(scene.PracticeModeFullMock),
+			IELTSTopicChoice:  "person",
+		},
+	)
+	if err != nil {
+		t.Fatalf("PreviewPractice() error = %v", err)
+	}
+	if result.Status != "needs_input" ||
+		!reflect.DeepEqual(result.RequiredMissingFields, []string{"ielts_topic_choice"}) ||
+		plans.calls != 0 || profiles.profileCalls != 0 {
 		t.Fatalf("result = %#v, plans = %#v, profiles = %#v", result, plans, profiles)
 	}
 }
@@ -267,5 +411,65 @@ func previewCatalogCandidate() scene.PreviewCatalogCandidate {
 			SessionPolicyRef:         "interview.project_deep_dive.session.v1",
 			EvaluationPolicyRef:      "interview.shadow.evaluation.v1",
 		},
+	}
+}
+
+func ieltsPreviewCatalogCandidate() scene.PreviewCatalogCandidate {
+	candidate := previewCatalogCandidate()
+	candidate.Scene.ID = "scene-ielts-speaking"
+	candidate.Scene.Experience = scene.PracticeExperienceIELTSSpeaking
+	candidate.Scene.Category = scene.SceneCategoryIELTSSpeaking
+	candidate.Scene.Name = "IELTS Speaking"
+	candidate.Scene.Roles[0].ID = "role-ielts-examiner"
+	candidate.Scene.Roles[0].DisplayName = "IELTS 口语考官"
+	candidate.DefaultRoleIDs = []string{"role-ielts-examiner"}
+	candidate.Scene.PracticeOptions = []scene.PracticeOption{
+		{ID: "option-ielts-full-mock", SceneID: candidate.Scene.ID, Mode: scene.PracticeModeFullMock, DisplayName: "完整模考"},
+		{ID: "option-ielts-part-1", SceneID: candidate.Scene.ID, Mode: scene.PracticeModePart1, DisplayName: "Part 1"},
+		{ID: "option-ielts-part-2", SceneID: candidate.Scene.ID, Mode: scene.PracticeModePart2, DisplayName: "Part 2"},
+		{ID: "option-ielts-part-3", SceneID: candidate.Scene.ID, Mode: scene.PracticeModePart3, DisplayName: "Part 3"},
+	}
+	candidate.DefaultOption = candidate.Scene.PracticeOptions[0]
+	return candidate
+}
+
+func ieltsPreviewPlan(
+	candidate scene.PreviewCatalogCandidate,
+	mode scene.PracticeMode,
+	optionID string,
+) preparation.PracticePlan {
+	part := preparation.IELTSAssignmentPartSnapshot{
+		Part:           mode,
+		TopicTitle:     "People",
+		TurnBlueprints: []string{"Part 1 question: Do you work or study?"},
+	}
+	switch mode {
+	case scene.PracticeModePart2:
+		part.CueCard = "Describe a person you admire."
+		part.TurnBlueprints = []string{"Part 2 cue card: Describe a person you admire."}
+	case scene.PracticeModePart3:
+		part.TurnBlueprints = []string{"Part 3 question: Why do people need role models?"}
+	case scene.PracticeModeFullMock:
+		part.Part = scene.PracticeModePart1
+	}
+	return preparation.PracticePlan{
+		ID:                  "10000000-0000-4000-8000-000000000009",
+		PreparationSnapshot: preparation.Snapshot{ID: "snapshot-1"},
+		SceneSelection: scene.SelectionSnapshot{
+			Scene:            candidate.Scene,
+			SelectedRoleIDs:  append([]string(nil), candidate.DefaultRoleIDs...),
+			PracticeOptionID: optionID,
+		},
+		SessionPolicy: preparation.SessionPolicy{
+			SuggestedDurationSeconds: 300,
+			MinEffectiveTurns:        1,
+			MaxEffectiveTurns:        1,
+		},
+		IELTSAssignment: &preparation.IELTSAssignmentSnapshot{
+			Mode:  mode,
+			Parts: []preparation.IELTSAssignmentPartSnapshot{part},
+		},
+		Revision: 1,
+		Status:   preparation.PlanStatusReady,
 	}
 }

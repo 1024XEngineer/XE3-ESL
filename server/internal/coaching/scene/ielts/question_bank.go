@@ -109,6 +109,7 @@ type QuestionSetResolver interface {
 	AssignQuestionSet(
 		context.Context,
 		PracticeMode,
+		string,
 	) (ResolvedQuestionSet, error)
 }
 

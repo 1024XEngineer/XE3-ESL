@@ -3,6 +3,8 @@ package agentcapability
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
@@ -61,23 +63,57 @@ func TestPreviewToolMapsReadyResult(t *testing.T) {
 	}
 	if port.input.SceneQuery != "IELTS" ||
 		result.Content["status"] != "preview_ready" ||
-		result.Content["practice_plan_id"] != nil ||
+		result.Content["confirmation_required"] != true ||
+		result.Content["replayed"] != false ||
+		len(result.Content) != 3 ||
 		len(result.SourceRefs) != 1 || len(result.Handoffs) != 1 ||
 		result.Handoffs[0].Type != agenthandoff.ConfirmPracticePlanType {
 		t.Fatalf("tool result = %#v, input = %#v", result, port.input)
+	}
+	for _, duplicate := range []string{
+		"practice_plan_id",
+		"target",
+		"scene_name",
+		"roles",
+		"practice_scope",
+		"suggested_duration_seconds",
+		"min_effective_turns",
+		"max_effective_turns",
+		"required_missing_fields",
+		"catalog_candidates",
+	} {
+		if _, found := result.Content[duplicate]; found {
+			t.Fatalf("ready result repeats card field %q: %#v", duplicate, result.Content)
+		}
 	}
 }
 
 func TestPreviewToolDoesNotExposePreparationIdentifiers(t *testing.T) {
 	definition := NewPreviewTool(&previewPortStub{}).Definition()
+	if !strings.Contains(
+		definition.Description,
+		"never say a practice was created or is ready unless this tool actually returns preview_ready",
+	) {
+		t.Fatalf("definition permits a false ready claim: %q", definition.Description)
+	}
 	if required := definition.InputSchema["required"].([]string); len(required) != 0 {
 		t.Fatalf("required = %#v, want optional discovery fields", required)
 	}
 	properties := definition.InputSchema["properties"].(map[string]any)
 	if properties["background_summary"] == nil ||
 		properties["preparation_profile_id"] != nil ||
-		properties["preparation_snapshot_id"] != nil {
+		properties["preparation_snapshot_id"] != nil ||
+		properties["ielts_selection"] != nil {
 		t.Fatalf("properties expose internal Preparation identifiers: %#v", properties)
+	}
+	for field, want := range map[string][]string{
+		"ielts_practice_mode": {"FULL_MOCK", "PART_1", "PART_2", "PART_3"},
+		"ielts_topic_choice":  {"random", "person", "place", "thing", "experience"},
+	} {
+		schema := properties[field].(map[string]any)
+		if !reflect.DeepEqual(schema["enum"], want) {
+			t.Fatalf("%s enum = %#v, want %#v", field, schema["enum"], want)
+		}
 	}
 }
 
@@ -96,7 +132,7 @@ func TestPreviewToolClassifiesDiscoveryAndCreation(t *testing.T) {
 	mayWrite := registry.InvocationEffect(capability.Invocation{
 		Name: PracticePreviewToolName,
 		Input: json.RawMessage(
-			`{"background_summary":"AI product manager","max_effective_turns":3}`,
+			`{"ielts_practice_mode":"PART_1","ielts_topic_choice":"random"}`,
 		),
 	})
 	if mayWrite != capability.InvocationEffectMayWrite {

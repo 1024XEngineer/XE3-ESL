@@ -491,6 +491,7 @@ ProductionAppDependencies createProductionAppDependencies({
   final practicePlanHandoffController = PracticePlanHandoffController(
     conversationController: conversationController,
     practiceController: practiceController,
+    ieltsPreparationController: ieltsPreparationController,
     workspaceController: practiceWorkspaceController,
     readPlan: preparationLaunchClient.getPlan,
     confirmPlan: ({required plan, required input, required idempotencyKey}) =>
