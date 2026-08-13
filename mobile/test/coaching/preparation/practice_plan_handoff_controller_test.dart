@@ -167,11 +167,11 @@ void main() {
     final threadCount = harness.conversation.threads.length;
 
     await _pumpConflictShell(tester, harness, controller);
-    final confirmButton = tester.widget<FilledButton>(
+    final confirmButton = tester.widget<InkWell>(
       find.byKey(const Key('confirm-practice-plan-practice-plan-session-1-2')),
     );
-    confirmButton.onPressed!();
-    confirmButton.onPressed!();
+    confirmButton.onTap!();
+    confirmButton.onTap!();
     await tester.pumpAndSettle();
     expect(find.text('开始新的练习？'), findsOneWidget);
     await tester.tap(find.byKey(const Key('cancel-existing-practice-action')));

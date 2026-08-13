@@ -21,48 +21,74 @@ final class PracticePlanHandoffCard extends StatelessWidget {
       if (!isIELTS) handoff.roles.join('、'),
       handoff.practiceScope,
     ].join(' · ');
-    return Container(
+    final title = isIELTS ? practiceSummary : handoff.target;
+    return Material(
       key: Key(
         'agent-handoff-practice-plan-'
         '${handoff.practicePlanId}-${handoff.planRevision}',
       ),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: SpeakUpDesign.surface,
-        border: Border.all(color: SpeakUpDesign.border),
+      color: SpeakUpDesign.surface,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: SpeakUpDesign.border),
         borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            isIELTS ? practiceSummary : handoff.target,
-            style: SpeakUpDesign.cardTitle,
-          ),
-          if (!isIELTS) ...[
-            const SizedBox(height: 6),
-            Text(
-              practiceSummary,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: SpeakUpDesign.body,
-            ),
-          ],
-          const SizedBox(height: 6),
-          Text('约 $minutes 分钟', style: SpeakUpDesign.meta),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              key: Key(
-                'confirm-practice-plan-'
-                '${handoff.practicePlanId}-${handoff.planRevision}',
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key(
+          'confirm-practice-plan-'
+          '${handoff.practicePlanId}-${handoff.planRevision}',
+        ),
+        onTap: onConfirm,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: isIELTS
+                    ? Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: title,
+                              style: SpeakUpDesign.cardTitle,
+                            ),
+                            TextSpan(
+                              text: '   约 $minutes 分钟',
+                              style: SpeakUpDesign.meta,
+                            ),
+                          ],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title, style: SpeakUpDesign.cardTitle),
+                          const SizedBox(height: 6),
+                          Text(
+                            practiceSummary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: SpeakUpDesign.body,
+                          ),
+                          const SizedBox(height: 6),
+                          Text('约 $minutes 分钟', style: SpeakUpDesign.meta),
+                        ],
+                      ),
               ),
-              onPressed: onConfirm,
-              child: const Text('开始练习'),
-            ),
+              if (onConfirm != null) ...[
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: SpeakUpDesign.secondary,
+                ),
+              ],
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
