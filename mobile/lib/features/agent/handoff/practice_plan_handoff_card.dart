@@ -16,8 +16,11 @@ final class PracticePlanHandoffCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final minutes = (handoff.suggestedDuration.inSeconds / 60).ceil();
     final isIELTS = handoff.practiceExperience == 'IELTS_SPEAKING';
+    final isInterview = handoff.practiceExperience == 'INTERVIEW';
     final title = isIELTS
         ? 'IELTS Speaking · ${handoff.practiceScope}'
+        : isInterview
+        ? handoff.sceneName
         : handoff.target;
     final role = handoff.roles.join('、');
 
@@ -43,6 +46,7 @@ final class PracticePlanHandoffCard extends StatelessWidget {
                   title: title,
                   role: role,
                   isIELTS: isIELTS,
+                  isInterview: isInterview,
                 ),
               ),
               Positioned(
@@ -77,7 +81,9 @@ final class PracticePlanHandoffCard extends StatelessWidget {
                               Expanded(
                                 child: _PracticeFact(
                                   icon: Icons.chat_bubble_outline_rounded,
-                                  label: _questionCountLabel(handoff),
+                                  label: isInterview
+                                      ? handoff.practiceScope
+                                      : _questionCountLabel(handoff),
                                 ),
                               ),
                             ],
@@ -141,11 +147,13 @@ final class _PracticeHero extends StatelessWidget {
     required this.title,
     required this.role,
     required this.isIELTS,
+    required this.isInterview,
   });
 
   final String title;
   final String role;
   final bool isIELTS;
+  final bool isInterview;
 
   @override
   Widget build(BuildContext context) {
@@ -154,16 +162,18 @@ final class _PracticeHero extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFFF4F1FF), Color(0xFFE9E3FF)],
+                colors: isInterview
+                    ? const [Color(0xFFF3F0EA), Color(0xFFE6DDD2)]
+                    : const [Color(0xFFF4F1FF), Color(0xFFE9E3FF)],
               ),
             ),
           ),
-          if (isIELTS)
+          if (isIELTS || isInterview)
             Positioned(
               top: 0,
               right: -4,
@@ -171,7 +181,7 @@ final class _PracticeHero extends StatelessWidget {
               width: 160,
               child: Semantics(
                 image: true,
-                label: 'IELTS 考官头像',
+                label: isIELTS ? 'IELTS 考官头像' : '面试官场景图',
                 child: ShaderMask(
                   blendMode: BlendMode.dstIn,
                   shaderCallback: (bounds) => const LinearGradient(
@@ -179,23 +189,33 @@ final class _PracticeHero extends StatelessWidget {
                     stops: [0, 0.3],
                   ).createShader(bounds),
                   child: Image.asset(
-                    'assets/images/scenes/ielts-examiner.jpg',
+                    isIELTS
+                        ? 'assets/images/scenes/ielts-examiner.jpg'
+                        : 'assets/images/scenes/interview-plan-card-v2.webp',
                     fit: BoxFit.cover,
-                    alignment: const Alignment(0, -0.3),
+                    alignment: isIELTS
+                        ? const Alignment(0, -0.3)
+                        : const Alignment(-1, -0.2),
                   ),
                 ),
               ),
             ),
-          if (isIELTS)
-            const Positioned.fill(
+          if (isIELTS || isInterview)
+            Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [
-                      Color(0xFFF4F1FF),
-                      Color(0xE6F4F1FF),
-                      Color(0x00F4F1FF),
-                    ],
+                    colors: isInterview
+                        ? const [
+                            Color(0xFFF3F0EA),
+                            Color(0xE6F3F0EA),
+                            Color(0x00F3F0EA),
+                          ]
+                        : const [
+                            Color(0xFFF4F1FF),
+                            Color(0xE6F4F1FF),
+                            Color(0x00F4F1FF),
+                          ],
                     stops: [0, 0.42, 0.78],
                   ),
                 ),
@@ -226,7 +246,7 @@ final class _PracticeHero extends StatelessWidget {
           Positioned(
             top: 48,
             left: 14,
-            right: isIELTS ? 74 : 14,
+            right: isIELTS || isInterview ? 74 : 14,
             child: Text(
               title,
               maxLines: 1,
@@ -241,7 +261,7 @@ final class _PracticeHero extends StatelessWidget {
           Positioned(
             top: 88,
             left: 14,
-            right: isIELTS ? 90 : 14,
+            right: isIELTS || isInterview ? 90 : 14,
             child: Row(
               children: [
                 const Icon(
@@ -252,7 +272,11 @@ final class _PracticeHero extends StatelessWidget {
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    isIELTS ? '$role · IELTS Examiner' : role,
+                    isIELTS
+                        ? '$role · IELTS Examiner'
+                        : isInterview
+                        ? '$role · Interviewer'
+                        : role,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
