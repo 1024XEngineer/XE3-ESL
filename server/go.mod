@@ -2,7 +2,7 @@ module github.com/1024XEngineer/XE3-ESL/server
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/PaddlePaddle/PaddleOCR/api_sdk/go v0.2.0
