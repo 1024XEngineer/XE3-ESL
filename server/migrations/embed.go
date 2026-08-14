@@ -80,4 +80,5 @@ import "embed"
 //go:embed 000092_evaluation_ielts_practice_band_runtime.*.sql
 //go:embed 000093_interview_user_controlled_sessions.*.sql
 //go:embed 000094_ielts_sports_team_category.*.sql
+//go:embed 000095_evaluation_ielts_speaking_prompt_v9.*.sql
 var Files embed.FS

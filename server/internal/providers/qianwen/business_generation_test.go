@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -180,10 +181,11 @@ func TestQianwenIELTSCriterionUsesStrictJSONSchema(t *testing.T) {
 	result, err := (&EvaluationScoringGenerator{generator: client}).Generate(
 		context.Background(),
 		scoring.TextGenerationRequest{
-			SystemPrompt:    scoring.IELTSSpeakingShadowSystemContract,
-			UserPrompt:      `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
-			OutputContract:  scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
-			OutputCriterion: scoring.IELTSCriterionLR,
+			SystemPrompt:         scoring.IELTSSpeakingShadowSystemContract,
+			UserPrompt:           `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
+			OutputContract:       scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion:      scoring.IELTSCriterionLR,
+			OutputRubricRequired: true,
 		},
 	)
 	if err != nil || result.Content != content {
@@ -203,6 +205,15 @@ func TestQianwenIELTSCriterionUsesStrictJSONSchema(t *testing.T) {
 	if criteria["minItems"] != float64(1) ||
 		criteria["maxItems"] != float64(1) {
 		t.Fatalf("criteria schema=%#v", criteria)
+	}
+	criterion := criteria["items"].(map[string]any)
+	required := criterion["required"].([]any)
+	if !slices.Contains(required, any("rubric_descriptor")) {
+		t.Fatalf("criterion required=%#v", required)
+	}
+	strengths := criterion["properties"].(map[string]any)["strengths"].(map[string]any)
+	if strengths["minItems"] != float64(1) {
+		t.Fatalf("strengths schema=%#v", strengths)
 	}
 }
 

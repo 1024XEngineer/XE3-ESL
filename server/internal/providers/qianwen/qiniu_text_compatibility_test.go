@@ -139,10 +139,11 @@ func TestQiniuIELTSCriterionUsesForcedSingleCriterionTool(t *testing.T) {
 	result, err := (&EvaluationScoringGenerator{generator: client}).Generate(
 		context.Background(),
 		scoring.TextGenerationRequest{
-			SystemPrompt:    scoring.IELTSSpeakingShadowSystemContract,
-			UserPrompt:      `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
-			OutputContract:  scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
-			OutputCriterion: scoring.IELTSCriterionLR,
+			SystemPrompt:         scoring.IELTSSpeakingShadowSystemContract,
+			UserPrompt:           `{"input":{"assessable_criteria":["IELTS_LR"]}}`,
+			OutputContract:       scoring.TextGenerationOutputIELTSSpeakingCriterionV3,
+			OutputCriterion:      scoring.IELTSCriterionLR,
+			OutputRubricRequired: true,
 		},
 	)
 	if err != nil {
@@ -189,7 +190,10 @@ func TestQiniuIELTSCriterionUsesForcedSingleCriterionTool(t *testing.T) {
 		"upgrade_examples": "upgrade",
 	} {
 		value := criterionProperties[collection].(map[string]any)
-		if _, hasMinimum := value["minItems"]; hasMinimum ||
+		minimum, hasMinimum := value["minItems"]
+		if (collection == "strengths" &&
+			(!hasMinimum || minimum != float64(1))) ||
+			(collection != "strengths" && hasMinimum) ||
 			value["maxItems"] != float64(3) {
 			t.Fatalf("%s schema = %#v", collection, value)
 		}

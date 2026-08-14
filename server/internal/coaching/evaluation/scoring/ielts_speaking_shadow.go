@@ -23,7 +23,7 @@ import (
 const (
 	IELTSSpeakingShadowSchemaVersion          = "ielts-speaking-full-mock-shadow/v1"
 	IELTSSpeakingShadowProviderSchemaVersion  = "ielts-speaking-full-mock-shadow-provider/v3"
-	IELTSSpeakingShadowPromptVersion          = "ielts-speaking-full-mock-shadow-prompt/v8"
+	IELTSSpeakingShadowPromptVersion          = "ielts-speaking-full-mock-shadow-prompt/v9"
 	IELTSSpeakingShadowRubricVersion          = "ielts-speaking-public-band-rubric/v2"
 	IELTSSpeakingCriterionRepairPolicyVersion = "ielts-speaking-criterion-repair/v1"
 
