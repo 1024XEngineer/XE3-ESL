@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
@@ -39,15 +41,15 @@ void main() {
     );
     addTearDown(harness.dispose);
     final plan = _plan(sourceThreadId: harness.conversation.threadId!);
+    final confirmation = Completer<PreparationPracticeBootstrap>();
     final controller = PracticePlanHandoffController(
       conversationController: harness.conversation,
       practiceController: harness.practice,
       ieltsPreparationController: harness.ieltsPreparation,
       workspaceController: harness.workspace,
       readPlan: (_) async => plan,
-      confirmPlan:
-          ({required plan, required input, required idempotencyKey}) async =>
-              _bootstrap(plan),
+      confirmPlan: ({required plan, required input, required idempotencyKey}) =>
+          confirmation.future,
       idFactory: _fixedId,
     );
     addTearDown(controller.dispose);
@@ -81,8 +83,22 @@ void main() {
     await tester.tap(
       find.byKey(const Key('confirm-practice-plan-practice-plan-session-1-2')),
     );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('agent-practice-transition-overlay')),
+      findsOneWidget,
+    );
+    expect(find.text('正在进入练习…'), findsOneWidget);
+    expect(find.byKey(const Key('no-focused-conversation')), findsNothing);
+
+    confirmation.complete(_bootstrap(plan));
     await tester.pumpAndSettle();
 
+    expect(
+      find.byKey(const Key('agent-practice-transition-overlay')),
+      findsNothing,
+    );
     expect(find.byKey(const Key('confirmed-practice-route')), findsOneWidget);
     expect(harness.practice.practiceSessionId, _sessionId);
     expect(harness.workspace.currentSessionId, _sessionId);
