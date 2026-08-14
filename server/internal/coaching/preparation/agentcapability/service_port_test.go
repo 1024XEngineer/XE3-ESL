@@ -99,12 +99,67 @@ func TestServicePortNeedsInputDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewPractice() error = %v", err)
 	}
-	wantMissing := []string{"background_summary", "max_effective_turns"}
+	wantMissing := []string{"background_summary"}
 	if result.Status != "needs_input" ||
 		!reflect.DeepEqual(result.RequiredMissingFields, wantMissing) ||
 		plans.calls != 0 || profiles.profileCalls != 0 ||
 		profiles.snapshotCalls != 0 {
 		t.Fatalf("result = %#v, plans = %#v, profiles = %#v", result, plans, profiles)
+	}
+}
+
+func TestServicePortCompletesNonIELTSDefaultsFromExactCandidate(t *testing.T) {
+	candidate := previewCatalogCandidate()
+	candidate.Scene.PracticeOptions = append(
+		candidate.Scene.PracticeOptions,
+		scene.PracticeOption{
+			ID: "option-focus", SceneID: candidate.Scene.ID,
+			Mode: scene.PracticeModeFocus, DisplayName: "重点练习",
+		},
+	)
+	profiles := &profileApplicationStub{
+		profile: preparation.Profile{ID: "profile-1", Version: 1},
+		snapshot: preparation.Snapshot{
+			ID: "snapshot-1", SourceProfileID: "profile-1", SourceVersion: 1,
+		},
+	}
+	plans := &planApplicationStub{plan: preparation.PracticePlan{
+		ID:                  "10000000-0000-4000-8000-000000000001",
+		PreparationSnapshot: profiles.snapshot,
+		SceneSelection: scene.SelectionSnapshot{
+			Scene:            candidate.Scene,
+			SelectedRoleIDs:  append([]string(nil), candidate.DefaultRoleIDs...),
+			PracticeOptionID: candidate.Scene.PracticeOptions[1].ID,
+		},
+		SessionPolicy: preparation.SessionPolicy{
+			SuggestedDurationSeconds: 480, MinEffectiveTurns: 2, MaxEffectiveTurns: 5,
+		},
+		Revision: 1, Status: preparation.PlanStatusReady,
+	}}
+	port, err := NewServicePort(plans, previewCatalogStub{
+		items: []scene.PreviewCatalogCandidate{candidate},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	result, err := port.PreviewPractice(
+		context.Background(),
+		previewCallContext(),
+		PreviewInput{
+			SceneID:           candidate.Scene.ID,
+			BackgroundSummary: "Java 开发工程师，重点练习常见问题和压力应对。",
+		},
+	)
+	if err != nil {
+		t.Fatalf("PreviewPractice() error = %v", err)
+	}
+	if result.Status != "preview_ready" {
+		t.Fatalf("result = %#v, want preview_ready", result)
+	}
+	if plans.request.SceneVersion != candidate.Scene.Version ||
+		plans.request.MaxEffectiveTurns != 5 ||
+		plans.request.PracticeOptionID != candidate.Scene.PracticeOptions[1].ID {
+		t.Fatalf("plan request = %#v", plans.request)
 	}
 }
 

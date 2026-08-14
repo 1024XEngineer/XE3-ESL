@@ -243,6 +243,8 @@ func enrichPreviewInput(
 	candidate := candidates[0]
 	if input.SceneID == "" {
 		input.SceneID = candidate.SceneID
+	}
+	if input.SceneID == candidate.SceneID && input.SceneVersion < 1 {
 		input.SceneVersion = candidate.SceneVersion
 	}
 	if len(input.SelectedRoleIDs) == 0 {
@@ -257,10 +259,32 @@ func enrichPreviewInput(
 			input.PracticeOptionID = optionID
 		}
 		input.MaxEffectiveTurns = 0
-	} else if input.PracticeOptionID == "" {
-		input.PracticeOptionID = candidate.DefaultPracticeOptionID
+	} else {
+		if input.PracticeOptionID == "" {
+			input.PracticeOptionID = preferredPreviewOption(input, candidate)
+		}
+		if input.MaxEffectiveTurns < 1 {
+			input.MaxEffectiveTurns = 5
+		}
 	}
 	return input
+}
+
+func preferredPreviewOption(
+	input PreviewInput,
+	candidate CatalogCandidate,
+) string {
+	summary := strings.ToLower(input.BackgroundSummary)
+	if strings.Contains(summary, "重点练习") ||
+		strings.Contains(summary, "focus") {
+		if optionID, found := previewOptionForMode(
+			candidate,
+			scene.PracticeModeFocus,
+		); found {
+			return optionID
+		}
+	}
+	return candidate.DefaultPracticeOptionID
 }
 
 func previewMissingFields(
