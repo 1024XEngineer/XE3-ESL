@@ -504,7 +504,7 @@ func TestPostgresIELTSSpeakingResultConstraintRejectsFCBand(
 	}
 }
 
-func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
+func TestPostgresIELTSSpeakingPromptV9LineageConstraintAndRoundTrip(
 	t *testing.T,
 ) {
 	pool, repository, configuration, evaluation :=
@@ -631,8 +631,8 @@ func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
 			var databaseError *pgconn.PgError
 			if !errors.As(err, &databaseError) ||
 				databaseError.ConstraintName !=
-					"evaluation_ielts_scene_results_v8_lineage_check" {
-				t.Fatalf("invalid v8 lineage error = %v", err)
+					"evaluation_ielts_scene_results_v9_lineage_check" {
+				t.Fatalf("invalid v9 lineage error = %v", err)
 			}
 		})
 	}
@@ -642,7 +642,7 @@ func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
 		claim,
 		result,
 	); err != nil {
-		t.Fatalf("complete valid v8 lineage: %v", err)
+		t.Fatalf("complete valid v9 lineage: %v", err)
 	}
 	state, err := repository.GetIELTSSpeakingShadowState(
 		context.Background(),
@@ -651,10 +651,10 @@ func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
 		evaluation.Revision.ID,
 	)
 	if err != nil {
-		t.Fatalf("read v8 lineage: %v", err)
+		t.Fatalf("read v9 lineage: %v", err)
 	}
 	if state.Result == nil {
-		t.Fatal("round-trip v8 result is missing")
+		t.Fatal("round-trip v9 result is missing")
 	}
 	want, err := json.Marshal(result.Provider)
 	if err != nil {
@@ -669,7 +669,7 @@ func TestPostgresIELTSSpeakingPromptV8LineageConstraintAndRoundTrip(
 	}
 }
 
-func TestPostgresIELTSSpeakingPromptV8AllowsNoProviderLineageWhenInsufficient(
+func TestPostgresIELTSSpeakingPromptV9AllowsNoProviderLineageWhenInsufficient(
 	t *testing.T,
 ) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsPostgresQuestionCount-1)
