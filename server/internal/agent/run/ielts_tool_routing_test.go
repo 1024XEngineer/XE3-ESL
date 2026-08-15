@@ -895,6 +895,61 @@ func TestIELTSWarmUpAnswerRequiresMeaningfulEnglish(t *testing.T) {
 	}
 }
 
+func TestRunLoopUsesOneFocusedModelCallAfterIELTSWarmUpAnswer(t *testing.T) {
+	matchingInput := json.RawMessage(
+		`{"ielts_practice_mode":"PART_1","ielts_topic_choice":"person"}`,
+	)
+	repository := &ieltsRoutingRepository{calls: []ToolCall{{
+		Name: ieltsWarmUpToolName, Input: matchingInput,
+		Status: ToolCallSucceeded,
+	}}}
+	preview := &ieltsLoopTool{
+		name: practicePreviewToolName,
+		result: capability.Result{
+			Content:  map[string]any{"status": "preview_ready"},
+			Handoffs: []agenthandoff.Item{loopPracticeHandoff()},
+		},
+	}
+	want := "听到了，你用 patient 和 encouraged 说明了这位老师为什么让你印象深刻。"
+	generator := newScriptedGenerator(finalLoopResult(want))
+	service := newLoopTestService(t, generator)
+	setLoopTools(t, service, capabilityfixture.NewStore(), preview)
+	service.repository = repository
+	service.messages = &recordingMessageReader{message: conversation.Message{
+		Role:            conversation.MessageRoleAssistant,
+		ProducedByRunID: "previous-run",
+	}}
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{SelectedMessages: adjacentIELTSMessageSources()},
+		TextRequest{Messages: routingConversation(
+			"创建雅思 Part 1 人物类专项练习",
+			"最近有没有谁让你印象挺深？用一两句英语说说。",
+			"My teacher was patient and always encouraged me.",
+		)},
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	requests := generator.Requests()
+	if result.Content != want || preview.calls != 1 || len(requests) != 1 {
+		t.Fatalf(
+			"result = %#v, preview calls = %d, requests = %#v",
+			result,
+			preview.calls,
+			requests,
+		)
+	}
+	if len(requests[0].Messages) != 2 ||
+		!strings.Contains(requests[0].Messages[0].Content, "具体原因") ||
+		requests[0].ToolChoice.Mode != ToolChoiceNone {
+		t.Fatalf("focused request = %#v", requests[0])
+	}
+}
+
 func TestRunLoopRestoredWarmUpStateTransitions(t *testing.T) {
 	matchingInput := json.RawMessage(
 		`{"ielts_practice_mode":"PART_1","ielts_topic_choice":"random"}`,
