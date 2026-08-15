@@ -17,8 +17,8 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	golang.org/x/crypto v0.54.0
-	golang.org/x/image v0.44.0
-	golang.org/x/text v0.40.0
+	golang.org/x/image v0.45.0
+	golang.org/x/text v0.41.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.2
 )
