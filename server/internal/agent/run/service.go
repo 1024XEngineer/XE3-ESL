@@ -828,7 +828,6 @@ func (service *Service) generateObserved(
 	toolIterations := 0
 	modelIterations := 0
 	previewSucceeded := previousIELTSTool == priorIELTSToolPreview
-	practicePreviewCalledThisTurn := false
 	ieltsPreviewCreatedThisTurn := false
 	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
@@ -884,7 +883,6 @@ func (service *Service) generateObserved(
 			return TextResult{}, err
 		}
 		request.Messages = append(request.Messages, toolMessage)
-		practicePreviewCalledThisTurn = call.Name == practicePreviewToolName
 		toolCalls = 1
 		toolIterations = 1
 		writeCalls = service.writeToolCallCount([]ModelToolCall{call})
@@ -893,6 +891,30 @@ func (service *Service) generateObserved(
 			isIELTSPracticePreviewCall(call)
 		seenToolCallIDs[call.ID] = struct{}{}
 		finalDecision = "tool_call_then_response"
+		if ieltsPreviewCreatedThisTurn && ieltsRouting.currentWarmUpAnswer {
+			result := service.repairIELTSWarmUpAcknowledgement(
+				loopCtx,
+				run,
+				input,
+			)
+			service.logRoutingDecision(
+				run,
+				finalDecision,
+				nil,
+				routingReason,
+				reasonSummary(routingReason, finalDecision),
+				1,
+			)
+			service.logRunCompleted(
+				run,
+				finalDecision,
+				1,
+				toolCalls,
+				startedAt,
+				result.Content,
+			)
+			return result, nil
+		}
 		if succeeded && call.Name == ieltsWarmUpToolName {
 			if prompt, ok := ieltsWarmUpPrompt(toolMessage); ok {
 				return service.completeDirectIELTSResponse(
@@ -920,12 +942,10 @@ func (service *Service) generateObserved(
 		}
 		request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
 	}
-	guardWarmUpAnswer := ieltsRouting.currentWarmUpAnswer &&
-		ieltsPreviewCreatedThisTurn
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		modelObserver := deltaObserver
-		if practicePreviewCalledThisTurn || guardWarmUpAnswer ||
+		if toolCalls > 0 ||
 			ieltsRouting.active && request.ToolChoice.Mode != ToolChoiceNone {
 			modelObserver = nil
 		}
@@ -979,19 +999,10 @@ func (service *Service) generateObserved(
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
-			if practicePreviewCalledThisTurn {
+			if toolCalls > 0 {
 				result.Content = sanitizeUserVisiblePracticeIdentifiers(
 					result.Content,
 				)
-			}
-			if guardWarmUpAnswer &&
-				!validIELTSWarmUpAcknowledgement(result.Content, input) {
-				result = service.repairIELTSWarmUpAcknowledgement(
-					loopCtx,
-					run,
-					input,
-				)
-				modelIterations++
 			}
 			if ieltsRouting.active && !previewSucceeded &&
 				claimsIELTSPracticeReady(result.Content) {
@@ -1134,8 +1145,6 @@ func (service *Service) generateObserved(
 				return TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
-			practicePreviewCalledThisTurn = practicePreviewCalledThisTurn ||
-				call.Name == practicePreviewToolName
 			if succeeded && call.Name == ieltsWarmUpToolName {
 				warmUpSucceeded = true
 				warmUpPrompt, _ = ieltsWarmUpPrompt(toolMessage)
@@ -1146,9 +1155,6 @@ func (service *Service) generateObserved(
 		}
 		ieltsPreviewCreatedThisTurn = ieltsPreviewCreatedThisTurn ||
 			ieltsPreviewCreated
-		guardWarmUpAnswer = guardWarmUpAnswer ||
-			isEnglishWarmUpAnswerAttempt(input) &&
-				ieltsPreviewCreatedThisTurn
 		if warmUpPrompt != "" {
 			return service.completeDirectIELTSResponse(
 				run,
@@ -1160,7 +1166,7 @@ func (service *Service) generateObserved(
 				startedAt,
 			), nil
 		}
-		if ieltsPreviewCreated && !guardWarmUpAnswer {
+		if ieltsPreviewCreated {
 			return service.completeDirectIELTSResponse(
 				run,
 				"好。",
@@ -1224,8 +1230,8 @@ func (service *Service) repairIELTSWarmUpAcknowledgement(
 		Messages: []TextMessage{
 			{
 				Role: TextRoleSystem,
-				Content: "只回复一句简短、自然的中文反馈，表明你听到了学员刚才说的具体内容。" +
-					"必须原样包含学员输入里的至少一个有意义英文内容词；" +
+				Content: "只回复一句简短、自然的中文反馈，表明你理解了学员刚才说的具体内容。" +
+					"概括学员提到的对象或经历，以及令其印象深刻的具体原因，优先原样包含两个具体英文内容词；" +
 					"不要评分、纠错、追问，也不要提练习、计划、准备、卡片、创建或开始。只输出这句话。",
 			},
 			{Role: TextRoleUser, Content: input},
