@@ -2,44 +2,24 @@ package summary
 
 import "time"
 
-const (
-	summaryPolicyVersion = "summary-policy-v1"
-	summaryPromptVersion = "summary-prompt-v1"
-	workerLeaseDuration  = 2 * time.Minute
-)
+const workerLeaseDuration = 2 * time.Minute
 
-// NewProcessor builds the production summary service and worker with policy
-// owned by Conversation Summary rather than startup wiring.
 func NewProcessor(
-	repository interface {
-		Repository
-		JobRepository
-	},
+	repository Repository,
 	generator Generator,
 	provider string,
 	model string,
+	maxContextCharacters int,
 ) (Processor, error) {
-	configuration := Configuration{
-		PolicyVersion: summaryPolicyVersion,
-		PromptVersion: summaryPromptVersion,
-		Provider:      provider,
-		Model:         model,
-	}
-	service, err := NewService(repository, generator, configuration)
+	configuration := Configuration{Provider: provider, Model: model}
+	service, err := NewGeneratorService(generator, configuration)
 	if err != nil {
 		return nil, err
 	}
-	return NewWorker(
-		repository,
-		repository,
-		service,
-		WorkerConfiguration{
-			TriggerPolicyVersion: TriggerPolicyV2,
-			TriggerMessages:      DefaultTriggerMessages,
-			RetainRecentMessages: DefaultRetainedMessages,
-			LeaseDuration:        workerLeaseDuration,
-			MaxAttempts:          DefaultWorkerMaxAttempts,
-			Summary:              configuration,
-		},
-	)
+	return NewWorker(repository, service, WorkerConfiguration{
+		MaxContextCharacters: maxContextCharacters,
+		LeaseDuration:        workerLeaseDuration,
+		MaxAttempts:          DefaultWorkerMaxAttempts,
+		Generation:           configuration,
+	})
 }

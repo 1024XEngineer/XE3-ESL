@@ -27,7 +27,7 @@ type Message struct {
 	ProducedByRunID         string
 	Modality                MessageModality
 	Content                 string
-	Audio                   *MessageAudio
+	Audio                   *AudioAttachment
 	SpeechFeedbackStatusURL string
 	CreatedAt               time.Time
 }

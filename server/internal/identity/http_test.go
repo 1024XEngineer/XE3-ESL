@@ -40,13 +40,9 @@ func (a applicationStub) Register(
 	ctx context.Context,
 	email string,
 	password string,
-	displayNames ...*string,
+	displayName *string,
 ) (User, error) {
 	if a.onRegisterName != nil {
-		var displayName *string
-		if len(displayNames) == 1 {
-			displayName = displayNames[0]
-		}
 		a.onRegisterName(displayName)
 	}
 	return a.register(ctx, email, password)
@@ -217,8 +213,7 @@ func TestIdentityHTTPContract(t *testing.T) {
 		if got != actor ||
 			command.DisplayName != "林同学" ||
 			command.ExpectedProfileVersion == nil ||
-			*command.ExpectedProfileVersion != 1 ||
-			command.IdempotencyKey != "profile-request-0001" {
+			*command.ExpectedProfileVersion != 1 {
 			t.Fatalf("unexpected profile update: %#v / %#v", got, command)
 		}
 		return UserProfile{
@@ -309,7 +304,6 @@ func TestIdentityHTTPContract(t *testing.T) {
 	)
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.Header.Set("Authorization", "Bearer sess_secret")
-	updateRequest.Header.Set("Idempotency-Key", "profile-request-0001")
 	updateResponse := httptest.NewRecorder()
 	router.ServeHTTP(updateResponse, updateRequest)
 	assertStatusAndJSON(
@@ -927,7 +921,6 @@ func TestProfileUpdateRateLimitUsesAuthenticatedUserScope(t *testing.T) {
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer sess_secret")
-	request.Header.Set("Idempotency-Key", "profile-rate-limit-0001")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
@@ -972,7 +965,7 @@ func TestAuthenticationInternalErrorIsSanitized(t *testing.T) {
 func newTestRouter(
 	t *testing.T,
 	app Application,
-	authenticator Authenticator,
+	authenticator testSessionResolver,
 	limits RateLimiters,
 ) *gin.Engine {
 	return newTestRouterWithOptions(t, app, authenticator, limits)
@@ -981,7 +974,7 @@ func newTestRouter(
 func newTestRouterWithOptions(
 	t *testing.T,
 	app Application,
-	authenticator Authenticator,
+	authenticator testSessionResolver,
 	limits RateLimiters,
 	options ...HTTPOption,
 ) *gin.Engine {
@@ -989,6 +982,7 @@ func newTestRouterWithOptions(
 	gin.SetMode(gin.TestMode)
 	handler, err := NewHTTPHandler(
 		app,
+		authenticator,
 		authenticator,
 		limits,
 		func() string { return "corr_test" },
@@ -1000,6 +994,11 @@ func newTestRouterWithOptions(
 	router := gin.New()
 	handler.RegisterRoutes(router)
 	return router
+}
+
+type testSessionResolver interface {
+	Authenticator
+	LogoutSessionResolver
 }
 
 func defaultTestRateLimits() RateLimiters {

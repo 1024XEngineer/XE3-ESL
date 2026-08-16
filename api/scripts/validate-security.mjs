@@ -99,31 +99,19 @@ const bundleOpenApi = async () => {
 
 const openApi = await bundleOpenApi();
 const schemas = openApi.components?.schemas ?? {};
-const preparationProfileRequest =
-  schemas.CreatePreparationProfileRequest?.properties ?? {};
-const preparationTextPattern =
-  preparationProfileRequest.background_summary?.pattern;
-assert.equal(preparationProfileRequest.resume_ref, undefined);
-assert.equal(preparationProfileRequest.resume_id?.format, 'uuid');
-assert.equal(preparationProfileRequest.resume_revision?.minimum, 1);
+const interviewPreparationRequest =
+  schemas.CreateInterviewPreparationRequest?.properties ?? {};
+assert.equal(interviewPreparationRequest.resume?.format, 'binary');
 assert.equal(
-  preparationProfileRequest.job_description_ref?.maxLength,
-  16 * 1024,
+  interviewPreparationRequest.resume?.contentMediaType,
+  'application/pdf',
 );
-assert.equal(
-  preparationProfileRequest.background_summary?.maxLength,
-  64 * 1024,
-);
-assert.equal(
-  preparationProfileRequest.job_description_ref?.pattern,
-  preparationTextPattern,
-);
-const preparationTextExpression = new RegExp(preparationTextPattern, 'u');
-assert.match('a', preparationTextExpression);
-assert.match('internal whitespace is allowed', preparationTextExpression);
-assert.doesNotMatch(' leading', preparationTextExpression);
-assert.doesNotMatch('trailing ', preparationTextExpression);
-assert.doesNotMatch('contains\u0000nul', preparationTextExpression);
+assert.equal(interviewPreparationRequest.resume_id, undefined);
+assert.equal(interviewPreparationRequest.expected_resume_version, undefined);
+assert.equal(interviewPreparationRequest.resume_revision, undefined);
+assert.equal(interviewPreparationRequest.current_revision, undefined);
+assert.equal(interviewPreparationRequest.resource_version, undefined);
+assert.equal(schemas.ResumeSnapshot, undefined);
 const responses = openApi.components?.responses ?? {};
 
 const resolveLocalReference = (value) => {
@@ -549,13 +537,7 @@ assert.equal(
   getJsonSchema(updateProfile.requestBody)?.$ref,
   '#/components/schemas/UpdateUserProfileRequest',
 );
-assert.ok(
-  updateProfile.parameters?.some(
-    (parameter) =>
-      parameter?.$ref === '#/components/parameters/IdempotencyKey',
-  ),
-  'Profile updates must require the shared Idempotency-Key parameter.',
-);
+assert.equal(updateProfile.parameters, undefined);
 assert.ok(createPracticePlan.responses?.['201']);
 assert.equal(logout.requestBody, undefined);
 assert.equal(logout.responses?.['429'], undefined);
@@ -613,7 +595,6 @@ assert.ok(
   'Practice Plan creation must provide a request example.',
 );
 assert.ok(createPracticePlanRequestExample.source_thread_id);
-assert.ok(createPracticePlanRequestExample.goal_id);
 const createPracticePlanResponse = resolveLocalReference(
   createPracticePlan.responses['201'],
 );
@@ -624,7 +605,6 @@ assert.equal(
 const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
 assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
   'practice_option_id',
-  'preparation_snapshot_id',
   'scene_id',
   'scene_version',
   'selected_role_ids',
@@ -632,11 +612,13 @@ assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
 assert.deepEqual(
   sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
   [
-    'goal_id',
-    'ielts_selection',
+    'background_summary',
+  'expected_interview_version',
+  'ielts_prepared_answers',
+  'ielts_selection',
+    'interview_preparation_id',
     'max_effective_turns',
     'practice_option_id',
-    'preparation_snapshot_id',
     'scene_id',
     'scene_version',
     'selected_role_ids',
@@ -647,87 +629,51 @@ assert.equal(createPracticePlanRequestSchema?.additionalProperties, false);
 assert.equal(createPracticePlanRequestSchema?.oneOf, undefined);
 assert.equal(
   createPracticePlanRequestSchema?.properties?.ielts_selection?.$ref,
-  '#/components/schemas/IELTSPracticeSelection',
+  '#/components/schemas/IELTSQuestionSelection',
 );
 assert.equal(
   createPracticePlanRequestSchema?.properties?.max_effective_turns?.maximum,
   64,
   'Practice Plan requests must share the runtime turn safety limit.',
 );
-const ieltsPracticeSelectionSchema = schemas.IELTSPracticeSelection;
+const ieltsPracticeSelectionSchema = schemas.IELTSQuestionSelection;
 assert.deepEqual(
   sorted(Object.keys(ieltsPracticeSelectionSchema?.properties ?? {})),
   ['cue_card_type', 'part_1_set_id', 'topic_group_id'],
 );
-assert.deepEqual(
-  ieltsPracticeSelectionSchema?.properties?.cue_card_type?.enum,
-  ['person', 'place', 'thing', 'experience'],
+assert.equal(
+  createPracticePlanRequestSchema?.properties?.source_thread_id?.format,
+  'uuid',
 );
 assert.equal(
-  ieltsPracticeSelectionSchema?.oneOf?.length,
-  4,
-  'IELTS selection must support exact ids or one category-only strategy.',
+  createPracticePlanRequestSchema?.properties?.interview_preparation_id?.$ref,
+  '#/components/schemas/AggregateId',
 );
-const updatePracticePlanRequestSchema = schemas.UpdatePracticePlanRequest;
-assert.equal(
-  updatePracticePlanRequestSchema?.properties?.ielts_selection?.$ref,
-  '#/components/schemas/IELTSPracticeExactSelection',
-);
-const ieltsPracticeExactSelectionSchema = schemas.IELTSPracticeExactSelection;
-assert.deepEqual(
-  sorted(Object.keys(ieltsPracticeExactSelectionSchema?.properties ?? {})),
-  ['part_1_set_id', 'topic_group_id'],
-);
-assert.equal(
-  ieltsPracticeExactSelectionSchema?.oneOf?.length,
-  3,
-  'IELTS updates must accept exact ids only.',
-);
-for (const contextField of ['source_thread_id', 'goal_id']) {
-  assert.equal(
-    createPracticePlanRequestSchema?.properties?.[contextField]?.$ref,
-    '#/components/schemas/ResourceId',
-    `${contextField} must reuse ResourceId.`,
-  );
-}
 
 const practicePlanSchema = schemas.PracticePlan;
 assert.ok(!practicePlanSchema?.required?.includes('source_thread_id'));
-assert.ok(!practicePlanSchema?.required?.includes('goal_snapshot'));
 assert.ok(practicePlanSchema?.required?.includes('preparation_snapshot'));
 assert.ok(practicePlanSchema?.required?.includes('scene_selection'));
 assert.ok(practicePlanSchema?.required?.includes('session_policy'));
 assert.ok(practicePlanSchema?.required?.includes('practice_objectives'));
 assert.ok(!practicePlanSchema?.required?.includes('ielts_assignment'));
 assert.equal(
-  practicePlanSchema?.properties?.source_thread_id?.$ref,
-  '#/components/schemas/ResourceId',
+  practicePlanSchema?.properties?.practice_plan_id?.$ref,
+  '#/components/schemas/AggregateId',
+);
+assert.equal(
+  practicePlanSchema?.properties?.source_thread_id?.format,
+  'uuid',
 );
 assert.deepEqual(
   practicePlanSchema?.properties?.practice_plan_status?.enum,
-  ['ready', 'archived'],
+  ['draft', 'ready'],
 );
 assert.equal(
   practicePlanSchema?.properties?.ielts_assignment?.$ref,
-  '#/components/schemas/IELTSPracticeAssignment',
+  '#/components/schemas/IELTSAssignment',
 );
-assert.equal(
-  practicePlanSchema?.allOf?.[0]?.if?.properties?.scene_selection?.properties
-    ?.scene?.properties?.practice_experience?.const,
-  'IELTS_SPEAKING',
-  'PracticePlan must identify IELTS through its frozen Scene.',
-);
-assert.deepEqual(
-  practicePlanSchema?.allOf?.[0]?.then?.required,
-  ['ielts_assignment'],
-  'IELTS PracticePlan must freeze its Part composition.',
-);
-assert.deepEqual(
-  practicePlanSchema?.allOf?.[0]?.else?.not?.required,
-  ['ielts_assignment'],
-  'Non-IELTS PracticePlan must not carry an IELTS assignment.',
-);
-const ieltsAssignmentSchema = schemas.IELTSPracticeAssignment;
+const ieltsAssignmentSchema = schemas.IELTSAssignment;
 assert.deepEqual(
   sorted(ieltsAssignmentSchema?.required ?? []),
   ['bank_id', 'mode', 'parts', 'season'],
@@ -735,9 +681,9 @@ assert.deepEqual(
 assert.equal(ieltsAssignmentSchema?.additionalProperties, false);
 assert.equal(
   ieltsAssignmentSchema?.properties?.parts?.items?.$ref,
-  '#/components/schemas/IELTSPracticePartAssignment',
+  '#/components/schemas/IELTSAssignmentPart',
 );
-const ieltsPartAssignmentSchema = schemas.IELTSPracticePartAssignment;
+const ieltsPartAssignmentSchema = schemas.IELTSAssignmentPart;
 assert.deepEqual(
   sorted(ieltsPartAssignmentSchema?.required ?? []),
   ['part', 'source_id', 'turn_blueprints'],
@@ -748,65 +694,6 @@ assert.deepEqual(ieltsPartAssignmentSchema?.properties?.part?.enum, [
   'PART_3',
 ]);
 assert.equal(ieltsPartAssignmentSchema?.additionalProperties, false);
-const ieltsPartRules = new Map(
-  (ieltsPartAssignmentSchema?.allOf ?? []).map((rule) => [
-    rule?.if?.properties?.part?.const,
-    rule?.then,
-  ]),
-);
-assert.deepEqual(
-  [...ieltsPartRules.keys()],
-  ['PART_1', 'PART_2', 'PART_3'],
-  'Every IELTS Part must have one explicit metadata rule.',
-);
-assert.deepEqual(
-  ieltsPartRules.get('PART_1')?.not?.anyOf?.map(
-    (rule) => rule.required?.[0],
-  ),
-  ['topic_title', 'cue_card'],
-  'Part 1 must forbid topic and Cue Card metadata.',
-);
-assert.deepEqual(
-  ieltsPartRules.get('PART_2')?.required,
-  ['topic_title', 'cue_card'],
-  'Part 2 must require topic and Cue Card metadata.',
-);
-assert.equal(
-  ieltsPartRules.get('PART_2')?.properties?.turn_blueprints?.maxItems,
-  1,
-  'Part 2 must freeze exactly one primary Question blueprint.',
-);
-assert.deepEqual(
-  ieltsPartRules.get('PART_3')?.required,
-  ['topic_title'],
-  'Part 3 must require linked topic metadata.',
-);
-assert.deepEqual(
-  ieltsPartRules.get('PART_3')?.not?.required,
-  ['cue_card'],
-  'Part 3 must forbid Cue Card metadata.',
-);
-const ieltsPartsByMode = new Map(
-  (ieltsAssignmentSchema?.allOf ?? []).map((rule) => [
-    rule?.if?.properties?.mode?.const,
-    rule?.then?.properties?.parts,
-  ]),
-);
-for (const [mode, expectedParts] of new Map([
-  ['FULL_MOCK', ['PART_1', 'PART_2', 'PART_3']],
-  ['PART_1', ['PART_1']],
-  ['PART_2', ['PART_2', 'PART_3']],
-  ['PART_3', ['PART_3']],
-])) {
-  const partsRule = ieltsPartsByMode.get(mode);
-  assert.equal(partsRule?.minItems, expectedParts.length);
-  assert.equal(partsRule?.maxItems, expectedParts.length);
-  assert.deepEqual(
-    partsRule?.prefixItems?.map((item) => item.properties?.part?.const),
-    expectedParts,
-    `${mode} must freeze its exact ordered Part composition.`,
-  );
-}
 
 const userSchema = schemas.User;
 assert.deepEqual(sorted(userSchema?.required ?? []), ['email', 'user_id']);
@@ -1103,84 +990,6 @@ assert.deepEqual(sorted(tokenResponseLocations), [
   'POST /v1/practice-sessions/{practice_session_id}/avatar-session-token 200 session_token',
 ]);
 
-const websocket = requireOperation(
-  'GET /v1/practice-sessions/{practice_session_id}/events',
-);
-const websocketSecurity = websocket['x-websocket-security'];
-assert.equal(websocketSecurity?.credential_location, 'authorization_header');
-assert.equal(websocketSecurity?.header, 'Authorization');
-assert.equal(websocketSecurity?.scheme, 'Bearer');
-assert.equal(websocketSecurity?.other_credential_locations_allowed, false);
-assert.equal(websocketSecurity?.production_transport, 'wss');
-assert.equal(websocketSecurity?.local_loopback_transport, 'ws');
-assert.deepEqual(websocketSecurity?.pre_upgrade?.validation_order, [
-  'session',
-  'actor',
-  'resource_ownership',
-  'replay_cursor',
-  'subprotocol',
-  'upgrade',
-]);
-assert.deepEqual(websocketSecurity?.pre_upgrade?.authentication_failure, {
-  http_status: 401,
-  error_code: 'authentication_required',
-});
-assert.deepEqual(websocketSecurity?.pre_upgrade?.resource_not_visible, {
-  http_status: 404,
-  error_code: 'resource_not_found',
-});
-assert.equal(websocketSecurity?.reconnect?.reauthenticate, true);
-assert.deepEqual(websocketSecurity?.connection_binding, {
-  actor_fields: ['user_id', 'session_id'],
-  target_field: 'practice_session_id',
-  target_switch_allowed: false,
-});
-assert.deepEqual(websocketSecurity?.logout, {
-  close_connections_by: 'session_id',
-  all_matching_connections: true,
-});
-assert.deepEqual(websocketSecurity?.active_connection?.authorization_recheck, {
-  before_replay_batch: true,
-  before_private_outbound_event: true,
-  checks: ['session_validity', 'resource_ownership'],
-});
-assert.deepEqual(websocketSecurity?.active_connection?.invalid_session, {
-  close_code: 4401,
-  close_reason: 'session_invalid',
-  send_application_events_before_close: false,
-});
-assert.equal(
-  websocketSecurity?.active_connection?.ordinary_disconnect?.is_logout,
-  false,
-);
-assert.deepEqual(websocketSecurity?.subprotocol?.allowed, [
-  'speakup.events.v1',
-]);
-assert.equal(websocketSecurity?.subprotocol?.carries_credentials, false);
-assert.equal(websocketSecurity?.after_sequence?.is_credential, false);
-
-const websocketParameters = Object.fromEntries(
-  (websocket.parameters ?? []).map((parameterValue) => {
-    const parameter = resolveLocalReference(parameterValue);
-    return [parameter.name, parameter];
-  }),
-);
-assert.equal(websocketParameters['Sec-WebSocket-Protocol']?.in, 'header');
-assert.equal(websocketParameters['Sec-WebSocket-Protocol']?.required, true);
-assert.equal(
-  resolveLocalReference(
-    websocketParameters['Sec-WebSocket-Protocol']?.schema,
-  )?.const,
-  'speakup.events.v1',
-);
-assert.equal(
-  resolveLocalReference(websocket.responses?.['101'])?.headers?.[
-    'Sec-WebSocket-Protocol'
-  ]?.schema?.const,
-  'speakup.events.v1',
-);
-assert.equal(websocketParameters.after_sequence?.in, 'query');
-
 const agentVoiceTranscription = requireOperation(
   'GET /v1/agent-threads/{thread_id}/voice-transcriptions/realtime',
 );
@@ -1224,79 +1033,35 @@ assert.equal(
   'speakup.voice-input.v1',
 );
 
-const interviewReport = requireOperation(
-  'GET /v1/practice-sessions/{practice_session_id}/interview-report',
-);
-assert.equal(interviewReport.operationId, 'getInterviewReport');
-assert.deepEqual(
-  interviewReport.security ?? openApi.security,
-  bearerSecurity,
-  'Interview reports must derive the Actor from BearerSession.',
-);
-assert.ok(interviewReport.responses?.['200']);
-assert.ok(interviewReport.responses?.['401']);
-assert.ok(interviewReport.responses?.['404']);
-assert.ok(interviewReport.responses?.['409']);
-const interviewReportResponse = resolveLocalReference(
-  interviewReport.responses['200'],
-);
-assert.equal(
-  interviewReportResponse?.headers?.['Cache-Control']?.schema?.const,
-  'private, no-store',
-  'Interview reports must prohibit shared and private caching.',
-);
-assert.equal(
-  getJsonSchema(interviewReportResponse)?.$ref,
-  '#/components/schemas/InterviewReportEnvelope',
-);
-assert.ok(
-  schemas.InterviewReportEnvelope,
-  'The root contract must export InterviewReportEnvelope.',
-);
-assert.ok(
-  schemas.InterviewReport,
-  'The root contract must export InterviewReport.',
-);
-assert.match(interviewReport.description ?? '', /another Actor/i);
-assert.match(interviewReport.description ?? '', /must not log/i);
-
-const ieltsSpeakingReport = requireOperation(
-  'GET /v1/practice-sessions/{practice_session_id}/ielts-speaking-report',
-);
-assert.equal(
-  ieltsSpeakingReport.operationId,
-  'getIeltsSpeakingReport',
-);
-assert.deepEqual(
-  ieltsSpeakingReport.security ?? openApi.security,
-  bearerSecurity,
-  'IELTS Speaking reports must derive the Actor from BearerSession.',
-);
-for (const status of ['200', '401', '404', '409']) {
-  assert.ok(ieltsSpeakingReport.responses?.[status]);
+for (const [operationKey, operationId] of [
+  [
+    'GET /v1/practice-sessions/{practice_session_id}/evaluation',
+    'getPracticeSessionEvaluation',
+  ],
+  [
+    'GET /v1/practice-turns/{turn_id}/evaluation',
+    'getPracticeTurnEvaluation',
+  ],
+  [
+    'GET /v1/agent-messages/{message_id}/evaluation',
+    'getAgentMessageEvaluation',
+  ],
+]) {
+  const operation = requireOperation(operationKey);
+  assert.equal(operation.operationId, operationId);
+  assert.deepEqual(
+    operation.security ?? openApi.security,
+    bearerSecurity,
+    `${operationKey} must derive the Actor from BearerSession.`,
+  );
+  for (const status of ['200', '401', '404', 'default']) {
+    assert.ok(operation.responses?.[status], `${operationKey} must declare ${status}.`);
+  }
+  assert.equal(
+    getJsonSchema(resolveLocalReference(operation.responses['200']))?.$ref,
+    '#/components/schemas/EvaluationResource',
+  );
 }
-const ieltsSpeakingReportResponse = resolveLocalReference(
-  ieltsSpeakingReport.responses['200'],
-);
-assert.equal(
-  ieltsSpeakingReportResponse?.headers?.['Cache-Control']?.schema?.const,
-  'private, no-store',
-  'IELTS Speaking reports must prohibit shared and private caching.',
-);
-assert.equal(
-  getJsonSchema(ieltsSpeakingReportResponse)?.$ref,
-  '#/components/schemas/IeltsSpeakingReportEnvelope',
-);
-assert.ok(
-  schemas.IeltsSpeakingReportEnvelope,
-  'The root contract must export IeltsSpeakingReportEnvelope.',
-);
-assert.ok(
-  schemas.IeltsSpeakingReport,
-  'The root contract must export IeltsSpeakingReport.',
-);
-assert.match(ieltsSpeakingReport.description ?? '', /another Actor/i);
-assert.match(ieltsSpeakingReport.description ?? '', /must not log/i);
 
 const evaluationReportHistory = requireOperation('GET /v1/evaluation-reports');
 const evaluationReportHistoryParameters = Object.fromEntries(
@@ -1323,11 +1088,112 @@ assert.equal(
   'Evaluation report request cursor must accept the server next_cursor format.',
 );
 assert.match(
-  'signed_payload.signed_mac',
+  'eyJjcmVhdGVkX2F0IjoiMjAyNi0wOC0xNVQwMDowMDowMFoiLCJyZXBvcnRfaWQiOiI3MzExYWRiNC0xZWEwLTQxYzctOGM2ZC1mMzM2Zjg1NGYxYzYifQ',
   new RegExp(evaluationReportCursorPattern, 'u'),
 );
+assert.doesNotMatch(
+  'signed_payload.signed_mac',
+  new RegExp(evaluationReportCursorPattern, 'u'),
+  'Evaluation cursors are one opaque base64url segment.',
+);
+
+const evaluationReport = requireOperation(
+  'GET /v1/evaluation-reports/{report_id}',
+);
+assert.equal(evaluationReport.operationId, 'getEvaluationReport');
+assert.deepEqual(
+  evaluationReport.security ?? openApi.security,
+  bearerSecurity,
+  'Evaluation report lookup must derive the Actor from BearerSession.',
+);
+assert.equal(
+  getJsonSchema(resolveLocalReference(evaluationReport.responses['200']))?.$ref,
+  '#/components/schemas/StoredFormalReport',
+);
+
+for (const schemaName of [
+  'EvaluationResource',
+  'FormalReport',
+  'StoredFormalReport',
+  'SpeechEvaluationResult',
+  'FeedbackItem',
+  'CreateRetryTurnResponse',
+]) {
+  assert.ok(schemas[schemaName], `The root contract must export ${schemaName}.`);
+}
+
+const speechEvaluationResult = resolveLocalReference(
+  schemas.SpeechEvaluationResult,
+);
+const acousticAssessment = resolveLocalReference(
+  speechEvaluationResult.properties.acoustic,
+);
+const assessedAcoustic = acousticAssessment.oneOf
+  .map(resolveLocalReference)
+  .find((candidate) => candidate.properties?.status?.const === 'ASSESSED');
+assert.ok(assessedAcoustic, 'Speech evaluation must declare ASSESSED acoustics.');
+assert.equal(assessedAcoustic.properties.provider, undefined);
+assert.equal(assessedAcoustic.properties.provider_session, undefined);
+
+const createFeedbackRetryTurn = requireOperation(
+  'POST /v1/evaluation-feedback-items/{feedback_item_id}/retry-turns',
+);
+assert.equal(
+  createFeedbackRetryTurn.operationId,
+  'createEvaluationFeedbackRetryTurn',
+);
+assert.equal(
+  createFeedbackRetryTurn.requestBody,
+  undefined,
+  'Retry creation has no client-controlled body.',
+);
+assert.deepEqual(
+  createFeedbackRetryTurn.security ?? openApi.security,
+  bearerSecurity,
+  'Retry creation must derive the Actor from BearerSession.',
+);
+for (const status of ['200', '201', '400', '401', '404', '409', 'default']) {
+  assert.ok(
+    createFeedbackRetryTurn.responses?.[status],
+    `Retry creation must declare ${status}.`,
+  );
+}
+const feedbackRetryParameters = (
+  createFeedbackRetryTurn.parameters ?? []
+).map(resolveLocalReference);
+assert.ok(
+  feedbackRetryParameters.some(
+    (parameter) =>
+      parameter.name === 'Idempotency-Key' &&
+      parameter.in === 'header' &&
+      parameter.required === true,
+  ),
+  'Retry creation must require Idempotency-Key.',
+);
+for (const status of ['200', '201']) {
+  const response = resolveLocalReference(
+    createFeedbackRetryTurn.responses[status],
+  );
+  assert.equal(
+    getJsonSchema(response)?.$ref,
+    '#/components/schemas/CreateRetryTurnResponse',
+  );
+  assert.equal(
+    response.headers?.Location,
+    undefined,
+    'Retry creation must not advertise a nonexistent Turn lookup route.',
+  );
+}
 
 for (const retiredOperation of [
+  'POST /v1/evaluations',
+  'GET /v1/evaluations/{evaluation_id}',
+  'POST /v1/evaluations/{evaluation_id}/re-evaluate',
+  'GET /v1/practice-sessions/{practice_session_id}/interview-report',
+  'GET /v1/practice-sessions/{practice_session_id}/ielts-speaking-report',
+  'GET /v1/speech-feedback/{speech_feedback_id}',
+  'POST /v1/feedback-items/{feedback_item_id}/retry-requests',
+  'GET /v1/retry-requests/{retry_request_id}',
   'POST /v1/turns/{turn_id}/turn-analyses',
   'GET /v1/turns/{turn_id}/turn-analyses',
   'GET /v1/turn-analyses/{turn_analysis_id}/feedback-items',
@@ -1348,288 +1214,6 @@ assert.equal(
   undefined,
   'The score-bearing HistoryRecord schema must not remain public.',
 );
-for (const schemaName of [
-  'SpeechFeedback',
-  'SpeechFeedbackSource',
-  'SpeechFeedbackAnchor',
-  'FeedbackItem',
-  'RetryRequest',
-  'RetryTranscriptionCandidate',
-  'ConfirmedRetryTurn',
-]) {
-  assert.ok(schemas[schemaName], `The root contract must export ${schemaName}.`);
-}
-
-const assertPrivateNoStoreResponses = (operation, statuses, label) => {
-  for (const status of statuses) {
-    const response = resolveLocalReference(operation.responses?.[status]);
-    assert.ok(response, `${label} must declare ${status}.`);
-    assert.equal(
-      resolveLocalReference(response.headers?.['Cache-Control'])?.schema?.const,
-      'private, no-store',
-      `${label} ${status} must prohibit shared and private caching.`,
-    );
-  }
-};
-
-const getSpeechFeedback = requireOperation(
-  'GET /v1/speech-feedback/{speech_feedback_id}',
-);
-assert.equal(getSpeechFeedback.operationId, 'getSpeechFeedback');
-assert.deepEqual(
-  getSpeechFeedback.security ?? openApi.security,
-  bearerSecurity,
-  'Speech feedback must derive the Actor from BearerSession.',
-);
-assertPrivateNoStoreResponses(
-  getSpeechFeedback,
-  ['200', '401', '404', 'default'],
-  'Speech feedback',
-);
-assert.equal(
-  getJsonSchema(resolveLocalReference(getSpeechFeedback.responses['200']))
-    ?.$ref,
-  '#/components/schemas/SpeechFeedback',
-);
-assert.equal(schemas.SpeechFeedback?.['x-max-json-bytes'], 524288);
-assert.match(getSpeechFeedback.description ?? '', /Another Actor/i);
-assert.match(getSpeechFeedback.description ?? '', /must not persist/i);
-
-const createRetryRequest = requireOperation(
-  'POST /v1/feedback-items/{feedback_item_id}/retry-requests',
-);
-assert.equal(createRetryRequest.operationId, 'requestRetry');
-assert.equal(
-  createRetryRequest.requestBody,
-  undefined,
-  'Retry creation has no client-controlled body.',
-);
-assertPrivateNoStoreResponses(
-  createRetryRequest,
-  ['200', '201', '400', '401', '404', '409', 'default'],
-  'Retry creation',
-);
-const retryCreationParameters = (createRetryRequest.parameters ?? []).map(
-  resolveLocalReference,
-);
-assert.ok(
-  retryCreationParameters.some(
-    (parameter) =>
-      parameter.name === 'Idempotency-Key' &&
-      parameter.in === 'header' &&
-      parameter.required === true,
-  ),
-  'Retry creation must require Idempotency-Key.',
-);
-
-const getRetryRequest = requireOperation(
-  'GET /v1/retry-requests/{retry_request_id}',
-);
-assert.equal(getRetryRequest.operationId, 'getRetryRequest');
-assertPrivateNoStoreResponses(
-  getRetryRequest,
-  ['200', '401', '404', 'default'],
-  'Retry lookup',
-);
-const retryRequestSchema = resolveLocalReference(schemas.RetryRequest);
-assert.equal(
-  retryRequestSchema?.properties?.new_turn_status?.const,
-  'ANSWERING',
-);
-assert.equal(
-  retryRequestSchema?.properties?.answer_path?.pattern,
-  '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$',
-);
-const createRetryTurnCommand = resolveLocalReference(
-  schemas.CreateRetryTurnCommand,
-);
-assert.deepEqual(
-  createRetryTurnCommand?.required,
-  [
-    'retry_request_id',
-    'practice_session_id',
-    'original_turn_id',
-    'question_id',
-  ],
-  'CreateRetryTurnCommand must match the production Review-to-Conversation command.',
-);
-assert.equal(
-  createRetryTurnCommand?.properties?.reason,
-  undefined,
-  'CreateRetryTurnCommand must not retain the retired smoke-only reason field.',
-);
-const createRetryTurnResult = resolveLocalReference(
-  schemas.CreateRetryTurnResult,
-);
-for (const requiredProperty of [
-  'retry_request_id',
-  'question_id',
-  'new_turn_id',
-  'new_turn_status',
-  'answer_path',
-]) {
-  assert.ok(
-    createRetryTurnResult?.required?.includes(requiredProperty),
-    `CreateRetryTurnResult must require ${requiredProperty}.`,
-  );
-}
-assert.equal(
-  createRetryTurnResult?.properties?.new_turn_status?.const,
-  'ANSWERING',
-);
-assert.equal(
-  createRetryTurnResult?.properties?.answer_path?.pattern,
-  '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$',
-);
-
-const assertRequiredIdempotencyKey = (operation, label) => {
-  const parameters = (operation.parameters ?? []).map(resolveLocalReference);
-  assert.ok(
-    parameters.some(
-      (parameter) =>
-        parameter.name === 'Idempotency-Key' &&
-        parameter.in === 'header' &&
-        parameter.required === true,
-    ),
-    `${label} must require Idempotency-Key.`,
-  );
-};
-
-const createRetryCandidate = requireOperation(
-  'POST /v1/retry-turns/{retry_turn_id}/transcription-candidates',
-);
-assert.equal(
-  createRetryCandidate.operationId,
-  'createRetryTurnTranscriptionCandidate',
-);
-assertRequiredIdempotencyKey(createRetryCandidate, 'Retry candidate creation');
-const retryCandidateRequestBody = resolveLocalReference(
-  createRetryCandidate.requestBody,
-);
-assert.deepEqual(
-  Object.keys(retryCandidateRequestBody?.content ?? {}),
-  ['audio/wav'],
-  'Retry candidate creation must accept raw WAV only.',
-);
-assert.equal(
-  resolveLocalReference(
-    retryCandidateRequestBody.content['audio/wav']?.schema,
-  )?.format,
-  'binary',
-);
-assertPrivateNoStoreResponses(
-  createRetryCandidate,
-  ['201', '400', '401', '404', '409', 'default'],
-  'Retry candidate creation',
-);
-assert.equal(
-  createRetryCandidate.responses['200'],
-  undefined,
-  'Retry candidate creation must use 201 for both creation and idempotent restore.',
-);
-assert.equal(
-  getJsonSchema(
-    resolveLocalReference(createRetryCandidate.responses['201']),
-  )?.$ref,
-  '#/components/schemas/RetryTranscriptionCandidate',
-);
-assert.match(
-  resolveLocalReference(createRetryCandidate.responses['201'])?.description ??
-    '',
-  /newly created.*idempotent replay/is,
-);
-assert.match(
-  createRetryCandidate.description ?? '',
-  /derives|resolves/i,
-);
-assert.match(
-  createRetryCandidate.description ?? '',
-  /never.*VoiceSessionState/is,
-);
-
-const confirmRetryCandidate = requireOperation(
-  'POST /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations',
-);
-assert.equal(
-  confirmRetryCandidate.operationId,
-  'confirmRetryTurnTranscriptionCandidate',
-);
-assert.equal(
-  confirmRetryCandidate.requestBody,
-  undefined,
-  'Retry confirmation must not accept a client-controlled body.',
-);
-assertRequiredIdempotencyKey(confirmRetryCandidate, 'Retry confirmation');
-assertPrivateNoStoreResponses(
-  confirmRetryCandidate,
-  ['200', '400', '401', '404', '409', 'default'],
-  'Retry confirmation',
-);
-assert.equal(
-  getJsonSchema(
-    resolveLocalReference(confirmRetryCandidate.responses['200']),
-  )?.$ref,
-  '#/components/schemas/ConfirmedRetryTurn',
-);
-assert.doesNotMatch(
-  JSON.stringify(confirmRetryCandidate.responses['200']),
-  /VoiceSessionState/,
-  'Retry confirmation must not reuse VoiceSessionState.',
-);
-
-const retryCandidateSchema = resolveLocalReference(
-  schemas.RetryTranscriptionCandidate,
-);
-for (const requiredProperty of [
-  'candidate_id',
-  'retry_turn_id',
-  'retry_request_id',
-  'practice_session_id',
-  'question_id',
-  'respondent_participant_id',
-  'transcript_id',
-  'evidence_version',
-  'transcript',
-]) {
-  assert.ok(
-    retryCandidateSchema?.required?.includes(requiredProperty),
-    `RetryTranscriptionCandidate must require ${requiredProperty}.`,
-  );
-}
-
-const confirmedRetryTurnSchema = resolveLocalReference(
-  schemas.ConfirmedRetryTurn,
-);
-assert.equal(
-  confirmedRetryTurnSchema?.properties?.turn_kind?.const,
-  'RETRY',
-);
-assert.equal(
-  confirmedRetryTurnSchema?.properties?.turn_status?.const,
-  'CONFIRMED',
-);
-assert.equal(
-  confirmedRetryTurnSchema?.properties?.counts_toward_turn_limit?.const,
-  false,
-);
-for (const forbiddenProperty of [
-  'effective_turns',
-  'session_completed',
-  'session_version',
-  'turn_limit',
-  'current_question',
-  'current_turn',
-  'turn_history',
-  'review_id',
-  'speech_feedback_status_url',
-]) {
-  assert.equal(
-    confirmedRetryTurnSchema?.properties?.[forbiddenProperty],
-    undefined,
-    `ConfirmedRetryTurn must not expose ${forbiddenProperty}.`,
-  );
-}
-
 const normalConfirmation = requireOperation(
   'POST /v1/transcription-candidates/{candidate_id}/confirmations',
 );
@@ -1652,7 +1236,7 @@ assert.equal(
 
 for (const [schemaName, propertyName] of [
   ['AgentMessage', 'speech_feedback_status_url'],
-  ['ConfirmedVoiceTurn', 'speech_feedback_status_url'],
+  ['ConfirmedPracticeTurn', 'speech_feedback_status_url'],
 ]) {
   const schema = resolveLocalReference(schemas[schemaName]);
   assert.ok(
@@ -1664,18 +1248,18 @@ for (const [schemaName, propertyName] of [
     `${schemaName}.${propertyName} must be absent rather than null when hidden.`,
   );
 }
-const voiceSessionState = resolveLocalReference(schemas.VoiceSessionState);
+const practiceInteractionState = resolveLocalReference(schemas.PracticeInteractionState);
 assert.equal(
-  voiceSessionState?.properties?.ielts_assignment?.$ref,
-  '#/components/schemas/IELTSPracticeAssignment',
-  'VoiceSessionState must expose the frozen IELTS Part composition.',
+  practiceInteractionState?.properties?.ielts_assignment?.$ref,
+  '#/components/schemas/IELTSAssignment',
+  'PracticeInteractionState must expose the frozen IELTS Part composition.',
 );
 assert.ok(
-  !(voiceSessionState?.required ?? []).includes('ielts_assignment'),
-  'Non-IELTS Voice Sessions must not require an IELTS assignment.',
+  !(practiceInteractionState?.required ?? []).includes('ielts_assignment'),
+  'Non-IELTS Practice Sessions must not require an IELTS assignment.',
 );
-const voiceAssignmentModes = new Map(
-  (voiceSessionState?.allOf ?? [])
+const practiceAssignmentModes = new Map(
+  (practiceInteractionState?.allOf ?? [])
     .filter((rule) => rule?.if?.properties?.practice_mode?.const)
     .map((rule) => [
       rule.if.properties.practice_mode.const,
@@ -1683,59 +1267,59 @@ const voiceAssignmentModes = new Map(
     ]),
 );
 assert.deepEqual(
-  voiceAssignmentModes,
+  practiceAssignmentModes,
   new Map([
     ['FULL_MOCK', 'FULL_MOCK'],
     ['PART_1', 'PART_1'],
     ['PART_2', 'PART_2'],
     ['PART_3', 'PART_3'],
   ]),
-  'Voice restore must keep practice_mode and the frozen IELTS mode equal.',
+  'Practice restore must keep practice_mode and the frozen IELTS mode equal.',
 );
-const voiceQuestion = resolveLocalReference(schemas.VoiceQuestion);
+const practiceQuestion = resolveLocalReference(schemas.PracticeQuestion);
 assert.ok(
-  voiceQuestion?.required?.includes('question_type'),
-  'VoiceQuestion must expose its PRIMARY/FOLLOW_UP classification.',
+  practiceQuestion?.required?.includes('question_type'),
+  'PracticeQuestion must expose its PRIMARY/FOLLOW_UP classification.',
 );
-assert.deepEqual(voiceQuestion.properties.question_type.enum, [
+assert.deepEqual(practiceQuestion.properties.question_type.enum, [
   'PRIMARY',
   'FOLLOW_UP',
 ]);
-const confirmedVoiceTurn = resolveLocalReference(schemas.ConfirmedVoiceTurn);
+const confirmedPracticeTurn = resolveLocalReference(schemas.ConfirmedPracticeTurn);
 assert.ok(
-  confirmedVoiceTurn?.required?.includes(
+  confirmedPracticeTurn?.required?.includes(
     'counts_toward_effective_turn_limit',
   ),
-  'ConfirmedVoiceTurn must expose whether it advances the displayed round.',
+  'ConfirmedPracticeTurn must expose whether it advances the displayed round.',
 );
 assert.ok(
-  voiceSessionState?.properties?.turn_history,
-  'VoiceSessionState must expose the cold-start Turn history.',
+  practiceInteractionState?.properties?.turn_history,
+  'PracticeInteractionState must expose the cold-start Turn history.',
 );
 assert.equal(
-  voiceSessionState.properties.turn_history.maxItems,
+  practiceInteractionState.properties.turn_history.maxItems,
   undefined,
   'User-controlled Turn history must not impose a fixed round-count bound.',
 );
 assert.equal(
-  voiceSessionState.properties.turn_limit.maximum,
+  practiceInteractionState.properties.turn_limit.maximum,
   64,
-  'Voice restore must enforce the primary Question safety limit.',
+  'Practice restore must enforce the primary Question safety limit.',
 );
 assert.ok(
-  !(voiceSessionState.required ?? []).includes('turn_history'),
+  !(practiceInteractionState.required ?? []).includes('turn_history'),
   'turn_history must remain an optional projection.',
 );
 assert.match(
-  voiceSessionState.properties.turn_history.description ?? '',
+  practiceInteractionState.properties.turn_history.description ?? '',
   /EFFECTIVE/,
 );
 const voiceTurnHistoryEntry = resolveLocalReference(
-  voiceSessionState.properties.turn_history.items,
+  practiceInteractionState.properties.turn_history.items,
 );
 assert.equal(
   voiceTurnHistoryEntry?.properties?.turn?.$ref,
-  '#/components/schemas/ConfirmedVoiceTurn',
+  '#/components/schemas/ConfirmedPracticeTurn',
 );
 const ordinaryConfirmedTurn = resolveLocalReference(
   voiceTurnHistoryEntry.properties.turn,
@@ -1749,7 +1333,7 @@ for (const retryOnlyProperty of [
   assert.equal(
     ordinaryConfirmedTurn?.properties?.[retryOnlyProperty],
     undefined,
-    `Ordinary ConfirmedVoiceTurn must not expose ${retryOnlyProperty}.`,
+    `Ordinary ConfirmedPracticeTurn must not expose ${retryOnlyProperty}.`,
   );
 }
 

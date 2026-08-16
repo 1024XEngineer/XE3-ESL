@@ -8,7 +8,7 @@ import (
 
 	paddleapi "github.com/PaddlePaddle/PaddleOCR/api_sdk/go"
 
-	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/resume/ocr"
+	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/ocr"
 )
 
 func TestClientMapsDocumentParsingResponseWithoutLeakingURL(t *testing.T) {

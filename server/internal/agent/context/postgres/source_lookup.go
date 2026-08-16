@@ -8,21 +8,6 @@ import (
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 )
 
-const summaryCheckpointSelectColumns = `
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    COALESCE(previous_checkpoint_id::text, ''),
-    source_from_sequence,
-    covered_through_sequence,
-    summary_content,
-    policy_version,
-    prompt_version,
-    provider,
-    model,
-    source_checksum,
-    created_at`
-
 func (r *Repository) FindThread(
 	ctx context.Context,
 	ownerID string,
@@ -32,25 +17,20 @@ func (r *Repository) FindThread(
 	err := r.database.QueryRow(ctx, `
 SELECT
     threads.id::text,
-    threads.owner_user_id::text,
+    threads.user_id::text,
     COALESCE(threads.title, ''),
-    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_goal_links AS active_link
-  ON active_link.thread_id = threads.id
- AND active_link.owner_user_id = threads.owner_user_id
- AND active_link.is_active
-WHERE threads.id = $1 AND threads.owner_user_id = $2`,
+WHERE threads.id = $1 AND threads.user_id = $2
+  AND threads.deleted_at IS NULL`,
 		threadID,
 		ownerID,
 	).Scan(
 		&result.ID,
 		&result.OwnerID,
 		&result.Title,
-		&result.ActiveGoalID,
 		&result.NextMessageSeq,
 		&result.CreatedAt,
 		&result.UpdatedAt,
@@ -72,20 +52,22 @@ func (r *Repository) FindMessage(
 	var modality string
 	err := r.database.QueryRow(ctx, `
 SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    modality,
-    content,
-    created_at
-FROM agent_messages
-WHERE id = $1
-  AND owner_user_id = $2
-  AND thread_id = $3`,
+    message.id::text,
+    thread.user_id::text,
+    message.thread_id::text,
+    message.sequence_no,
+    message.role,
+    COALESCE(message.client_message_id, ''),
+    COALESCE(message.produced_by_run_id::text, ''),
+    message.modality,
+    message.content,
+    message.created_at
+FROM agent_messages AS message
+INNER JOIN agent_threads AS thread ON thread.id = message.thread_id
+WHERE message.id = $1
+  AND thread.user_id = $2
+  AND message.thread_id = $3
+  AND thread.deleted_at IS NULL`,
 		messageID,
 		ownerID,
 		threadID,
@@ -109,51 +91,41 @@ WHERE id = $1
 	return result, nil
 }
 
-func (r *Repository) FindLatestCheckpoint(
+func (r *Repository) FindSummary(
 	ctx context.Context,
 	ownerID string,
 	threadID string,
 	maxSequence int64,
-) (agentsummary.Checkpoint, error) {
-	var result agentsummary.Checkpoint
+) (agentsummary.State, error) {
+	var result agentsummary.State
 	var content []byte
-	var sourceChecksum []byte
 	err := r.database.QueryRow(ctx, `
-SELECT `+summaryCheckpointSelectColumns+`
-FROM agent_thread_summary_checkpoints
-WHERE owner_user_id = $1
-  AND thread_id = $2
-  AND covered_through_sequence <= $3
-ORDER BY covered_through_sequence DESC
-LIMIT 1`,
+SELECT
+	thread.user_id::text,
+	thread.id::text,
+	thread.summary_through_sequence,
+	thread.summary_content
+FROM agent_threads AS thread
+WHERE thread.user_id = $1
+  AND thread.id = $2
+  AND thread.deleted_at IS NULL
+	AND thread.summary_content IS NOT NULL
+  AND thread.summary_through_sequence <= $3`,
 		ownerID,
 		threadID,
 		maxSequence,
 	).Scan(
-		&result.ID,
 		&result.OwnerID,
 		&result.ThreadID,
-		&result.PreviousCheckpointID,
-		&result.SourceFromSequence,
-		&result.CoveredThroughSequence,
+		&result.ThroughSequence,
 		&content,
-		&result.PolicyVersion,
-		&result.PromptVersion,
-		&result.Provider,
-		&result.Model,
-		&sourceChecksum,
-		&result.CreatedAt,
 	)
 	if err != nil {
-		return agentsummary.Checkpoint{}, mapSourcePostgresError(err)
+		return agentsummary.State{}, mapSourcePostgresError(err)
 	}
-	if len(sourceChecksum) != len(result.SourceChecksum) {
-		return agentsummary.Checkpoint{}, conversation.ErrRepository
-	}
-	copy(result.SourceChecksum[:], sourceChecksum)
 	if err := json.Unmarshal(content, &result.Content); err != nil ||
 		!result.Valid() {
-		return agentsummary.Checkpoint{}, conversation.ErrRepository
+		return agentsummary.State{}, conversation.ErrRepository
 	}
 	return result, nil
 }

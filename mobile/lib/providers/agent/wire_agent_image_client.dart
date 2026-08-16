@@ -133,11 +133,11 @@ final class WireAgentImageClient
         },
         body: image.bytes,
       );
-      _requireStatus(response, const <int>{HttpStatus.created});
+      _requireStatus(response, const <int>{
+        HttpStatus.created,
+        HttpStatus.accepted,
+      });
       final asset = _decodeAsset(response.body);
-      if (asset.threadId != threadId) {
-        throw _invalidResponse();
-      }
       return asset;
     });
   }
@@ -320,7 +320,6 @@ AgentImageAsset _decodeAsset(Uint8List bytes) {
   final object = _jsonObject(bytes);
   const required = <String>{
     'image_asset_id',
-    'thread_id',
     'content_type',
     'size_bytes',
     'width',
@@ -336,9 +335,8 @@ AgentImageAsset _decodeAsset(Uint8List bytes) {
   }
   final status = switch (object['status']) {
     'staged' => AgentImageAssetStatus.staged,
-    'attached' => AgentImageAssetStatus.attached,
+    'ready' => AgentImageAssetStatus.ready,
     'deleting' => AgentImageAssetStatus.deleting,
-    'deleted' => AgentImageAssetStatus.deleted,
     _ => throw _invalidResponse(),
   };
   final contentType = object['content_type'];
@@ -358,7 +356,6 @@ AgentImageAsset _decodeAsset(Uint8List bytes) {
   }
   return AgentImageAsset(
     id: _jsonUuid(object['image_asset_id']),
-    threadId: _jsonUuid(object['thread_id']),
     contentType: contentType,
     sizeBytes: size,
     width: width,

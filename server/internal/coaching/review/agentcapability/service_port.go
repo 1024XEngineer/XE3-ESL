@@ -7,20 +7,34 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	domainreview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 )
 
 const defaultReviewSearchLimit = 10
 
-type ServicePort struct {
-	history *domainreview.HistoryService
+type reportReader interface {
+	GetFormalReport(
+		context.Context,
+		string,
+		string,
+	) (report.StoredFormalReport, error)
+	ListFormalReports(
+		context.Context,
+		string,
+		report.HistoryQuery,
+	) (report.HistoryPage, error)
 }
 
-func NewServicePort(history *domainreview.HistoryService) (*ServicePort, error) {
-	if history == nil {
-		return nil, errors.New("review capability: history service is required")
+type ServicePort struct {
+	reports reportReader
+}
+
+func NewServicePort(reports reportReader) (*ServicePort, error) {
+	if reports == nil {
+		return nil, errors.New("review capability: report reader is required")
 	}
-	return &ServicePort{history: history}, nil
+	return &ServicePort{reports: reports}, nil
 }
 
 func (port *ServicePort) SearchReviews(
@@ -28,45 +42,26 @@ func (port *ServicePort) SearchReviews(
 	call capability.CallContext,
 	input ReviewSearchInput,
 ) ([]ReviewSummary, error) {
-	if port == nil || port.history == nil || !call.Actor.Valid() {
+	if port == nil || port.reports == nil || !call.Actor.Valid() {
 		return nil, capability.ErrExecutionRejected
 	}
 	limit := input.Limit
 	if limit == 0 {
 		limit = defaultReviewSearchLimit
 	}
-	actor := domainreview.Actor{UserID: call.Actor.UserID}
-	query := strings.TrimSpace(input.Query)
-	practiceSessionID := strings.TrimSpace(input.PracticeSessionID)
-	var items []domainreview.Report
-	var err error
-	if query == "" && practiceSessionID == "" {
-		var page domainreview.HistoryPage
-		page, err = port.history.ListCompleted(
-			ctx,
-			actor,
-			domainreview.HistoryQuery{Limit: limit},
-		)
-		items = page.Items
-	} else {
-		if query == "" {
-			query = practiceSessionID
-		}
-		items, err = port.history.SearchCompleted(
-			ctx,
-			actor,
-			domainreview.HistorySearchQuery{
-				Query:             query,
-				PracticeSessionID: practiceSessionID,
-				Limit:             limit,
-			},
-		)
-	}
+	page, err := port.reports.ListFormalReports(
+		ctx,
+		call.Actor.UserID,
+		report.HistoryQuery{
+			Limit:  limit,
+			Search: strings.TrimSpace(input.Query),
+		},
+	)
 	if err != nil {
 		return nil, mapReviewToolError(err)
 	}
-	result := make([]ReviewSummary, len(items))
-	for index, item := range items {
+	result := make([]ReviewSummary, len(page.Items))
+	for index, item := range page.Items {
 		if !item.Valid() {
 			return nil, capability.ErrExecutionRejected
 		}
@@ -80,12 +75,12 @@ func (port *ServicePort) GetReview(
 	call capability.CallContext,
 	input ReviewGetInput,
 ) (ReviewDetail, error) {
-	if port == nil || port.history == nil || !call.Actor.Valid() {
+	if port == nil || port.reports == nil || !call.Actor.Valid() {
 		return ReviewDetail{}, capability.ErrExecutionRejected
 	}
-	item, err := port.history.Get(
+	item, err := port.reports.GetFormalReport(
 		ctx,
-		domainreview.Actor{UserID: call.Actor.UserID},
+		call.Actor.UserID,
 		input.ReportID,
 	)
 	if err != nil {
@@ -97,31 +92,31 @@ func (port *ServicePort) GetReview(
 	return mapReviewDetail(item), nil
 }
 
-func mapReviewSummary(item domainreview.Report) ReviewSummary {
+func mapReviewSummary(item report.StoredFormalReport) ReviewSummary {
 	return ReviewSummary{
-		ID:                 item.ID,
+		ID:                 item.ReportID,
 		PracticeSessionID:  item.PracticeSessionID,
-		SceneType:          item.SceneType,
-		PracticeExperience: item.PracticeExperience,
-		SceneCategory:      item.SceneCategory,
-		PracticeMode:       item.PracticeMode,
-		Scoreability:       item.ScoreabilityStatus,
-		Summary:            item.Summary,
+		SceneType:          string(item.Report.SceneType),
+		PracticeExperience: item.Report.PracticeExperience,
+		SceneCategory:      item.Report.SceneCategory,
+		PracticeMode:       item.Report.PracticeMode,
+		Scoreability:       string(item.Report.ScoreabilityStatus),
+		Summary:            item.Report.Summary,
 		CompletedAt:        item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
-			ID:   item.ID,
+			ID:   item.ReportID,
 		}},
 	}
 }
 
-func mapReviewDetail(item domainreview.Report) ReviewDetail {
-	dimensions := make([]ReviewDimension, len(item.Dimensions))
-	for index, dimension := range item.Dimensions {
+func mapReviewDetail(item report.StoredFormalReport) ReviewDetail {
+	dimensions := make([]ReviewDimension, len(item.Report.Dimensions))
+	for index, dimension := range item.Report.Dimensions {
 		dimensions[index] = ReviewDimension{
 			Key:          dimension.Key,
 			Score:        cloneScore(dimension.Score),
-			Scale:        dimension.Scale,
+			Scale:        string(dimension.Scale),
 			Coverage:     dimension.Coverage,
 			Confidence:   dimension.Confidence,
 			Strengths:    mapFindings(dimension.Strengths),
@@ -129,33 +124,33 @@ func mapReviewDetail(item domainreview.Report) ReviewDetail {
 			Examples:     mapFindings(dimension.Examples),
 		}
 	}
-	actions := make([]ReviewPriorityAction, len(item.PriorityActions))
-	for index, action := range item.PriorityActions {
+	actions := make([]ReviewPriorityAction, len(item.Report.PriorityActions))
+	for index, action := range item.Report.PriorityActions {
 		actions[index] = ReviewPriorityAction{
 			DimensionKey: action.DimensionKey,
 			FindingID:    action.FindingID,
 		}
 	}
 	return ReviewDetail{
-		ID:                 item.ID,
+		ID:                 item.ReportID,
 		PracticeSessionID:  item.PracticeSessionID,
-		SceneType:          item.SceneType,
-		PracticeExperience: item.PracticeExperience,
-		SceneCategory:      item.SceneCategory,
-		PracticeMode:       item.PracticeMode,
-		Scoreability:       item.ScoreabilityStatus,
-		Summary:            item.Summary,
+		SceneType:          string(item.Report.SceneType),
+		PracticeExperience: item.Report.PracticeExperience,
+		SceneCategory:      item.Report.SceneCategory,
+		PracticeMode:       item.Report.PracticeMode,
+		Scoreability:       string(item.Report.ScoreabilityStatus),
+		Summary:            item.Report.Summary,
 		Dimensions:         dimensions,
 		PriorityActions:    actions,
 		CompletedAt:        item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
-			ID:   item.ID,
+			ID:   item.ReportID,
 		}},
 	}
 }
 
-func mapFindings(items []domainreview.ReportFinding) []ReviewFinding {
+func mapFindings(items []report.ReportFinding) []ReviewFinding {
 	result := make([]ReviewFinding, len(items))
 	for index, item := range items {
 		excerpts := make([]string, 0, len(item.Evidence))
@@ -184,10 +179,10 @@ func cloneScore(value *float64) *float64 {
 
 func mapReviewToolError(err error) error {
 	switch {
-	case errors.Is(err, domainreview.ErrInvalidReview):
+	case errors.Is(err, evaluation.ErrInvalidRequest):
 		return capability.ErrInvalidInput
-	case errors.Is(err, domainreview.ErrReviewNotFound),
-		errors.Is(err, domainreview.ErrAccountDeleted):
+	case errors.Is(err, evaluation.ErrNotFound),
+		errors.Is(err, evaluation.ErrAccountUnavailable):
 		return capability.ErrExecutionRejected
 	default:
 		return err

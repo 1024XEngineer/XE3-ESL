@@ -15,7 +15,6 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 
 typedef ConversationVoiceStarter = AgentComposerAction;
 typedef ConversationPendingImageAction = AgentComposerPendingImageAction;
@@ -54,7 +53,7 @@ class ConversationPage extends StatefulWidget {
     this.onBrowseScenes,
     this.onContinuePractice,
     this.onOpenReview,
-    this.onMessageHandoff,
+    this.clientActionBuilder,
     ConversationVoiceStarter? onStartVoice,
     ConversationVoiceStarter? onVoicePlaceholder,
     this.onCreateConversation,
@@ -95,7 +94,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onBrowseScenes;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
-  final ValueChanged<AgentHandoff>? onMessageHandoff;
+  final AgentClientActionBuilder? clientActionBuilder;
   final ConversationVoiceStarter? onStartVoice;
   final VoidCallback? onCreateConversation;
   final int draftThreadRecoveryGeneration;
@@ -276,7 +275,7 @@ class ConversationPage extends StatefulWidget {
                               suppressLoadingFeedback: replyPending,
                               messageAudioController: messageAudioController,
                               onTranslateMessage: onTranslateMessage,
-                              onHandoff: onMessageHandoff,
+                              clientActionBuilder: clientActionBuilder,
                               onRefreshImage: onRefreshMessageImage,
                               feedbackPresenter: feedbackPresenter,
                               onSameThreadRepractice:
@@ -501,10 +500,11 @@ class _ConversationPageState extends State<ConversationPage> {
 
     final previousLast = oldWidget.messages.lastOrNull;
     final currentLast = widget.messages.lastOrNull;
-    final handoffFootprintChanged =
-        previousLast?.handoffs.length != currentLast?.handoffs.length;
+    final clientActionFootprintChanged =
+        previousLast?.clientActions.length != currentLast?.clientActions.length;
     if (previousLast?.id == currentLast?.id &&
-        (previousLast?.text != currentLast?.text || handoffFootprintChanged)) {
+        (previousLast?.text != currentLast?.text ||
+            clientActionFootprintChanged)) {
       if (_isNearLatest()) {
         _scheduleScrollToLatest();
       } else {
@@ -982,7 +982,7 @@ class _MessageList extends StatelessWidget {
     required this.suppressLoadingFeedback,
     this.messageAudioController,
     this.onTranslateMessage,
-    this.onHandoff,
+    this.clientActionBuilder,
     this.onRefreshImage,
     this.feedbackPresenter,
     this.onSameThreadRepractice,
@@ -992,7 +992,7 @@ class _MessageList extends StatelessWidget {
   final bool suppressLoadingFeedback;
   final AgentMessageAudioController? messageAudioController;
   final ConversationMessageTranslator? onTranslateMessage;
-  final ValueChanged<AgentHandoff>? onHandoff;
+  final AgentClientActionBuilder? clientActionBuilder;
   final ConversationMessageImageAction? onRefreshImage;
   final ConversationMessageFeedbackPresenter? feedbackPresenter;
   final VoidCallback? onSameThreadRepractice;
@@ -1011,7 +1011,7 @@ class _MessageList extends StatelessWidget {
               message: message,
               messageAudioController: messageAudioController,
               onTranslate: onTranslateMessage,
-              onHandoff: onHandoff,
+              clientActionBuilder: clientActionBuilder,
               onRefreshImage: onRefreshImage,
               correction: feedbackPresenter?.correctionFor(message),
               polish: feedbackPresenter?.polishFor(message),

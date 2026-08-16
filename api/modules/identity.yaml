@@ -164,11 +164,9 @@ paths:
       description: |
         Creates a missing profile when `expected_profile_version` is omitted,
         or updates an existing profile when the expected version matches.
-        `Idempotency-Key` is required. The trusted User is always derived from
-        the Session and cannot be supplied in the request body.
+        The trusted User is always derived from the Session and cannot be
+        supplied in the request body.
       operationId: updateCurrentUserProfile
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -177,7 +175,7 @@ paths:
               $ref: '#/components/schemas/UpdateUserProfileRequest'
       responses:
         '200':
-          description: The created, updated, or idempotently replayed profile.
+          description: The created or updated profile.
           content:
             application/json:
               schema:
@@ -191,21 +189,11 @@ paths:
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
-  parameters:
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      schema:
-        type: string
-        minLength: 8
-        maxLength: 128
-        pattern: '^[A-Za-z0-9._~+/-]+$'
   responses:
     InvalidCredentials:
       description: |
         Authentication failed. The response is identical for an unknown email,
-        incorrect password, disabled account, or account deletion state.
+        incorrect password, or account deletion state.
       content:
         application/json:
           schema:
@@ -243,28 +231,17 @@ components:
               retryable: false
               correlation_id: corr_profile_not_found
     ProfileConflict:
-      description: |
-        The expected profile version is stale, or the Idempotency-Key was
-        previously used with a different normalized request.
+      description: The expected profile version is stale.
       content:
         application/json:
           schema:
             $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
-          examples:
-            staleVersion:
-              value:
-                error:
-                  code: profile_version_conflict
-                  message: User profile changed before this update.
-                  retryable: false
-                  correlation_id: corr_profile_version_conflict
-            reusedKey:
-              value:
-                error:
-                  code: idempotency_key_conflict
-                  message: Idempotency key was already used for a different request.
-                  retryable: false
-                  correlation_id: corr_idempotency_key_conflict
+          example:
+            error:
+              code: profile_version_conflict
+              message: User profile changed before this update.
+              retryable: false
+              correlation_id: corr_profile_version_conflict
   schemas:
     UserId:
       type: string

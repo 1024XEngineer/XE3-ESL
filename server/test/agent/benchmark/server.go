@@ -4,27 +4,26 @@ package benchmark
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	conversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
-	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
-	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,29 +56,12 @@ func NewHandler(
 		return nil, err
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	goalRepository, err := goal.NewPostgresRepository(database, ids)
-	if err != nil {
-		return nil, err
-	}
-	goalService, err := goal.NewService(goalRepository)
-	if err != nil {
-		return nil, err
-	}
-	conversationGoals, err := goalagentconversation.New(goalService)
-	if err != nil {
-		return nil, err
-	}
-	contextGoals, err := goalagentcontext.New(goalService)
-	if err != nil {
-		return nil, err
-	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		return nil, err
 	}
 	conversationService, err := agentconversation.NewService(
 		conversationRepository,
-		conversationGoals,
 	)
 	if err != nil {
 		return nil, err
@@ -90,11 +72,11 @@ func NewHandler(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		contextGoals,
-		emptyLearningProfileReader{},
-		emptyStableProfileReader{},
-		emptyMemorySearcher{},
-		readyMemoryExtractionBarrier{},
+		agentcontext.Instruction{
+			Version: "benchmark-agent-v1",
+			Content: "You are the Agent routing benchmark.",
+		},
+		emptyCoachingProfileContributor{},
 	)
 	if err != nil {
 		return nil, err
@@ -116,7 +98,6 @@ func NewHandler(
 	runService, err := agentrun.NewService(
 		runRepository,
 		conversationRepository,
-		contextRepository,
 		contextAssembler,
 		generator,
 		configuration,
@@ -130,7 +111,7 @@ func NewHandler(
 	conversationHandler, err := conversationhttp.NewHandler(
 		conversationService,
 		renderer,
-		conversationhttp.WithToolCalls(runService),
+		conversationhttp.WithClientActions(runService),
 	)
 	if err != nil {
 		return nil, err
@@ -144,10 +125,10 @@ func NewHandler(
 		conversation: conversationHandler,
 		runs:         runHandler,
 	}
-	return bootstrap.NewRouterWithReadinessAndRoutes(
+	return app.NewRouterWithReadinessAndRoutes(
 		logger,
 		database,
-		[]bootstrap.RouteRegistrar{routes},
+		[]app.RouteRegistrar{routes},
 	), nil
 }
 
@@ -162,29 +143,16 @@ func (benchmarkPreviewPort) PreviewPractice(
 	if mode == "" {
 		mode = "FULL_SIMULATION"
 	}
-	handoff, err := agenthandoff.NewConfirmPracticePlan(agenthandoff.Item{
-		Label:                    "确认并开始练习",
-		PracticePlanID:           "00000000-0000-4000-8000-000000000648",
-		PlanRevision:             1,
-		Target:                   "IELTS Speaking practice",
-		SceneName:                "IELTS Speaking",
-		PracticeExperience:       "IELTS_SPEAKING",
-		SceneCategory:            "IELTS_SPEAKING",
-		PracticeMode:             mode,
-		Roles:                    []string{"IELTS 口语考官"},
-		PracticeScope:            "IELTS Speaking",
-		SuggestedDurationSeconds: 300,
-		MinEffectiveTurns:        1,
-		MaxEffectiveTurns:        3,
-		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
-		ConfirmationPrompt:       "确认后开始正式练习。",
-	})
+	action, err := agentclientaction.New(
+		preparationcapability.ConfirmPracticePlanActionType,
+		json.RawMessage(`{"practice_mode":"`+mode+`"}`),
+	)
 	if err != nil {
 		return preparationcapability.PreviewResult{}, err
 	}
 	return preparationcapability.PreviewResult{
-		Status:  "preview_ready",
-		Handoff: handoff,
+		Status:       "preview_ready",
+		ClientAction: action,
 	}, nil
 }
 
@@ -237,6 +205,7 @@ func newIdentityHandler(
 	return identity.NewHTTPHandler(
 		service,
 		service,
+		service,
 		rateLimits,
 		nil,
 		identity.WithSourceIPResolver(sourceIPs),
@@ -257,42 +226,11 @@ func (routes *benchmarkRoutes) RegisterRoutes(router *gin.Engine) {
 	routes.runs.RegisterRoutes(protected)
 }
 
-type emptyLearningProfileReader struct{}
+type emptyCoachingProfileContributor struct{}
 
-func (emptyLearningProfileReader) ReadLearningProfile(
+func (emptyCoachingProfileContributor) Contribute(
 	context.Context,
-	agentcontext.LearningProfileReadRequest,
-) ([]agentcontext.LearningProfileDimension, error) {
-	return []agentcontext.LearningProfileDimension{}, nil
-}
-
-type emptyStableProfileReader struct{}
-
-func (emptyStableProfileReader) ReadStableProfile(
-	context.Context,
-	agentcontext.StableProfileReadRequest,
-) ([]agentcontext.StableProfileMemory, error) {
-	return []agentcontext.StableProfileMemory{}, nil
-}
-
-type emptyMemorySearcher struct{}
-
-func (emptyMemorySearcher) Search(
-	context.Context,
-	agentcontext.MemorySearchRequest,
-) ([]agentcontext.MemorySearchHit, error) {
-	return []agentcontext.MemorySearchHit{}, nil
-}
-
-type readyMemoryExtractionBarrier struct{}
-
-func (readyMemoryExtractionBarrier) Await(
-	_ context.Context,
-	request agentcontext.MemoryExtractionBarrierRequest,
-) (agentcontext.MemoryExtractionBarrierResult, error) {
-	return agentcontext.MemoryExtractionBarrierResult{
-		PolicyVersion: agentcontext.MemoryExtractionBarrierPolicyV1,
-		Cutoff:        request.Cutoff,
-		Status:        agentcontext.MemoryExtractionBarrierReady,
-	}, nil
+	requestcontext.Actor,
+) (agentcontext.CoachingProfileContribution, error) {
+	return agentcontext.CoachingProfileContribution{Enabled: true}, nil
 }

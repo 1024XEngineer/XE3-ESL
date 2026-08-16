@@ -6,27 +6,27 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'agent_voice_models.dart';
 
 abstract interface class AgentVoiceClient {
-  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+  Stream<AgentVoiceTranscriptionEvent> createDraftStream({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   });
 
-  Future<AgentVoiceCandidate> createCandidate({
+  Future<AgentVoiceDraft> createDraft({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   });
 
-  Future<AgentVoiceCandidate> getCandidate({required String candidateId});
+  Future<AgentVoiceDraft> getDraft({required String draftId});
 
-  Future<AgentVoiceCandidate> retryCandidate({required String candidateId});
+  Future<AgentVoiceDraft> retryDraft({required String draftId});
 
-  Future<void> deleteCandidate({required String candidateId});
+  Future<void> deleteDraft({required String draftId});
 
-  Future<AgentVoiceConfirmation> confirmCandidate({
-    required String candidateId,
-    required int candidateVersion,
+  Future<AgentVoiceConfirmation> confirmDraft({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   });
@@ -49,16 +49,16 @@ abstract interface class AgentVoiceClient {
 }
 
 abstract interface class AgentVoiceStreamingClient {
-  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
-    required String candidateId,
-    required int candidateVersion,
+  Stream<AgentVoiceConfirmationStreamEvent> confirmDraftStream({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   });
 }
 
 abstract interface class AgentVoiceRealtimeInputClient {
-  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+  Stream<AgentVoiceTranscriptionEvent> createDraftRealtime({
     required String threadId,
     required Stream<Uint8List> audioChunks,
     required String idempotencyKey,
@@ -75,34 +75,34 @@ final class FakeAgentVoiceClient
 
   final Duration delay;
   int _accountGeneration = 0;
-  int _candidateSequence = 0;
+  int _draftSequence = 0;
   int _messageSequence = 0;
-  final Map<String, AgentVoiceCandidate> _candidates = {};
+  final Map<String, AgentVoiceDraft> _drafts = {};
   final Map<String, AgentVoiceConfirmation> _confirmations = {};
   final Map<String, AgentVoiceRun> _runs = {};
   final Map<String, AgentMessage> _messages = {};
   final Set<String> _audioIds = {};
 
   @override
-  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+  Stream<AgentVoiceTranscriptionEvent> createDraftStream({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   }) async* {
-    final candidate = await createCandidate(
+    final draft = await createDraft(
       threadId: threadId,
       recording: recording,
       idempotencyKey: idempotencyKey,
     );
     yield AgentVoiceTranscriptUpdated(
-      text: candidate.transcript!.text,
+      text: draft.transcript!.text,
       finalResult: true,
     );
-    yield AgentVoiceCandidateCompleted(candidate);
+    yield AgentVoiceDraftCompleted(draft);
   }
 
   @override
-  Future<AgentVoiceCandidate> createCandidate({
+  Future<AgentVoiceDraft> createDraft({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
@@ -119,16 +119,16 @@ final class FakeAgentVoiceClient
       );
     }
     final requestId = '$threadId\u{0}$idempotencyKey';
-    for (final candidate in _candidates.values) {
-      if (candidate.transcript?.requestId == requestId) {
-        return candidate;
+    for (final draft in _drafts.values) {
+      if (draft.transcript?.requestId == requestId) {
+        return draft;
       }
     }
     final now = DateTime.now().toUtc();
-    final candidate = AgentVoiceCandidate(
-      id: 'voice_candidate_${++_candidateSequence}',
+    final draft = AgentVoiceDraft(
+      id: 'voice_draft_${++_draftSequence}',
       threadId: threadId,
-      status: AgentVoiceCandidateStatus.candidateReady,
+      status: AgentVoiceDraftStatus.ready,
       asrAttempt: 1,
       version: 1,
       recording: AgentVoiceRecordingMetadata(
@@ -149,86 +149,66 @@ final class FakeAgentVoiceClient
       createdAt: now,
       updatedAt: now,
     );
-    _candidates[candidate.id] = candidate;
-    return candidate;
+    _drafts[draft.id] = draft;
+    return draft;
   }
 
   @override
-  Future<AgentVoiceCandidate> getCandidate({
-    required String candidateId,
-  }) async {
+  Future<AgentVoiceDraft> getDraft({required String draftId}) async {
     final generation = _accountGeneration;
     await _wait(generation);
-    final candidate = _candidates[candidateId];
-    if (candidate == null) {
+    final draft = _drafts[draftId];
+    if (draft == null) {
       throw const AgentClientException(kind: AgentClientFailureKind.notFound);
     }
-    return candidate;
+    return draft;
   }
 
   @override
-  Future<AgentVoiceCandidate> retryCandidate({required String candidateId}) {
-    return getCandidate(candidateId: candidateId);
+  Future<AgentVoiceDraft> retryDraft({required String draftId}) {
+    return getDraft(draftId: draftId);
   }
 
   @override
-  Future<void> deleteCandidate({required String candidateId}) async {
+  Future<void> deleteDraft({required String draftId}) async {
     final generation = _accountGeneration;
     await _wait(generation);
-    final candidate = _candidates[candidateId];
-    if (candidate == null) {
+    final draft = _drafts[draftId];
+    if (draft == null) {
       throw const AgentClientException(kind: AgentClientFailureKind.notFound);
     }
-    final now = DateTime.now().toUtc();
-    _candidates[candidateId] = AgentVoiceCandidate(
-      id: candidate.id,
-      threadId: candidate.threadId,
-      status: AgentVoiceCandidateStatus.deleted,
-      asrAttempt: candidate.asrAttempt,
-      version: candidate.version,
-      recording: candidate.recording,
-      transcript: candidate.transcript,
-      failure: candidate.failure,
-      expiresAt: candidate.expiresAt,
-      confirmedMessageId: candidate.confirmedMessageId,
-      confirmedRunId: candidate.confirmedRunId,
-      messageAudioId: candidate.messageAudioId,
-      confirmedAt: candidate.confirmedAt,
-      deletedAt: now,
-      createdAt: candidate.createdAt,
-      updatedAt: now,
-    );
+    _drafts.remove(draftId);
   }
 
   @override
-  Future<AgentVoiceConfirmation> confirmCandidate({
-    required String candidateId,
-    required int candidateVersion,
+  Future<AgentVoiceConfirmation> confirmDraft({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   }) async {
     final generation = _accountGeneration;
     await _wait(generation);
-    final operationKey = '$candidateId\u{0}$clientMessageId';
+    final operationKey = '$draftId\u{0}$clientMessageId';
     final replay = _confirmations[operationKey];
     if (replay != null) {
       if (replay.message.text != confirmedText ||
-          replay.candidate.version != candidateVersion) {
+          replay.draft.version != draftVersion) {
         throw const AgentClientException(kind: AgentClientFailureKind.conflict);
       }
       return replay;
     }
-    final candidate = _candidates[candidateId];
-    if (candidate == null) {
+    final draft = _drafts[draftId];
+    if (draft == null) {
       throw const AgentClientException(kind: AgentClientFailureKind.notFound);
     }
-    if (!candidate.isReady ||
-        candidate.version != candidateVersion ||
+    if (!draft.isReady ||
+        draft.version != draftVersion ||
         confirmedText.trim().isEmpty) {
       throw const AgentClientException(kind: AgentClientFailureKind.conflict);
     }
     final now = DateTime.now().toUtc();
-    final audioId = 'voice_audio_$candidateId';
+    final audioId = 'voice_audio_$draftId';
     final message = AgentMessage(
       id: _nextMessageId(),
       role: AgentMessageRole.user,
@@ -239,8 +219,8 @@ final class FakeAgentVoiceClient
         id: audioId,
         status: AgentMessageAudioStatus.readable,
         contentType: 'audio/wav',
-        sizeBytes: candidate.recording.sizeBytes,
-        duration: candidate.recording.duration,
+        sizeBytes: draft.recording.sizeBytes,
+        duration: draft.recording.duration,
         playbackPath: '/v1/agent-message-audios/$audioId/playback',
       ),
     );
@@ -252,35 +232,34 @@ final class FakeAgentVoiceClient
       createdAt: now,
     );
     final run = AgentVoiceRun(
-      id: 'voice_run_$candidateId',
-      threadId: candidate.threadId,
+      id: 'voice_run_$draftId',
+      threadId: draft.threadId,
       inputMessageId: message.id,
       status: AgentVoiceRunStatus.completed,
       assistantMessageId: assistantMessage.id,
     );
-    final confirmedCandidate = AgentVoiceCandidate(
-      id: candidate.id,
-      threadId: candidate.threadId,
-      status: AgentVoiceCandidateStatus.confirmed,
-      asrAttempt: candidate.asrAttempt,
-      version: candidate.version,
-      recording: candidate.recording,
-      transcript: candidate.transcript,
-      expiresAt: candidate.expiresAt,
+    final confirmedDraft = AgentVoiceDraft(
+      id: draft.id,
+      threadId: draft.threadId,
+      status: AgentVoiceDraftStatus.confirmed,
+      asrAttempt: draft.asrAttempt,
+      version: draft.version,
+      recording: draft.recording,
+      transcript: draft.transcript,
       confirmedMessageId: message.id,
       confirmedRunId: run.id,
       messageAudioId: audioId,
       confirmedAt: now,
-      createdAt: candidate.createdAt,
+      createdAt: draft.createdAt,
       updatedAt: now,
     );
     final confirmation = AgentVoiceConfirmation(
-      candidate: confirmedCandidate,
+      draft: confirmedDraft,
       message: message,
       run: run,
       assistantMessage: assistantMessage,
     );
-    _candidates[candidate.id] = confirmedCandidate;
+    _drafts[draft.id] = confirmedDraft;
     _confirmations[operationKey] = confirmation;
     _runs[run.id] = run;
     _messages[message.id] = message;
@@ -290,15 +269,15 @@ final class FakeAgentVoiceClient
   }
 
   @override
-  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
-    required String candidateId,
-    required int candidateVersion,
+  Stream<AgentVoiceConfirmationStreamEvent> confirmDraftStream({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   }) async* {
-    final confirmation = await confirmCandidate(
-      candidateId: candidateId,
-      candidateVersion: candidateVersion,
+    final confirmation = await confirmDraft(
+      draftId: draftId,
+      draftVersion: draftVersion,
       clientMessageId: clientMessageId,
       confirmedText: confirmedText,
     );
@@ -387,9 +366,9 @@ final class FakeAgentVoiceClient
   @override
   Future<void> clearAccountState() async {
     _accountGeneration++;
-    _candidateSequence = 0;
+    _draftSequence = 0;
     _messageSequence = 0;
-    _candidates.clear();
+    _drafts.clear();
     _confirmations.clear();
     _runs.clear();
     _messages.clear();

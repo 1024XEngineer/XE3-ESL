@@ -11,7 +11,7 @@ import (
 	"time"
 
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
@@ -37,7 +37,7 @@ func run() int {
 		logger.Error("text generation configuration failed")
 		return 1
 	}
-	providers, err := bootstrap.NewAgentModelProviders(textConfiguration)
+	providers, err := app.NewAgentModelProviders(textConfiguration)
 	if err != nil {
 		logger.Error("text generation startup failed")
 		return 1

@@ -7,7 +7,7 @@ import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -302,12 +302,12 @@ void main() {
   });
 
   test(
-    'loads the trusted handoff immediately after stream completion',
+    'loads the trusted client action immediately after stream completion',
     () async {
       final client = _StreamingHistoryAgentClient();
       final controller = ConversationController(
         client: client,
-        clientIdFactory: (_) => 'stream-handoff-message',
+        clientIdFactory: (_) => 'stream-client-action-message',
       );
       addTearDown(controller.dispose);
       await controller.initialize();
@@ -315,117 +315,125 @@ void main() {
       expect(await controller.sendText('帮我创建练习'), isTrue);
       client.authoritativeMessages = const <AgentMessage>[
         AgentMessage(
-          id: 'user-handoff-1',
+          id: 'user-client-action-1',
           role: AgentMessageRole.user,
           text: '帮我创建练习',
           sequence: 1,
         ),
         AgentMessage(
-          id: 'assistant-handoff-1',
+          id: 'assistant-client-action-1',
           role: AgentMessageRole.assistant,
           text: '练习方案已准备好。',
           sequence: 2,
-          handoffs: <AgentHandoff>[_practiceHandoff],
+          clientActions: <AgentClientAction>[_practiceClientAction],
         ),
       ];
       client.events
         ..add(
           const AgentInputCommitted(
-            runId: 'run-handoff-1',
+            runId: 'run-client-action-1',
             userMessage: AgentMessage(
-              id: 'user-handoff-1',
+              id: 'user-client-action-1',
               role: AgentMessageRole.user,
               text: '帮我创建练习',
               sequence: 1,
             ),
           ),
         )
-        ..add(const AgentAssistantStarted(runId: 'run-handoff-1'))
+        ..add(const AgentAssistantStarted(runId: 'run-client-action-1'))
         ..add(
-          const AgentAssistantDelta(runId: 'run-handoff-1', delta: '练习方案已准备好。'),
+          const AgentAssistantDelta(
+            runId: 'run-client-action-1',
+            delta: '练习方案已准备好。',
+          ),
         )
         ..add(
           const AgentRunCompleted(
-            runId: 'run-handoff-1',
-            assistantMessageId: 'assistant-handoff-1',
+            runId: 'run-client-action-1',
+            assistantMessageId: 'assistant-client-action-1',
           ),
         );
       await client.events.close();
       await Future<void>.delayed(Duration.zero);
 
       expect(controller.isBusy, isFalse);
-      expect(controller.messages.last.id, 'assistant-handoff-1');
-      expect(controller.messages.last.handoffs, <AgentHandoff>[
-        _practiceHandoff,
+      expect(controller.messages.last.id, 'assistant-client-action-1');
+      expect(controller.messages.last.clientActions, <AgentClientAction>[
+        _practiceClientAction,
       ]);
       expect(client.messagePageCalls, 1);
     },
   );
 
-  test('retries only the authoritative handoff Message refresh', () async {
-    final client = _StreamingHistoryAgentClient(messageFailuresRemaining: 1);
-    final controller = ConversationController(
-      client: client,
-      clientIdFactory: (_) => 'stream-handoff-retry-message',
-    );
-    addTearDown(controller.dispose);
-    await controller.initialize();
-
-    expect(await controller.sendText('帮我创建练习'), isTrue);
-    client.authoritativeMessages = const <AgentMessage>[
-      AgentMessage(
-        id: 'user-handoff-retry-1',
-        role: AgentMessageRole.user,
-        text: '帮我创建练习',
-        sequence: 1,
-      ),
-      AgentMessage(
-        id: 'assistant-handoff-retry-1',
-        role: AgentMessageRole.assistant,
-        text: '练习方案已准备好。',
-        sequence: 2,
-        handoffs: <AgentHandoff>[_practiceHandoff],
-      ),
-    ];
-    client.events
-      ..add(
-        const AgentInputCommitted(
-          runId: 'run-handoff-retry-1',
-          userMessage: AgentMessage(
-            id: 'user-handoff-retry-1',
-            role: AgentMessageRole.user,
-            text: '帮我创建练习',
-            sequence: 1,
-          ),
-        ),
-      )
-      ..add(const AgentAssistantStarted(runId: 'run-handoff-retry-1'))
-      ..add(
-        const AgentAssistantDelta(
-          runId: 'run-handoff-retry-1',
-          delta: '练习方案已准备好。',
-        ),
-      )
-      ..add(
-        const AgentRunCompleted(
-          runId: 'run-handoff-retry-1',
-          assistantMessageId: 'assistant-handoff-retry-1',
-        ),
+  test(
+    'retries only the authoritative client-action Message refresh',
+    () async {
+      final client = _StreamingHistoryAgentClient(messageFailuresRemaining: 1);
+      final controller = ConversationController(
+        client: client,
+        clientIdFactory: (_) => 'stream-client-action-retry-message',
       );
-    await client.events.close();
-    await Future<void>.delayed(Duration.zero);
+      addTearDown(controller.dispose);
+      await controller.initialize();
 
-    expect(controller.canRetryThreadHistory, isTrue);
-    expect(controller.messages.last.handoffs, isEmpty);
-    expect(client.messagePageCalls, 1);
+      expect(await controller.sendText('帮我创建练习'), isTrue);
+      client.authoritativeMessages = const <AgentMessage>[
+        AgentMessage(
+          id: 'user-client-action-retry-1',
+          role: AgentMessageRole.user,
+          text: '帮我创建练习',
+          sequence: 1,
+        ),
+        AgentMessage(
+          id: 'assistant-client-action-retry-1',
+          role: AgentMessageRole.assistant,
+          text: '练习方案已准备好。',
+          sequence: 2,
+          clientActions: <AgentClientAction>[_practiceClientAction],
+        ),
+      ];
+      client.events
+        ..add(
+          const AgentInputCommitted(
+            runId: 'run-client-action-retry-1',
+            userMessage: AgentMessage(
+              id: 'user-client-action-retry-1',
+              role: AgentMessageRole.user,
+              text: '帮我创建练习',
+              sequence: 1,
+            ),
+          ),
+        )
+        ..add(const AgentAssistantStarted(runId: 'run-client-action-retry-1'))
+        ..add(
+          const AgentAssistantDelta(
+            runId: 'run-client-action-retry-1',
+            delta: '练习方案已准备好。',
+          ),
+        )
+        ..add(
+          const AgentRunCompleted(
+            runId: 'run-client-action-retry-1',
+            assistantMessageId: 'assistant-client-action-retry-1',
+          ),
+        );
+      await client.events.close();
+      await Future<void>.delayed(Duration.zero);
 
-    await controller.retryThreadHistory();
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.messages.last.clientActions, isEmpty);
+      expect(client.messagePageCalls, 1);
 
-    expect(controller.canRetryThreadHistory, isFalse);
-    expect(controller.threadHistoryErrorMessage, isNull);
-    expect(controller.messages.last.handoffs, <AgentHandoff>[_practiceHandoff]);
-    expect(client.messagePageCalls, 2);
-  });
+      await controller.retryThreadHistory();
+
+      expect(controller.canRetryThreadHistory, isFalse);
+      expect(controller.threadHistoryErrorMessage, isNull);
+      expect(controller.messages.last.clientActions, <AgentClientAction>[
+        _practiceClientAction,
+      ]);
+      expect(client.messagePageCalls, 2);
+    },
+  );
 
   test('sends Unicode stream input as UTF-8 and preserves retry', () async {
     const threadId = '11111111-1111-4111-8111-111111111111';
@@ -572,18 +580,11 @@ final class _StreamingAgentClient
       delegate.listThreads(pageSize: pageSize, cursor: cursor);
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() =>
-      delegate.getFocusedThread();
+  Future<AgentThreadSnapshot> getThread({required String threadId}) =>
+      delegate.getThread(threadId: threadId);
 
   @override
   Future<AgentThreadSummary> createThread() => delegate.createThread();
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
-      delegate.setFocusedThread(threadId: threadId);
-
-  @override
-  Future<void> clearFocusedThread() => delegate.clearFocusedThread();
 
   @override
   Future<void> deleteThread({required String threadId}) =>
@@ -640,18 +641,11 @@ final class _StreamingHistoryAgentClient
       _delegate.listThreads(pageSize: pageSize, cursor: cursor);
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() =>
-      _delegate.getFocusedThread();
+  Future<AgentThreadSnapshot> getThread({required String threadId}) =>
+      _delegate.getThread(threadId: threadId);
 
   @override
   Future<AgentThreadSummary> createThread() => _delegate.createThread();
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
-      _delegate.setFocusedThread(threadId: threadId);
-
-  @override
-  Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
 
   @override
   Future<void> deleteThread({required String threadId}) =>
@@ -685,20 +679,9 @@ final class _StreamingHistoryAgentClient
   );
 }
 
-const _practiceHandoff = ConfirmPracticePlanHandoff(
-  label: '确认并开始练习',
-  practicePlanId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  planRevision: 2,
-  target: 'Java 后端面试',
-  sceneName: '项目经历深挖',
-  practiceExperience: 'INTERVIEW',
-  sceneCategory: 'INTERVIEW_PROFESSIONAL',
-  practiceMode: 'FULL_SIMULATION',
-  roles: <String>['技术面试官'],
-  practiceScope: '完整模拟',
-  suggestedDuration: Duration(minutes: 10),
-  minEffectiveTurns: 3,
-  maxEffectiveTurns: 5,
-  executableStatus: 'ready',
-  confirmationPrompt: '请确认是否按此方案开始练习。',
+const _practiceClientAction = AgentClientAction(
+  type: 'practice.plan.confirm.v1',
+  payload: <String, Object?>{
+    'practice_plan_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  },
 );

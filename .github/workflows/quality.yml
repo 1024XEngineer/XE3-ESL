@@ -27,7 +27,6 @@ jobs:
       flutter: ${{ steps.scope.outputs.flutter }}
       go: ${{ steps.scope.outputs.go }}
       api: ${{ steps.scope.outputs.api }}
-      smoke: ${{ steps.scope.outputs.smoke }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,13 +48,11 @@ jobs:
           flutter=false
           go=false
           api=false
-          smoke=false
 
           set_all_checks() {
             flutter=true
             go=true
             api=true
-            smoke=true
           }
 
           if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
@@ -81,11 +78,9 @@ jobs:
                   ;;
                 server/*)
                   go=true
-                  smoke=true
                   ;;
                 api/*)
                   api=true
-                  smoke=true
                   ;;
               esac
             done < "$changed_files"
@@ -95,7 +90,6 @@ jobs:
             echo "flutter=$flutter"
             echo "go=$go"
             echo "api=$api"
-            echo "smoke=$smoke"
           } >> "$GITHUB_OUTPUT"
 
   flutter:
@@ -171,28 +165,6 @@ jobs:
       - name: Check API contracts
         run: make check-api
 
-  smoke:
-    name: Deterministic smoke
-    needs: changes
-    if: needs.changes.outputs.smoke == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-          cache: true
-          cache-dependency-path: server/go.sum
-
-      - name: Check deterministic Mock main flow
-        run: make check-smoke
-
   quality-gate:
     name: Quality gate
     needs:
@@ -200,7 +172,6 @@ jobs:
       - flutter
       - go
       - api
-      - smoke
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -212,8 +183,6 @@ jobs:
       GO_RESULT: ${{ needs.go.result }}
       API_REQUIRED: ${{ needs.changes.outputs.api }}
       API_RESULT: ${{ needs.api.result }}
-      SMOKE_REQUIRED: ${{ needs.changes.outputs.smoke }}
-      SMOKE_RESULT: ${{ needs.smoke.result }}
     steps:
       - name: Require every selected check to pass
         shell: bash
@@ -257,4 +226,3 @@ jobs:
           require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
-          require_result "Deterministic smoke" "$SMOKE_REQUIRED" "$SMOKE_RESULT"

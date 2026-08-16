@@ -5,8 +5,8 @@ import 'dart:typed_data';
 
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -123,45 +123,13 @@ final class WireAgentClient
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() {
-    return _runAccountOperation((generation) async {
-      final response = await _send(
-        generation: generation,
-        method: 'GET',
-        path: '/v1/agent-threads/focused',
-      );
-      _requireStatus(response, const <int>{
-        HttpStatus.ok,
-        HttpStatus.noContent,
-      });
-      if (response.statusCode == HttpStatus.noContent) {
-        _requireEmptyBody(response);
-        return null;
-      }
-      return _hydrateThread(
-        generation: generation,
-        thread: _decodeThread(response.body),
-      );
-    });
-  }
-
-  @override
-  Future<AgentThreadSummary> createThread() {
-    return _runAccountOperation((generation) async {
-      final thread = await _createWireThreadSafely(generation);
-      return thread.presentation;
-    });
-  }
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
+  Future<AgentThreadSnapshot> getThread({required String threadId}) {
     return _runAccountOperation((generation) async {
       _requireUuid(threadId);
       final response = await _send(
         generation: generation,
-        method: 'PUT',
-        path: '/v1/agent-threads/focused',
-        body: <String, Object?>{'thread_id': threadId},
+        method: 'GET',
+        path: '/v1/agent-threads/$threadId',
       );
       _requireStatus(response, const <int>{HttpStatus.ok});
       final thread = _decodeThread(response.body);
@@ -176,15 +144,10 @@ final class WireAgentClient
   }
 
   @override
-  Future<void> clearFocusedThread() {
+  Future<AgentThreadSummary> createThread() {
     return _runAccountOperation((generation) async {
-      final response = await _send(
-        generation: generation,
-        method: 'DELETE',
-        path: '/v1/agent-threads/focused',
-      );
-      _requireStatus(response, const <int>{HttpStatus.noContent});
-      _requireEmptyBody(response);
+      final thread = await _createWireThreadSafely(generation);
+      return thread.presentation;
     });
   }
 
@@ -275,7 +238,6 @@ final class WireAgentClient
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      activeGoalId: thread.activeGoalId,
       textRecovery: recovery.failure,
       messages: <AgentMessage>[
         for (final message in messagePage.messages) message.presentation,
@@ -380,7 +342,6 @@ final class WireAgentClient
       generation: generation,
       method: 'POST',
       path: '/v1/agent-threads',
-      body: const <String, Object?>{},
     );
     _requireStatus(response, const <int>{HttpStatus.created});
     return _decodeThread(response.body);
@@ -1323,40 +1284,31 @@ final class _WireThread {
     required this.createdAt,
     required this.updatedAt,
     this.title,
-    this.activeGoalId,
   });
 
   final String id;
   final String? title;
-  final String? activeGoalId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   AgentThreadSummary get presentation => AgentThreadSummary(
     id: id,
     title: title,
-    activeGoalId: activeGoalId,
     createdAt: createdAt,
     updatedAt: updatedAt,
   );
 }
 
 final class _WireThreadPage {
-  const _WireThreadPage({
-    required this.threads,
-    this.focusedThreadId,
-    this.nextCursor,
-  });
+  const _WireThreadPage({required this.threads, this.nextCursor});
 
   final List<_WireThread> threads;
-  final String? focusedThreadId;
   final String? nextCursor;
 
   AgentThreadPage get presentation => AgentThreadPage(
     threads: List<AgentThreadSummary>.unmodifiable(
       threads.map((thread) => thread.presentation),
     ),
-    focusedThreadId: focusedThreadId,
     nextCursor: nextCursor,
   );
 }
@@ -1373,7 +1325,7 @@ final class _WireMessage {
     this.producedByRunId,
     this.audio,
     this.images = const <AgentImageAsset>[],
-    this.handoffs = const <AgentHandoff>[],
+    this.clientActions = const <AgentClientAction>[],
     this.speechFeedbackStatusUrl,
   });
 
@@ -1387,7 +1339,7 @@ final class _WireMessage {
   final String? producedByRunId;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
-  final List<AgentHandoff> handoffs;
+  final List<AgentClientAction> clientActions;
   final String? speechFeedbackStatusUrl;
 
   AgentMessage get presentation => AgentMessage(
@@ -1399,7 +1351,7 @@ final class _WireMessage {
     modality: modality,
     audio: audio,
     images: images,
-    handoffs: handoffs,
+    clientActions: clientActions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -1458,7 +1410,7 @@ _WireThreadPage _decodeThreadPage(String body) {
   return _decodeBody(body, (value) {
     final root = _strictObject(
       value,
-      allowed: const <String>{'threads', 'focused_thread_id', 'next_cursor'},
+      allowed: const <String>{'threads', 'next_cursor'},
       required: const <String>{'threads'},
     );
     final values = _strictList(root['threads'], maxLength: 100);
@@ -1479,11 +1431,6 @@ _WireThreadPage _decodeThreadPage(String body) {
     }
     return _WireThreadPage(
       threads: threads,
-      focusedThreadId: _absentOnlyOptional(
-        root,
-        'focused_thread_id',
-        _strictUuid,
-      ),
       nextCursor: _absentOnlyOptional(
         root,
         'next_cursor',
@@ -1532,25 +1479,14 @@ AgentMessageTranslation _decodeMessageTranslation(
 _WireThread _decodeThreadObject(Object? value) {
   final object = _strictObject(
     value,
-    allowed: const <String>{
-      'thread_id',
-      'title',
-      'active_goal_id',
-      'created_at',
-      'updated_at',
-    },
+    allowed: const <String>{'thread_id', 'title', 'created_at', 'updated_at'},
     required: const <String>{'thread_id', 'title', 'created_at', 'updated_at'},
   );
   final id = _strictUuid(object['thread_id']);
   final titleValue = object['title'];
   final title = titleValue == null
       ? null
-      : _strictString(titleValue, minLength: 2, maxLength: 32);
-  final activeGoalId = _absentOnlyOptional(
-    object,
-    'active_goal_id',
-    _strictUuid,
-  );
+      : _strictString(titleValue, minLength: 1, maxLength: 32);
   final createdAt = _strictDateTime(object['created_at']);
   final updatedAt = _strictDateTime(object['updated_at']);
   if (updatedAt.isBefore(createdAt)) {
@@ -1559,7 +1495,6 @@ _WireThread _decodeThreadObject(Object? value) {
   return _WireThread(
     id: id,
     title: title,
-    activeGoalId: activeGoalId,
     createdAt: createdAt,
     updatedAt: updatedAt,
   );
@@ -1618,7 +1553,7 @@ _WireMessage _decodeMessageObject(
       'content',
       'audio',
       'images',
-      'handoffs',
+      'client_actions',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -1665,7 +1600,7 @@ _WireMessage _decodeMessageObject(
       _absentOnlyOptional(
         object,
         'images',
-        (value) => _decodeMessageImages(value, expectedThreadId),
+        (value) => _decodeMessageImages(value),
       ) ??
       const <AgentImageAsset>[];
   final effectiveModality = modality ?? AgentMessageModality.text;
@@ -1679,9 +1614,9 @@ _WireMessage _decodeMessageObject(
     'produced_by_run_id',
     _strictUuid,
   );
-  final handoffs =
-      _absentOnlyOptional(object, 'handoffs', decodeAgentHandoffs) ??
-      const <AgentHandoff>[];
+  final clientActions =
+      _absentOnlyOptional(object, 'client_actions', decodeAgentClientActions) ??
+      const <AgentClientAction>[];
   final speechFeedbackStatusUrl = _absentOnlyOptional(
     object,
     'speech_feedback_status_url',
@@ -1696,11 +1631,10 @@ _WireMessage _decodeMessageObject(
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null ||
               producedByRunId != null ||
-              handoffs.isNotEmpty)) ||
+              clientActions.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
-      (effectiveModality == AgentMessageModality.voice && audio == null) ||
-      (effectiveModality == AgentMessageModality.text && audio != null) ||
+      (effectiveModality != AgentMessageModality.voice && audio != null) ||
       (effectiveModality == AgentMessageModality.multimodal &&
           (role != AgentMessageRole.user || audio != null || images.isEmpty)) ||
       (effectiveModality != AgentMessageModality.multimodal &&
@@ -1709,7 +1643,8 @@ _WireMessage _decodeMessageObject(
           role != AgentMessageRole.user) ||
       (speechFeedbackStatusUrl != null &&
           (role != AgentMessageRole.user ||
-              effectiveModality != AgentMessageModality.voice))) {
+              effectiveModality != AgentMessageModality.voice ||
+              audio == null))) {
     throw const _InvalidAgentResponse();
   }
   return _WireMessage(
@@ -1723,15 +1658,12 @@ _WireMessage _decodeMessageObject(
     producedByRunId: producedByRunId,
     audio: audio,
     images: images,
-    handoffs: handoffs,
+    clientActions: clientActions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
 
-List<AgentImageAsset> _decodeMessageImages(
-  Object? value,
-  String expectedThreadId,
-) {
+List<AgentImageAsset> _decodeMessageImages(Object? value) {
   final values = _strictList(value, maxLength: agentMaximumImagesPerMessage);
   if (values.isEmpty) {
     throw const _InvalidAgentResponse();
@@ -1743,7 +1675,6 @@ List<AgentImageAsset> _decodeMessageImages(
         item,
         allowed: const <String>{
           'image_asset_id',
-          'thread_id',
           'content_type',
           'size_bytes',
           'width',
@@ -1754,7 +1685,6 @@ List<AgentImageAsset> _decodeMessageImages(
         },
         required: const <String>{
           'image_asset_id',
-          'thread_id',
           'content_type',
           'size_bytes',
           'width',
@@ -1764,7 +1694,6 @@ List<AgentImageAsset> _decodeMessageImages(
         },
       );
       final id = _strictUuid(object['image_asset_id']);
-      final threadId = _strictUuid(object['thread_id']);
       final contentType = _strictString(
         object['content_type'],
         minLength: 1,
@@ -1776,13 +1705,11 @@ List<AgentImageAsset> _decodeMessageImages(
         maxLength: 16,
       )) {
         'staged' => AgentImageAssetStatus.staged,
-        'attached' => AgentImageAssetStatus.attached,
+        'ready' => AgentImageAssetStatus.ready,
         'deleting' => AgentImageAssetStatus.deleting,
-        'deleted' => AgentImageAssetStatus.deleted,
         _ => throw const _InvalidAgentResponse(),
       };
       if (!ids.add(id) ||
-          threadId != expectedThreadId ||
           (contentType != 'image/jpeg' &&
               contentType != 'image/png' &&
               contentType != 'image/webp')) {
@@ -1790,7 +1717,6 @@ List<AgentImageAsset> _decodeMessageImages(
       }
       return AgentImageAsset(
         id: id,
-        threadId: threadId,
         contentType: contentType,
         sizeBytes: _strictInt(
           object['size_bytes'],
@@ -1817,7 +1743,6 @@ AgentMessageAudio _decodeMessageAudio(Object? value) {
       'size_bytes',
       'duration_ms',
       'playback_path',
-      'deleted_at',
     },
     required: const <String>{
       'audio_id',
@@ -1825,19 +1750,14 @@ AgentMessageAudio _decodeMessageAudio(Object? value) {
       'content_type',
       'size_bytes',
       'duration_ms',
+      'playback_path',
     },
   );
   final id = _strictUuid(object['audio_id']);
-  final status = switch (_strictString(
-    object['status'],
-    minLength: 1,
-    maxLength: 16,
-  )) {
-    'readable' => AgentMessageAudioStatus.readable,
-    'deleting' => AgentMessageAudioStatus.deleting,
-    'deleted' => AgentMessageAudioStatus.deleted,
-    _ => throw const _InvalidAgentResponse(),
-  };
+  if (_strictString(object['status'], minLength: 1, maxLength: 16) !=
+      'readable') {
+    throw const _InvalidAgentResponse();
+  }
   if (_strictString(object['content_type'], minLength: 1, maxLength: 32) !=
       'audio/wav') {
     throw const _InvalidAgentResponse();
@@ -1861,22 +1781,16 @@ AgentMessageAudio _decodeMessageAudio(Object? value) {
       maxLength: 256,
     ),
   );
-  final deletedAt = _absentOnlyOptional(object, 'deleted_at', _strictDateTime);
-  if ((status == AgentMessageAudioStatus.readable &&
-          (playbackPath == null || deletedAt != null)) ||
-      (status == AgentMessageAudioStatus.deleting && playbackPath != null) ||
-      (status == AgentMessageAudioStatus.deleted &&
-          (playbackPath != null || deletedAt == null))) {
+  if (playbackPath != '/v1/agent-message-audios/$id/playback') {
     throw const _InvalidAgentResponse();
   }
   return AgentMessageAudio(
     id: id,
-    status: status,
+    status: AgentMessageAudioStatus.readable,
     contentType: 'audio/wav',
     sizeBytes: sizeBytes,
     duration: Duration(milliseconds: durationMs),
     playbackPath: playbackPath,
-    deletedAt: deletedAt,
   );
 }
 
@@ -2303,13 +2217,19 @@ final class _IoAgentHttpTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
+    if (body != null && bodyBytes != null) {
+      throw ArgumentError('Only one request body may be provided.');
+    }
     HttpClientRequest? request;
     try {
       request = await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
       request.followRedirects = false;
       headers.forEach(request.headers.set);
-      if (body != null) {
+      if (bodyBytes != null) {
+        request.add(bodyBytes);
+      } else if (body != null) {
         request.add(utf8.encode(body));
       }
       final response = await request.close().timeout(

@@ -27,7 +27,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: _json(HttpStatus.ok, _ieltsPart2SessionJson()),
       ),
     ]);
@@ -69,7 +69,7 @@ void main() {
           _Transport([
             _Step(
               method: 'GET',
-              path: '/v1/practice-sessions/$_sessionId/voice-state',
+              path: '/v1/practice-sessions/$_sessionId/interaction-state',
               response: _json(HttpStatus.ok, state),
             ),
           ]),
@@ -94,7 +94,7 @@ void main() {
       final transport = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/practice-sessions/$_sessionId/voice-state',
+          path: '/v1/practice-sessions/$_sessionId/interaction-state',
           response: _json(HttpStatus.ok, {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
@@ -141,7 +141,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
@@ -177,31 +177,31 @@ void main() {
     const encoded = 'resource%2Fpart%3Fquery%23fragment%25value';
 
     expect(
-      endpoints.voiceStatePath(opaque),
-      '/v1/practice-sessions/$encoded/voice-state',
+      endpoints.interactionStatePath(opaque),
+      '/v1/practice-sessions/$encoded/interaction-state',
     );
     expect(
-      endpoints.voiceActivationPath(opaque),
-      '/v1/practice-sessions/$encoded/voice-activation',
+      endpoints.activationPath(opaque),
+      '/v1/practice-sessions/$encoded/activation',
     );
     expect(
       endpoints.transcribePath(opaque, opaque),
-      '/v1/voice-practice-sessions/$encoded/questions/'
+      '/v1/practice-sessions/$encoded/questions/'
       '$encoded/transcription-candidates',
     );
     expect(
       endpoints.transcribeRealtimePath(opaque, opaque),
-      '/v1/voice-practice-sessions/$encoded/questions/'
+      '/v1/practice-sessions/$encoded/questions/'
       '$encoded/transcription-candidates/realtime',
     );
     expect(
       endpoints.submitTextPath(opaque, opaque),
-      '/v1/voice-practice-sessions/$encoded/questions/'
+      '/v1/practice-sessions/$encoded/questions/'
       '$encoded/text-answers',
     );
     expect(
       endpoints.questionTipPath(opaque, opaque),
-      '/v1/voice-practice-sessions/$encoded/questions/$encoded/tips',
+      '/v1/practice-sessions/$encoded/questions/$encoded/tips',
     );
     expect(
       endpoints.confirmPath(opaque),
@@ -209,7 +209,7 @@ void main() {
     );
     expect(
       endpoints.questionTranslationPath(opaque),
-      '/v1/voice-questions/$encoded/translation',
+      '/v1/practice-questions/$encoded/translation',
     );
     expect(
       endpoints.endEarlyPath(opaque),
@@ -225,7 +225,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/voice-questions/$_questionId/translation',
+        path: '/v1/practice-questions/$_questionId/translation',
         response: _json(HttpStatus.ok, {
           'question_id': _questionId,
           'target_language': 'zh-CN',
@@ -249,7 +249,7 @@ void main() {
       _Step(
         method: 'POST',
         path:
-            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '/v1/practice-sessions/$_sessionId/questions/'
             '$_questionId/tips',
         verify: (request) {
           expect(request.jsonBody, isNull);
@@ -285,7 +285,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'POST',
-        path: '/v1/practice-sessions/$_sessionId/voice-activation',
+        path: '/v1/practice-sessions/$_sessionId/activation',
         verify: (request) {
           expect(request.jsonBody, isNull);
           expect(request.rawFilePath, isNull);
@@ -296,7 +296,7 @@ void main() {
       _Step(
         method: 'POST',
         path:
-            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '/v1/practice-sessions/$_sessionId/questions/'
             '$_questionId/transcription-candidates',
         verify: (request) {
           expect(request.jsonBody, isNull);
@@ -404,7 +404,7 @@ void main() {
       _Step(
         method: 'POST',
         path:
-            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '/v1/practice-sessions/$_sessionId/questions/'
             '$_questionId/transcription-candidates',
         verify: (request) {
           expect(request.rawFilePath, audioFile.path);
@@ -448,7 +448,7 @@ void main() {
     server.listen((request) async {
       expect(
         request.uri.path,
-        '/v1/voice-practice-sessions/$_sessionId/questions/'
+        '/v1/practice-sessions/$_sessionId/questions/'
         '$_questionId/transcription-candidates/realtime',
       );
       expect(
@@ -557,7 +557,7 @@ void main() {
       _Step(
         method: 'POST',
         path:
-            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '/v1/practice-sessions/$_sessionId/questions/'
             '$_questionId/text-answers',
         verify: (request) {
           expect(request.rawFilePath, isNull);
@@ -628,13 +628,12 @@ void main() {
         },
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
-          'practice_plan_id': 'plan-1',
-          'plan_revision': 1,
+          'practice_plan_id': _planId,
+          'plan_version': 1,
           'practice_experience': 'INTERVIEW',
           'scene_category': 'INTERVIEW_PROFESSIONAL',
           'practice_mode': 'FOCUS',
           'evaluation_policy_ref': 'interview.shadow.evaluation.v1',
-          'snapshot_id': 'snapshot-1',
           'practice_session_status': 'ended_early',
           'session_version': 4,
           'started_at': '2026-07-25T09:00:01Z',
@@ -675,13 +674,12 @@ void main() {
           },
           response: _json(HttpStatus.ok, {
             'practice_session_id': _sessionId,
-            'practice_plan_id': 'plan-1',
-            'plan_revision': 1,
+            'practice_plan_id': _planId,
+            'plan_version': 1,
             'practice_experience': 'LIFE_AND_TRAVEL',
             'scene_category': 'LIFE_TRAVEL',
             'practice_mode': 'FULL_SIMULATION',
             'evaluation_policy_ref': 'scenario.shadow.evaluation.v1',
-            'snapshot_id': 'snapshot-1',
             'practice_session_status': 'completed',
             'session_version': 9,
             'started_at': '2026-07-25T09:00:01Z',
@@ -708,7 +706,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: const PracticeWireResponse(
           statusCode: HttpStatus.unauthorized,
           body: '{}',
@@ -782,7 +780,7 @@ void main() {
       final first = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/practice-sessions/$_sessionId/voice-state',
+          path: '/v1/practice-sessions/$_sessionId/interaction-state',
           response: const PracticeWireResponse(
             statusCode: HttpStatus.notFound,
             body: '{}',
@@ -792,7 +790,7 @@ void main() {
       final second = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/practice-sessions/$_sessionId/voice-state',
+          path: '/v1/practice-sessions/$_sessionId/interaction-state',
           response: const PracticeWireResponse(
             statusCode: HttpStatus.notFound,
             body: '{}',
@@ -900,7 +898,7 @@ void main() {
         'evidence_version': 1,
         'effective_turns': 1,
         'session_completed': false,
-        'audio_asset_id': 'audio-asset-1',
+        'audio_asset_id': '00000000-0000-4000-8000-000000000001',
       },
     };
     final transport = _Transport([
@@ -918,7 +916,7 @@ void main() {
       idempotencyKey: 'confirm-operation',
     );
 
-    expect(confirmation.audioAssetId, 'audio-asset-1');
+    expect(confirmation.audioAssetId, '00000000-0000-4000-8000-000000000001');
     transport.expectDone();
   });
 
@@ -926,7 +924,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'POST',
-        path: '/v1/practice-sessions/$_sessionId/voice-activation',
+        path: '/v1/practice-sessions/$_sessionId/activation',
         response: _json(HttpStatus.created, _sessionJson()),
       ),
     ]);
@@ -953,7 +951,7 @@ void main() {
       _Step(
         method: 'POST',
         path:
-            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '/v1/practice-sessions/$_sessionId/questions/'
             '$_questionId/transcription-candidates',
         response: _json(HttpStatus.created, {
           'candidate_id': _candidateId,
@@ -996,7 +994,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'voice_rate_limited',
@@ -1036,7 +1034,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'quota_exhausted',
@@ -1066,7 +1064,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/practice-sessions/$_sessionId/voice-state',
+        path: '/v1/practice-sessions/$_sessionId/interaction-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'voice_rate_limited',
@@ -1172,7 +1170,6 @@ const _practiceCapabilitiesJson = <String, Object?>{
   'retry_allowed': true,
   'question_translation_allowed': true,
   'question_tips_allowed': true,
-  'avatar_allowed': false,
   'speech_feedback_allowed': false,
 };
 
@@ -1248,6 +1245,7 @@ const _credential = AuthSessionCredential(
   generation: 7,
 );
 const _sessionId = '30000000-0000-4000-8000-000000000088';
+const _planId = '20000000-0000-4000-8000-000000000088';
 const _questionId = '40000000-0000-4000-8000-000000000088';
 const _nextQuestionId = '40000000-0000-4000-8000-000000000089';
 const _candidateId = '50000000-0000-4000-8000-000000000088';

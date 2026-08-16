@@ -1,7 +1,6 @@
 package identity
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -11,9 +10,7 @@ import (
 )
 
 const (
-	transactionRollbackTimeout       = 5 * time.Second
-	profileIdempotencyRetention      = 24 * time.Hour
-	profileIdempotencyRecordsPerUser = 64
+	transactionRollbackTimeout = 5 * time.Second
 )
 
 type PostgreSQL interface {
@@ -42,15 +39,8 @@ func (r *PostgresRepository) CreateUserWithCredential(
 	ctx context.Context,
 	canonicalEmail string,
 	passwordHash string,
-	displayNameInput ...*string,
+	displayName *string,
 ) (_ User, resultErr error) {
-	if len(displayNameInput) > 1 {
-		return User{}, ErrRepository
-	}
-	var displayName *string
-	if len(displayNameInput) == 1 {
-		displayName = displayNameInput[0]
-	}
 	userID, err := r.ids.NewID()
 	if err != nil {
 		return User{}, ErrRepository
@@ -67,42 +57,35 @@ func (r *PostgresRepository) CreateUserWithCredential(
 
 	var createdAt time.Time
 	var updatedAt time.Time
+	var profileVersion int64
+	if displayName != nil {
+		profileVersion = 1
+	}
 	if err := tx.QueryRow(ctx, `
-INSERT INTO identity_users (
+INSERT INTO users (
     id,
     canonical_email,
-    account_status,
+    status,
+    display_name,
+    profile_version,
     created_at,
     updated_at
-) VALUES ($1, $2, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+) VALUES ($1, $2, 'active', $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 RETURNING created_at, updated_at`,
 		userID,
 		canonicalEmail,
+		displayName,
+		profileVersion,
 	).Scan(&createdAt, &updatedAt); err != nil {
 		return User{}, mapPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO identity_credentials (user_id, password_hash, updated_at)
+INSERT INTO credentials (user_id, password_hash, updated_at)
 VALUES ($1, $2, CURRENT_TIMESTAMP)`,
 		userID,
 		passwordHash,
 	); err != nil {
 		return User{}, mapPostgresError(err)
-	}
-	if displayName != nil {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO identity_user_profiles (
-    user_id,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at
-) VALUES ($1, $2, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-			userID,
-			*displayName,
-		); err != nil {
-			return User{}, mapPostgresError(err)
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return User{}, ErrRepository
@@ -123,13 +106,13 @@ func (r *PostgresRepository) FindProfileByUserID(
 	var profile UserProfile
 	err := r.database.QueryRow(ctx, `
 SELECT
-    user_id::text,
+    id::text,
     display_name,
     profile_version,
     created_at,
     updated_at
-FROM identity_user_profiles
-WHERE user_id = $1`,
+FROM users
+WHERE id = $1 AND status = 'active' AND display_name IS NOT NULL`,
 		userID,
 	).Scan(
 		&profile.UserID,
@@ -147,224 +130,56 @@ WHERE user_id = $1`,
 func (r *PostgresRepository) PersistProfile(
 	ctx context.Context,
 	command PersistProfileCommand,
-) (_ UserProfile, resultErr error) {
-	if len(command.RequestDigest) != sha256DigestBytes {
-		return UserProfile{}, ErrRepository
-	}
-	tx, err := r.database.Begin(ctx)
-	if err != nil {
-		return UserProfile{}, ErrRepository
-	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
-
-	if _, err := tx.Exec(ctx, `
-SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`,
-		command.UserID,
-		command.IdempotencyKey,
-	); err != nil {
-		return UserProfile{}, mapPostgresError(err)
-	}
-	if _, err := tx.Exec(ctx, `
-DELETE FROM identity_profile_idempotency
-WHERE user_id = $1
-  AND created_at < CURRENT_TIMESTAMP - make_interval(secs => $2)`,
-		command.UserID,
-		int64(profileIdempotencyRetention/time.Second),
-	); err != nil {
-		return UserProfile{}, mapPostgresError(err)
-	}
-
-	var replay UserProfile
-	var replayDigest []byte
-	err = tx.QueryRow(ctx, `
-SELECT
-    user_id::text,
-    request_digest,
-    response_display_name,
-    response_profile_version,
-    response_created_at,
-    response_updated_at
-FROM identity_profile_idempotency
-WHERE user_id = $1 AND idempotency_key = $2`,
-		command.UserID,
-		command.IdempotencyKey,
-	).Scan(
-		&replay.UserID,
-		&replayDigest,
-		&replay.DisplayName,
-		&replay.ProfileVersion,
-		&replay.CreatedAt,
-		&replay.UpdatedAt,
-	)
-	switch {
-	case err == nil:
-		if !bytes.Equal(replayDigest, command.RequestDigest) {
-			return UserProfile{}, ErrIdempotencyKeyConflict
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return UserProfile{}, ErrRepository
-		}
-		return replay, nil
-	case !errors.Is(err, pgx.ErrNoRows):
-		return UserProfile{}, mapPostgresError(err)
-	}
-
-	var accountStatus string
-	if err := tx.QueryRow(ctx, `
-SELECT account_status
-FROM identity_users
-WHERE id = $1
-FOR UPDATE`,
-		command.UserID,
-	).Scan(&accountStatus); err != nil {
-		return UserProfile{}, mapPostgresError(err)
-	}
-	if AccountStatus(accountStatus) != AccountActive {
-		return UserProfile{}, ErrAuthenticationRequired
-	}
-
-	var current UserProfile
-	err = tx.QueryRow(ctx, `
-SELECT
-    user_id::text,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at
-FROM identity_user_profiles
-WHERE user_id = $1
-FOR UPDATE`,
-		command.UserID,
-	).Scan(
-		&current.UserID,
-		&current.DisplayName,
-		&current.ProfileVersion,
-		&current.CreatedAt,
-		&current.UpdatedAt,
-	)
-
-	var persisted UserProfile
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		if command.ExpectedProfileVersion != nil {
-			return UserProfile{}, ErrProfileVersionConflict
-		}
-		if err := tx.QueryRow(ctx, `
-INSERT INTO identity_user_profiles (
-    user_id,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at
-) VALUES ($1, $2, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-RETURNING
-    user_id::text,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at`,
-			command.UserID,
-			command.DisplayName,
-		).Scan(
-			&persisted.UserID,
-			&persisted.DisplayName,
-			&persisted.ProfileVersion,
-			&persisted.CreatedAt,
-			&persisted.UpdatedAt,
-		); err != nil {
-			if errors.Is(mapPostgresError(err), ErrConflict) {
-				return UserProfile{}, ErrProfileVersionConflict
-			}
-			return UserProfile{}, mapPostgresError(err)
-		}
-	case err != nil:
-		return UserProfile{}, mapPostgresError(err)
-	default:
-		if command.ExpectedProfileVersion == nil ||
-			*command.ExpectedProfileVersion != current.ProfileVersion {
-			return UserProfile{}, ErrProfileVersionConflict
-		}
-		if err := tx.QueryRow(ctx, `
-UPDATE identity_user_profiles
+) (UserProfile, error) {
+	var profile UserProfile
+	err := r.database.QueryRow(ctx, `
+WITH locked_user AS (
+    SELECT id, display_name, profile_version
+    FROM users
+    WHERE id = $1 AND status = 'active'
+    FOR UPDATE
+)
+UPDATE users AS owner
 SET
     display_name = $2,
-    profile_version = profile_version + 1,
+    profile_version = CASE
+        WHEN locked_user.display_name IS NULL THEN 1
+        ELSE locked_user.profile_version + 1
+    END,
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
-        updated_at + INTERVAL '1 microsecond'
+        owner.updated_at + INTERVAL '1 microsecond'
     )
-WHERE user_id = $1 AND profile_version = $3
+FROM locked_user
+WHERE owner.id = locked_user.id
+  AND (
+      (locked_user.display_name IS NULL AND $3::bigint IS NULL)
+      OR
+      (locked_user.display_name IS NOT NULL AND $3 = locked_user.profile_version)
+  )
 RETURNING
-    user_id::text,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at`,
-			command.UserID,
-			command.DisplayName,
-			*command.ExpectedProfileVersion,
-		).Scan(
-			&persisted.UserID,
-			&persisted.DisplayName,
-			&persisted.ProfileVersion,
-			&persisted.CreatedAt,
-			&persisted.UpdatedAt,
-		); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return UserProfile{}, ErrProfileVersionConflict
-			}
-			return UserProfile{}, mapPostgresError(err)
-		}
-	}
-
-	if _, err := tx.Exec(ctx, `
-INSERT INTO identity_profile_idempotency (
-    user_id,
-    idempotency_key,
-    request_digest,
-    response_display_name,
-    response_profile_version,
-    response_created_at,
-    response_updated_at,
-    created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+    owner.id::text,
+    owner.display_name,
+    owner.profile_version,
+    owner.created_at,
+    owner.updated_at`,
 		command.UserID,
-		command.IdempotencyKey,
-		command.RequestDigest,
-		persisted.DisplayName,
-		persisted.ProfileVersion,
-		persisted.CreatedAt,
-		persisted.UpdatedAt,
-	); err != nil {
-		if errors.Is(mapPostgresError(err), ErrConflict) {
-			return UserProfile{}, ErrIdempotencyKeyConflict
-		}
+		command.DisplayName,
+		command.ExpectedProfileVersion,
+	).Scan(
+		&profile.UserID,
+		&profile.DisplayName,
+		&profile.ProfileVersion,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UserProfile{}, ErrProfileVersionConflict
+	}
+	if err != nil {
 		return UserProfile{}, mapPostgresError(err)
 	}
-	if _, err := tx.Exec(ctx, `
-DELETE FROM identity_profile_idempotency AS records
-USING (
-    SELECT idempotency_key
-    FROM identity_profile_idempotency
-    WHERE user_id = $1
-    ORDER BY created_at DESC, idempotency_key DESC
-    OFFSET $2
-) AS overflow
-WHERE records.user_id = $1
-  AND records.idempotency_key = overflow.idempotency_key`,
-		command.UserID,
-		profileIdempotencyRecordsPerUser,
-	); err != nil {
-		return UserProfile{}, mapPostgresError(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return UserProfile{}, ErrRepository
-	}
-	return persisted, nil
+	return profile, nil
 }
 
 func (r *PostgresRepository) FindCredentialByEmail(
@@ -377,13 +192,13 @@ func (r *PostgresRepository) FindCredentialByEmail(
 SELECT
     users.id::text,
     users.canonical_email,
-    users.account_status,
+    users.status,
     users.created_at,
     users.updated_at,
     credentials.password_hash,
     credentials.updated_at
-FROM identity_users AS users
-JOIN identity_credentials AS credentials ON credentials.user_id = users.id
+FROM users
+JOIN credentials ON credentials.user_id = users.id
 WHERE users.canonical_email = $1`,
 		canonicalEmail,
 	).Scan(
@@ -427,8 +242,8 @@ func (r *PostgresRepository) CreateSession(
 
 	var status string
 	if err := tx.QueryRow(ctx, `
-SELECT account_status
-FROM identity_users
+SELECT status
+FROM users
 WHERE id = $1
 FOR UPDATE`,
 		params.UserID,
@@ -439,7 +254,7 @@ FOR UPDATE`,
 	var credentialUpdatedAt time.Time
 	if err := tx.QueryRow(ctx, `
 SELECT password_hash, updated_at
-FROM identity_credentials
+FROM credentials
 WHERE user_id = $1
 FOR UPDATE`,
 		params.UserID,
@@ -454,7 +269,7 @@ FOR UPDATE`,
 
 	if params.ReplacementHash != "" {
 		tag, err := tx.Exec(ctx, `
-UPDATE identity_credentials
+UPDATE credentials
 SET
     password_hash = $1,
     updated_at = GREATEST(
@@ -479,7 +294,7 @@ WHERE user_id = $2
 	var createdAt time.Time
 	var expiresAt time.Time
 	if err := tx.QueryRow(ctx, `
-INSERT INTO identity_auth_sessions (
+INSERT INTO auth_sessions (
     id,
     user_id,
     token_digest,
@@ -537,11 +352,11 @@ SELECT
     sessions.expires_at,
     users.id::text,
     users.canonical_email,
-    users.account_status,
+    users.status,
     users.created_at,
     users.updated_at
-FROM identity_auth_sessions AS sessions
-JOIN identity_users AS users ON users.id = sessions.user_id
+FROM auth_sessions AS sessions
+JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_digest = $1
   AND ($2::boolean OR sessions.revoked_at IS NULL)
   AND sessions.created_at <= CURRENT_TIMESTAMP
@@ -571,8 +386,8 @@ func (r *PostgresRepository) FindUserByID(
 	var user User
 	var status string
 	err := r.database.QueryRow(ctx, `
-SELECT id::text, canonical_email, account_status, created_at, updated_at
-FROM identity_users
+SELECT id::text, canonical_email, status, created_at, updated_at
+FROM users
 WHERE id = $1`,
 		userID,
 	).Scan(
@@ -607,7 +422,7 @@ func (r *PostgresRepository) RevokeSession(
 	var lockedUserID string
 	if err := tx.QueryRow(ctx, `
 SELECT id::text
-FROM identity_users
+FROM users
 WHERE id = $1
 FOR UPDATE`,
 		userID,
@@ -615,7 +430,7 @@ FOR UPDATE`,
 		return mapPostgresError(err)
 	}
 	tag, err := tx.Exec(ctx, `
-UPDATE identity_auth_sessions
+UPDATE auth_sessions
 SET
     revoked_at = COALESCE(
         revoked_at,
@@ -656,7 +471,7 @@ func (r *PostgresRepository) RevokeAllSessionsForUser(
 	var lockedUserID string
 	if err := tx.QueryRow(ctx, `
 SELECT id::text
-FROM identity_users
+FROM users
 WHERE id = $1
 FOR UPDATE`,
 		userID,
@@ -664,7 +479,7 @@ FOR UPDATE`,
 		return mapPostgresError(err)
 	}
 	tag, err := tx.Exec(ctx, `
-UPDATE identity_credentials
+UPDATE credentials
 SET updated_at = GREATEST(
     CURRENT_TIMESTAMP,
     updated_at + INTERVAL '1 microsecond'
@@ -679,7 +494,7 @@ WHERE user_id = $1`,
 		return ErrNotFound
 	}
 	if _, err := tx.Exec(ctx, `
-UPDATE identity_auth_sessions
+UPDATE auth_sessions
 SET
     revoked_at = GREATEST(CURRENT_TIMESTAMP, created_at),
     revocation_reason = $2

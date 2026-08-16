@@ -16,8 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Application is the consumer-owned MessageAudio and speech boundary. The
-// voice-input implementation can satisfy it without exposing candidate writes.
+// Application is the consumer-owned recording and speech boundary.
 type Application interface {
 	Playback(
 		context.Context,
@@ -178,7 +177,7 @@ func mapError(err error) error {
 			apperror.WithCause(err),
 		)
 	case errors.Is(err, agentvoice.ErrConflict),
-		errors.Is(err, agentvoice.ErrCandidateStale):
+		errors.Is(err, agentvoice.ErrDraftStale):
 		return apperror.New(
 			apperror.Conflict, "resource_conflict",
 			"Resource state conflicts with this operation.",

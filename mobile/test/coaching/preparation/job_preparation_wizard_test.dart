@@ -1,689 +1,115 @@
-import '../../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/design/speak_up_theme.dart';
+import 'package:speakup/features/coaching/interview/interview_resume_file.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_client.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
-import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_wizard.dart';
-import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/features/coaching/scene/scene_client.dart';
-import 'package:speakup/resume/resume.dart';
+
+import '../../support/preparation_contract_fixtures.dart';
 
 void main() {
-  testWidgets('restorable draft actions fit the shared button theme', (
-    tester,
-  ) async {
-    final store = MemoryJobPreparationDraftStore();
-    final first = _controller(_WizardClient(), draftStore: store);
-    await first.activateAccount('user-1');
-    first.updateInput(_input);
-    await tester.runAsync(() async {
-      while (await store.read('user-1') == null) {
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-    });
-    first.dispose();
-
-    final restored = _controller(_WizardClient(), draftStore: store);
-    addTearDown(restored.dispose);
-    await restored.activateAccount('user-1');
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: JobPreparationWizard(controller: restored),
-      ),
-    );
-    await tester.pump();
-
-    expect(restored.hasRestorableDraft, isTrue);
-    await _scrollTo(
-      tester,
-      target: const Key('job-draft-card'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    expect(find.byKey(const Key('job-draft-card')), findsOneWidget);
-    expect(find.byKey(const Key('resume-job-draft-button')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('keeps one job input for either title or JD', (tester) async {
-    final controller = JobPreparationController(
-      client: _WizardClient(),
-      threadIdProvider: () => 'thread-1',
-      goalActivator:
-          ({
-            required threadId,
-            required candidate,
-            required clientOperationId,
-          }) async =>
-              AgentPracticeContext(threadId: threadId, goalId: 'goal-1'),
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {},
-    );
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(home: JobPreparationWizard(controller: controller)),
-    );
-
-    expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.textContaining('第 1/3 步'), findsNothing);
-    expect(find.byKey(const Key('job-input-field')), findsOneWidget);
-    expect(find.byKey(const Key('job-source-selector')), findsNothing);
-    expect(find.byKey(const Key('job-description-field')), findsNothing);
-    expect(find.byKey(const Key('job-title-field')), findsNothing);
-    expect(find.byKey(const Key('job-company-field')), findsNothing);
-    expect(find.byKey(const Key('job-background-field')), findsNothing);
-    expect(find.byKey(const Key('job-goal-field')), findsNothing);
-
-    await tester.enterText(
-      find.byKey(const Key('job-input-field')),
-      'Backend engineer',
-    );
-    expect(controller.input.source, JobTargetSource.quickStart);
-    expect(controller.input.jobTitle, 'Backend engineer');
-    await _scrollTo(
-      tester,
-      target: const Key('create-and-start-interview-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(
-      find.byKey(const Key('create-and-start-interview-button')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
-    expect(find.byKey(const Key('job-wizard-preview-step')), findsNothing);
-    expect(controller.bootstrap, isNotNull);
-  });
-
-  testWidgets('automatically treats structured text as a JD', (tester) async {
-    final controller = _controller(_WizardClient());
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(home: JobPreparationWizard(controller: controller)),
-    );
-    await tester.enterText(
-      find.byKey(const Key('job-input-field')),
-      '岗位职责：负责 Go 服务开发\n任职要求：熟悉 PostgreSQL',
-    );
-
-    expect(controller.input.source, JobTargetSource.jobDescription);
-    expect(controller.input.jobTitle, isNull);
-    expect(controller.input.jobDescription, contains('任职要求'));
-    expect(find.textContaining('通用模拟生成'), findsNothing);
-  });
-
-  testWidgets('AI analysis remains internal instead of opening an editor', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    addTearDown(controller.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-
-    await tester.pumpWidget(
-      MaterialApp(home: JobPreparationWizard(controller: controller)),
-    );
-    expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
-    expect(find.byKey(const Key('candidate-title-field')), findsNothing);
-    expect(find.byKey(const Key('job-practice-focus-field')), findsNothing);
-    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
-  });
-
-  testWidgets('start analyzes, creates a Session, and enters practice', (
-    tester,
-  ) async {
-    final client = _WizardClient();
-    var created = 0;
-    final controller = _controller(
-      client,
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {},
-    );
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: JobPreparationWizard(
-          controller: controller,
-          onPracticeStarted: () async => created++,
+  testWidgets(
+    'wizard starts the aggregate flow without legacy draft settings',
+    (tester) async {
+      final practice = PracticeController(
+        client: FakePracticeClient(
+          planId: contractPlanId,
+          practiceExperience: PracticeExperience.interview,
+          sceneCategory: SceneCategory.interviewProfessional,
+          turnLimit: 6,
         ),
-      ),
-    );
-    await tester.enterText(
-      find.byKey(const Key('job-input-field')),
-      'Build reliable Go APIs and explain system design trade-offs.',
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('create-and-start-interview-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(
-      find.byKey(const Key('create-and-start-interview-button')),
-    );
-    await tester.pumpAndSettle();
+      );
+      final workspace = PracticeWorkspaceController(
+        practiceController: practice,
+        recordStore: MemoryPracticeLaunchRecordStore(),
+      );
+      await workspace.activateAccount(contractUserId);
+      final client = _WizardClient();
+      var started = 0;
+      final controller = JobPreparationController(
+        client: client,
+        workspaceController: workspace,
+        idFactory: (scope) => '$scope-contract-key',
+        voiceActivator:
+            ({
+              required scene,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
+      );
+      addTearDown(() {
+        controller.dispose();
+        workspace.dispose();
+        practice.dispose();
+      });
 
-    expect(find.byKey(const Key('job-wizard-confirmation-step')), findsNothing);
-    expect(find.byKey(const Key('job-wizard-preview-step')), findsNothing);
-    expect(client.sessionCalls, 1);
-    expect(created, 1);
-  });
-
-  testWidgets('first page only offers a per-interview resume upload', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    final resumeController = ResumeController(
-      client: _WizardResumeClient(
-        items: <ResumeItem>[_wizardResume('Backend resume')],
-      ),
-      filePicker: const _WizardResumePicker(null),
-      urlOpener: const _WizardResumeOpener(),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(resumeController.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-    await resumeController.load();
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: JobPreparationWizard(
-          controller: controller,
-          resumeController: resumeController,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: JobPreparationWizard(
+            controller: controller,
+            onPracticeStarted: () => started++,
+          ),
         ),
-      ),
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('job-resume-source-card'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
+      );
+      await tester.enterText(
+        find.byKey(const Key('job-input-field')),
+        'Responsibilities:\n${contractInterviewInput.jobDescription!}',
+      );
+      await tester.tap(
+        find.byKey(const Key('create-and-start-interview-button')),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('上传简历'), findsOneWidget);
-    expect(find.text('上传 PDF 简历'), findsOneWidget);
-    expect(find.text('Backend resume'), findsNothing);
-    expect(find.text('不使用简历'), findsNothing);
-    expect(find.byType(DropdownButtonFormField<String?>), findsNothing);
-    expect(controller.resumeSelection, isNull);
-  });
-
-  testWidgets('close delegates to the catalog route boundary', (tester) async {
-    final controller = _controller(_WizardClient());
-    var exits = 0;
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: JobPreparationWizard(
-          controller: controller,
-          onExit: () => exits++,
-        ),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('job-wizard-close')));
-    await tester.pumpAndSettle();
-
-    expect(exits, 1);
-    expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
-  });
-
-  testWidgets('closing a saved plan restores the interview catalog state', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    final catalogController = PreparationController(
-      client: _WizardCatalogClient(),
-    );
-    var exits = 0;
-    addTearDown(controller.dispose);
-    addTearDown(catalogController.dispose);
-    expect(await controller.openSavedPlan(_plan.id), isTrue);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: JobPreparationWizard(
-          controller: controller,
-          catalogController: catalogController,
-          onExit: () => exits++,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(catalogController.selectedScene?.id, _sceneId);
-    await tester.tap(find.byKey(const Key('job-wizard-close')));
-    await tester.pumpAndSettle();
-
-    expect(exits, 1);
-    expect(catalogController.selectedScene, isNull);
-  });
-
-  testWidgets('saves a switched role for an open-turn interview', (
-    tester,
-  ) async {
-    final client = _WizardClient(initialPlan: _openPlan);
-    final controller = _controller(client);
-    final catalogController = PreparationController(
-      client: _WizardCatalogClient(),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(catalogController.dispose);
-    expect(await controller.openSavedPlan(_openPlan.id), isTrue);
-    await catalogController.loadIfNeeded();
-    await catalogController.selectScene(_scene);
-    catalogController.selectRole(_role);
-    catalogController.selectOption(_option);
-    expect(catalogController.roles, hasLength(2));
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: JobPreparationWizard(
-          controller: controller,
-          catalogController: catalogController,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('job-plan-advanced-settings')));
-    await tester.pumpAndSettle();
-    expect(find.text('开放轮次'), findsWidgets);
-
-    await tester.tap(find.byKey(const Key('job-plan-role-selector')));
-    await tester.pumpAndSettle();
-    expect(find.text('选择面试官视角'), findsOneWidget);
-    await tester.tap(find.text('Recruiter').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Recruiting focus'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('save-job-plan-revision')));
-    await tester.pumpAndSettle();
-
-    expect(
-      client.revisedInput,
-      isA<RevisePreparationPlanInput>()
-          .having(
-            (input) => input.selectedRoleIds,
-            'selectedRoleIds',
-            const <String>[_recruiterRoleId],
-          )
-          .having(
-            (input) => input.practiceOptionId,
-            'practiceOptionId',
-            _recruiterOptionId,
-          )
-          .having((input) => input.maxEffectiveTurns, 'maxEffectiveTurns', 0),
-    );
-    expect(find.text('Recruiter · 开放轮次'), findsOneWidget);
-  });
-
-  testWidgets('temporary parse failure keeps job context and can be skipped', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    final resumeController = ResumeController(
-      client: _WizardResumeClient(
-        temporary: _wizardResume(
-          'Temporary resume',
-          status: ResumeParseStatus.failed,
-          revision: null,
-        ),
-      ),
-      filePicker: _WizardResumePicker(
-        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
-      ),
-      urlOpener: const _WizardResumeOpener(),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(resumeController.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: JobPreparationWizard(
-          controller: controller,
-          resumeController: resumeController,
-        ),
-      ),
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('temporary-resume-upload-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('临时简历解析失败，可以重试或重新上传。'), findsOneWidget);
-    expect(find.text('重试解析'), findsOneWidget);
-    expect(controller.candidate?.jobTitle, 'Backend engineer');
-    await _scrollTo(
-      tester,
-      target: const Key('create-and-start-interview-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(
-      find.byKey(const Key('create-and-start-interview-button')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(controller.resumeSelection, isNull);
-    expect(controller.bootstrap, isNotNull);
-  });
-
-  testWidgets('temporary upload becomes the selected parsed resume', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    final resumeController = ResumeController(
-      client: _WizardResumeClient(
-        temporaryCreated: _wizardResume(
-          'Temporary resume',
-          status: ResumeParseStatus.queued,
-          revision: null,
-        ),
-        temporaryDetail: _wizardResume('Temporary resume'),
-      ),
-      filePicker: _WizardResumePicker(
-        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
-      ),
-      urlOpener: const _WizardResumeOpener(),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(resumeController.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: JobPreparationWizard(
-          controller: controller,
-          resumeController: resumeController,
-        ),
-      ),
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('temporary-resume-upload-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(find.byKey(const Key('temporary-resume-upload-button')));
-    await tester.pumpAndSettle();
-
-    expect(controller.resumeSelection?.title, 'Temporary resume');
-    expect(controller.resumeSelection?.temporary, isTrue);
-    expect(find.text('临时简历已解析，可用于本次面试。'), findsOneWidget);
-  });
-
-  testWidgets('temporary file is deleted once its snapshot exists', (
-    tester,
-  ) async {
-    final client = _WizardClient(failPlan: true);
-    final controller = _controller(client);
-    final resumeClient = _WizardResumeClient(
-      temporary: _wizardResume('Temporary resume'),
-    );
-    final resumeController = ResumeController(
-      client: resumeClient,
-      filePicker: _WizardResumePicker(
-        ResumePdfFile(name: 'temporary.pdf', bytes: '%PDF-temp'.codeUnits),
-      ),
-      urlOpener: const _WizardResumeOpener(),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(resumeController.dispose);
-    controller.updateInput(_input);
-    await controller.analyze();
-    await resumeController.pickTemporary();
-    controller.selectResume(
-      JobPreparationResumeSelection(
-        resumeId: resumeController.temporaryItem!.id,
-        revision: resumeController.temporaryItem!.currentRevision!,
-        resourceVersion: resumeController.temporaryItem!.version,
-        temporary: true,
-        title: resumeController.temporaryItem!.title,
-      ),
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: SpeakUpTheme.light,
-        home: JobPreparationWizard(
-          controller: controller,
-          resumeController: resumeController,
-        ),
-      ),
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('create-and-start-interview-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    await tester.tap(
-      find.byKey(const Key('create-and-start-interview-button')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(client.snapshotCalls, 1);
-    expect(resumeClient.deleteTemporaryCalls, 1);
-    expect(resumeController.temporaryItem, isNull);
-  });
-
-  testWidgets('voice retry reuses committed Session', (tester) async {
-    final client = _WizardClient();
-    var voiceCalls = 0;
-    final controller = _controller(
-      client,
-      voiceActivator:
-          ({
-            required context,
-            required scene,
-            required bootstrap,
-            required clientOperationId,
-          }) async {
-            voiceCalls++;
-            if (voiceCalls == 1) {
-              throw StateError('voice unavailable');
-            }
-          },
-    );
-    addTearDown(controller.dispose);
-    expect(await controller.openSavedPlan(_plan.id), isTrue);
-
-    await tester.pumpWidget(
-      MaterialApp(home: JobPreparationWizard(controller: controller)),
-    );
-    await _scrollTo(
-      tester,
-      target: const Key('start-job-practice-button'),
-      scrollable: const Key('job-wizard-preview-step'),
-    );
-    await tester.tap(find.byKey(const Key('start-job-practice-button')));
-    await tester.pumpAndSettle();
-    await _scrollTo(
-      tester,
-      target: const Key('start-job-practice-button'),
-      scrollable: const Key('job-wizard-preview-step'),
-    );
-    expect(find.text('重新连接语音练习'), findsOneWidget);
-    expect(find.byKey(const Key('job-preview-error')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('start-job-practice-button')));
-    await tester.pump();
-
-    expect(client.sessionCalls, 1);
-    expect(voiceCalls, 2);
-  });
-
-  testWidgets('narrow screen, keyboard and 2x text remain usable', (
-    tester,
-  ) async {
-    final controller = _controller(_WizardClient());
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MediaQuery(
-        data: const MediaQueryData(
-          size: Size(320, 640),
-          textScaler: TextScaler.linear(2),
-        ),
-        child: MaterialApp(home: JobPreparationWizard(controller: controller)),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('job-input-field')));
-    await tester.pump();
-
-    expect(tester.takeException(), isNull);
-    expect(find.byKey(const Key('job-company-field')), findsNothing);
-    await _scrollTo(
-      tester,
-      target: const Key('create-and-start-interview-button'),
-      scrollable: const Key('job-wizard-input-step'),
-    );
-    expect(
-      find.byKey(const Key('create-and-start-interview-button')),
-      findsOneWidget,
-    );
-  });
-}
-
-Future<void> _scrollTo(
-  WidgetTester tester, {
-  required Key target,
-  required Key scrollable,
-}) async {
-  await tester.scrollUntilVisible(
-    find.byKey(target),
-    260,
-    scrollable: find
-        .descendant(
-          of: find.byKey(scrollable),
-          matching: find.byType(Scrollable),
-        )
-        .first,
-    maxScrolls: 12,
-  );
-  await tester.pump();
-}
-
-JobPreparationController _controller(
-  _WizardClient client, {
-  JobPreparationDraftStore? draftStore,
-  JobPreparationVoiceActivator? voiceActivator,
-}) {
-  var sequence = 0;
-  return JobPreparationController(
-    client: client,
-    draftStore: draftStore,
-    threadIdProvider: () => _threadId,
-    goalActivator:
-        ({
-          required threadId,
-          required candidate,
-          required clientOperationId,
-        }) async => AgentPracticeContext(threadId: threadId, goalId: _goalId),
-    voiceActivator:
-        voiceActivator ??
-        ({
-          required context,
-          required scene,
-          required bootstrap,
-          required clientOperationId,
-        }) async {},
-    idFactory: (scope) => '$scope-widget-${++sequence}',
-    analysisPollInterval: Duration.zero,
+      expect(started, 1);
+      expect(client.preparationCreates, 1);
+      expect(client.planCreates, 1);
+      expect(client.sessionCreates, 1);
+      expect(find.byKey(const Key('job-draft-card')), findsNothing);
+      expect(find.byKey(const Key('job-plan-advanced')), findsNothing);
+    },
   );
 }
 
 final class _WizardClient implements JobPreparationClient {
-  _WizardClient({this.failPlan = false, PracticePlan? initialPlan})
-    : _planValue = initialPlan;
-
-  final bool failPlan;
-  JobTarget? _target;
-  PreparationSnapshot? _snapshotValue;
-  PracticePlan? _planValue;
-  RevisePreparationPlanInput? revisedInput;
-  int sessionCalls = 0;
-  int snapshotCalls = 0;
+  int preparationCreates = 0;
+  int planCreates = 0;
+  int sessionCreates = 0;
+  InterviewPreparationInput? _input;
 
   @override
-  Future<JobTarget> analyzeJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
+  Future<InterviewPreparation> createInterviewPreparation({
+    required InterviewPreparationInput input,
+    InterviewResumeFile? resume,
     required String idempotencyKey,
   }) async {
-    _target = _targetFor(
-      JobTargetStage.awaitingConfirmation,
-      input: _target?.input ?? _input,
-    );
-    return _target!;
+    preparationCreates++;
+    _input = input;
+    return _preparation(InterviewPreparationStatus.draft, 1);
   }
 
   @override
-  Future<void> clearAccountState() async {}
-
-  @override
-  Future<JobTarget> confirmJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required int expectedAnalysisVersion,
-    required JobTargetCandidate candidate,
+  Future<InterviewPreparation> confirmInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
+    required InterviewPreparationCandidate candidate,
     required String idempotencyKey,
-  }) async {
-    _target = _targetFor(
-      JobTargetStage.confirmed,
-      input: _target?.input ?? _input,
-      confirmedCandidate: candidate,
-    );
-    return _target!;
-  }
-
-  @override
-  Future<PreparationProfile> createProfile({
-    required CreatePreparationProfileInput input,
-    required String idempotencyKey,
-  }) async => _profile;
+  }) async => _preparation(InterviewPreparationStatus.confirmed, 2);
 
   @override
   Future<PracticePlan> createPlan({
-    required CreatePreparationPlanInput input,
+    required CreatePracticePlanInput input,
     required String idempotencyKey,
   }) async {
-    if (failPlan) {
-      throw const JobPreparationException(
-        kind: JobPreparationFailureKind.network,
-        stage: JobPreparationOperationStage.plan,
-        retryable: true,
-      );
-    }
-    final snapshot = _snapshotValue ?? _snapshot;
-    _planValue = _planFrom(snapshot: snapshot, context: null, revision: 1);
-    return _planValue!;
+    planCreates++;
+    return contractPlan(includeInterview: true);
   }
 
   @override
@@ -692,53 +118,13 @@ final class _WizardClient implements JobPreparationClient {
     required CreatePreparationSessionInput input,
     required String idempotencyKey,
   }) async {
-    sessionCalls++;
-    return _bootstrap;
+    sessionCreates++;
+    return contractBootstrap(plan);
   }
 
   @override
-  Future<PreparationSnapshot> createSnapshot({
-    required String profileId,
-    required int sourceVersion,
-    required String idempotencyKey,
-  }) async {
-    snapshotCalls++;
-    final target = _target ?? _targetFor(JobTargetStage.confirmed);
-    final candidate =
-        target.confirmation?.candidate ?? _candidateFor(target.input.source);
-    _snapshotValue = PreparationSnapshot(
-      id: _snapshotId,
-      sourceProfileId: _profileId,
-      sourceVersion: 1,
-      sourceJobTargetId: target.id,
-      sourceJobTargetConfirmationVersion: 1,
-      jobTargetInput: target.input,
-      jobTargetCandidate: candidate,
-      backgroundSnapshot: target.input.candidateBackground ?? _background,
-      createdAt: _now,
-    );
-    return _snapshotValue!;
-  }
-
-  @override
-  Future<JobTarget> createJobTarget({
-    required JobTargetInput input,
-    required String idempotencyKey,
-  }) async {
-    _target = _targetFor(JobTargetStage.draft, input: input);
-    return _target!;
-  }
-
-  @override
-  Future<JobTarget> discardJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required String idempotencyKey,
-  }) async =>
-      _targetFor(JobTargetStage.discarded, input: _target?.input ?? _input);
-
-  @override
-  Future<PracticePlan> getPlan(String planId) async => _planValue ?? _plan;
+  Future<PracticePlan> getPlan(String planId) async =>
+      contractPlan(includeInterview: true);
 
   @override
   Future<List<PracticePlanSummary>> listPlans({
@@ -746,437 +132,48 @@ final class _WizardClient implements JobPreparationClient {
   }) async => const <PracticePlanSummary>[];
 
   @override
-  Future<void> deletePlan(String planId) async {}
+  Future<InterviewPreparation> getInterviewPreparation(String id) async =>
+      contractInterviewPreparation();
 
   @override
-  Future<JobTarget> getJobTarget(String jobTargetId) async =>
-      _target ?? _targetFor(JobTargetStage.awaitingConfirmation);
+  Future<InterviewPreparation> regenerateInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
+    required InterviewPreparationInput input,
+    required String idempotencyKey,
+  }) async => contractInterviewPreparation();
 
   @override
-  Future<PracticePlan> revisePlan({
+  Future<InterviewPreparation> discardInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
+    required String idempotencyKey,
+  }) async => contractInterviewPreparation(
+    status: InterviewPreparationStatus.discarded,
+    version: expectedVersion + 1,
+  );
+
+  @override
+  Future<PracticePlan> confirmPlan({
     required String planId,
-    required RevisePreparationPlanInput input,
+    required int expectedVersion,
     required String idempotencyKey,
-  }) async {
-    revisedInput = input;
-    final current = _planValue ?? _plan;
-    _planValue = _planFrom(
-      snapshot: current.preparationSnapshot,
-      context: current.agentContext,
-      revision: input.expectedPlanRevision + 1,
-      selectedRoleId: input.selectedRoleIds.single,
-      practiceOptionId: input.practiceOptionId,
-      sessionPolicy: current.sessionPolicy,
-    );
-    return _planValue!;
-  }
-
-  @override
-  Future<JobTarget> updateJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required JobTargetInput input,
-    required String idempotencyKey,
-  }) async {
-    _target = _targetFor(JobTargetStage.draft, input: input);
-    return _target!;
-  }
-}
-
-final class _WizardCatalogClient implements SceneClient {
-  @override
-  Future<SceneDefinition> getScene(String sceneId) async => _scene;
-
-  @override
-  Future<List<SceneDefinition>> listScenes() async => [_scene];
-
-  @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) async => [
-    _role,
-    _recruiterRole,
-  ];
-}
-
-ResumeItem _wizardResume(
-  String title, {
-  ResumeParseStatus status = ResumeParseStatus.ready,
-  int? revision = 1,
-}) => ResumeItem(
-  id: '70000000-0000-4000-8000-000000000007',
-  title: title,
-  originalFilename: 'resume.pdf',
-  sizeBytes: 1024,
-  parseStatus: status,
-  currentRevision: revision,
-  version: 2,
-  updatedAt: DateTime.utc(2026, 8, 6),
-);
-
-final class _WizardResumePicker implements ResumeFilePicker {
-  const _WizardResumePicker(this.file);
-
-  final ResumePdfFile? file;
-
-  @override
-  Future<ResumePdfFile?> pickPdf() async => file;
-}
-
-final class _WizardResumeOpener implements ResumeUrlOpener {
-  const _WizardResumeOpener();
-
-  @override
-  Future<bool> open(Uri url) async => true;
-}
-
-final class _WizardResumeClient implements ResumeClient {
-  _WizardResumeClient({
-    this.items = const <ResumeItem>[],
-    this.temporary,
-    this.temporaryCreated,
-    this.temporaryDetail,
-  });
-
-  final List<ResumeItem> items;
-  final ResumeItem? temporary;
-  final ResumeItem? temporaryCreated;
-  final ResumeItem? temporaryDetail;
-  int deleteTemporaryCalls = 0;
-
-  @override
-  Future<List<ResumeItem>> list() async => items;
-
-  @override
-  Future<ResumeItem> create({
-    required String title,
-    required ResumePdfFile file,
-  }) async => throw UnimplementedError();
-
-  @override
-  Future<ResumeItem> createTemporary(ResumePdfFile file) async =>
-      temporaryCreated ?? temporary!;
-
-  @override
-  Future<ResumeDetail> getTemporary(String resumeId) async =>
-      ResumeDetail(resume: temporaryDetail ?? temporary!);
-
-  @override
-  Future<ResumeItem> retryTemporaryParse(ResumeItem resume) async => resume;
-
-  @override
-  Future<void> deleteTemporary(ResumeItem resume) async {
-    deleteTemporaryCalls += 1;
-  }
+  }) async => contractPlan();
 
   @override
   Future<void> clearAccountState() async {}
 
-  @override
-  Future<void> delete(ResumeItem resume) async => throw UnimplementedError();
-
-  @override
-  Future<ResumeDetail> get(String resumeId) async => throw UnimplementedError();
-
-  @override
-  Future<Uri> getContentUrl(String resumeId) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<ResumeItem> rename(ResumeItem resume, String title) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<ResumeItem> replace(ResumeItem resume, ResumePdfFile file) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<ResumeItem> retryParse(ResumeItem resume) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<ResumeDetail> updateContent(
-    ResumeDetail detail,
-    ResumeContent content,
-  ) async => throw UnimplementedError();
-}
-
-JobTarget _targetFor(
-  JobTargetStage stage, {
-  JobTargetInput input = _input,
-  JobTargetCandidate? confirmedCandidate,
-}) {
-  final analysis = switch (stage) {
-    JobTargetStage.parsing => JobTargetAnalysis(
-      inputVersion: 1,
-      analysisVersion: 1,
-      attempt: 1,
-      status: JobTargetAnalysisStatus.running,
-      startedAt: _now,
-    ),
-    JobTargetStage.awaitingConfirmation ||
-    JobTargetStage.confirmed => JobTargetAnalysis(
-      inputVersion: 1,
-      analysisVersion: 1,
-      attempt: 1,
-      status: JobTargetAnalysisStatus.succeeded,
-      candidate: _candidateFor(input.source),
-      startedAt: _now,
-      finishedAt: _now,
-    ),
-    JobTargetStage.analysisFailed => JobTargetAnalysis(
-      inputVersion: 1,
-      analysisVersion: 1,
-      attempt: 1,
-      status: JobTargetAnalysisStatus.failed,
-      stableErrorCategory: 'provider_unavailable',
-      startedAt: _now,
-      finishedAt: _now,
-    ),
-    JobTargetStage.draft || JobTargetStage.discarded => null,
-  };
-  return JobTarget(
-    id: _targetId,
-    userId: _userId,
-    input: input,
-    inputVersion: 1,
-    stage: stage,
-    analysis: analysis,
-    confirmation: stage == JobTargetStage.confirmed
-        ? JobTargetConfirmation(
-            inputVersion: 1,
-            analysisVersion: 1,
-            confirmationVersion: 1,
-            candidate: confirmedCandidate ?? _candidateFor(input.source),
-            confirmedAt: _now,
-          )
-        : null,
-    createdAt: _now,
-    updatedAt: _now,
+  InterviewPreparation _preparation(
+    InterviewPreparationStatus status,
+    int version,
+  ) => InterviewPreparation(
+    id: contractInterviewId,
+    userId: contractUserId,
+    input: _input!,
+    candidate: contractCandidate,
+    status: status,
+    version: version,
+    createdAt: DateTime.parse(contractCreatedAt),
+    updatedAt: DateTime.parse(contractCreatedAt),
   );
 }
-
-JobTargetCandidate _candidateFor(JobTargetSource source) => JobTargetCandidate(
-  source: source,
-  generalAdviceOnly: source == JobTargetSource.quickStart,
-  jobTitle: 'Backend engineer',
-  seniority: 'Senior',
-  responsibilities: const ['Build reliable APIs'],
-  coreSkills: const ['Go services'],
-  communicationFocus: const ['Explain trade-offs'],
-  practiceGoals: const ['System design'],
-  scopeNotice: source == JobTargetSource.quickStart
-      ? 'Not based on a real JD.'
-      : 'Based on the supplied JD.',
-  catalogRecommendation: const JobTargetCatalogRecommendation(
-    sceneId: _sceneId,
-    sceneVersion: 1,
-    selectedRoleIds: [_roleId],
-    practiceOptionId: _optionId,
-  ),
-);
-
-PracticePlan _planWithRevision(int revision) => _planFrom(
-  snapshot: _snapshot,
-  context: const AgentPracticeContext(threadId: _threadId, goalId: _goalId),
-  revision: revision,
-);
-
-PracticePlan _planFrom({
-  required PreparationSnapshot snapshot,
-  required AgentPracticeContext? context,
-  required int revision,
-  String selectedRoleId = _roleId,
-  String practiceOptionId = _optionId,
-  PreparationSessionPolicy sessionPolicy = _policy,
-}) => PracticePlan(
-  id: _planId,
-  userId: _userId,
-  sourceThreadId: context?.threadId,
-  goalSnapshot: context == null
-      ? null
-      : PreparationGoalSnapshot(
-          id: context.goalId,
-          title: _scene.name,
-          version: 1,
-        ),
-  preparationSnapshot: snapshot,
-  sceneSelection: SceneSelectionSnapshot(
-    scene: _scene,
-    selectedRoleIds: <String>[selectedRoleId],
-    practiceOptionId: practiceOptionId,
-  ),
-  sessionPolicy: sessionPolicy,
-  practiceObjectives: _objectives,
-  revision: revision,
-  status: PracticePlanStatus.ready,
-  createdAt: _now,
-  updatedAt: _now,
-);
-
-final _now = DateTime.utc(2026, 7, 26, 12);
-
-const _input = JobTargetInput(
-  source: JobTargetSource.jobDescription,
-  jobDescription: 'Build reliable APIs and explain trade-offs.',
-  candidateBackground: _background,
-);
-
-final _profile = PreparationProfile(
-  id: _profileId,
-  userId: _userId,
-  backgroundSummary: _background,
-  jobTargetId: _targetId,
-  jobTargetConfirmationVersion: 1,
-  version: 1,
-  updatedAt: _now,
-);
-
-final _snapshot = PreparationSnapshot(
-  id: _snapshotId,
-  sourceProfileId: _profileId,
-  sourceVersion: 1,
-  sourceJobTargetId: _targetId,
-  sourceJobTargetConfirmationVersion: 1,
-  jobTargetInput: _input,
-  jobTargetCandidate: _candidateFor(JobTargetSource.jobDescription),
-  backgroundSnapshot: _background,
-  createdAt: _now,
-);
-
-final _scene = testScene(
-  id: _sceneId,
-  experience: PracticeExperience.interview,
-  category: SceneCategory.interviewProfessional,
-  name: 'Technical interview',
-  version: 1,
-  prompt: _prompt,
-  roles: [_role, _recruiterRole],
-  practiceOptions: [_fullOption, _option, _recruiterOption],
-);
-
-const _prompt = ScenePrompt(
-  publicSceneBrief: 'Discuss one backend project.',
-  practiceGoal: 'Explain decisions with evidence.',
-  userRole: 'Candidate',
-  aiRole: 'Technical interviewer',
-  personaSummary: 'Precise and evidence seeking.',
-  focusAreas: ['system_design'],
-  turnBlueprints: ['Ask for a project overview.'],
-);
-
-final _role = testRole(
-  id: _roleId,
-  sceneId: _sceneId,
-  type: 'TECHNICAL_INTERVIEWER',
-  displayName: 'Technical interviewer',
-  responsibilities: 'Probe technical depth.',
-  style: 'Precise',
-  practiceObjectiveIds: ['system_design'],
-);
-
-final _option = testPracticeOption(
-  id: _optionId,
-  sceneId: _sceneId,
-  mode: PracticeMode.focus,
-  displayName: 'System design focus',
-  roleId: _roleId,
-);
-
-final _fullOption = testPracticeOption(
-  id: 'option-full',
-  sceneId: _sceneId,
-  mode: PracticeMode.fullSimulation,
-  displayName: 'Full simulation',
-);
-
-final _recruiterRole = testRole(
-  id: _recruiterRoleId,
-  sceneId: _sceneId,
-  type: 'RECRUITER',
-  displayName: 'Recruiter',
-  responsibilities: 'Probe motivation and communication.',
-  style: 'Conversational',
-  practiceObjectiveIds: ['system_design'],
-);
-
-final _recruiterOption = testPracticeOption(
-  id: _recruiterOptionId,
-  sceneId: _sceneId,
-  mode: PracticeMode.focus,
-  displayName: 'Recruiting focus',
-  roleId: _recruiterRoleId,
-);
-
-const _objectives = [
-  PracticeObjective(
-    id: 'system_design',
-    description: 'Explain one design trade-off.',
-  ),
-];
-
-const _policy = PreparationSessionPolicy(
-  suggestedDurationSeconds: 720,
-  minEffectiveTurns: 2,
-  maxEffectiveTurns: 5,
-  coverageCheckpointTurn: 3,
-  maxFollowUpsPerQuestion: 2,
-  earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
-  retryAllowed: false,
-  questionTranslationAllowed: true,
-  questionTipsAllowed: true,
-  avatarAllowed: true,
-  speechFeedbackAllowed: true,
-);
-
-const _openPolicy = PreparationSessionPolicy(
-  completionMode: PreparationCompletionMode.userControlled,
-  suggestedDurationSeconds: 900,
-  minEffectiveTurns: 1,
-  maxEffectiveTurns: 0,
-  coverageCheckpointTurn: 1,
-  maxFollowUpsPerQuestion: 2,
-  earlyCompletionRule: 'USER_ENDS_SESSION',
-  retryAllowed: false,
-  questionTranslationAllowed: true,
-  questionTipsAllowed: true,
-  avatarAllowed: true,
-  speechFeedbackAllowed: true,
-);
-
-final _plan = _planWithRevision(1);
-final _openPlan = _planFrom(
-  snapshot: _snapshot,
-  context: const AgentPracticeContext(threadId: _threadId, goalId: _goalId),
-  revision: 1,
-  sessionPolicy: _openPolicy,
-);
-
-final _bootstrap = PreparationPracticeBootstrap(
-  session: PreparationPracticeSession(
-    id: _sessionId,
-    planId: _planId,
-    practiceExperience: PracticeExperience.interview,
-    sceneCategory: SceneCategory.interviewProfessional,
-    practiceMode: PracticeMode.focus,
-    snapshotId: _snapshotId,
-    status: 'starting',
-    version: 1,
-    createdAt: _now,
-  ),
-  preparationSnapshotId: _snapshotId,
-  maxEffectiveTurns: 5,
-);
-
-const _background = 'Built reliable Go services for three years.';
-const _userId = 'user-1';
-const _targetId = 'target-1';
-const _profileId = 'profile-1';
-const _snapshotId = 'snapshot-1';
-const _planId = 'plan-1';
-const _sessionId = 'session-1';
-const _threadId = 'thread-1';
-const _goalId = 'goal-1';
-const _sceneId = 'scene-1';
-const _roleId = 'role-1';
-const _optionId = 'option-1';
-const _recruiterRoleId = 'role-2';
-const _recruiterOptionId = 'option-2';

@@ -162,7 +162,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              feedback.acousticAssessment.isAssessed
+              feedback.acousticAssessment!.isAssessed
                   ? '表达反馈基于已确认文本，发音表现基于本次录音。'
                   : '以下表达反馈仅基于已确认文本；当前不包含发音或声学流利度判断。',
               style: Theme.of(
@@ -178,7 +178,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space12),
-            _AcousticBoundary(assessment: feedback.acousticAssessment),
+            _AcousticBoundary(assessment: feedback.acousticAssessment!),
           ],
         );
     }
@@ -194,17 +194,17 @@ String _compactTitle(SpeechFeedbackProjection projection, String fallback) {
     return fallback;
   }
   final assessment = feedback.acousticAssessment;
-  if (!assessment.isAssessed) {
+  if (assessment == null || !assessment.isAssessed) {
     return '查看评分与润色';
   }
-  if (assessment.category == 'topic') {
-    return '发音 ${assessment.pronunciationScore!.round()}  '
-        '语速 ${assessment.speakingSpeedWpm!.round()}词/分  '
-        '相关 ${assessment.semanticScore!.round()}';
+  final labels = <String>['发音 ${assessment.pronunciationScore!.round()}'];
+  if (assessment.fluencyScore case final score?) {
+    labels.add('流利 ${score.round()}');
   }
-  return '流利 ${assessment.fluencyScore!.round()}  '
-      '发音 ${assessment.accuracyScore!.round()}  '
-      '完整 ${assessment.integrityScore!.round()}';
+  if (assessment.integrityScore case final score?) {
+    labels.add('完整 ${score.round()}');
+  }
+  return labels.join('  ');
 }
 
 final class _DisclosureContent {
@@ -370,7 +370,7 @@ class _InsufficientDetails extends StatelessWidget {
           ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
         ),
         const SizedBox(height: SpeakUpDesign.space12),
-        _AcousticBoundary(assessment: feedback.acousticAssessment),
+        _AcousticBoundary(assessment: feedback.acousticAssessment!),
       ],
     );
   }
@@ -410,25 +410,12 @@ class _AcousticBoundary extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      assessment.category == 'topic'
-                          ? '发音准确度 '
-                                '${assessment.pronunciationScore!.round()} · '
-                                '语速 '
-                                '${assessment.speakingSpeedWpm!.round()} '
-                                '词/分钟 · '
-                                '题意相关 '
-                                '${assessment.semanticScore!.round()}'
-                          : '发音准确度 '
-                                '${assessment.accuracyScore!.round()} · '
-                                '流利度 '
-                                '${assessment.fluencyScore!.round()} · '
-                                '完整度 '
-                                '${assessment.integrityScore!.round()}',
+                      _acousticScoreLabel(assessment),
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: SpeakUpDesign.space4),
                     Text(
-                      assessment.notice!,
+                      '根据本次录音自动评估，仅供练习参考。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: SpeakUpDesign.secondary,
                       ),
@@ -488,14 +475,26 @@ class _FailureDetails extends StatelessWidget {
 String _itemKindLabel(SpeechFeedbackItemKind kind) => switch (kind) {
   SpeechFeedbackItemKind.correction => '纠错',
   SpeechFeedbackItemKind.strength => '表达亮点',
-  SpeechFeedbackItemKind.improvement => '改进建议',
   SpeechFeedbackItemKind.recommendedExpression => '推荐表达',
 };
 
 String _repracticeLabel(SpeechFeedbackRepracticeMode mode) => switch (mode) {
   SpeechFeedbackRepracticeMode.sameQuestion => '再答一次',
-  SpeechFeedbackRepracticeMode.sameThread => '继续练习',
   SpeechFeedbackRepracticeMode.none => throw StateError(
     'A NONE repractice mode must not render an action.',
   ),
 };
+
+String _acousticScoreLabel(SpeechFeedbackAcousticAssessment assessment) {
+  final labels = <String>['发音准确度 ${assessment.pronunciationScore!.round()}'];
+  if (assessment.fluencyScore case final value?) {
+    labels.add('流利度 ${value.round()}');
+  }
+  if (assessment.integrityScore case final value?) {
+    labels.add('完整度 ${value.round()}');
+  }
+  if (assessment.speakingSpeedWpm case final value?) {
+    labels.add('语速 ${value.round()} 词/分钟');
+  }
+  return labels.join(' · ');
+}

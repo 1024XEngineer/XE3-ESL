@@ -13,8 +13,6 @@ import (
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentconversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
-	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -112,12 +110,12 @@ func newAgentTestDatabase(t *testing.T) agentTestDatabase {
 	} {
 		if _, err := pool.Exec(
 			context.Background(),
-			`INSERT INTO identity_users (id, canonical_email)
+			`INSERT INTO users (id, canonical_email)
 VALUES ($1, $2)`,
 			user.id,
 			user.email,
 		); err != nil {
-			t.Fatalf("insert identity user: %v", err)
+			t.Fatalf("insert user: %v", err)
 		}
 	}
 	return agentTestDatabase{
@@ -146,30 +144,18 @@ func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
 func newAgentDataServices(
 	t *testing.T,
 	pool *pgxpool.Pool,
-) (*goal.Service, *agentconversation.Service) {
+) *agentconversation.Service {
 	t.Helper()
 	ids := identity.NewUUIDv4Generator(nil)
-	goalRepository, err := goal.NewPostgresRepository(pool, ids)
-	if err != nil {
-		t.Fatalf("new Goal repository: %v", err)
-	}
-	goalService, err := goal.NewService(goalRepository)
-	if err != nil {
-		t.Fatalf("new Goal service: %v", err)
-	}
 	repository, err := agentconversationpostgres.New(pool, ids)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	goalReader, err := goalagentconversation.New(goalService)
-	if err != nil {
-		t.Fatalf("new Agent Goal reader: %v", err)
-	}
-	service, err := agentconversation.NewService(repository, goalReader)
+	service, err := agentconversation.NewService(repository)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
-	return goalService, service
+	return service
 }
 
 type authenticatorFunc func(

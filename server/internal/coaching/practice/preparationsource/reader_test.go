@@ -2,7 +2,6 @@ package preparationsource
 
 import (
 	"testing"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
@@ -39,7 +38,6 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 	plan.SessionPolicy.MaxFollowUpsPerQuestion = 3
 	plan.SessionPolicy.QuestionTranslationAllowed = true
 	plan.SessionPolicy.QuestionTipsAllowed = true
-	plan.SessionPolicy.AvatarAllowed = true
 	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	projection, err = ProjectConfirmedPlan(plan)
 	if err != nil {
@@ -82,6 +80,7 @@ func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
 	option.RoleDefinitionID = "role-selected"
 	option.SessionPolicyRef = practice.InterviewProjectDeepDiveSessionPolicy
 	plan.SessionPolicy = preparation.SessionPolicy{
+		CompletionMode:             preparation.CompletionModeTurnLimited,
 		SuggestedDurationSeconds:   600,
 		MinEffectiveTurns:          1,
 		MaxEffectiveTurns:          3,
@@ -90,7 +89,6 @@ func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
 		EarlyCompletionRule:        preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		QuestionTranslationAllowed: true,
 		QuestionTipsAllowed:        true,
-		AvatarAllowed:              true,
 		SpeechFeedbackAllowed:      true,
 	}
 
@@ -130,11 +128,7 @@ func confirmedPlanFixture() preparation.PracticePlan {
 		ID:     "plan-1",
 		UserID: "user-1",
 		PreparationSnapshot: preparation.Snapshot{
-			ID:                 "preparation-1",
-			SourceProfileID:    "profile-1",
-			SourceVersion:      1,
-			BackgroundSnapshot: "background",
-			CreatedAt:          time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC),
+			BackgroundSummary: "background",
 		},
 		SceneSelection: scene.SelectionSnapshot{
 			Scene: scene.SceneDefinition{
@@ -185,13 +179,12 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			RetryAllowed:               true,
 			QuestionTranslationAllowed: true,
 			QuestionTipsAllowed:        true,
-			AvatarAllowed:              true,
 			SpeechFeedbackAllowed:      true,
 		},
 		PracticeObjectives: []preparation.PracticeObjective{{
 			ID: "clarity", Description: "Speak clearly.",
 		}},
-		Revision: 1,
-		Status:   preparation.PlanStatusReady,
+		Version: 1,
+		Status:  preparation.PlanStatusReady,
 	}
 }

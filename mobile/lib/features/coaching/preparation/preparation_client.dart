@@ -1,19 +1,16 @@
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 abstract interface class PreparationClient {
-  Future<PreparationProfile> createProfile({
-    required CreatePreparationProfileInput input,
-    required String idempotencyKey,
-  });
-
-  Future<PreparationSnapshot> createSnapshot({
-    required String profileId,
-    required int sourceVersion,
-    required String idempotencyKey,
-  });
-
   Future<PracticePlan> createPlan({
-    required CreatePreparationPlanInput input,
+    required CreatePracticePlanInput input,
+    required String idempotencyKey,
+  });
+
+  Future<PracticePlan> getPlan(String planId);
+
+  Future<PracticePlan> confirmPlan({
+    required String planId,
+    required int expectedVersion,
     required String idempotencyKey,
   });
 

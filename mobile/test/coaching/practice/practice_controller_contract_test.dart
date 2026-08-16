@@ -24,7 +24,6 @@ void main() {
         retryAllowed: false,
         questionTranslationAllowed: false,
         questionTipsAllowed: true,
-        avatarAllowed: false,
         speechFeedbackAllowed: true,
       ),
       sessionVersion: 4,

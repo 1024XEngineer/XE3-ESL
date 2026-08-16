@@ -16,7 +16,10 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
 
-const voiceObjectReadTimeout = 30 * time.Second
+const (
+	voiceObjectReadTimeout = 30 * time.Second
+	voiceSignedURLMaxTTL   = 2 * time.Minute
+)
 
 // SignedAudioLoader reads a private object through a short-lived server
 // capability and recreates a validated provider source. Signed URLs and object
@@ -56,7 +59,7 @@ func newSignedAudioLoader(
 	allowedHosts []string,
 	resolver voiceHostResolver,
 ) (*SignedAudioLoader, error) {
-	if nilDependency(store) {
+	if store == nil {
 		return nil, errors.New("agent voice input: object store is required")
 	}
 	if client == nil {
@@ -165,16 +168,16 @@ func trustedVoiceDialHost(
 
 func (loader *SignedAudioLoader) LoadVoiceAudio(
 	ctx context.Context,
-	candidate Candidate,
+	draft Draft,
 ) (platformmedia.ManagedAudioSource, error) {
 	if ctx == nil ||
-		candidate.ObjectKey == "" ||
-		candidate.ContentType != platformmedia.ContentTypeWAV ||
-		candidate.Size <= 0 ||
-		candidate.ChecksumSHA256 == "" {
+		draft.ObjectKey == "" ||
+		draft.ContentType != platformmedia.ContentTypeWAV ||
+		draft.Size <= 0 ||
+		draft.ChecksumSHA256 == "" {
 		return nil, ErrInvalidRequest
 	}
-	signed, err := loader.store.SignedGet(ctx, candidate.ObjectKey)
+	signed, err := loader.store.SignedGet(ctx, draft.ObjectKey)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +190,7 @@ func (loader *SignedAudioLoader) LoadVoiceAudio(
 		target.Fragment != "" ||
 		signed.ExpiresAt.IsZero() ||
 		!signed.ExpiresAt.After(now) ||
-		signed.ExpiresAt.After(now.Add(defaultVoicePlaybackTTL)) {
+		signed.ExpiresAt.After(now.Add(voiceSignedURLMaxTTL)) {
 		return nil, ErrRepository
 	}
 	if err := loader.validateSignedTarget(ctx, target); err != nil {
@@ -225,7 +228,7 @@ func (loader *SignedAudioLoader) LoadVoiceAudio(
 	}
 	checksum, err := voiceAudioChecksum(audio)
 	if err != nil ||
-		!sameVoiceUpload(candidate, audio, checksum) {
+		!sameVoiceUpload(draft, audio, checksum) {
 		_ = audio.Close()
 		return nil, ErrRepository
 	}

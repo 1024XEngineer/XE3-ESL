@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_practice_history_store.dart';
-import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_generation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -32,12 +32,12 @@ final class IeltsPracticeNavigationRequest {
 final class IeltsPreparationController extends ChangeNotifier {
   IeltsPreparationController({
     required this.client,
-    this.answerPreparationClient,
+    this.answerGenerator,
     this.historyStore = const NullIeltsPracticeHistoryStore(),
   });
 
   final IeltsQuestionBankClient client;
-  final IeltsAnswerPreparationClient? answerPreparationClient;
+  final IeltsAnswerGenerator? answerGenerator;
   final IeltsPracticeHistoryStore historyStore;
 
   IeltsQuestionBank? _questionBank;

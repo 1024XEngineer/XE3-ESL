@@ -55,7 +55,7 @@ Thread 和工具数据。
   "messages": ["看看我上次面试评价"],
   "expected_decision": "tool_call",
   "expected_tools": ["review.search.v2"],
-  "forbidden_tools": ["goal.create.v1"],
+  "forbidden_tools": ["practice.preview.v1"],
   "required_response_terms": ["评价"],
   "forbidden_response_terms": ["report_id"],
   "max_non_empty_paragraphs": 2,

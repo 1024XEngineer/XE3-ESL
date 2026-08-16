@@ -2,26 +2,31 @@ package agentvoice
 
 import (
 	"context"
-	"errors"
+	"strings"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	voice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-// Feedback translates Evaluation's coordinator into Agent Voice's feedback
-// port. Evaluation remains authoritative for evidence and feedback status.
+type messageReader interface {
+	FindMessageByID(context.Context, string, string) (conversation.Message, error)
+}
+
 type Feedback struct {
-	coordinator *speechfeedback.SpeechFeedbackCoordinator
+	scheduler *evaluation.AgentMessageFeedbackScheduler
+	messages  messageReader
 }
 
 func NewFeedback(
-	coordinator *speechfeedback.SpeechFeedbackCoordinator,
+	scheduler *evaluation.AgentMessageFeedbackScheduler,
+	messages messageReader,
 ) (*Feedback, error) {
-	if coordinator == nil {
+	if scheduler == nil || messages == nil {
 		return nil, voice.ErrInvalidContext
 	}
-	return &Feedback{coordinator: coordinator}, nil
+	return &Feedback{scheduler: scheduler, messages: messages}, nil
 }
 
 func (feedback *Feedback) EnsureMessage(
@@ -30,22 +35,53 @@ func (feedback *Feedback) EnsureMessage(
 	threadID string,
 	messageID string,
 ) (voice.FeedbackReference, error) {
-	if feedback == nil || feedback.coordinator == nil {
-		return voice.FeedbackReference{}, voice.ErrInvalidContext
-	}
-	reference, err := feedback.coordinator.EnsureAgentVoiceMessage(
-		ctx,
-		actor,
-		threadID,
-		messageID,
-	)
-	if errors.Is(err, speechfeedback.ErrSpeechFeedbackNotApplicable) {
-		return voice.FeedbackReference{}, nil
-	}
-	if err != nil {
+	statusURL, found, err := feedback.ensure(ctx, actor, threadID, messageID)
+	if err != nil || !found {
 		return voice.FeedbackReference{}, err
 	}
-	return voice.FeedbackReference{StatusURL: reference.StatusURL}, nil
+	return voice.FeedbackReference{StatusURL: statusURL}, nil
+}
+
+func (feedback *Feedback) StatusURLForAgentVoiceMessage(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	messageID string,
+) (string, bool, error) {
+	return feedback.ensure(ctx, actor, "", messageID)
+}
+
+func (feedback *Feedback) ensure(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	expectedThreadID string,
+	messageID string,
+) (string, bool, error) {
+	if feedback == nil || feedback.scheduler == nil || feedback.messages == nil ||
+		ctx == nil || !actor.Valid() {
+		return "", false, voice.ErrInvalidContext
+	}
+	message, err := feedback.messages.FindMessageByID(ctx, actor.UserID, messageID)
+	if err != nil {
+		return "", false, err
+	}
+	if message.OwnerID != actor.UserID ||
+		(expectedThreadID != "" && message.ThreadID != expectedThreadID) ||
+		message.Role != conversation.MessageRoleUser ||
+		message.Modality != conversation.MessageModalityVoice ||
+		strings.TrimSpace(message.Content) == "" {
+		return "", false, nil
+	}
+	_, _, err = feedback.scheduler.Schedule(ctx, evaluation.AgentMessageEvidence{
+		UserID:      actor.UserID,
+		ThreadID:    message.ThreadID,
+		MessageID:   message.ID,
+		Transcript:  message.Content,
+		ConfirmedAt: message.CreatedAt,
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return "/v1/agent-messages/" + message.ID + "/evaluation", true, nil
 }
 
 var _ voice.FeedbackPort = (*Feedback)(nil)

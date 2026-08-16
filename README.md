@@ -56,7 +56,7 @@ make dev-android
 
 ## 质量检查
 
-在仓库根目录执行完整的 Flutter、Go、API 契约和确定性主流程检查：
+在仓库根目录执行完整的 Flutter、Go 和 API 契约检查：
 
 ```shell
 make check
@@ -68,7 +68,6 @@ make check
 make check-flutter
 make check-go
 make check-api
-make check-smoke
 ```
 
 PostgreSQL 迁移、数据库集成、Readiness 和可达 Go 漏洞检查由 Database Workflow 验证。所有合入 `dev` 或 `main` 的变更都必须通过对应的 Pull Request 检查。

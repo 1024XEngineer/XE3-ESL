@@ -26,9 +26,8 @@ type MessagePageCursor struct {
 }
 
 type ThreadPage struct {
-	Threads         []Thread
-	FocusedThreadID string
-	NextCursor      string
+	Threads    []Thread
+	NextCursor string
 }
 
 type MessagePage struct {

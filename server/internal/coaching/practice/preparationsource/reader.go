@@ -29,13 +29,13 @@ func (reader *Reader) ReadExecutablePlan(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	planID string,
-	exactRevision int,
+	exactVersion int,
 ) (practice.PlanProjection, error) {
 	plan, err := reader.plans.ReadExecutablePlan(
 		ctx,
 		actor,
 		planID,
-		exactRevision,
+		exactVersion,
 	)
 	if err != nil {
 		return practice.PlanProjection{}, mapReadError(err)
@@ -81,7 +81,7 @@ func ProjectConfirmedPlan(
 	return practice.PlanProjection{
 		ID:                 plan.ID,
 		OwnerUserID:        plan.UserID,
-		Revision:           plan.Revision,
+		Version:            plan.Version,
 		Preparation:        projectPreparation(plan.PreparationSnapshot),
 		SceneSelection:     selection,
 		SessionPolicy:      policy,
@@ -188,9 +188,7 @@ func projectSessionPolicy(
 		return practice.SessionPolicy{}, practice.ErrConflict
 	}
 	projected := practice.SessionPolicy{
-		CompletionMode: practice.NormalizeCompletionMode(
-			practice.CompletionMode(policy.CompletionMode),
-		),
+		CompletionMode:           practice.CompletionMode(policy.CompletionMode),
 		SuggestedDurationSeconds: policy.SuggestedDurationSeconds,
 		MinEffectiveTurns:        policy.MinEffectiveTurns,
 		MaxEffectiveTurns:        policy.MaxEffectiveTurns,
@@ -202,7 +200,6 @@ func projectSessionPolicy(
 		RetryAllowed:               policy.RetryAllowed,
 		QuestionTranslationAllowed: policy.QuestionTranslationAllowed,
 		QuestionTipsAllowed:        policy.QuestionTipsAllowed,
-		AvatarAllowed:              policy.AvatarAllowed,
 		SpeechFeedbackAllowed:      policy.SpeechFeedbackAllowed,
 	}
 	if projected != registered {
@@ -215,82 +212,62 @@ func projectPreparation(
 	snapshot preparation.Snapshot,
 ) practice.PreparationSnapshot {
 	result := practice.PreparationSnapshot{
-		ID:                                 snapshot.ID,
-		SourceProfileID:                    snapshot.SourceProfileID,
-		SourceVersion:                      snapshot.SourceVersion,
-		SourceJobTargetID:                  snapshot.SourceJobTargetID,
-		SourceJobTargetConfirmationVersion: snapshot.SourceJobTargetConfirmationVersion,
-		ResumeSnapshot:                     projectResumeSnapshot(snapshot.ResumeSnapshot),
-		JobDescriptionSnapshot:             snapshot.JobDescriptionSnapshot,
-		BackgroundSnapshot:                 snapshot.BackgroundSnapshot,
-		CreatedAt:                          snapshot.CreatedAt,
+		BackgroundSnapshot: snapshot.BackgroundSummary,
 	}
-	if snapshot.Context != nil {
-		result.Kind = string(snapshot.Context.Kind)
-		if scenario := snapshot.Context.Scenario; scenario != nil {
-			result.ScenarioContext = &practice.ScenarioPreparationContext{
-				Situation:          scenario.Situation,
-				UserRole:           scenario.UserRole,
-				CounterpartRole:    scenario.CounterpartRole,
-				Goal:               scenario.Goal,
-				CounterpartPersona: scenario.CounterpartPersona,
-			}
-		}
+	if snapshot.Interview == nil {
+		return result
 	}
-	if input := snapshot.JobTargetInputSnapshot; input != nil {
-		result.JobTargetInputSnapshot = &practice.JobTargetInput{
-			Source:              string(input.Source),
-			JobTitle:            input.JobTitle,
-			JobDescription:      input.JobDescription,
-			Company:             input.Company,
-			Seniority:           input.Seniority,
-			CandidateBackground: input.CandidateBackground,
-			PracticeFocus:       input.PracticeFocus,
-		}
+	interview := snapshot.Interview
+	result.InterviewPreparationID = interview.ID
+	result.InterviewPreparationVersion = interview.Version
+	result.ResumeMaterial = projectResumeMaterial(interview.ResumeContent)
+	input := interview.Input
+	result.JobTargetInputSnapshot = &practice.JobTargetInput{
+		Source:              string(input.Source),
+		JobTitle:            input.JobTitle,
+		JobDescription:      input.JobDescription,
+		Company:             input.Company,
+		Seniority:           input.Seniority,
+		CandidateBackground: input.CandidateBackground,
+		PracticeFocus:       input.PracticeFocus,
 	}
-	if candidate := snapshot.JobTargetCandidateSnapshot; candidate != nil {
-		result.JobTargetCandidateSnapshot = &practice.JobTargetCandidate{
-			Source:             string(candidate.Source),
-			GeneralAdviceOnly:  candidate.GeneralAdviceOnly,
-			JobTitle:           candidate.JobTitle,
-			Seniority:          candidate.Seniority,
-			Responsibilities:   append([]string(nil), candidate.Responsibilities...),
-			CoreSkills:         append([]string(nil), candidate.CoreSkills...),
-			CommunicationFocus: append([]string(nil), candidate.CommunicationFocus...),
-			PracticeGoals:      append([]string(nil), candidate.PracticeGoals...),
-			ScopeNotice:        candidate.ScopeNotice,
-			CatalogRecommendation: practice.JobTargetCatalogRecommendation{
-				SceneID: candidate.CatalogRecommendation.SceneID,
-				SceneVersion: candidate.CatalogRecommendation.
-					SceneVersion,
-				SelectedRoleIDs: append(
-					[]string(nil),
-					candidate.CatalogRecommendation.SelectedRoleIDs...,
-				),
-				PracticeOptionID: candidate.CatalogRecommendation.
-					PracticeOptionID,
-			},
-		}
+	candidate := interview.Candidate
+	result.JobTargetCandidateSnapshot = &practice.JobTargetCandidate{
+		Source:             string(candidate.Source),
+		GeneralAdviceOnly:  candidate.GeneralAdviceOnly,
+		JobTitle:           candidate.JobTitle,
+		Seniority:          candidate.Seniority,
+		Responsibilities:   append([]string(nil), candidate.Responsibilities...),
+		CoreSkills:         append([]string(nil), candidate.CoreSkills...),
+		CommunicationFocus: append([]string(nil), candidate.CommunicationFocus...),
+		PracticeGoals:      append([]string(nil), candidate.PracticeGoals...),
+		ScopeNotice:        candidate.ScopeNotice,
+		CatalogRecommendation: practice.JobTargetCatalogRecommendation{
+			SceneID:          candidate.CatalogRecommendation.SceneID,
+			SceneVersion:     candidate.CatalogRecommendation.SceneVersion,
+			SelectedRoleIDs:  append([]string(nil), candidate.CatalogRecommendation.SelectedRoleIDs...),
+			PracticeOptionID: candidate.CatalogRecommendation.PracticeOptionID,
+		},
 	}
 	return result
 }
 
-func projectResumeSnapshot(
-	snapshot *preparation.ResumeRevisionSnapshot,
-) *practice.ResumeRevisionSnapshot {
+func projectResumeMaterial(
+	snapshot *preparation.ResumeMaterial,
+) *practice.ResumeMaterial {
 	if snapshot == nil {
 		return nil
 	}
 	material := practice.ResumeMaterial{
-		TargetPosition:       snapshot.Material.TargetPosition,
-		ProfessionalSummary:  snapshot.Material.ProfessionalSummary,
-		WorkExperiences:      make([]practice.ResumeWorkExperience, len(snapshot.Material.WorkExperiences)),
-		ProjectExperiences:   make([]practice.ResumeProjectExperience, len(snapshot.Material.ProjectExperiences)),
-		EducationExperiences: make([]practice.ResumeEducationExperience, len(snapshot.Material.EducationExperiences)),
-		Skills:               append([]string(nil), snapshot.Material.Skills...),
-		Awards:               append([]string(nil), snapshot.Material.Awards...),
+		TargetPosition:       snapshot.TargetPosition,
+		ProfessionalSummary:  snapshot.ProfessionalSummary,
+		WorkExperiences:      make([]practice.ResumeWorkExperience, len(snapshot.WorkExperiences)),
+		ProjectExperiences:   make([]practice.ResumeProjectExperience, len(snapshot.ProjectExperiences)),
+		EducationExperiences: make([]practice.ResumeEducationExperience, len(snapshot.EducationExperiences)),
+		Skills:               append([]string(nil), snapshot.Skills...),
+		Awards:               append([]string(nil), snapshot.Awards...),
 	}
-	for index, item := range snapshot.Material.WorkExperiences {
+	for index, item := range snapshot.WorkExperiences {
 		material.WorkExperiences[index] = practice.ResumeWorkExperience{
 			Company: item.Company, Position: item.Position,
 			StartDate: item.StartDate, EndDate: item.EndDate,
@@ -298,7 +275,7 @@ func projectResumeSnapshot(
 			Achievements: append([]string(nil), item.Achievements...),
 		}
 	}
-	for index, item := range snapshot.Material.ProjectExperiences {
+	for index, item := range snapshot.ProjectExperiences {
 		material.ProjectExperiences[index] = practice.ResumeProjectExperience{
 			ProjectName: item.ProjectName, Role: item.Role,
 			Description:  item.Description,
@@ -307,17 +284,13 @@ func projectResumeSnapshot(
 			Achievements: append([]string(nil), item.Achievements...),
 		}
 	}
-	for index, item := range snapshot.Material.EducationExperiences {
+	for index, item := range snapshot.EducationExperiences {
 		material.EducationExperiences[index] = practice.ResumeEducationExperience{
 			School: item.School, Major: item.Major, Degree: item.Degree,
 			GPA: item.GPA, StartDate: item.StartDate, EndDate: item.EndDate,
 		}
 	}
-	return &practice.ResumeRevisionSnapshot{
-		ResumeID: snapshot.ResumeID,
-		Revision: snapshot.Revision,
-		Material: material,
-	}
+	return &material
 }
 
 func projectIELTSAssignment(
@@ -334,11 +307,19 @@ func projectIELTSAssignment(
 	}
 	for index, part := range assignment.Parts {
 		result.Parts[index] = practice.IELTSPart{
-			Part:           practice.PracticeMode(part.Part),
-			SourceID:       part.SourceID,
-			TopicTitle:     part.TopicTitle,
-			CueCard:        part.CueCard,
-			TurnBlueprints: append([]string(nil), part.TurnBlueprints...),
+			Part:            practice.PracticeMode(part.Part),
+			SourceID:        part.SourceID,
+			TopicTitle:      part.TopicTitle,
+			CueCard:         part.CueCard,
+			TurnBlueprints:  append([]string(nil), part.TurnBlueprints...),
+			PreparedAnswers: make([]practice.IELTSPreparedAnswer, len(part.PreparedAnswers)),
+		}
+		for answerIndex, answer := range part.PreparedAnswers {
+			result.Parts[index].PreparedAnswers[answerIndex] = practice.IELTSPreparedAnswer{
+				QuestionPosition: answer.QuestionPosition,
+				Answer:           answer.Answer,
+				Personalized:     answer.Personalized,
+			}
 		}
 	}
 	return result

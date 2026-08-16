@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_generation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -19,9 +20,10 @@ class IeltsSetDetailPage extends StatefulWidget {
     this.cueCard,
     this.speechClient,
     this.audioPlayer,
-    this.answerPreparationClient,
+    this.answerGenerator,
+    this.answerSpeaker,
     this.cueCardQuestionReference,
-    this.questionReferences = const <IeltsAnswerQuestionReference>[],
+    this.questionReferences = const <IeltsQuestionReference>[],
     super.key,
   }) : assert((speechClient == null) == (audioPlayer == null));
 
@@ -30,12 +32,13 @@ class IeltsSetDetailPage extends StatefulWidget {
   final String subtitle;
   final List<String> questions;
   final IeltsCueCard? cueCard;
-  final VoidCallback? onStart;
+  final ValueChanged<List<IeltsPreparedAnswer>>? onStart;
   final IeltsSpeechClient? speechClient;
   final PracticeAudioPlayer? audioPlayer;
-  final IeltsAnswerPreparationClient? answerPreparationClient;
-  final IeltsAnswerQuestionReference? cueCardQuestionReference;
-  final List<IeltsAnswerQuestionReference> questionReferences;
+  final IeltsAnswerGenerator? answerGenerator;
+  final PracticePromptSpeaker? answerSpeaker;
+  final IeltsQuestionReference? cueCardQuestionReference;
+  final List<IeltsQuestionReference> questionReferences;
 
   @override
   State<IeltsSetDetailPage> createState() => _IeltsSetDetailPageState();
@@ -44,15 +47,16 @@ class IeltsSetDetailPage extends StatefulWidget {
 class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   StreamSubscription<void>? _speechCompletion;
   int? _speakingQuestionIndex;
-  int? _speakingAnswerIndex;
-  int? _expandedQuestionIndex;
-  bool _cueCardAnswerExpanded = false;
-  final Map<int, IeltsAnswerPreparation> _preparations = {};
-  final Set<int> _generatingQuestionIndexes = {};
-  final Map<int, String> _answerErrors = {};
-  final Map<int, int> _answerRequests = {};
   String? _speechError;
   int _speechRequest = 0;
+  int? _expandedAnswerIndex;
+  final Map<int, IeltsGeneratedAnswer> _answers = {};
+  final Set<int> _personalizedAnswers = {};
+  final Set<int> _generatingAnswers = {};
+  final Map<int, String> _answerErrors = {};
+  PracticePromptSpeaker? _ownedAnswerSpeaker;
+  int? _speakingAnswerIndex;
+  int _answerSpeechRequest = 0;
 
   String get _partLabel => switch (widget.mode) {
     PracticeMode.part1 => 'Part 1',
@@ -70,72 +74,28 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   void initState() {
     super.initState();
     _speechCompletion = widget.audioPlayer?.onComplete.listen((_) {
-      if (mounted &&
-          (_speakingQuestionIndex != null || _speakingAnswerIndex != null)) {
-        setState(() {
-          _speakingQuestionIndex = null;
-          _speakingAnswerIndex = null;
-        });
+      if (mounted && _speakingQuestionIndex != null) {
+        setState(() => _speakingQuestionIndex = null);
       }
     });
-    if (_canPrepareQuestionAnswers) {
-      _expandedQuestionIndex = 0;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_ensureExample(0, widget.questionReferences[0]));
-        }
-      });
-    } else if (_canPrepareCueCardAnswer) {
-      _cueCardAnswerExpanded = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_ensureExample(0, widget.cueCardQuestionReference!));
-        }
-      });
-    }
-  }
-
-  bool get _canPrepareQuestionAnswers =>
-      (widget.mode == PracticeMode.part1 ||
-          widget.mode == PracticeMode.part3) &&
-      widget.answerPreparationClient != null &&
-      widget.questions.isNotEmpty &&
-      widget.questionReferences.length == widget.questions.length;
-
-  bool get _canPrepareCueCardAnswer =>
-      widget.mode == PracticeMode.part2 &&
-      widget.cueCard != null &&
-      widget.answerPreparationClient != null &&
-      widget.cueCardQuestionReference != null;
-
-  int _startAnswerRequest(int index) {
-    final request = (_answerRequests[index] ?? 0) + 1;
-    setState(() {
-      _answerRequests[index] = request;
-      _generatingQuestionIndexes.add(index);
-      _answerErrors.remove(index);
-    });
-    return request;
-  }
-
-  bool _isCurrentAnswerRequest(int index, int request) =>
-      mounted && _answerRequests[index] == request;
-
-  void _finishAnswerRequest(int index, int request) {
-    if (_isCurrentAnswerRequest(index, request)) {
-      setState(() => _generatingQuestionIndexes.remove(index));
-    }
   }
 
   @override
   void dispose() {
     _speechRequest++;
+    _answerSpeechRequest++;
     unawaited(_speechCompletion?.cancel());
     unawaited(widget.audioPlayer?.stop());
+    if (widget.answerSpeaker case final speaker?) {
+      unawaited(speaker.stop());
+    } else if (_ownedAnswerSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     super.dispose();
   }
 
   Future<void> _toggleQuestionSpeech(int index) async {
+    await _stopAnswerSpeech();
     final reference = widget.questionReferences[index];
     await _toggleSpeech(
       questionIndex: index,
@@ -144,27 +104,126 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
     );
   }
 
+  Future<void> _generateAnswer(
+    int index,
+    IeltsQuestionReference question, {
+    required bool personalized,
+  }) async {
+    if (_generatingAnswers.contains(index) || widget.answerGenerator == null) {
+      return;
+    }
+    final points = personalized
+        ? await showModalBottomSheet<List<String>>(
+            context: context,
+            useSafeArea: true,
+            isScrollControlled: true,
+            builder: (_) => const _PersonalAnswerSheet(),
+          )
+        : const <String>[];
+    if (points == null || !mounted) return;
+    setState(() {
+      _generatingAnswers.add(index);
+      _answerErrors.remove(index);
+    });
+    try {
+      final answer = await widget.answerGenerator!.generate(
+        question: question,
+        personalPoints: points,
+      );
+      if (mounted) {
+        setState(() {
+          _answers[index] = answer;
+          if (personalized) {
+            _personalizedAnswers.add(index);
+          } else {
+            _personalizedAnswers.remove(index);
+          }
+        });
+      }
+    } on Object {
+      if (mounted) {
+        setState(() => _answerErrors[index] = '这次没有生成成功，请重试。');
+      }
+    } finally {
+      if (mounted) setState(() => _generatingAnswers.remove(index));
+    }
+  }
+
   Future<void> _toggleAnswerSpeech(
     int index,
-    IeltsAnswerPreparation preparation,
+    IeltsGeneratedAnswer answer,
   ) async {
-    await _toggleSpeech(
-      answerIndex: index,
-      load: () => widget.speechClient!.loadAnswer(preparation.id),
-      failureMessage: '答案朗读失败，请稍后重试。',
+    final request = ++_answerSpeechRequest;
+    final wasSpeaking = _speakingAnswerIndex == index;
+    try {
+      await widget.audioPlayer?.stop();
+      if (mounted) setState(() => _speakingQuestionIndex = null);
+      final speaker =
+          widget.answerSpeaker ??
+          (_ownedAnswerSpeaker ??= SystemPracticePromptSpeaker());
+      await speaker.stop();
+      if (!mounted || request != _answerSpeechRequest) return;
+      if (wasSpeaking) {
+        setState(() => _speakingAnswerIndex = null);
+        return;
+      }
+      setState(() {
+        _speakingAnswerIndex = index;
+        _answerErrors.remove(index);
+      });
+      await speaker.speak(answer.speechText);
+    } on Object {
+      if (mounted && request == _answerSpeechRequest) {
+        setState(() => _answerErrors[index] = '回答播放失败，请重试。');
+      }
+    } finally {
+      if (mounted && request == _answerSpeechRequest) {
+        setState(() => _speakingAnswerIndex = null);
+      }
+    }
+  }
+
+  Future<void> _stopAnswerSpeech() async {
+    _answerSpeechRequest++;
+    await (widget.answerSpeaker ?? _ownedAnswerSpeaker)?.stop();
+    if (mounted && _speakingAnswerIndex != null) {
+      setState(() => _speakingAnswerIndex = null);
+    }
+  }
+
+  List<IeltsPreparedAnswer> _preparedAnswers() {
+    final result = <IeltsPreparedAnswer>[];
+    for (final entry in _answers.entries) {
+      final reference = widget.mode == PracticeMode.part2
+          ? widget.cueCardQuestionReference
+          : entry.key < widget.questionReferences.length
+          ? widget.questionReferences[entry.key]
+          : null;
+      if (reference == null) continue;
+      result.add(
+        IeltsPreparedAnswer(
+          bankId: reference.bankId,
+          part: reference.part,
+          sourceId: reference.sourceId,
+          questionPosition: reference.questionPosition,
+          answer: entry.value.answer.trim(),
+          personalized: _personalizedAnswers.contains(entry.key),
+        ),
+      );
+    }
+    result.sort(
+      (left, right) => left.questionPosition.compareTo(right.questionPosition),
     );
+    return List<IeltsPreparedAnswer>.unmodifiable(result);
   }
 
   Future<void> _toggleSpeech({
     int? questionIndex,
-    int? answerIndex,
     required Future<Uint8List> Function() load,
     required String failureMessage,
   }) async {
     final request = ++_speechRequest;
-    final wasSpeaking = questionIndex != null
-        ? _speakingQuestionIndex == questionIndex
-        : _speakingAnswerIndex == answerIndex;
+    final wasSpeaking = _speakingQuestionIndex == questionIndex;
 
     try {
       await widget.audioPlayer!.stop();
@@ -181,7 +240,6 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
 
       setState(() {
         _speakingQuestionIndex = questionIndex;
-        _speakingAnswerIndex = answerIndex;
         _speechError = null;
       });
       final bytes = await load();
@@ -197,113 +255,9 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
       if (mounted && request == _speechRequest) {
         setState(() {
           _speakingQuestionIndex = null;
-          _speakingAnswerIndex = null;
           _speechError = failureMessage;
         });
       }
-    }
-  }
-
-  Future<void> _prepareAnswer(
-    int index,
-    IeltsAnswerQuestionReference question,
-  ) async {
-    final points = await showModalBottomSheet<List<String>>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: PreparationDesign.surface,
-      builder: (_) => const _PolishExperienceSheet(),
-    );
-    if (points == null || !mounted) {
-      return;
-    }
-    if (_generatingQuestionIndexes.contains(index)) {
-      return;
-    }
-    final request = _startAnswerRequest(index);
-    try {
-      final existing = _preparations[index];
-      var draft =
-          existing ??
-          await widget.answerPreparationClient!.create(
-            question: question,
-            personalPoints: points,
-            targetBand: 7,
-          );
-      if (draft.status != IeltsAnswerPreparationStatus.draft ||
-          !_samePersonalPoints(draft.personalPoints, points) ||
-          draft.targetBand != 7) {
-        draft = await widget.answerPreparationClient!.update(
-          id: draft.id,
-          expectedVersion: draft.version,
-          personalPoints: points,
-          targetBand: 7,
-        );
-      }
-      final ready = await widget.answerPreparationClient!.generate(
-        id: draft.id,
-        expectedVersion: draft.version,
-      );
-      if (_isCurrentAnswerRequest(index, request)) {
-        setState(() {
-          _preparations[index] = ready;
-          _answerErrors.remove(index);
-        });
-      }
-    } on IeltsAnswerPreparationException catch (error) {
-      if (_isCurrentAnswerRequest(index, request)) {
-        setState(() => _answerErrors[index] = _answerFailureMessage(error));
-      }
-    } catch (_) {
-      if (_isCurrentAnswerRequest(index, request)) {
-        setState(() => _answerErrors[index] = '暂时无法生成答案，请稍后重试。');
-      }
-    } finally {
-      _finishAnswerRequest(index, request);
-    }
-  }
-
-  Future<void> _ensureExample(
-    int index,
-    IeltsAnswerQuestionReference question,
-  ) async {
-    if (_preparations.containsKey(index) ||
-        _generatingQuestionIndexes.contains(index)) {
-      return;
-    }
-    final request = _startAnswerRequest(index);
-    try {
-      final draft = await widget.answerPreparationClient!.create(
-        question: question,
-        personalPoints: const [],
-        targetBand: 7,
-      );
-      if (draft.status == IeltsAnswerPreparationStatus.ready) {
-        if (_isCurrentAnswerRequest(index, request)) {
-          setState(() {
-            _preparations[index] = draft;
-            _answerErrors.remove(index);
-          });
-        }
-        return;
-      }
-      final example = await widget.answerPreparationClient!.generate(
-        id: draft.id,
-        expectedVersion: draft.version,
-      );
-      if (_isCurrentAnswerRequest(index, request)) {
-        setState(() {
-          _preparations[index] = example;
-          _answerErrors.remove(index);
-        });
-      }
-    } on IeltsAnswerPreparationException catch (error) {
-      if (_isCurrentAnswerRequest(index, request)) {
-        setState(() => _answerErrors[index] = _answerFailureMessage(error));
-      }
-    } finally {
-      _finishAnswerRequest(index, request);
     }
   }
 
@@ -368,60 +322,34 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                     ],
                     if (widget.cueCard case final value?) ...[
                       _CueCardContent(cueCard: value),
-                      if (_canPrepareCueCardAnswer) ...[
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            key: const Key('ielts-cue-card-answer-toggle'),
-                            onPressed: () {
-                              setState(() {
-                                _cueCardAnswerExpanded =
-                                    !_cueCardAnswerExpanded;
-                              });
-                              if (_cueCardAnswerExpanded) {
-                                unawaited(
-                                  _ensureExample(
-                                    0,
-                                    widget.cueCardQuestionReference!,
-                                  ),
-                                );
-                              }
-                            },
-                            icon: Icon(
-                              _cueCardAnswerExpanded
-                                  ? Icons.keyboard_arrow_up_rounded
-                                  : Icons.keyboard_arrow_down_rounded,
-                            ),
-                            label: Text(
-                              _cueCardAnswerExpanded ? '收起答案' : '示例与自定义答案',
-                            ),
+                      if (widget.answerGenerator != null &&
+                          widget.cueCardQuestionReference != null)
+                        _AnswerPreparationPanel(
+                          index: 0,
+                          expanded: _expandedAnswerIndex == 0,
+                          generating: _generatingAnswers.contains(0),
+                          answer: _answers[0],
+                          personalized: _personalizedAnswers.contains(0),
+                          speaking: _speakingAnswerIndex == 0,
+                          errorMessage: _answerErrors[0],
+                          onToggle: () => setState(
+                            () => _expandedAnswerIndex =
+                                _expandedAnswerIndex == 0 ? null : 0,
                           ),
+                          onExample: () => _generateAnswer(
+                            0,
+                            widget.cueCardQuestionReference!,
+                            personalized: false,
+                          ),
+                          onPersonalize: () => _generateAnswer(
+                            0,
+                            widget.cueCardQuestionReference!,
+                            personalized: true,
+                          ),
+                          onSpeak: _answers[0] == null
+                              ? null
+                              : () => _toggleAnswerSpeech(0, _answers[0]!),
                         ),
-                        if (_cueCardAnswerExpanded)
-                          _QuestionAnswerPanel(
-                            index: 0,
-                            tipText: _answerTip,
-                            preparation: _preparations[0],
-                            generating: _generatingQuestionIndexes.contains(0),
-                            errorMessage: _answerErrors[0],
-                            speaking: _speakingAnswerIndex == 0,
-                            onPrepare: () => _prepareAnswer(
-                              0,
-                              widget.cueCardQuestionReference!,
-                            ),
-                            onRetry: () => _ensureExample(
-                              0,
-                              widget.cueCardQuestionReference!,
-                            ),
-                            onSpeak:
-                                widget.speechClient == null ||
-                                    _preparations[0]?.speechText == null
-                                ? null
-                                : () =>
-                                      _toggleAnswerSpeech(0, _preparations[0]!),
-                          ),
-                      ],
                       if (widget.questions.isNotEmpty)
                         const SizedBox(height: 30),
                     ],
@@ -447,54 +375,36 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                                   index >= widget.questionReferences.length
                               ? null
                               : () => _toggleQuestionSpeech(index),
-                          expanded: _expandedQuestionIndex == index,
-                          onToggle: _canPrepareQuestionAnswers
-                              ? () {
-                                  final opening =
-                                      _expandedQuestionIndex != index;
-                                  setState(() {
-                                    _expandedQuestionIndex = opening
-                                        ? index
-                                        : null;
-                                    _answerErrors.remove(index);
-                                  });
-                                  if (opening) {
-                                    unawaited(
-                                      _ensureExample(
-                                        index,
-                                        widget.questionReferences[index],
-                                      ),
-                                    );
-                                  }
-                                }
-                              : null,
                         ),
-                        if (_canPrepareQuestionAnswers &&
-                            _expandedQuestionIndex == index)
-                          _QuestionAnswerPanel(
+                        if (widget.answerGenerator != null &&
+                            index < widget.questionReferences.length)
+                          _AnswerPreparationPanel(
                             index: index,
-                            tipText: _answerTip,
-                            preparation: _preparations[index],
-                            generating: _generatingQuestionIndexes.contains(
-                              index,
-                            ),
-                            errorMessage: _answerErrors[index],
+                            expanded: _expandedAnswerIndex == index,
+                            generating: _generatingAnswers.contains(index),
+                            answer: _answers[index],
+                            personalized: _personalizedAnswers.contains(index),
                             speaking: _speakingAnswerIndex == index,
-                            onPrepare: () => _prepareAnswer(
+                            errorMessage: _answerErrors[index],
+                            onToggle: () => setState(
+                              () => _expandedAnswerIndex =
+                                  _expandedAnswerIndex == index ? null : index,
+                            ),
+                            onExample: () => _generateAnswer(
                               index,
                               widget.questionReferences[index],
+                              personalized: false,
                             ),
-                            onRetry: () => _ensureExample(
+                            onPersonalize: () => _generateAnswer(
                               index,
                               widget.questionReferences[index],
+                              personalized: true,
                             ),
-                            onSpeak:
-                                widget.speechClient == null ||
-                                    _preparations[index]?.speechText == null
+                            onSpeak: _answers[index] == null
                                 ? null
                                 : () => _toggleAnswerSpeech(
                                     index,
-                                    _preparations[index]!,
+                                    _answers[index]!,
                                   ),
                           ),
                       ],
@@ -529,7 +439,9 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
                 ),
                 child: FilledButton(
                   key: const Key('ielts-set-detail-start'),
-                  onPressed: widget.onStart,
+                  onPressed: widget.onStart == null
+                      ? null
+                      : () => widget.onStart!(_preparedAnswers()),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(52),
                     backgroundColor: PreparationDesign.ink,
@@ -551,25 +463,6 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
       ),
     );
   }
-
-  String get _answerTip => switch (widget.mode) {
-    PracticeMode.part1 => 'Tip：先直接回答，再补一个原因或小例子。',
-    PracticeMode.part2 => 'Tip：围绕 Cue Card 要点组织开头、主体和结尾。',
-    PracticeMode.part3 => 'Tip：先表明观点，再解释并补充例子或比较。',
-    _ => throw StateError('IELTS answer preparation requires a section mode.'),
-  };
-}
-
-bool _samePersonalPoints(List<String> left, List<String> right) {
-  if (left.length != right.length) {
-    return false;
-  }
-  for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 class _PartOneHeader extends StatelessWidget {
@@ -690,16 +583,12 @@ class _QuestionRow extends StatelessWidget {
     required this.question,
     required this.speaking,
     required this.onSpeak,
-    required this.expanded,
-    required this.onToggle,
   });
 
   final int index;
   final String question;
   final bool speaking;
   final VoidCallback? onSpeak;
-  final bool expanded;
-  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -743,231 +632,177 @@ class _QuestionRow extends StatelessWidget {
             side: const BorderSide(color: PreparationDesign.border),
           ),
         ),
-        if (onToggle != null) ...[
-          const SizedBox(width: 2),
-          IconButton(
-            key: Key('ielts-set-detail-expand-$index'),
-            tooltip: expanded ? '收起第 $index 题' : '展开第 $index 题',
-            onPressed: onToggle,
-            icon: Icon(
-              expanded
-                  ? Icons.keyboard_arrow_up_rounded
-                  : Icons.keyboard_arrow_down_rounded,
-            ),
-          ),
-        ],
       ],
     ),
   );
 }
 
-class _QuestionAnswerPanel extends StatelessWidget {
-  const _QuestionAnswerPanel({
+class _AnswerPreparationPanel extends StatelessWidget {
+  const _AnswerPreparationPanel({
     required this.index,
-    required this.tipText,
-    required this.preparation,
+    required this.expanded,
     required this.generating,
-    required this.errorMessage,
+    required this.answer,
+    required this.personalized,
     required this.speaking,
-    required this.onPrepare,
-    required this.onRetry,
+    required this.errorMessage,
+    required this.onToggle,
+    required this.onExample,
+    required this.onPersonalize,
     required this.onSpeak,
   });
 
   final int index;
-  final String tipText;
-  final IeltsAnswerPreparation? preparation;
+  final bool expanded;
   final bool generating;
-  final String? errorMessage;
+  final IeltsGeneratedAnswer? answer;
+  final bool personalized;
   final bool speaking;
-  final VoidCallback onPrepare;
-  final VoidCallback onRetry;
+  final String? errorMessage;
+  final VoidCallback onToggle;
+  final VoidCallback onExample;
+  final VoidCallback onPersonalize;
   final VoidCallback? onSpeak;
 
   @override
-  Widget build(BuildContext context) {
-    final ready = preparation?.status == IeltsAnswerPreparationStatus.ready;
-    final personalized = ready && preparation!.personalPoints.isNotEmpty;
-    return Container(
-      key: Key('ielts-answer-panel-${index + 1}'),
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(0, 16, 0, 20),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: PreparationDesign.border)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(tipText, style: PreparationDesign.label),
-          const SizedBox(height: 12),
-          if (generating)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Row(
-                children: [
-                  SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 10),
-                  Text('正在准备表达…', style: PreparationDesign.body),
-                ],
-              ),
-            )
-          else if (ready) ...[
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: PreparationDesign.surfaceMuted,
-                borderRadius: BorderRadius.circular(
-                  PreparationDesign.radiusCard,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
+  Widget build(BuildContext context) => Container(
+    key: Key('ielts-answer-panel-${index + 1}'),
+    width: double.infinity,
+    decoration: const BoxDecoration(
+      border: Border(bottom: BorderSide(color: PreparationDesign.border)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextButton.icon(
+          key: Key('ielts-answer-toggle-${index + 1}'),
+          onPressed: onToggle,
+          icon: Icon(
+            expanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.lightbulb_outline_rounded,
+          ),
+          label: Text(expanded ? '收起答案准备' : '准备这道题的答案'),
+          style: TextButton.styleFrom(
+            alignment: Alignment.centerLeft,
+            minimumSize: const Size.fromHeight(44),
+            foregroundColor: PreparationDesign.ink,
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (generating)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
                       children: [
-                        Text(
-                          personalized ? '我的表达' : '示例回答',
-                          style: PreparationDesign.label.copyWith(
-                            color: PreparationDesign.inkSecondary,
+                        SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 10),
+                        Text('正在准备表达…'),
+                      ],
+                    ),
+                  )
+                else ...[
+                  if (answer case final value?) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            personalized ? '我的回答' : '参考回答',
+                            style: PreparationDesign.cardTitle,
                           ),
                         ),
-                        TextButton.icon(
-                          key: Key('ielts-speak-answer-${index + 1}'),
+                        IconButton(
+                          key: Key('ielts-answer-speak-${index + 1}'),
+                          tooltip: speaking ? '停止播放回答' : '播放回答',
                           onPressed: onSpeak,
                           icon: Icon(
                             speaking
                                 ? Icons.stop_rounded
                                 : Icons.volume_up_outlined,
-                            size: 18,
                           ),
-                          label: Text(speaking ? '停止' : '播放'),
-                          style: _answerActionStyle,
                         ),
                         TextButton.icon(
-                          key: Key('ielts-polish-answer-${index + 1}'),
-                          onPressed: onPrepare,
-                          icon: const Icon(
-                            Icons.auto_awesome_outlined,
-                            size: 18,
-                          ),
-                          label: Text(personalized ? '重新润色' : '润色'),
-                          style: _answerActionStyle,
+                          key: Key('ielts-answer-adjust-${index + 1}'),
+                          onPressed: onPersonalize,
+                          icon: const Icon(Icons.auto_awesome_outlined),
+                          label: Text(personalized ? '调整' : '定制'),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _ExpandableAnswerText(text: preparation!.answer!),
-                  ],
-                ),
-              ),
+                    const SizedBox(height: 4),
+                    Text(
+                      value.answer,
+                      key: Key('ielts-answer-body-${index + 1}'),
+                      style: PreparationDesign.body,
+                    ),
+                    if (value.outline.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '回答思路：${value.outline.join(' → ')}',
+                        style: PreparationDesign.label.copyWith(
+                          color: PreparationDesign.inkSecondary,
+                        ),
+                      ),
+                    ],
+                  ] else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: onExample,
+                            child: const Text('生成示例回答'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            key: Key('ielts-personalize-answer-${index + 1}'),
+                            onPressed: onPersonalize,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: PreparationDesign.ink,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('定制我的答案'),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+                if (errorMessage case final message?) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    message,
+                    style: PreparationDesign.body.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ] else
-            TextButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重新加载示例'),
-            ),
-          if (errorMessage case final message?) ...[
-            const SizedBox(height: 10),
-            Text(
-              message,
-              key: const Key('ielts-answer-error'),
-              style: PreparationDesign.body.copyWith(
-                color: Theme.of(context).colorScheme.error,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  static final ButtonStyle _answerActionStyle = TextButton.styleFrom(
-    minimumSize: const Size(0, 40),
-    padding: const EdgeInsets.symmetric(horizontal: 8),
-    foregroundColor: PreparationDesign.ink,
-  );
-}
-
-class _ExpandableAnswerText extends StatefulWidget {
-  const _ExpandableAnswerText({required this.text});
-
-  final String text;
-
-  @override
-  State<_ExpandableAnswerText> createState() => _ExpandableAnswerTextState();
-}
-
-class _ExpandableAnswerTextState extends State<_ExpandableAnswerText> {
-  static const _collapsedLines = 6;
-  bool _expanded = false;
-
-  @override
-  void didUpdateWidget(covariant _ExpandableAnswerText oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) {
-      _expanded = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final style = PreparationDesign.body;
-      final painter = TextPainter(
-        text: TextSpan(text: widget.text, style: style),
-        textDirection: Directionality.of(context),
-        textScaler: MediaQuery.textScalerOf(context),
-      )..layout(maxWidth: constraints.maxWidth);
-      final canExpand = painter.computeLineMetrics().length > _collapsedLines;
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            widget.text,
-            key: const Key('ielts-answer-body'),
-            maxLines: _expanded ? null : _collapsedLines,
-            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-            style: style,
           ),
-          if (canExpand) ...[
-            const SizedBox(height: 8),
-            TextButton(
-              key: const Key('ielts-answer-expand-body'),
-              onPressed: () => setState(() => _expanded = !_expanded),
-              style: TextButton.styleFrom(
-                minimumSize: const Size(0, 40),
-                padding: EdgeInsets.zero,
-                foregroundColor: PreparationDesign.ink,
-              ),
-              child: Text(_expanded ? '收起答案' : '查看完整答案'),
-            ),
-          ],
-        ],
-      );
-    },
+      ],
+    ),
   );
 }
 
-class _PolishExperienceSheet extends StatefulWidget {
-  const _PolishExperienceSheet();
+class _PersonalAnswerSheet extends StatefulWidget {
+  const _PersonalAnswerSheet();
 
   @override
-  State<_PolishExperienceSheet> createState() => _PolishExperienceSheetState();
+  State<_PersonalAnswerSheet> createState() => _PersonalAnswerSheetState();
 }
 
-class _PolishExperienceSheetState extends State<_PolishExperienceSheet> {
+class _PersonalAnswerSheetState extends State<_PersonalAnswerSheet> {
   final _controller = TextEditingController();
-  bool _showValidation = false;
+  bool _showError = false;
 
   @override
   void dispose() {
@@ -983,7 +818,7 @@ class _PolishExperienceSheetState extends State<_PolishExperienceSheet> {
         .take(12)
         .toList(growable: false);
     if (points.isEmpty) {
-      setState(() => _showValidation = true);
+      setState(() => _showError = true);
       return;
     }
     Navigator.of(context).pop(points);
@@ -999,33 +834,27 @@ class _PolishExperienceSheetState extends State<_PolishExperienceSheet> {
     ),
     child: Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('润色成我的表达', style: PreparationDesign.sectionTitle),
+        const Text('定制我的答案', style: PreparationDesign.sectionTitle),
         const SizedBox(height: 8),
-        Text(
-          '写下真实经历或想法，每行一个要点。',
-          style: PreparationDesign.body.copyWith(
-            color: PreparationDesign.inkSecondary,
-          ),
-        ),
+        const Text('写下你的真实经历或观点，每行一个要点。'),
         const SizedBox(height: 14),
         TextField(
-          key: const Key('ielts-polish-experience'),
+          key: const Key('ielts-personal-answer-points'),
           controller: _controller,
           autofocus: true,
           minLines: 3,
           maxLines: 6,
           maxLength: 1500,
           decoration: InputDecoration(
-            hintText: '例如：我通勤时喜欢听轻快的音乐，它让我更有精神。',
-            errorText: _showValidation ? '请先写一条真实经历或想法。' : null,
+            hintText: '例如：我通勤时喜欢听轻快的音乐',
+            errorText: _showError ? '请先写一条真实经历或观点。' : null,
             border: const OutlineInputBorder(),
           ),
         ),
-        const SizedBox(height: 12),
         FilledButton(
-          key: const Key('ielts-polish-generate'),
+          key: const Key('ielts-generate-personal-answer'),
           onPressed: _submit,
           style: FilledButton.styleFrom(
             minimumSize: const Size.fromHeight(50),
@@ -1038,12 +867,3 @@ class _PolishExperienceSheetState extends State<_PolishExperienceSheet> {
     ),
   );
 }
-
-String _answerFailureMessage(IeltsAnswerPreparationException error) =>
-    switch (error.kind) {
-      IeltsAnswerPreparationFailureKind.authenticationRequired => '登录后才能定制答案。',
-      IeltsAnswerPreparationFailureKind.generationFailed => '这次生成没有成功，请重试一次。',
-      IeltsAnswerPreparationFailureKind.conflict => '答案已在其他页面更新，请重新进入后再试。',
-      IeltsAnswerPreparationFailureKind.network => '网络连接失败，请检查网络后重试。',
-      _ => '暂时无法生成答案，请稍后重试。',
-    };

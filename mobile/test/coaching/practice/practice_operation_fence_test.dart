@@ -97,6 +97,26 @@ void main() {
     expect(controller.recordings.single.audioAssetId, 'audio-B');
   });
 
+  test(
+    'explicit recording deletion preserves the transcript contract',
+    () async {
+      final account = _AccountMarker();
+      final media = _AccountMediaClient(account);
+      final controller = _controller(
+        practice: _AccountPracticeClient(account),
+        media: media,
+        player: _GatedAudioPlayer(),
+      );
+      addTearDown(controller.dispose);
+      await _restorePractice(controller, 'A');
+
+      await controller.deleteRecording('audio-A');
+
+      expect(controller.recordings, isEmpty);
+      expect(controller.recordingNoticeMessage, '录音已删除，文字保留');
+    },
+  );
+
   test('logout fences microphone start waiting on old playback', () async {
     final account = _AccountMarker();
     final recorder = _AccountRecorder(account);

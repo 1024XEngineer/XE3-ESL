@@ -79,17 +79,11 @@ dependency_overrides:
   avatar_kit:
     path: $tool_dir/avatar_kit_stub
 EOF
-
 print "启动 PostgreSQL..."
 docker compose -p xe3-esl -f "$repo_dir/compose.yaml" up -d --wait postgres
 
 print "执行数据库迁移..."
 (cd "$server_dir" && go run ./cmd/migrate up)
-
-print "确认 IELTS 题库..."
-(cd "$server_dir" && go run ./cmd/ielts-bank-import \
-  -file data/ielts/2026-05-08-mainland.json \
-  -publish-if-empty)
 
 print "构建并启动本地后端..."
 (cd "$server_dir" && go build -o "$server_binary" ./cmd/server)

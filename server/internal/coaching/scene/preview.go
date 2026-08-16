@@ -31,7 +31,7 @@ func NewCatalogPreviewResolver(
 	catalog CatalogReader,
 ) (*CatalogPreviewResolver, error) {
 	if catalog == nil {
-		return nil, errors.New("preparation: catalog is required")
+		return nil, errors.New("scene: catalog is required")
 	}
 	return &CatalogPreviewResolver{catalog: catalog}, nil
 }

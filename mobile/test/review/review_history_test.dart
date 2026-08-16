@@ -26,7 +26,7 @@ import '../support/practice_fixtures.dart';
 
 void main() {
   test('wire client sends Bearer and decodes a bounded stable page', () async {
-    const cursor = 'cursor.token';
+    const cursor = 'cursor_token';
     final transport = _Transport(
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
@@ -935,6 +935,42 @@ void main() {
           improvements: <EvaluationReportFinding>[],
           recommendedExamples: <EvaluationReportFinding>[],
         ),
+        EvaluationReportDimension(
+          key: 'LEXICAL_RESOURCE',
+          score: 6,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'GRAMMATICAL_RANGE_ACCURACY',
+          score: 6.5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'PRONUNCIATION',
+          score: 4.5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 0.87,
+          confidence: 0.8,
+          reasonCodes: <String>['PARTIAL_ACOUSTIC_COVERAGE'],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
       ],
     );
     final controller = ReviewHistoryController(
@@ -954,10 +990,86 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('review-detail-status-notice')), findsNothing);
+    expect(find.text('题目与作答'), findsOneWidget);
+    expect(
+      find.textContaining('Tell me about your experience.'),
+      findsOneWidget,
+    );
     expect(find.text('7.5 / 9'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+    expect(find.text('每一项的依据与建议'), findsOneWidget);
+    for (final key in const <String>[
+      'FLUENCY_COHERENCE',
+      'LEXICAL_RESOURCE',
+      'GRAMMATICAL_RANGE_ACCURACY',
+      'PRONUNCIATION',
+    ]) {
+      expect(find.byKey(Key('ielts-criterion-$key')), findsOneWidget);
+    }
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .data,
+      '6',
+    );
+    expect(find.text('证据覆盖 87%'), findsOneWidget);
   });
 
-  testWidgets('generic four-dimension report renders the shared radar', (
+  testWidgets('profile shows IELTS ability instead of the report narrative', (
+    tester,
+  ) async {
+    final item = _sceneItem(
+      id: 'profile-ielts-ability',
+      sceneType: EvaluationReportSceneType.ieltsSpeaking,
+      scoreability: EvaluationReportScoreability.provisional,
+      dimensions: [
+        for (final entry in const <String, double>{
+          'FLUENCY_COHERENCE': 4,
+          'PRONUNCIATION': 4.5,
+          'GRAMMATICAL_RANGE_ACCURACY': 3,
+          'LEXICAL_RESOURCE': 3.5,
+        }.entries)
+          EvaluationReportDimension(
+            key: entry.key,
+            score: entry.value,
+            scale: EvaluationReportScoreScale.ieltsBand,
+            coverage: 1,
+            confidence: 0.8,
+            reasonCodes: const <String>[],
+            evidenceRefIds: const <String>[],
+            strengths: const <EvaluationReportFinding>[],
+            improvements: const <EvaluationReportFinding>[],
+            recommendedExamples: const <EvaluationReportFinding>[],
+          ),
+      ],
+    );
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+    );
+    addTearDown(controller.dispose);
+    await controller.refresh();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CurrentIeltsAbilityProfile(historyController: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前 IELTS 能力'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+    expect(find.text('本次回答已经形成可复盘的文本反馈。'), findsNothing);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .data,
+      '4',
+    );
+  });
+
+  testWidgets('generic four-dimension report renders each dimension', (
     tester,
   ) async {
     final dimensions = <EvaluationReportDimension>[
@@ -993,14 +1105,12 @@ void main() {
       sceneType: EvaluationReportSceneType.overseasWorkplace,
       scoreability: EvaluationReportScoreability.provisional,
       dimensions: dimensions,
-      detailSchema: 'general-scene-evaluation/v1',
     );
 
     await tester.pumpWidget(
       MaterialApp(home: ReviewReportDetailPage(item: item)),
     );
 
-    expect(find.byKey(const Key('review-generic-score-radar')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-summary')), findsNothing);
     expect(find.textContaining('/ 100'), findsNWidgets(4));
     expect(
@@ -1026,28 +1136,24 @@ void main() {
         sceneType: EvaluationReportSceneType.interview,
         cardTitle: '模拟面试',
         reportTitle: '面试复盘',
-        detailSchema: 'interview-report/v1',
       ),
       (
         id: 'ielts-part-1',
         sceneType: EvaluationReportSceneType.ieltsSpeaking,
         cardTitle: 'IELTS 专项',
         reportTitle: 'Part 1 专项复盘',
-        detailSchema: 'ielts-speaking-practice-report/v1',
       ),
       (
         id: 'workplace',
         sceneType: EvaluationReportSceneType.overseasWorkplace,
         cardTitle: '职场英语复盘',
         reportTitle: '职场英语复盘',
-        detailSchema: 'general-scene-evaluation/v1',
       ),
       (
         id: 'daily-life',
         sceneType: EvaluationReportSceneType.overseasDailyLife,
         cardTitle: '日常英语复盘',
         reportTitle: '日常英语复盘',
-        detailSchema: 'general-scene-evaluation/v1',
       ),
     ];
 
@@ -1059,7 +1165,6 @@ void main() {
             testCase.sceneType == EvaluationReportSceneType.ieltsSpeaking
             ? 'PART_1'
             : 'FULL_SIMULATION',
-        detailSchema: testCase.detailSchema,
         scoreability: EvaluationReportScoreability.provisional,
         dimensions: const <EvaluationReportDimension>[],
       );
@@ -1079,7 +1184,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.text(testCase.reportTitle), findsOneWidget);
+      expect(find.text(testCase.reportTitle), findsWidgets);
 
       await tester.pumpWidget(const SizedBox.shrink());
       controller.dispose();
@@ -1428,6 +1533,7 @@ final class _Transport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     expect(method, 'GET');
     this.uri = uri;
@@ -1711,7 +1817,6 @@ ReviewHistoryItem _sceneItem({
   required EvaluationReportScoreability scoreability,
   required List<EvaluationReportDimension> dimensions,
   String? practiceMode,
-  String detailSchema = 'interview-report/v1',
   List<EvaluationReportPriorityAction> priorityActions =
       const <EvaluationReportPriorityAction>[],
 }) {
@@ -1720,9 +1825,7 @@ ReviewHistoryItem _sceneItem({
   final report = EvaluationReport(
     id: id,
     evaluationId: '7b000001-0000-4000-8000-000000000001',
-    evaluationRevisionId: 'a1000001-0000-4000-8000-000000000001',
     practiceSessionId: 'session-$id',
-    revision: 1,
     sceneType: sceneType,
     practiceExperience: switch (sceneType) {
       EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
@@ -1745,10 +1848,19 @@ ReviewHistoryItem _sceneItem({
     summary: scoreability == EvaluationReportScoreability.insufficient
         ? '当前回答不足以形成可靠结论。'
         : '本次回答已经形成可复盘的文本反馈。',
+    questions: const <EvaluationReportQuestion>[
+      EvaluationReportQuestion(
+        id: '40000000-0000-4000-8000-000000000001',
+        position: 1,
+        text: 'Tell me about your experience.',
+        answer: EvaluationReportAnswer(
+          turnId: '50000000-0000-4000-8000-000000000005',
+          transcript: 'I led a project and improved delivery.',
+        ),
+      ),
+    ],
     dimensions: dimensions,
     priorityActions: priorityActions,
-    detailSchema: detailSchema,
-    detail: <String, Object?>{'schema_version': detailSchema},
     createdAt: completedAt,
   );
   return ReviewHistoryItem(
@@ -1798,7 +1910,8 @@ Map<String, Object?> _wireItem({
 }) {
   return evaluationReportWireFixture(
     reportId: id,
-    practiceSessionId: 'session-$score',
+    practiceSessionId:
+        '30000000-0000-4000-8000-${score.toString().padLeft(12, '0')}',
     createdAt: createdAt,
     score: score.toDouble(),
   );

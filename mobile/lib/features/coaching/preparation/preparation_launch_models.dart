@@ -7,6 +7,7 @@ final class PreparationLaunchSelection {
     required this.selectedRoleIds,
     required this.practiceOptionId,
     this.ieltsSelection,
+    this.ieltsPreparedAnswers = const <IeltsPreparedAnswer>[],
   });
 
   factory PreparationLaunchSelection.fromCatalog({
@@ -14,19 +15,20 @@ final class PreparationLaunchSelection {
     required RoleDefinition role,
     required PracticeOption option,
     IeltsPracticeSelection? ieltsSelection,
-  }) {
-    return PreparationLaunchSelection(
-      scene: scene,
-      selectedRoleIds: <String>[role.id],
-      practiceOptionId: option.id,
-      ieltsSelection: ieltsSelection,
-    );
-  }
+    List<IeltsPreparedAnswer> ieltsPreparedAnswers = const [],
+  }) => PreparationLaunchSelection(
+    scene: scene,
+    selectedRoleIds: <String>[role.id],
+    practiceOptionId: option.id,
+    ieltsSelection: ieltsSelection,
+    ieltsPreparedAnswers: ieltsPreparedAnswers,
+  );
 
   final SceneDefinition scene;
   final List<String> selectedRoleIds;
   final String practiceOptionId;
   final IeltsPracticeSelection? ieltsSelection;
+  final List<IeltsPreparedAnswer> ieltsPreparedAnswers;
 
   @override
   bool operator ==(Object other) =>
@@ -34,7 +36,8 @@ final class PreparationLaunchSelection {
       identical(other.scene, scene) &&
       _sameStrings(other.selectedRoleIds, selectedRoleIds) &&
       other.practiceOptionId == practiceOptionId &&
-      other.ieltsSelection == ieltsSelection;
+      other.ieltsSelection == ieltsSelection &&
+      _samePreparedAnswers(other.ieltsPreparedAnswers, ieltsPreparedAnswers);
 
   @override
   int get hashCode => Object.hash(
@@ -42,17 +45,36 @@ final class PreparationLaunchSelection {
     Object.hashAll(selectedRoleIds),
     practiceOptionId,
     ieltsSelection,
+    Object.hashAll(ieltsPreparedAnswers.map(_preparedAnswerHash)),
   );
 }
 
-bool _sameStrings(List<String> left, List<String> right) {
-  if (left.length != right.length) {
-    return false;
-  }
+bool _samePreparedAnswers(
+  List<IeltsPreparedAnswer> left,
+  List<IeltsPreparedAnswer> right,
+) {
+  if (left.length != right.length) return false;
   for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) {
+    if (_preparedAnswerHash(left[index]) != _preparedAnswerHash(right[index])) {
       return false;
     }
+  }
+  return true;
+}
+
+int _preparedAnswerHash(IeltsPreparedAnswer value) => Object.hash(
+  value.bankId,
+  value.part,
+  value.sourceId,
+  value.questionPosition,
+  value.answer,
+  value.personalized,
+);
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
   }
   return true;
 }
@@ -61,10 +83,10 @@ final class PreparationPracticeSession {
   const PreparationPracticeSession({
     required this.id,
     required this.planId,
+    required this.planVersion,
     required this.practiceExperience,
     required this.sceneCategory,
     required this.practiceMode,
-    required this.snapshotId,
     required this.status,
     required this.version,
     required this.createdAt,
@@ -72,10 +94,10 @@ final class PreparationPracticeSession {
 
   final String id;
   final String planId;
+  final int planVersion;
   final PracticeExperience practiceExperience;
   final SceneCategory sceneCategory;
   final PracticeMode practiceMode;
-  final String snapshotId;
   final String status;
   final int version;
   final DateTime createdAt;
@@ -84,37 +106,22 @@ final class PreparationPracticeSession {
 final class PreparationPracticeBootstrap {
   const PreparationPracticeBootstrap({
     required this.session,
-    required this.preparationSnapshotId,
     required this.maxEffectiveTurns,
   });
 
   final PreparationPracticeSession session;
-  final String preparationSnapshotId;
   final int maxEffectiveTurns;
 }
 
 final class CreatePreparationSessionInput {
-  const CreatePreparationSessionInput({
-    required this.expectedPlanRevision,
-    required this.userConfirmed,
-  });
+  const CreatePreparationSessionInput({required this.expectedPlanVersion});
 
-  final int expectedPlanRevision;
-  final bool userConfirmed;
+  final int expectedPlanVersion;
 }
 
-enum PreparationLaunchStage {
-  context,
-  goal,
-  profile,
-  snapshot,
-  plan,
-  session,
-  voice,
-}
+enum PreparationLaunchStage { context, plan, session, voice }
 
 enum PreparationLaunchFailureKind {
-  contextMissing,
   contextChanged,
   authenticationRequired,
   invalidRequest,
@@ -141,15 +148,14 @@ final class PreparationLaunchException implements Exception {
   final String? errorCode;
   final bool retryable;
 
-  PreparationLaunchException at(PreparationLaunchStage value) {
-    return PreparationLaunchException(
-      kind: kind,
-      stage: value,
-      statusCode: statusCode,
-      errorCode: errorCode,
-      retryable: retryable,
-    );
-  }
+  PreparationLaunchException at(PreparationLaunchStage value) =>
+      PreparationLaunchException(
+        kind: kind,
+        stage: value,
+        statusCode: statusCode,
+        errorCode: errorCode,
+        retryable: retryable,
+      );
 
   @override
   String toString() =>

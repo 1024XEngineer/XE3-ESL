@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -34,7 +32,6 @@ final class AuthController extends ChangeNotifier {
   bool _profileSaving = false;
   bool _profilePromptDismissed = false;
   String? _profileErrorMessage;
-  _PendingProfileUpdate? _pendingProfileUpdate;
 
   AuthState get state => _state;
   UserProfile? get profile => _profile;
@@ -293,18 +290,6 @@ final class AuthController extends ChangeNotifier {
     final expectedGeneration = credential.generation;
     final expectedToken = credential.sessionToken;
     final expectedProfileVersion = _profile?.profileVersion;
-    final pending = _pendingProfileUpdate;
-    final operation =
-        pending != null &&
-            pending.displayName == displayName &&
-            pending.expectedProfileVersion == expectedProfileVersion
-        ? pending
-        : _PendingProfileUpdate(
-            displayName: displayName,
-            expectedProfileVersion: expectedProfileVersion,
-            idempotencyKey: _newProfileIdempotencyKey(),
-          );
-    _pendingProfileUpdate = operation;
     _profileSaving = true;
     _profileErrorMessage = null;
     notifyListeners();
@@ -312,10 +297,8 @@ final class AuthController extends ChangeNotifier {
       final updated = await client.updateProfile(
         sessionToken: expectedToken,
         displayName: displayName,
-        expectedProfileVersion: operation.expectedProfileVersion,
-        idempotencyKey: operation.idempotencyKey,
+        expectedProfileVersion: expectedProfileVersion,
       );
-      _pendingProfileUpdate = null;
       if (!_matchesCredential(expectedGeneration, expectedToken) ||
           updated.userId != currentState.user.id) {
         return null;
@@ -329,7 +312,6 @@ final class AuthController extends ChangeNotifier {
         return null;
       }
       if (error.isAuthenticationFailure) {
-        _pendingProfileUpdate = null;
         await invalidateSession(
           expectedSessionToken: expectedToken,
           expectedGeneration: expectedGeneration,
@@ -337,7 +319,6 @@ final class AuthController extends ChangeNotifier {
         return '登录状态已失效，请重新登录。';
       }
       if (error.kind == IdentityFailureKind.profileVersionConflict) {
-        _pendingProfileUpdate = null;
         await _loadProfile(
           epoch: _authEpoch,
           token: expectedToken,
@@ -346,11 +327,7 @@ final class AuthController extends ChangeNotifier {
         return '昵称已在其他设备修改，已为你刷新。';
       }
       if (error.kind == IdentityFailureKind.invalidRequest) {
-        _pendingProfileUpdate = null;
         return '昵称需要为 1–40 个有效字符。';
-      }
-      if (!error.retryable) {
-        _pendingProfileUpdate = null;
       }
       return '昵称保存失败，请稍后重试。';
     } catch (_) {
@@ -534,7 +511,6 @@ final class AuthController extends ChangeNotifier {
     _profileSaving = false;
     _profilePromptDismissed = false;
     _profileErrorMessage = null;
-    _pendingProfileUpdate = null;
   }
 
   Future<T> _withSessionStoreLock<T>(Future<T> Function() action) {
@@ -581,22 +557,4 @@ String _registrationMessage(IdentityClientException error) {
     IdentityFailureKind.invalidRequest => '请输入有效邮箱和至少 8 个字符的密码。',
     _ => _tryAgainMessage,
   };
-}
-
-String _newProfileIdempotencyKey() {
-  final random = Random.secure();
-  final bytes = List<int>.generate(18, (_) => random.nextInt(256));
-  return 'profile_${base64Url.encode(bytes).replaceAll('=', '')}';
-}
-
-final class _PendingProfileUpdate {
-  const _PendingProfileUpdate({
-    required this.displayName,
-    required this.expectedProfileVersion,
-    required this.idempotencyKey,
-  });
-
-  final String displayName;
-  final int? expectedProfileVersion;
-  final String idempotencyKey;
 }

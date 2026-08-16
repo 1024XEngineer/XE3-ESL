@@ -13,14 +13,10 @@ import 'package:speakup/features/coaching/practice/practice_message_bubble.dart'
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/scenario/scenario_assets.dart';
 
-/// A vendor-neutral surface used by the scenario scenario shell.
-///
-/// The injected builder may render any avatar implementation. Keeping the
-/// dependency in the composition root lets the product UI survive a vendor
-/// change without importing a provider SDK.
-typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
 typedef ScenarioAsyncAction = Future<void> Function();
+typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
 
 class ScenarioPracticePage extends StatefulWidget {
   const ScenarioPracticePage({
@@ -33,10 +29,10 @@ class ScenarioPracticePage extends StatefulWidget {
     this.questionSpeaker,
     this.onPracticeCompleted,
     this.speechFeedbackController,
-    this.replayLoading = false,
-    this.replayPlaying = false,
     this.onExitRequested,
     this.previewMode = false,
+    this.replayLoading = false,
+    this.replayPlaying = false,
     super.key,
   });
 
@@ -49,10 +45,10 @@ class ScenarioPracticePage extends StatefulWidget {
   final PracticePromptSpeaker? questionSpeaker;
   final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
-  final bool replayLoading;
-  final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
   final bool previewMode;
+  final bool replayLoading;
+  final bool replayPlaying;
 
   @override
   State<ScenarioPracticePage> createState() => _ScenarioPracticePageState();
@@ -258,13 +254,6 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _stopQuestionNarration() async {
     _questionNarrationGeneration++;
-    if (widget.replayPlaying && widget.onReplayQuestion != null) {
-      try {
-        await widget.onReplayQuestion!();
-      } on Object {
-        // Avatar playback is best-effort and must not block user input.
-      }
-    }
     await widget.practiceController.stopPracticeAudio();
     await _stopQuestionSpeakerSafely();
     if (mounted && _playingQuestionId != null) {
@@ -596,21 +585,18 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
           child: scene == null
               ? const Center(child: Text('请先选择一个情景开始对话。'))
               : PracticeStageLayout(
-                  avatarRegionKey: const Key('scenario-avatar-region'),
-                  avatar: PracticeAvatarStage(
+                  stageRegionKey: const Key('scenario-role-region'),
+                  stage: PracticeRoleStage(
                     title: scene.name,
-                    fallback: const PracticeAvatarFallback(
-                      semanticLabel: '情景对话静态角色画面',
-                      imageKey: Key('scenario-avatar-placeholder'),
+                    fallback: PracticeRoleFallback(
+                      assetName: scenarioStageAssetPath(scene),
+                      semanticLabel: '${scene.name}角色画面',
+                      imageKey: const Key('scenario-role-placeholder'),
                     ),
-                    surfaceBuilder:
-                        _exitApproved || !widget.practiceController.canUseAvatar
-                        ? null
-                        : widget.avatarSurfaceBuilder,
+                    surfaceBuilder: widget.avatarSurfaceBuilder,
                     statusLabel: widget.avatarStatusLabel,
                     exitInFlight: _exitInFlight,
                     exitButtonKey: const Key('scenario-exit'),
-                    statusKey: const Key('scenario-avatar-status'),
                     onExit: _requestExit,
                   ),
                   content: _ConversationPanel(
@@ -623,8 +609,6 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                     previewMode: widget.previewMode,
                     onBeforeStartRecording: _beforeStartRecording,
                     speechFeedbackController: widget.speechFeedbackController,
-                    replayLoading: widget.replayLoading,
-                    replayPlaying: widget.replayPlaying,
                     playingQuestionId: _playingQuestionId,
                     narrationErrorQuestionId: _questionNarrationErrorId,
                     onPlayQuestion: _playQuestion,
@@ -661,8 +645,6 @@ class _ConversationPanel extends StatelessWidget {
     required this.previewMode,
     required this.onBeforeStartRecording,
     required this.speechFeedbackController,
-    required this.replayLoading,
-    required this.replayPlaying,
     required this.playingQuestionId,
     required this.narrationErrorQuestionId,
     required this.onPlayQuestion,
@@ -686,8 +668,6 @@ class _ConversationPanel extends StatelessWidget {
   final bool previewMode;
   final ScenarioAsyncAction? onBeforeStartRecording;
   final SpeechFeedbackController? speechFeedbackController;
-  final bool replayLoading;
-  final bool replayPlaying;
   final String? playingQuestionId;
   final String? narrationErrorQuestionId;
   final Future<void> Function(PracticeMessage message) onPlayQuestion;
@@ -735,12 +715,10 @@ class _ConversationPanel extends StatelessWidget {
                         final playing =
                             playingQuestionId == message.id ||
                             (currentQuestion &&
-                                (replayPlaying ||
-                                    controller.isQuestionAudioPlaying));
+                                controller.isQuestionAudioPlaying);
                         final playbackLoading =
                             currentQuestion &&
-                            (replayLoading ||
-                                controller.isQuestionAudioLoading);
+                            controller.isQuestionAudioLoading;
                         final tipsAvailable =
                             currentQuestion &&
                             (controller

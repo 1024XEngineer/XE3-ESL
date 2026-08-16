@@ -6,18 +6,16 @@ import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 void main() {
-  testWidgets('separates plan content and preserves card actions', (
+  testWidgets('separates plan content and opens the selected plan', (
     tester,
   ) async {
     PracticePlanSummary? opened;
-    PracticePlanSummary? deleted;
     final plan = _plan('plan-1');
 
     await _pumpCatalog(
       tester,
       plans: [plan],
       onPlanPressed: (value) => opened = value,
-      onPlanDeleted: (value) => deleted = value,
     );
 
     expect(find.text('Java Developer'), findsOneWidget);
@@ -35,14 +33,7 @@ void main() {
     await tester.pump();
     expect(opened, same(plan));
 
-    await tester.tap(find.byKey(const Key('delete-interview-plan-plan-1')));
-    await tester.pumpAndSettle();
-    expect(find.text('删除模拟面试？'), findsOneWidget);
-    expect(deleted, isNull);
-
-    await tester.tap(find.byKey(const Key('confirm-delete-interview-plan')));
-    await tester.pumpAndSettle();
-    expect(deleted, same(plan));
+    expect(find.byKey(const Key('delete-interview-plan-plan-1')), findsNothing);
   });
 
   testWidgets('renders loading, error, empty, and multiple plan states', (
@@ -97,10 +88,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(content, findsOneWidget);
     }
-    final deleteButton = find.byKey(const Key('delete-interview-plan-plan-1'));
-    await tester.ensureVisible(deleteButton);
-    await tester.pumpAndSettle();
-    expect(deleteButton.hitTestable(), findsOneWidget);
+    expect(find.byKey(const Key('delete-interview-plan-plan-1')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
@@ -111,7 +99,6 @@ Future<void> _pumpCatalog(
   bool loading = false,
   String? errorMessage,
   ValueChanged<PracticePlanSummary>? onPlanPressed,
-  ValueChanged<PracticePlanSummary>? onPlanDeleted,
   VoidCallback? onRetry,
 }) {
   return tester.pumpWidget(
@@ -126,7 +113,6 @@ Future<void> _pumpCatalog(
             errorMessage: errorMessage,
             onCreatePressed: () {},
             onPlanPressed: onPlanPressed ?? (_) {},
-            onPlanDeleted: onPlanDeleted ?? (_) {},
             onRetry: onRetry ?? () {},
           ),
         ),
@@ -138,7 +124,7 @@ Future<void> _pumpCatalog(
 PracticePlanSummary _plan(String id, {int maxEffectiveTurns = 3}) {
   return PracticePlanSummary(
     id: id,
-    revision: 1,
+    version: 1,
     status: PracticePlanStatus.ready,
     experience: PracticeExperience.interview,
     sceneName: 'Technical interview',

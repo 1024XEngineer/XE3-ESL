@@ -6,6 +6,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+)
+
+const (
+	testJobTargetSceneID           = "scn_interview_self_introduction"
+	testJobTargetTechnicalRoleID   = "role_interview_self_introduction_counterpart"
+	testJobTargetTechnicalOptionID = "option_interview_self_introduction_full"
 )
 
 func TestAIJobTargetParserSeparatesUntrustedMaterial(
@@ -178,4 +186,35 @@ func (failure jobTargetGenerationFailureStub) Error() string {
 
 func (failure jobTargetGenerationFailureStub) StableCategory() string {
 	return failure.category
+}
+
+func mustSceneCatalog(t *testing.T) *scene.Catalog {
+	t.Helper()
+	catalog, err := scene.NewBuiltinCatalog(
+		scene.EvaluationPolicyReferenceValidatorFunc(func(string) error { return nil }),
+	)
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog: %v", err)
+	}
+	return catalog
+}
+
+func validJobTargetCandidateFixture(source JobTargetSource) JobTargetCandidate {
+	return JobTargetCandidate{
+		Source:             source,
+		GeneralAdviceOnly:  source == JobTargetSourceQuickStart,
+		JobTitle:           "Backend Engineer",
+		Seniority:          "mid-level",
+		Responsibilities:   []string{"Build reliable APIs."},
+		CoreSkills:         []string{"Go"},
+		CommunicationFocus: []string{"Explain technical trade-offs clearly."},
+		PracticeGoals:      []string{"Answer with concrete examples."},
+		ScopeNotice:        "Practice uses the supplied role material.",
+		CatalogRecommendation: JobTargetCatalogRecommendation{
+			SceneID:          testJobTargetSceneID,
+			SceneVersion:     1,
+			SelectedRoleIDs:  []string{testJobTargetTechnicalRoleID},
+			PracticeOptionID: testJobTargetTechnicalOptionID,
+		},
+	}
 }

@@ -26,12 +26,11 @@ const (
 type Session struct {
 	ID                  string             `json:"practice_session_id"`
 	PlanID              string             `json:"practice_plan_id"`
-	PlanRevision        int                `json:"plan_revision"`
+	PlanVersion         int                `json:"plan_version"`
 	Experience          PracticeExperience `json:"practice_experience"`
 	Category            SceneCategory      `json:"scene_category"`
 	PracticeMode        PracticeMode       `json:"practice_mode"`
 	EvaluationPolicyRef string             `json:"evaluation_policy_ref"`
-	SnapshotID          string             `json:"snapshot_id"`
 	Status              SessionStatus      `json:"practice_session_status"`
 	Version             int                `json:"session_version"`
 	EffectiveTurns      int                `json:"-"`
@@ -52,9 +51,8 @@ type Participant struct {
 }
 
 type SessionSnapshot struct {
-	ID                 string              `json:"snapshot_id"`
 	SessionID          string              `json:"practice_session_id"`
-	PlanRevision       int                 `json:"plan_revision"`
+	PlanVersion        int                 `json:"plan_version"`
 	Experience         PracticeExperience  `json:"practice_experience"`
 	Category           SceneCategory       `json:"scene_category"`
 	PracticeMode       PracticeMode        `json:"practice_mode"`
@@ -64,7 +62,6 @@ type SessionSnapshot struct {
 	SessionPolicy      SessionPolicy       `json:"session_policy"`
 	PracticeObjectives []PracticeObjective `json:"practice_objectives"`
 	IELTSAssignment    *IELTSAssignment    `json:"ielts_assignment,omitempty"`
-	CreatedAt          time.Time           `json:"created_at"`
 }
 
 type SessionBootstrap struct {
@@ -73,12 +70,12 @@ type SessionBootstrap struct {
 }
 
 type CreateSessionCommand struct {
-	SessionID    string
-	SnapshotID   string
-	PlanID       string
-	PlanRevision int
-	Snapshot     SessionSnapshot
-	Intent       IdempotencyIntent
+	SessionID          string
+	PlanID             string
+	PlanVersion        int
+	Snapshot           SessionSnapshot
+	ClientRequestID    string
+	RequestFingerprint [sha256.Size]byte
 }
 
 type SessionTransition string
@@ -94,17 +91,13 @@ type TransitionSessionCommand struct {
 	SessionID              string
 	ExpectedSessionVersion int
 	Transition             SessionTransition
-	Intent                 IdempotencyIntent
+	ClientRequestID        string
+	RequestFingerprint     [sha256.Size]byte
 }
 
 // SessionRepository is Practice's complete Session persistence boundary.
 // PracticePlan data is owned and read through Preparation's PlanReader.
 type SessionRepository interface {
-	ReplaySession(
-		context.Context,
-		Actor,
-		IdempotencyIntent,
-	) (SessionBootstrap, bool, error)
 	CreateSession(
 		context.Context,
 		Actor,
@@ -116,48 +109,9 @@ type SessionRepository interface {
 		Actor,
 		string,
 	) (SessionSnapshot, error)
-	ResolveSessionByPlan(
-		context.Context,
-		Actor,
-		string,
-	) (SessionBootstrap, error)
 	TransitionSession(
 		context.Context,
 		Actor,
 		TransitionSessionCommand,
 	) (Session, bool, error)
-	DeleteUserData(context.Context, DeletionContext) error
-}
-
-// VoiceSessionRepository exposes the same frozen Session authority to the
-// production voice composition. This Port never reads a live Plan.
-type VoiceSessionRepository interface {
-	GetSession(context.Context, Actor, string) (Session, error)
-	GetSessionSnapshot(
-		context.Context,
-		Actor,
-		string,
-	) (SessionSnapshot, error)
-	ReplayVoiceStart(
-		context.Context,
-		Actor,
-		IdempotencyIntent,
-	) (SessionBootstrap, bool, error)
-	ResolveSessionByPlan(
-		context.Context,
-		Actor,
-		string,
-	) (SessionBootstrap, error)
-	ActivateSession(
-		context.Context,
-		Actor,
-		string,
-		string,
-		IdempotencyIntent,
-	) (SessionBootstrap, error)
-	AdvanceTurn(
-		context.Context,
-		Actor,
-		ConsumeTurnCommand,
-	) (TurnResult, error)
 }

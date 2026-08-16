@@ -34,7 +34,7 @@ void main() {
     expect(client.realtimeCalls, 1);
     expect(client.fileUploadCalls, 0);
     expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
-    expect(controller.editedTranscript, 'Candidate text');
+    expect(controller.editedTranscript, 'Draft text');
   });
   test('late upload result cannot cross the Thread fence', () async {
     final client = _ControlledVoiceClient();
@@ -45,23 +45,23 @@ void main() {
     await controller.startRecording();
     await controller.stopRecording();
 
-    client.createCompleter = Completer<AgentVoiceCandidate>();
+    client.createCompleter = Completer<AgentVoiceDraft>();
     final upload = controller.upload();
     await Future<void>.delayed(Duration.zero);
     await controller.bindThread('thread-b');
-    client.createCompleter!.complete(_readyCandidate(threadId: 'thread-a'));
+    client.createCompleter!.complete(_readyDraft(threadId: 'thread-a'));
     await upload;
 
     expect(controller.threadId, 'thread-b');
     expect(controller.state, AgentVoiceComposerState.idle);
-    expect(controller.candidate, isNull);
+    expect(controller.draft, isNull);
     expect(committed, isEmpty);
-    expect(client.deletedCandidateIds, contains('candidate-a'));
+    expect(client.deletedDraftIds, contains('draft-a'));
   });
 
-  test('late confirmation cannot cross Candidate and Thread fences', () async {
+  test('late confirmation cannot cross Draft and Thread fences', () async {
     final client = _ControlledVoiceClient()
-      ..createResult = _readyCandidate(threadId: 'thread-a');
+      ..createResult = _readyDraft(threadId: 'thread-a');
     final committed = <AgentMessage>[];
     final controller = _controller(client, committed);
     addTearDown(controller.dispose);
@@ -69,7 +69,7 @@ void main() {
     await controller.startRecording();
     await controller.stopRecording();
     await controller.upload();
-    expect(controller.candidate?.version, 1);
+    expect(controller.draft?.version, 1);
     controller.updateTranscript('Edited confirmed text');
 
     client.confirmCompleter = Completer<AgentVoiceConfirmation>();
@@ -78,7 +78,7 @@ void main() {
     await controller.bindThread('thread-b');
     client.confirmCompleter!.complete(
       _confirmation(
-        candidate: _readyCandidate(threadId: 'thread-a'),
+        draft: _readyDraft(threadId: 'thread-a'),
         text: 'Edited confirmed text',
       ),
     );
@@ -242,7 +242,7 @@ void main() {
   testWidgets('recording limit automatically stops and uploads', (
     tester,
   ) async {
-    final upload = Completer<AgentVoiceCandidate>();
+    final upload = Completer<AgentVoiceDraft>();
     final client = _ControlledVoiceClient()..createCompleter = upload;
     final controller = _controller(
       client,
@@ -259,12 +259,12 @@ void main() {
     expect(controller.state, AgentVoiceComposerState.uploading);
     expect(controller.recording, isNotNull);
 
-    upload.complete(_readyCandidate(threadId: 'thread-a'));
+    upload.complete(_readyDraft(threadId: 'thread-a'));
     await tester.pump();
 
     expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
     expect(controller.recording, isNull);
-    expect(controller.candidate, isNotNull);
+    expect(controller.draft, isNotNull);
   });
 
   test('upload and ASR failures expose bounded retry states', () async {
@@ -285,7 +285,7 @@ void main() {
     expect(uploadController.errorMessage, contains('检查网络'));
 
     final asrClient = _ControlledVoiceClient()
-      ..createResult = _failedCandidate(threadId: 'thread-a');
+      ..createResult = _failedDraft(threadId: 'thread-a');
     final asrController = _controller(asrClient, <AgentMessage>[]);
     addTearDown(asrController.dispose);
     await asrController.bindThread('thread-a');
@@ -300,18 +300,14 @@ void main() {
   test(
     'Run retry identity is stable per failed Run and rotates for its retry',
     () async {
-      final candidate = _readyCandidate(threadId: 'thread-a');
+      final draft = _readyDraft(threadId: 'thread-a');
       final firstRun = _failedRun('run-a');
       final secondRun = _failedRun('run-b');
       final thirdRun = _failedRun('run-c');
       final client = _ControlledVoiceClient()
-        ..createResult = candidate
+        ..createResult = draft
         ..confirmResults.add(
-          _confirmation(
-            candidate: candidate,
-            text: 'Candidate text',
-            run: firstRun,
-          ),
+          _confirmation(draft: draft, text: 'Draft text', run: firstRun),
         )
         ..retryRunResults.addAll(<Object>[
           const AgentClientException(
@@ -350,18 +346,18 @@ void main() {
   );
 
   test('ambiguous ASR retry GET-reconciles before any second POST', () async {
-    final failed = _failedCandidate(threadId: 'thread-a');
-    final ready = _readyCandidate(threadId: 'thread-a', version: 2);
+    final failed = _failedDraft(threadId: 'thread-a');
+    final ready = _readyDraft(threadId: 'thread-a', version: 2);
     final retryClient = _ControlledVoiceClient()
       ..createResult = failed
-      ..retryCandidateResults.addAll(<Object>[
+      ..retryDraftResults.addAll(<Object>[
         const AgentClientException(
           kind: AgentClientFailureKind.network,
           retryable: true,
         ),
         ready,
       ])
-      ..getCandidateResults.add(failed);
+      ..getDraftResults.add(failed);
     final retryController = _controller(retryClient, <AgentMessage>[]);
     addTearDown(retryController.dispose);
     await retryController.bindThread('thread-a');
@@ -378,13 +374,13 @@ void main() {
 
     final reconciledClient = _ControlledVoiceClient()
       ..createResult = failed
-      ..retryCandidateResults.add(
+      ..retryDraftResults.add(
         const AgentClientException(
           kind: AgentClientFailureKind.network,
           retryable: true,
         ),
       )
-      ..getCandidateResults.add(ready);
+      ..getDraftResults.add(ready);
     final reconciledController = _controller(
       reconciledClient,
       <AgentMessage>[],
@@ -410,22 +406,22 @@ void main() {
     'ambiguous confirmation freezes its command and reconciles Message and Run',
     () async {
       const confirmedText = 'Frozen confirmed transcript';
-      final candidate = _readyCandidate(threadId: 'thread-a');
+      final draft = _readyDraft(threadId: 'thread-a');
       final durableRun = _failedRun('run-a', retryable: false);
       final durable = _confirmation(
-        candidate: candidate,
+        draft: draft,
         text: confirmedText,
         run: durableRun,
       );
       final client = _ControlledVoiceClient()
-        ..createResult = candidate
+        ..createResult = draft
         ..confirmResults.add(
           const AgentClientException(
             kind: AgentClientFailureKind.network,
             retryable: true,
           ),
         )
-        ..getCandidateResults.add(durable.candidate)
+        ..getDraftResults.add(durable.draft)
         ..getRunResults.add(durableRun)
         ..messages[durable.message.id] = durable.message;
       final committed = <AgentMessage>[];
@@ -448,7 +444,7 @@ void main() {
       expect(committed.single.text, confirmedText);
 
       final replayClient = _ControlledVoiceClient()
-        ..createResult = candidate
+        ..createResult = draft
         ..confirmResults.addAll(<Object>[
           const AgentClientException(
             kind: AgentClientFailureKind.network,
@@ -456,7 +452,7 @@ void main() {
           ),
           durable,
         ])
-        ..getCandidateResults.add(candidate);
+        ..getDraftResults.add(draft);
       final replayController = _controller(replayClient, <AgentMessage>[]);
       addTearDown(replayController.dispose);
       await replayController.bindThread('thread-a');
@@ -479,7 +475,7 @@ void main() {
   test(
     'background preserves confirmed Run and foreground resumes it with GET',
     () async {
-      final candidate = _readyCandidate(threadId: 'thread-a');
+      final draft = _readyDraft(threadId: 'thread-a');
       final pendingRun = AgentVoiceRun(
         id: 'run-a',
         threadId: 'thread-a',
@@ -488,13 +484,9 @@ void main() {
       );
       final stalledRun = Completer<AgentVoiceRun>();
       final client = _ControlledVoiceClient()
-        ..createResult = candidate
+        ..createResult = draft
         ..confirmResults.add(
-          _confirmation(
-            candidate: candidate,
-            text: 'Candidate text',
-            run: pendingRun,
-          ),
+          _confirmation(draft: draft, text: 'Draft text', run: pendingRun),
         )
         ..getRunCompleter = stalledRun;
       final controller = _controller(client, <AgentMessage>[]);
@@ -546,7 +538,7 @@ void main() {
       await authenticationController.upload();
       expect(authenticationController.state, AgentVoiceComposerState.idle);
       expect(authenticationController.recording, isNull);
-      expect(authenticationController.candidate, isNull);
+      expect(authenticationController.draft, isNull);
 
       final backgroundController = _controller(
         _ControlledVoiceClient(),
@@ -720,20 +712,17 @@ AgentVoiceController _controller(
     clock: clock ?? DateTime.now,
     recordingLimit: recordingLimit,
     pollInterval: Duration.zero,
-    maximumCandidatePolls: 2,
+    maximumDraftPolls: 2,
     maximumRunPolls: 2,
   );
 }
 
-AgentVoiceCandidate _failedCandidate({
-  required String threadId,
-  int version = 1,
-}) {
+AgentVoiceDraft _failedDraft({required String threadId, int version = 1}) {
   final now = DateTime.utc(2026, 7, 26, 12);
-  return AgentVoiceCandidate(
-    id: 'candidate-a',
+  return AgentVoiceDraft(
+    id: 'draft-a',
     threadId: threadId,
-    status: AgentVoiceCandidateStatus.failed,
+    status: AgentVoiceDraftStatus.failed,
     asrAttempt: version,
     version: version,
     recording: const AgentVoiceRecordingMetadata(
@@ -742,7 +731,7 @@ AgentVoiceCandidate _failedCandidate({
       duration: Duration(seconds: 3),
       sampleRate: 16000,
     ),
-    failure: const AgentVoiceCandidateFailure(
+    failure: const AgentVoiceDraftFailure(
       kind: 'provider_unavailable',
       retryable: true,
     ),
@@ -752,15 +741,12 @@ AgentVoiceCandidate _failedCandidate({
   );
 }
 
-AgentVoiceCandidate _readyCandidate({
-  required String threadId,
-  int version = 1,
-}) {
+AgentVoiceDraft _readyDraft({required String threadId, int version = 1}) {
   final now = DateTime.utc(2026, 7, 26, 12);
-  return AgentVoiceCandidate(
-    id: 'candidate-a',
+  return AgentVoiceDraft(
+    id: 'draft-a',
     threadId: threadId,
-    status: AgentVoiceCandidateStatus.candidateReady,
+    status: AgentVoiceDraftStatus.ready,
     asrAttempt: version,
     version: version,
     recording: const AgentVoiceRecordingMetadata(
@@ -770,7 +756,7 @@ AgentVoiceCandidate _readyCandidate({
       sampleRate: 16000,
     ),
     transcript: const AgentVoiceTranscript(
-      text: 'Candidate text',
+      text: 'Draft text',
       requestId: 'request-a',
       provider: 'fake',
       model: 'fake-asr',
@@ -793,40 +779,39 @@ AgentVoiceRun _failedRun(String id, {bool retryable = true}) {
 }
 
 AgentVoiceConfirmation _confirmation({
-  required AgentVoiceCandidate candidate,
+  required AgentVoiceDraft draft,
   required String text,
   AgentVoiceRun? run,
 }) {
-  final now = candidate.updatedAt;
+  final now = draft.updatedAt;
   const messageId = 'message-a';
   const audioId = 'audio-a';
   final resolvedRun =
       run ??
       AgentVoiceRun(
         id: 'run-a',
-        threadId: candidate.threadId,
+        threadId: draft.threadId,
         inputMessageId: messageId,
         status: AgentVoiceRunStatus.completed,
         assistantMessageId: 'assistant-a',
       );
-  final confirmed = AgentVoiceCandidate(
-    id: candidate.id,
-    threadId: candidate.threadId,
-    status: AgentVoiceCandidateStatus.confirmed,
-    asrAttempt: candidate.asrAttempt,
-    version: candidate.version,
-    recording: candidate.recording,
-    transcript: candidate.transcript,
-    expiresAt: candidate.expiresAt,
+  final confirmed = AgentVoiceDraft(
+    id: draft.id,
+    threadId: draft.threadId,
+    status: AgentVoiceDraftStatus.confirmed,
+    asrAttempt: draft.asrAttempt,
+    version: draft.version,
+    recording: draft.recording,
+    transcript: draft.transcript,
     confirmedMessageId: messageId,
     confirmedRunId: resolvedRun.id,
     messageAudioId: audioId,
     confirmedAt: now,
-    createdAt: candidate.createdAt,
+    createdAt: draft.createdAt,
     updatedAt: now,
   );
   return AgentVoiceConfirmation(
-    candidate: confirmed,
+    draft: confirmed,
     message: AgentMessage(
       id: messageId,
       role: AgentMessageRole.user,
@@ -846,8 +831,8 @@ AgentVoiceConfirmation _confirmation({
 }
 
 typedef _ConfirmationCall = ({
-  String candidateId,
-  int candidateVersion,
+  String draftId,
+  int draftVersion,
   String clientMessageId,
   String confirmedText,
 });
@@ -859,15 +844,15 @@ final class _ControlledVoiceClient
         AgentVoiceClient,
         AgentVoiceRealtimeInputClient,
         AgentMessageAudioClient {
-  Completer<AgentVoiceCandidate>? createCompleter;
+  Completer<AgentVoiceDraft>? createCompleter;
   Completer<AgentVoiceConfirmation>? confirmCompleter;
   Completer<Uint8List>? speechCompleter;
-  AgentVoiceCandidate? createResult;
+  AgentVoiceDraft? createResult;
   Object? createError;
   Object? speechError;
   Object? messageAudioError;
-  final List<Object> getCandidateResults = <Object>[];
-  final List<Object> retryCandidateResults = <Object>[];
+  final List<Object> getDraftResults = <Object>[];
+  final List<Object> retryDraftResults = <Object>[];
   final List<Object> confirmResults = <Object>[];
   final List<Object> getRunResults = <Object>[];
   final List<Object> retryRunResults = <Object>[];
@@ -878,27 +863,27 @@ final class _ControlledVoiceClient
   final List<_RetryRunCall> retryRunCalls = <_RetryRunCall>[];
   final List<String> getRunCalls = <String>[];
   final List<String> getMessageCalls = <String>[];
-  final List<String> deletedCandidateIds = <String>[];
+  final List<String> deletedDraftIds = <String>[];
   int realtimeCalls = 0;
   int fileUploadCalls = 0;
 
   @override
-  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+  Stream<AgentVoiceTranscriptionEvent> createDraftStream({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   }) async* {
     fileUploadCalls++;
-    final candidate = await createCandidate(
+    final draft = await createDraft(
       threadId: threadId,
       recording: recording,
       idempotencyKey: idempotencyKey,
     );
-    yield AgentVoiceCandidateCompleted(candidate);
+    yield AgentVoiceDraftCompleted(draft);
   }
 
   @override
-  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+  Stream<AgentVoiceTranscriptionEvent> createDraftRealtime({
     required String threadId,
     required Stream<Uint8List> audioChunks,
     required String idempotencyKey,
@@ -906,37 +891,37 @@ final class _ControlledVoiceClient
     realtimeCalls++;
     await for (final _ in audioChunks) {}
     yield const AgentVoiceTranscriptUpdated(
-      text: 'Realtime candidate text.',
+      text: 'Realtime draft text.',
       finalResult: true,
     );
-    yield AgentVoiceCandidateCompleted(_readyCandidate(threadId: threadId));
+    yield AgentVoiceDraftCompleted(_readyDraft(threadId: threadId));
   }
 
   @override
-  Future<AgentVoiceCandidate> createCandidate({
+  Future<AgentVoiceDraft> createDraft({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   }) {
     if (createError case final error?) {
-      return Future<AgentVoiceCandidate>.error(error);
+      return Future<AgentVoiceDraft>.error(error);
     }
     return createCompleter?.future ??
-        Future<AgentVoiceCandidate>.value(
-          createResult ?? _readyCandidate(threadId: threadId),
+        Future<AgentVoiceDraft>.value(
+          createResult ?? _readyDraft(threadId: threadId),
         );
   }
 
   @override
-  Future<AgentVoiceConfirmation> confirmCandidate({
-    required String candidateId,
-    required int candidateVersion,
+  Future<AgentVoiceConfirmation> confirmDraft({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   }) {
     confirmationCalls.add((
-      candidateId: candidateId,
-      candidateVersion: candidateVersion,
+      draftId: draftId,
+      draftVersion: draftVersion,
       clientMessageId: clientMessageId,
       confirmedText: confirmedText,
     ));
@@ -946,35 +931,33 @@ final class _ControlledVoiceClient
     return confirmCompleter?.future ??
         Future<AgentVoiceConfirmation>.value(
           _confirmation(
-            candidate: createResult ?? _readyCandidate(threadId: 'thread-a'),
+            draft: createResult ?? _readyDraft(threadId: 'thread-a'),
             text: confirmedText,
           ),
         );
   }
 
   @override
-  Future<void> deleteCandidate({required String candidateId}) async {
-    deletedCandidateIds.add(candidateId);
+  Future<void> deleteDraft({required String draftId}) async {
+    deletedDraftIds.add(draftId);
   }
 
   @override
-  Future<AgentVoiceCandidate> getCandidate({
-    required String candidateId,
-  }) async {
+  Future<AgentVoiceDraft> getDraft({required String draftId}) async {
     asrOperations.add('GET');
-    if (getCandidateResults.isNotEmpty) {
-      return _result<AgentVoiceCandidate>(getCandidateResults.removeAt(0));
+    if (getDraftResults.isNotEmpty) {
+      return _result<AgentVoiceDraft>(getDraftResults.removeAt(0));
     }
-    return createResult ?? _readyCandidate(threadId: 'thread-a');
+    return createResult ?? _readyDraft(threadId: 'thread-a');
   }
 
   @override
-  Future<AgentVoiceCandidate> retryCandidate({required String candidateId}) {
+  Future<AgentVoiceDraft> retryDraft({required String draftId}) {
     asrOperations.add('POST');
-    if (retryCandidateResults.isNotEmpty) {
-      return _result<AgentVoiceCandidate>(retryCandidateResults.removeAt(0));
+    if (retryDraftResults.isNotEmpty) {
+      return _result<AgentVoiceDraft>(retryDraftResults.removeAt(0));
     }
-    return getCandidate(candidateId: candidateId);
+    return getDraft(draftId: draftId);
   }
 
   @override

@@ -5,18 +5,20 @@ import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/design/conversation_message_content.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/agent/handoff/practice_plan_handoff_card.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 
 import 'agent_models.dart';
 import 'agent_message_audio_controller.dart';
+
+typedef AgentClientActionBuilder =
+    Widget Function(BuildContext context, AgentClientAction action);
 
 final class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.messageAudioController,
     this.onTranslate,
-    this.onHandoff,
+    this.clientActionBuilder,
     this.onRefreshImage,
     this.correction,
     this.polish,
@@ -27,7 +29,7 @@ final class AgentMessageBubble extends StatefulWidget {
   final AgentMessage message;
   final AgentMessageAudioController? messageAudioController;
   final Future<String> Function(AgentMessage message)? onTranslate;
-  final ValueChanged<AgentHandoff>? onHandoff;
+  final AgentClientActionBuilder? clientActionBuilder;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
   final InlineLanguageSuggestion? correction;
@@ -125,7 +127,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final bubble = ConversationBubbleSurface(
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
-      margin: message.handoffs.isEmpty
+      margin: message.clientActions.isEmpty
           ? const EdgeInsets.only(bottom: 7)
           : EdgeInsets.zero,
       padding: isUser && message.modality == AgentMessageModality.voice
@@ -133,7 +135,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           : null,
       child: primaryContent,
     );
-    if (message.handoffs.isEmpty) {
+    if (message.clientActions.isEmpty || widget.clientActionBuilder == null) {
       return bubble;
     }
     return Padding(
@@ -144,15 +146,8 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         children: [
           bubble,
           const SizedBox(height: 10),
-          for (final handoff in message.handoffs)
-            switch (handoff) {
-              ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
-                handoff: handoff,
-                onConfirm: widget.onHandoff == null
-                    ? null
-                    : () => widget.onHandoff!(handoff),
-              ),
-            },
+          for (final action in message.clientActions)
+            widget.clientActionBuilder!(context, action),
         ],
       ),
     );
@@ -275,9 +270,12 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
 
   Widget _buildUserVoice(BuildContext context, Color foreground) {
     final message = widget.message;
-    final audio = message.audio!;
+    final audio = message.audio;
     final audioController = widget.messageAudioController;
-    final readable = audio.isReadable && audioController != null;
+    final recordingDeleted =
+        audio == null || audio.status == AgentMessageAudioStatus.deleted;
+    final readable =
+        !recordingDeleted && audio.isReadable && audioController != null;
     final loading =
         audioController?.loadingMessageId == message.id &&
         audioController?.messagePlaybackUsesPreview == false;
@@ -302,16 +300,26 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           key: Key('agent-user-voice-transcript-${message.id}'),
           style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
         ),
-        InlineLanguageFeedback(
-          leading: _VoicePlaybackAction(
-            key: Key('agent-user-voice-play-${message.id}'),
-            loading: loading,
-            playing: playing,
-            duration: audio.duration,
-            onPressed: readable
-                ? () => audioController.toggleMessagePlayback(message)
-                : null,
+        if (recordingDeleted) ...[
+          const SizedBox(height: 4),
+          const Text(
+            '录音已删除，文字已保留',
+            key: Key('agent-user-voice-recording-deleted'),
+            style: SpeakUpDesign.meta,
           ),
+        ],
+        InlineLanguageFeedback(
+          leading: recordingDeleted
+              ? null
+              : _VoicePlaybackAction(
+                  key: Key('agent-user-voice-play-${message.id}'),
+                  loading: loading,
+                  playing: playing,
+                  duration: audio.duration,
+                  onPressed: readable
+                      ? () => audioController.toggleMessagePlayback(message)
+                      : null,
+                ),
           correction: widget.correction,
           polish: widget.polish,
           feedbackNotice: widget.feedbackNotice,

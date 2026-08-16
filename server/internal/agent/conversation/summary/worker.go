@@ -3,35 +3,33 @@ package summary
 import (
 	"context"
 	"errors"
-	"math"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
 const maxSummarySweepLimit = 20
 
+type ContentGenerator interface {
+	Generate(context.Context, GenerateCommand) (Content, error)
+}
+
 type Worker struct {
-	jobs          JobRepository
-	checkpoints   CheckpointRepository
-	generator     CheckpointGenerator
+	repository    Repository
+	generator     ContentGenerator
 	configuration WorkerConfiguration
 }
 
 func NewWorker(
-	jobs JobRepository,
-	checkpoints CheckpointRepository,
-	generator CheckpointGenerator,
+	repository Repository,
+	generator ContentGenerator,
 	configuration WorkerConfiguration,
 ) (*Worker, error) {
-	if jobs == nil ||
-		checkpoints == nil ||
-		generator == nil ||
-		!configuration.Valid() {
+	if repository == nil || generator == nil || !configuration.Valid() {
 		return nil, ErrInvalidArgument
 	}
 	return &Worker{
-		jobs:          jobs,
-		checkpoints:   checkpoints,
+		repository:    repository,
 		generator:     generator,
 		configuration: configuration,
 	}, nil
@@ -49,31 +47,26 @@ func (worker *Worker) ProcessPending(
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		claim, acquired, err := worker.jobs.ClaimJob(
-			ctx,
-			worker.configuration,
-		)
+		claim, found, err := worker.repository.Claim(ctx, worker.configuration)
 		if err != nil {
 			return result, err
 		}
-		if !acquired {
+		if !found {
 			return result, nil
 		}
 		result.Claimed++
-		status, err := worker.processClaim(ctx, claim)
+		outcome, err := worker.process(ctx, claim)
 		if err != nil {
 			return result, err
 		}
-		switch status {
-		case JobCompleted:
+		switch outcome {
+		case "completed":
 			result.Completed++
-		case JobPending:
+		case "retried":
 			result.Retried++
-		case JobSkipped:
+		case "skipped":
 			result.Skipped++
-		case JobSuperseded:
-			result.Superseded++
-		case JobFailed:
+		case "failed":
 			result.Failed++
 		default:
 			return result, conversation.ErrRepository
@@ -82,168 +75,163 @@ func (worker *Worker) ProcessPending(
 	return result, nil
 }
 
-func (worker *Worker) processClaim(
-	ctx context.Context,
-	claim JobClaim,
-) (JobStatus, error) {
-	previous, err := worker.checkpoints.FindLatestCheckpoint(
+func (worker *Worker) process(ctx context.Context, claim Claim) (string, error) {
+	var previous *State
+	state, err := worker.repository.FindSummary(
+		ctx, claim.OwnerID, claim.ThreadID, claim.TargetSequence,
+	)
+	if err == nil {
+		if !state.Valid() || state.OwnerID != claim.OwnerID ||
+			state.ThreadID != claim.ThreadID ||
+			state.ThroughSequence >= claim.TargetSequence {
+			return worker.recordFailure(ctx, claim, ErrInvalidResponse)
+		}
+		previous = &state
+	} else if !errors.Is(err, conversation.ErrNotFound) {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	fromSequence := int64(1)
+	if previous != nil {
+		fromSequence = previous.ThroughSequence + 1
+	}
+	messages, err := worker.repository.ListMessagesForSummary(
 		ctx,
 		claim.OwnerID,
 		claim.ThreadID,
-		math.MaxInt64,
-	)
-	hasPrevious := err == nil
-	if err != nil && !errors.Is(err, conversation.ErrNotFound) {
-		return worker.recordFailure(ctx, claim, 0, err)
-	}
-	previousCoverage := int64(0)
-	if hasPrevious {
-		previousCoverage = previous.CoveredThroughSequence
-	}
-	if previousCoverage >= claim.ObservedThroughSequence {
-		return worker.finish(
-			ctx,
-			claim,
-			JobSuperseded,
-			claim.ObservedThroughSequence,
-			"already_covered",
-		)
-	}
-	uncoveredMessages := claim.ObservedThroughSequence - previousCoverage
-	if uncoveredMessages < worker.configuration.TriggerMessages {
-		return worker.finish(
-			ctx,
-			claim,
-			JobSkipped,
-			0,
-			"below_threshold",
-		)
-	}
-
-	target := claim.ObservedThroughSequence -
-		worker.configuration.RetainRecentMessages
-	maxTarget := int64(math.MaxInt64)
-	if previousCoverage <=
-		math.MaxInt64-int64(MaxSourceMessages) {
-		maxTarget = previousCoverage +
-			int64(MaxSourceMessages)
-	}
-	if target > maxTarget {
-		target = maxTarget
-	}
-	if target <= previousCoverage {
-		return worker.finish(
-			ctx,
-			claim,
-			JobSuperseded,
-			target,
-			"no_new_coverage",
-		)
-	}
-
-	checkpoint, err := worker.generator.GenerateCheckpoint(
-		ctx,
-		GenerateCheckpointCommand{
-			OwnerID:                claim.OwnerID,
-			ThreadID:               claim.ThreadID,
-			CoveredThroughSequence: target,
-		},
+		fromSequence,
+		claim.TargetSequence,
 	)
 	if err != nil {
-		if errors.Is(err, conversation.ErrConflict) {
-			latest, latestErr := worker.checkpoints.FindLatestCheckpoint(
-				ctx,
-				claim.OwnerID,
-				claim.ThreadID,
-				math.MaxInt64,
-			)
-			if latestErr == nil &&
-				latest.CoveredThroughSequence >= target {
-				return worker.finish(
-					ctx,
-					claim,
-					JobSuperseded,
-					target,
-					"concurrently_covered",
-				)
-			}
-			if latestErr != nil &&
-				!errors.Is(latestErr, conversation.ErrNotFound) {
-				return worker.recordFailure(
-					ctx,
-					claim,
-					target,
-					latestErr,
-				)
-			}
+		return worker.recordFailure(ctx, claim, err)
+	}
+	coveredCount := selectCoverage(
+		messages,
+		claim.TargetSequence,
+		worker.configuration.TriggerCharacters(),
+		worker.configuration.RetainCharacters(),
+	)
+	if coveredCount == 0 {
+		if err := worker.repository.Skip(ctx, claim); err != nil {
+			return "", err
 		}
-		return worker.recordFailure(ctx, claim, target, err)
+		return "skipped", nil
 	}
-	if !checkpoint.Valid() ||
-		checkpoint.OwnerID != claim.OwnerID ||
-		checkpoint.ThreadID != claim.ThreadID ||
-		checkpoint.CoveredThroughSequence != target {
-		return worker.recordFailure(
-			ctx,
-			claim,
-			target,
-			ErrInvalidResponse,
-		)
+	coveredCount = selectSourceWithinBudget(
+		previous,
+		messages[:coveredCount],
+		worker.configuration.MaxContextCharacters,
+	)
+	if coveredCount == 0 {
+		return worker.recordFailure(ctx, claim, ErrSourceExceedsBudget)
 	}
-	job, err := worker.jobs.CompleteJob(
+	source := messages[:coveredCount]
+	content, err := worker.generator.Generate(ctx, GenerateCommand{
+		Previous:           previous,
+		Messages:           source,
+		MaxInputCharacters: worker.configuration.MaxContextCharacters,
+	})
+	if err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if !content.Valid() {
+		return worker.recordFailure(ctx, claim, ErrInvalidResponse)
+	}
+	if err := worker.repository.Complete(
 		ctx,
 		claim,
-		target,
-		checkpoint,
-	)
-	if err != nil {
+		source[len(source)-1].Sequence,
+		content,
+	); err != nil {
 		return "", err
 	}
-	return job.Status, nil
+	return "completed", nil
 }
 
-func (worker *Worker) finish(
-	ctx context.Context,
-	claim JobClaim,
-	status JobStatus,
-	target int64,
-	reason string,
-) (JobStatus, error) {
-	job, err := worker.jobs.FinishJob(
-		ctx,
-		claim,
-		status,
-		target,
-		reason,
-	)
-	if err != nil {
-		return "", err
+// selectSourceWithinBudget advances the oldest continuous prefix that fits
+// the real model input after the fixed system prompt, previous Summary and JSON
+// framing are encoded. It never truncates a Message or skips a fact in front
+// of the persisted waterline.
+func selectSourceWithinBudget(
+	previous *State,
+	messages []conversation.Message,
+	maxInputCharacters int,
+) int {
+	covered := 0
+	for count := 1; count <= len(messages); count++ {
+		command := GenerateCommand{
+			Previous:           previous,
+			Messages:           messages[:count],
+			MaxInputCharacters: maxInputCharacters,
+		}
+		payload, err := encodeGenerationPayload(command)
+		if err != nil || utf8.RuneCountInString(summarySystemPrompt)+
+			utf8.RuneCount(payload) > maxInputCharacters {
+			break
+		}
+		covered = count
 	}
-	return job.Status, nil
+	return covered
+}
+
+// selectCoverage keeps a recent character window verbatim. If the repository
+// returned a capped backlog, it advances one bounded batch even when messages
+// are individually tiny because message framing also consumes model context.
+func selectCoverage(
+	messages []conversation.Message,
+	targetSequence int64,
+	triggerCharacters int,
+	retainCharacters int,
+) int {
+	if len(messages) == 0 || triggerCharacters < 1 || retainCharacters < 1 {
+		return 0
+	}
+	truncatedBacklog := messages[len(messages)-1].Sequence < targetSequence
+	total := 0
+	for _, message := range messages {
+		total += utf8.RuneCountInString(message.Content)
+	}
+	if !truncatedBacklog && total < triggerCharacters {
+		return 0
+	}
+	limit := min(len(messages), MaxSourceMessages)
+	if truncatedBacklog {
+		return limit
+	}
+	retained := 0
+	covered := len(messages)
+	for covered > 0 {
+		runes := utf8.RuneCountInString(messages[covered-1].Content)
+		if retained+runes > retainCharacters {
+			break
+		}
+		retained += runes
+		covered--
+	}
+	if covered > MaxSourceMessages {
+		covered = MaxSourceMessages
+	}
+	return covered
 }
 
 func (worker *Worker) recordFailure(
 	ctx context.Context,
-	claim JobClaim,
-	target int64,
+	claim Claim,
 	cause error,
-) (JobStatus, error) {
-	kind, retryable := summaryJobFailure(cause)
-	job, err := worker.jobs.FailJob(
-		ctx,
-		claim,
-		target,
-		kind,
-		retryable,
-		worker.configuration,
+) (string, error) {
+	kind, retryable := classifyFailure(cause)
+	retry, err := worker.repository.Fail(
+		ctx, claim, kind, retryable, worker.configuration,
 	)
 	if err != nil {
 		return "", err
 	}
-	return job.Status, nil
+	if retry {
+		return "retried", nil
+	}
+	return "failed", nil
 }
 
-func summaryJobFailure(cause error) (string, bool) {
+func classifyFailure(cause error) (string, bool) {
 	switch {
 	case errors.Is(cause, context.Canceled):
 		return "canceled", true
@@ -252,6 +240,8 @@ func summaryJobFailure(cause error) (string, bool) {
 	case errors.Is(cause, ErrInvalidArgument),
 		errors.Is(cause, conversation.ErrInvalidRequest):
 		return "invalid_argument", false
+	case errors.Is(cause, ErrSourceExceedsBudget):
+		return "source_exceeds_budget", false
 	case errors.Is(cause, ErrInvalidResponse):
 		return "invalid_response", false
 	case errors.Is(cause, conversation.ErrNotFound):
@@ -262,7 +252,7 @@ func summaryJobFailure(cause error) (string, bool) {
 	var generationError GenerationFailure
 	if errors.As(cause, &generationError) {
 		kind := generationError.StableCategory()
-		if !summaryJobFailurePattern.MatchString(kind) {
+		if !failurePattern.MatchString(kind) {
 			kind = "provider_error"
 		}
 		return kind, generationError.Retryable()

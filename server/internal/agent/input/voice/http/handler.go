@@ -28,32 +28,29 @@ type Application interface {
 		requestcontext.Actor,
 		agentvoice.UploadRequest,
 		agentvoice.TranscriptionObserver,
-	) (agentvoice.Candidate, error)
-	GetCandidate(
+	) (agentvoice.Draft, error)
+	GetDraft(
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (agentvoice.Candidate, error)
+	) (agentvoice.Draft, error)
 	Retry(
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (agentvoice.Candidate, error)
+	) (agentvoice.Draft, error)
 	Confirm(
 		context.Context,
 		requestcontext.Actor,
-		agentvoice.ConfirmCandidateCommand,
+		agentvoice.ConfirmDraftCommand,
 	) (agentvoice.Confirmation, error)
-	DeleteCandidate(context.Context, requestcontext.Actor, string) error
-}
-
-type streamingConfirmationApplication interface {
 	ConfirmStream(
 		context.Context,
 		requestcontext.Actor,
-		agentvoice.ConfirmCandidateCommand,
+		agentvoice.ConfirmDraftCommand,
 		agentvoice.ConfirmationStreamObserver,
 	) (agentvoice.Confirmation, error)
+	DeleteDraft(context.Context, requestcontext.Actor, string) error
 }
 
 type ThreadReader interface {
@@ -96,27 +93,27 @@ func NewHandler(
 
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET(
-		"/v1/agent-threads/:thread_id/voice-message-candidates/realtime",
+		"/v1/agent-threads/:thread_id/voice-drafts/realtime",
 		handler.uploadRealtime,
 	)
 	routes.GET(
-		"/v1/agent-voice-message-candidates/:candidate_id",
+		"/v1/agent-voice-drafts/:draft_id",
 		handler.get,
 	)
 	routes.POST(
-		"/v1/agent-voice-message-candidates/:candidate_id/retries",
+		"/v1/agent-voice-drafts/:draft_id/retries",
 		handler.retry,
 	)
 	routes.DELETE(
-		"/v1/agent-voice-message-candidates/:candidate_id",
+		"/v1/agent-voice-drafts/:draft_id",
 		handler.delete,
 	)
 	routes.POST(
-		"/v1/agent-voice-message-candidates/:candidate_id/confirmations",
+		"/v1/agent-voice-drafts/:draft_id/confirmations",
 		handler.confirm,
 	)
 	routes.POST(
-		"/v1/agent-voice-message-candidates/:candidate_id/confirmations/stream",
+		"/v1/agent-voice-drafts/:draft_id/confirmations/stream",
 		handler.confirmStream,
 	)
 }
@@ -127,14 +124,14 @@ func (handler *Handler) get(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	candidate, err := handler.application.GetCandidate(
-		c.Request.Context(), actor, c.Param("candidate_id"),
+	draft, err := handler.application.GetDraft(
+		c.Request.Context(), actor, c.Param("draft_id"),
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
 		return
 	}
-	c.JSON(http.StatusOK, CandidateResponse(candidate))
+	c.JSON(http.StatusOK, DraftResponse(draft))
 }
 
 func (handler *Handler) retry(c *gin.Context) {
@@ -147,14 +144,14 @@ func (handler *Handler) retry(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	candidate, err := handler.application.Retry(
-		c.Request.Context(), actor, c.Param("candidate_id"),
+	draft, err := handler.application.Retry(
+		c.Request.Context(), actor, c.Param("draft_id"),
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
 		return
 	}
-	c.JSON(http.StatusOK, CandidateResponse(candidate))
+	c.JSON(http.StatusOK, DraftResponse(draft))
 }
 
 func (handler *Handler) delete(c *gin.Context) {
@@ -167,8 +164,8 @@ func (handler *Handler) delete(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	if err := handler.application.DeleteCandidate(
-		c.Request.Context(), actor, c.Param("candidate_id"),
+	if err := handler.application.DeleteDraft(
+		c.Request.Context(), actor, c.Param("draft_id"),
 	); err != nil {
 		handler.write(c, mapError(err))
 		return
@@ -190,7 +187,7 @@ func (handler *Handler) confirm(c *gin.Context) {
 		handler.write(c, mapError(err))
 		return
 	}
-	confirmation.Message.Audio = &confirmation.Audio
+	confirmation.Message.Audio = &confirmation.Attachment
 	c.JSON(
 		agentrunhttp.RunWriteStatus(confirmation.Run),
 		confirmationResponse(confirmation),
@@ -198,17 +195,12 @@ func (handler *Handler) confirm(c *gin.Context) {
 }
 
 func (handler *Handler) confirmStream(c *gin.Context) {
-	application, ok := handler.application.(streamingConfirmationApplication)
-	if !ok {
-		handler.write(c, internalError(nil))
-		return
-	}
 	actor, command, ok := handler.prepareConfirmation(c)
 	if !ok {
 		return
 	}
 	stream := &confirmationSSEWriter{context: c}
-	confirmation, err := application.ConfirmStream(
+	confirmation, err := handler.application.ConfirmStream(
 		c.Request.Context(),
 		actor,
 		command,
@@ -248,43 +240,43 @@ func (handler *Handler) confirmStream(c *gin.Context) {
 
 func (handler *Handler) prepareConfirmation(c *gin.Context) (
 	requestcontext.Actor,
-	agentvoice.ConfirmCandidateCommand,
+	agentvoice.ConfirmDraftCommand,
 	bool,
 ) {
 	values, ok := httpinput.DecodeObject(
 		c,
-		[]string{"candidate_version", "client_message_id", "confirmed_text"},
-		[]string{"candidate_version", "client_message_id", "confirmed_text"},
+		[]string{"draft_version", "client_message_id", "confirmed_text"},
+		[]string{"draft_version", "client_message_id", "confirmed_text"},
 		httpinput.DefaultJSONBodyLimit,
 		httpinput.DefaultReadTimeout,
 	)
 	if !ok {
 		handler.write(c, invalidRequest(nil))
-		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
+		return requestcontext.Actor{}, agentvoice.ConfirmDraftCommand{}, false
 	}
-	version, versionOK := httpinput.Int64(values["candidate_version"])
+	version, versionOK := httpinput.Int64(values["draft_version"])
 	clientMessageID, clientOK := httpinput.String(values["client_message_id"])
 	confirmedText, textOK := httpinput.String(values["confirmed_text"])
 	if !versionOK || !clientOK || !textOK {
 		handler.write(c, invalidRequest(nil))
-		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
+		return requestcontext.Actor{}, agentvoice.ConfirmDraftCommand{}, false
 	}
 	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
 	if !ok {
 		handler.write(c, authenticationRequired())
-		return requestcontext.Actor{}, agentvoice.ConfirmCandidateCommand{}, false
+		return requestcontext.Actor{}, agentvoice.ConfirmDraftCommand{}, false
 	}
-	return actor, agentvoice.ConfirmCandidateCommand{
-		CandidateID: c.Param("candidate_id"), CandidateVersion: version,
+	return actor, agentvoice.ConfirmDraftCommand{
+		DraftID: c.Param("draft_id"), Version: version,
 		ClientMessageID: clientMessageID, ConfirmedText: confirmedText,
 	}, true
 }
 
 func confirmationResponse(confirmation agentvoice.Confirmation) gin.H {
 	return gin.H{
-		"candidate": CandidateResponse(confirmation.Candidate),
-		"message":   agentconversationhttp.MessageResponse(confirmation.Message),
-		"run":       agentrunhttp.RunResponse(confirmation.Run),
+		"draft":   DraftResponse(confirmation.Draft),
+		"message": agentconversationhttp.MessageResponse(confirmation.Message),
+		"run":     agentrunhttp.RunResponse(confirmation.Run),
 	}
 }
 
@@ -299,7 +291,7 @@ func (writer *confirmationSSEWriter) OnConfirmationCommitted(
 	confirmation agentvoice.Confirmation,
 ) error {
 	writer.runID = confirmation.Run.ID
-	confirmation.Message.Audio = &confirmation.Audio
+	confirmation.Message.Audio = &confirmation.Attachment
 	return writer.write("input.committed", confirmationResponse(confirmation))
 }
 
@@ -343,50 +335,49 @@ func (writer *confirmationSSEWriter) write(event string, data any) error {
 	return writer.context.Request.Context().Err()
 }
 
-func CandidateResponse(candidate agentvoice.Candidate) gin.H {
+func DraftResponse(draft agentvoice.Draft) gin.H {
 	result := gin.H{
-		"candidate_id": candidate.ID, "thread_id": candidate.ThreadID,
-		"status": candidate.Status, "asr_attempt": candidate.ASRAttempt,
-		"candidate_version": candidate.CandidateVersion,
+		"draft_id": draft.ID, "thread_id": draft.ThreadID,
+		"status": draft.Status, "asr_attempt": draft.ASRAttempt,
+		"draft_version": draft.Version,
 		"recording": gin.H{
-			"content_type": candidate.ContentType, "size_bytes": candidate.Size,
-			"duration_ms": durationMilliseconds(candidate.Duration),
-			"sample_rate": candidate.SampleRate,
+			"content_type": draft.ContentType, "size_bytes": draft.Size,
+			"duration_ms": durationMilliseconds(draft.Duration),
+			"sample_rate": draft.SampleRate,
 		},
-		"expires_at": candidate.ExpiresAt.UTC().Format(time.RFC3339Nano),
-		"created_at": candidate.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at": candidate.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"created_at": draft.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at": draft.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if candidate.ASRCandidateText != "" {
+	if !draft.ExpiresAt.IsZero() {
+		result["expires_at"] = draft.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	if draft.Transcript != "" {
 		transcript := gin.H{
-			"candidate_text": candidate.ASRCandidateText,
-			"request_id":     candidate.ASRRequestID,
-			"provider":       candidate.ASRProvider, "model": candidate.ASRModel,
+			"text":       draft.Transcript,
+			"request_id": draft.ASRRequestID,
+			"provider":   draft.ASRProvider, "model": draft.ASRModel,
 		}
-		if candidate.ASRLanguage != "" {
-			transcript["language"] = candidate.ASRLanguage
+		if draft.ASRLanguage != "" {
+			transcript["language"] = draft.ASRLanguage
 		}
-		if candidate.ASREmotion != "" {
-			transcript["emotion"] = candidate.ASREmotion
+		if draft.ASREmotion != "" {
+			transcript["emotion"] = draft.ASREmotion
 		}
-		if candidate.ASRFinishReason != "" {
-			transcript["finish_reason"] = candidate.ASRFinishReason
+		if draft.ASRFinishReason != "" {
+			transcript["finish_reason"] = draft.ASRFinishReason
 		}
 		result["transcript"] = transcript
 	}
-	if candidate.FailureKind != "" {
+	if draft.FailureKind != "" {
 		result["failure"] = gin.H{
-			"kind": candidate.FailureKind, "retryable": candidate.FailureRetryable,
+			"kind": draft.FailureKind, "retryable": draft.FailureRetryable,
 		}
 	}
-	if candidate.ConfirmedMessageID != "" {
-		result["confirmed_message_id"] = candidate.ConfirmedMessageID
-		result["confirmed_run_id"] = candidate.ConfirmedRunID
-		result["message_audio_id"] = candidate.MessageAudioID
-		result["confirmed_at"] = candidate.ConfirmedAt.UTC().Format(time.RFC3339Nano)
-	}
-	if !candidate.DeletedAt.IsZero() {
-		result["deleted_at"] = candidate.DeletedAt.UTC().Format(time.RFC3339Nano)
+	if draft.ConfirmedMessageID != "" {
+		result["confirmed_message_id"] = draft.ConfirmedMessageID
+		result["confirmed_run_id"] = draft.ConfirmedRunID
+		result["message_audio_id"] = draft.ID
+		result["confirmed_at"] = draft.ConfirmedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return result
 }
@@ -424,13 +415,13 @@ func mapError(err error) error {
 			"Idempotency key conflicts with the original request.",
 			apperror.WithCause(err),
 		)
-	case errors.Is(err, agentvoice.ErrCandidateProcessing):
+	case errors.Is(err, agentvoice.ErrDraftProcessing):
 		return apperror.New(
 			apperror.Conflict, "resource_processing",
 			"Resource processing is still in progress.",
 			apperror.WithRetryable(true), apperror.WithCause(err),
 		)
-	case errors.Is(err, agentvoice.ErrCandidateStale),
+	case errors.Is(err, agentvoice.ErrDraftStale),
 		errors.Is(err, agentvoice.ErrConflict):
 		return apperror.New(
 			apperror.Conflict, "resource_conflict",

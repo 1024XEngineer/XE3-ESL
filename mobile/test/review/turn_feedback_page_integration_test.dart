@@ -361,8 +361,8 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(client.calls, 1);
       expect(
-        controller.projections.values.single.feedback?.speechFeedbackId,
-        feedback.speechFeedbackId,
+        controller.projections.values.single.feedback?.evaluationId,
+        feedback.evaluationId,
       );
     },
   );
@@ -390,101 +390,90 @@ final class _MemoryIeltsProgressStore implements IeltsMockProgressStore {
 }
 
 SpeechFeedback _agentFeedback() {
-  const statusUrl = '/v1/speech-feedback/speech_feedback_agent_001';
+  const messageId = '20000000-0000-4000-8000-000000000010';
+  const statusUrl = '/v1/agent-messages/$messageId/evaluation';
   return SpeechFeedback(
-    speechFeedbackId: 'speech_feedback_agent_001',
-    source: const AgentVoiceMessageFeedbackSource(
-      threadId: 'thread_001',
-      messageId: 'message_001',
-      transcriptEvidenceId: 'transcript_evidence_001',
-      candidateVersion: 1,
+    evaluationId: '10000000-0000-4000-8000-000000000010',
+    source: const SpeechFeedbackSource(
+      kind: SpeechFeedbackSourceKind.agentMessage,
+      sourceId: messageId,
+      contextId: '30000000-0000-4000-8000-000000000010',
     ),
     feedbackStatus: SpeechFeedbackStatus.ready,
     scoreabilityStatus: SpeechFeedbackScoreabilityStatus.provisional,
-    gateStatus: SpeechFeedbackGateStatus.feedbackOnly,
+    summary: 'Use the past tense and a more natural expression.',
     reasonCodes: const [],
-    schemaVersion: 'speech-feedback/v1',
-    strategyRef: 'qianwen-speech-feedback/v1',
-    pipelineVersion: 'speech-feedback-pipeline/v1',
-    isFinal: false,
     items: [
       SpeechFeedbackItem(
         feedbackItemId: 'item_agent_001',
-        speechFeedbackId: 'speech_feedback_agent_001',
+        evaluationId: '10000000-0000-4000-8000-000000000010',
+        position: 1,
         kind: SpeechFeedbackItemKind.correction,
-        anchor: const AgentTranscriptFeedbackAnchor(
-          transcriptEvidenceId: 'transcript_evidence_001',
-          messageId: 'message_001',
+        anchor: const SpeechFeedbackAnchor(
+          evidenceRefId: messageId,
           startUtf8Byte: 0,
           endUtf8Byte: 8,
           originalExcerpt: 'I manage',
         ),
         explanation: 'Use the past tense for the completed release.',
         suggestedText: 'I managed',
-        repracticeMode: SpeechFeedbackRepracticeMode.sameThread,
+        repracticeMode: SpeechFeedbackRepracticeMode.none,
         createdAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
       ),
       SpeechFeedbackItem(
         feedbackItemId: 'item_agent_002',
-        speechFeedbackId: 'speech_feedback_agent_001',
+        evaluationId: '10000000-0000-4000-8000-000000000010',
+        position: 2,
         kind: SpeechFeedbackItemKind.recommendedExpression,
-        anchor: const AgentTranscriptFeedbackAnchor(
-          transcriptEvidenceId: 'transcript_evidence_001',
-          messageId: 'message_001',
+        anchor: const SpeechFeedbackAnchor(
+          evidenceRefId: messageId,
           startUtf8Byte: 0,
           endUtf8Byte: 8,
           originalExcerpt: 'I manage',
         ),
         explanation: 'Use a more natural completed-action expression.',
         suggestedText: 'I handled the release successfully.',
-        repracticeMode: SpeechFeedbackRepracticeMode.sameThread,
+        repracticeMode: SpeechFeedbackRepracticeMode.none,
         createdAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
       ),
     ],
-    acousticAssessment: const SpeechFeedbackAcousticAssessment(
-      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+    acousticAssessment: const SpeechFeedbackAcousticAssessment.notAssessed(
+      reason: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
     ),
     statusUrl: statusUrl,
     createdAt: DateTime.utc(2026, 7, 30, 10),
     updatedAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
-    completedAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
   );
 }
 
 SpeechFeedback _practiceFeedback({bool insufficient = false}) {
-  const statusUrl = '/v1/speech-feedback/speech_feedback_practice_001';
+  const turnId = '20000000-0000-4000-8000-000000000020';
+  const statusUrl = '/v1/practice-turns/$turnId/evaluation';
   return SpeechFeedback(
-    speechFeedbackId: 'speech_feedback_practice_001',
-    source: const ConversationTurnFeedbackSource(
-      practiceSessionId: 'practice_session_001',
-      turnId: 'practice_turn_001',
-      inputRevision: 1,
-      evidenceSnapshotId: 'evidence_snapshot_001',
+    evaluationId: '10000000-0000-4000-8000-000000000020',
+    source: const SpeechFeedbackSource(
+      kind: SpeechFeedbackSourceKind.practiceTurn,
+      sourceId: turnId,
+      contextId: '30000000-0000-4000-8000-000000000020',
     ),
     feedbackStatus: SpeechFeedbackStatus.ready,
     scoreabilityStatus: insufficient
         ? SpeechFeedbackScoreabilityStatus.insufficient
         : SpeechFeedbackScoreabilityStatus.provisional,
-    gateStatus: SpeechFeedbackGateStatus.feedbackOnly,
+    summary: insufficient ? 'Evidence is insufficient.' : 'Use past tense.',
     reasonCodes: insufficient
         ? const ['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']
         : const [],
-    schemaVersion: 'speech-feedback/v1',
-    strategyRef: 'qianwen-speech-feedback/v1',
-    pipelineVersion: 'speech-feedback-pipeline/v1',
-    isFinal: false,
     items: insufficient
         ? const []
         : [
             SpeechFeedbackItem(
               feedbackItemId: 'item_practice_001',
-              speechFeedbackId: 'speech_feedback_practice_001',
+              evaluationId: '10000000-0000-4000-8000-000000000020',
+              position: 1,
               kind: SpeechFeedbackItemKind.correction,
-              anchor: const ConversationTranscriptFeedbackAnchor(
-                evidenceRefId: 'evidence_ref_001',
-                turnId: 'practice_turn_001',
+              anchor: const SpeechFeedbackAnchor(
+                evidenceRefId: 'practice_turn_001',
                 startUtf8Byte: 0,
                 endUtf8Byte: 8,
                 originalExcerpt: 'I manage',
@@ -495,15 +484,12 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
               createdAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
             ),
           ],
-    acousticAssessment: const SpeechFeedbackAcousticAssessment(
-      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+    acousticAssessment: const SpeechFeedbackAcousticAssessment.notAssessed(
+      reason: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
     ),
     statusUrl: statusUrl,
     createdAt: DateTime.utc(2026, 7, 30, 10, 1),
     updatedAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
-    completedAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
   );
 }
 
@@ -615,19 +601,15 @@ final class _PracticeClient
   int retryRequests = 0;
   int retryConfirmations = 0;
 
-  static final _retryRequest = PracticeRetryRequest(
-    retryRequestId: 'retry_request_001',
-    feedbackItemId: 'item_practice_001',
+  static final _retryTurn = PracticeRetryTurn(
+    turnId: 'retry_turn_001',
     sessionId: 'practice_session_001',
     originalTurnId: 'practice_turn_001',
     questionId: 'practice_question_001',
-    retryStatus: PracticeRetryRequestStatus.turnCreated,
-    statusUrl: '/v1/retry-requests/retry_request_001',
+    sequence: 2,
+    status: PracticeRetryTurnStatus.answering,
     createdAt: DateTime.utc(2026, 7, 30, 10, 2),
-    updatedAt: DateTime.utc(2026, 7, 30, 10, 2, 1),
-    newTurnId: 'retry_turn_001',
-    answerPath: '/v1/retry-turns/retry_turn_001/transcription-candidates',
-    completedAt: DateTime.utc(2026, 7, 30, 10, 2, 1),
+    replayed: false,
   );
 
   @override
@@ -655,22 +637,14 @@ final class _PracticeClient
   }
 
   @override
-  Future<PracticeRetryRequest> requestSameQuestionRetry({
+  Future<PracticeRetryTurn> requestSameQuestionRetry({
     required String feedbackItemId,
     required String idempotencyKey,
   }) async {
     expect(feedbackItemId, 'item_practice_001');
     expect(idempotencyKey, isNotEmpty);
     retryRequests++;
-    return _retryRequest;
-  }
-
-  @override
-  Future<PracticeRetryRequest> getSameQuestionRetryRequest({
-    required String retryRequestId,
-  }) async {
-    expect(retryRequestId, _retryRequest.retryRequestId);
-    return _retryRequest;
+    return _retryTurn;
   }
 
   @override
@@ -679,15 +653,14 @@ final class _PracticeClient
     required String idempotencyKey,
     required RecordedPracticeAudio audio,
   }) async {
-    expect(answerPath, _retryRequest.answerPath);
+    expect(answerPath, _retryTurn.answerPath);
     expect(idempotencyKey, isNotEmpty);
     expect(audio.contentType, 'audio/wav');
     return RetryTranscriptionCandidate(
       id: 'retry_candidate_001',
       retryTurnId: 'retry_turn_001',
-      retryRequestId: _retryRequest.retryRequestId,
-      sessionId: _retryRequest.sessionId,
-      questionId: _retryRequest.questionId,
+      sessionId: _retryTurn.sessionId,
+      questionId: _retryTurn.questionId,
       respondentParticipantId: 'participant_user',
       transcriptId: 'retry_transcript_001',
       evidenceVersion: 1,
@@ -702,16 +675,15 @@ final class _PracticeClient
     required String candidateId,
     required String idempotencyKey,
   }) async {
-    expect(retryTurnId, _retryRequest.newTurnId);
+    expect(retryTurnId, _retryTurn.turnId);
     expect(candidateId, 'retry_candidate_001');
     expect(idempotencyKey, isNotEmpty);
     retryConfirmations++;
     return ConfirmedRetryTurn(
       turnId: retryTurnId,
-      retryRequestId: _retryRequest.retryRequestId,
-      originalTurnId: _retryRequest.originalTurnId,
-      sessionId: _retryRequest.sessionId,
-      questionId: _retryRequest.questionId,
+      originalTurnId: _retryTurn.originalTurnId,
+      sessionId: _retryTurn.sessionId,
+      questionId: _retryTurn.questionId,
       respondentParticipantId: 'participant_user',
       candidateId: candidateId,
       answerText: 'I managed the release.',

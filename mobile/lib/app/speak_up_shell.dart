@@ -7,14 +7,17 @@ import 'package:speakup/features/agent/conversation/agent_message_audio_controll
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/agent/client_action/practice_plan_client_action_card.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -25,12 +28,11 @@ import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
-import 'package:speakup/resume/resume.dart';
+import 'package:speakup/features/coaching/profile/coaching_profile.dart';
+import 'package:speakup/features/profile/profile_page.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -41,13 +43,11 @@ class SpeakUpShell extends StatefulWidget {
     this.preparationController,
     this.ieltsPreparationController,
     this.preparationLaunchController,
-    this.practicePlanHandoffController,
+    this.practicePlanClientActionController,
     this.jobPreparationController,
     this.reviewHistoryController,
-    this.interviewReportController,
-    this.ieltsSpeakingReportController,
     this.speechFeedbackController,
-    this.resumeController,
+    this.coachingProfileController,
     required this.conversationController,
     required this.composerController,
     this.messageAudioController,
@@ -68,13 +68,11 @@ class SpeakUpShell extends StatefulWidget {
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
   final PreparationLaunchController? preparationLaunchController;
-  final PracticePlanHandoffController? practicePlanHandoffController;
+  final PracticePlanClientActionController? practicePlanClientActionController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
-  final InterviewReportController? interviewReportController;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final SpeechFeedbackController? speechFeedbackController;
-  final ResumeController? resumeController;
+  final CoachingProfileController? coachingProfileController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -120,7 +118,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   int _selectedIndex = 0;
   AgentConversationFeedbackPresenter? _feedbackPresenter;
   bool _practiceRouteInFlight = false;
-  bool _agentHandoffInFlight = false;
+  bool _clientActionInFlight = false;
   bool _conversationDrawerOpen = false;
   int _navigationGeneration = 0;
 
@@ -206,7 +204,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         _showMockNotice('练习正在准备，请完成后再离开训练页');
         return;
       }
-      if (launch?.workspaceController?.currentLease != null) {
+      if (launch?.workspaceController.currentLease != null) {
         final parked = await launch!.parkCurrentPractice();
         if (!mounted || navigationGeneration != _navigationGeneration) {
           return;
@@ -258,30 +256,56 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   Future<void> _openPractice() => _openPracticeRoute();
 
-  Future<void> _confirmAgentHandoff(AgentHandoff handoff) async {
-    final controller = widget.practicePlanHandoffController;
-    if (handoff is! ConfirmPracticePlanHandoff ||
-        controller == null ||
-        _agentHandoffInFlight ||
+  Widget _buildAgentClientAction(
+    BuildContext context,
+    AgentClientAction action,
+  ) {
+    final practiceAction = decodeConfirmPracticePlanClientAction(action);
+    return PracticePlanClientActionCard(
+      action: practiceAction,
+      onConfirm: () => unawaited(_confirmAgentClientAction(practiceAction)),
+    );
+  }
+
+  Future<void> _confirmAgentClientAction(
+    ConfirmPracticePlanClientAction action,
+  ) async {
+    final controller = widget.practicePlanClientActionController;
+    if (controller == null ||
+        _clientActionInFlight ||
         controller.isBusy ||
         widget.conversationController.isBusy) {
       return;
     }
-    setState(() => _agentHandoffInFlight = true);
+    setState(() => _clientActionInFlight = true);
     try {
-      var replaceCurrentPractice = false;
-      if (controller.workspaceController.hasResumable) {
-        if (!controller.workspaceController.resumableHasProgress) {
-          replaceCurrentPractice = true;
-        } else {
-          final action = await _chooseAgentHandoffPracticeAction(
-            controller,
-            handoff,
-          );
-          if (!mounted || action == null) {
+      final workspace = controller.workspaceController;
+      if (action.practiceExperience == 'IELTS_SPEAKING' &&
+          !workspace.hasResumableForPlan(action.practicePlanId)) {
+        try {
+          final assignment = await controller.loadIELTSPreview(action);
+          if (!mounted || !await _showIELTSPlanPreview(assignment)) {
             return;
           }
-          if (action == ExistingPracticeAction.continuePractice) {
+        } on Object {
+          if (mounted) _showMockNotice('暂时无法预览这组雅思题目，请重试。');
+          return;
+        }
+      }
+      var replaceCurrentPractice = false;
+      if (workspace.hasResumable &&
+          !workspace.hasResumableForPlan(action.practicePlanId)) {
+        if (!workspace.resumableHasProgress) {
+          replaceCurrentPractice = true;
+        } else {
+          final choice = await _chooseClientActionPracticeAction(
+            controller,
+            action,
+          );
+          if (!mounted || choice == null) {
+            return;
+          }
+          if (choice == ExistingPracticeAction.continuePractice) {
             await _openPracticeRoute();
             return;
           }
@@ -289,7 +313,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         }
       }
       var confirmed = await controller.confirm(
-        handoff,
+        action,
         replaceCurrentPractice: replaceCurrentPractice,
       );
       if (!mounted) {
@@ -298,22 +322,22 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       if (!confirmed &&
           !replaceCurrentPractice &&
           controller.failure ==
-              PracticePlanHandoffFailure.localExistingPractice) {
-        final action = await _chooseAgentHandoffPracticeAction(
+              PracticePlanClientActionFailure.localExistingPractice) {
+        final choice = await _chooseClientActionPracticeAction(
           controller,
-          handoff,
+          action,
         );
-        if (!mounted || action == null) {
+        if (!mounted || choice == null) {
           return;
         }
-        if (action == ExistingPracticeAction.continuePractice) {
+        if (choice == ExistingPracticeAction.continuePractice) {
           if (controller.workspaceController.hasResumable) {
             await _openPracticeRoute();
           }
           return;
         }
         confirmed = await controller.confirm(
-          handoff,
+          action,
           replaceCurrentPractice: true,
         );
         if (!mounted) {
@@ -327,22 +351,32 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       await _openPracticeRoute();
     } finally {
       if (mounted) {
-        setState(() => _agentHandoffInFlight = false);
+        setState(() => _clientActionInFlight = false);
       }
     }
   }
 
-  Future<ExistingPracticeAction?> _chooseAgentHandoffPracticeAction(
-    PracticePlanHandoffController controller,
-    ConfirmPracticePlanHandoff handoff,
+  Future<bool> _showIELTSPlanPreview(IeltsPracticeAssignment assignment) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (_) => _IeltsPlanPreviewSheet(assignment: assignment),
+    );
+    return result ?? false;
+  }
+
+  Future<ExistingPracticeAction?> _chooseClientActionPracticeAction(
+    PracticePlanClientActionController controller,
+    ConfirmPracticePlanClientAction action,
   ) {
-    final scope = handoff.practiceScope.trim();
+    final scope = action.practiceScope.trim();
     return showExistingPracticeActionSheet(
       context,
       currentTitle: controller.workspaceController.currentTitle,
       nextTitle: scope.isEmpty
-          ? handoff.sceneName
-          : '${handoff.sceneName} · $scope',
+          ? action.sceneName
+          : '${action.sceneName} · $scope',
     );
   }
 
@@ -450,7 +484,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
-        onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
+        clientActionBuilder: _buildAgentClientAction,
         onStartVoice: widget.composerController.supportsAgentVoice
             ? () async {
                 await widget.messageAudioController?.stopPlayback();
@@ -530,10 +564,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
-        ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
         autoload: false,
       ),
-      _ProfilePage(
+      ProfilePage(
         showBackButton: false,
         user: widget.user,
         profile: widget.authController?.profile,
@@ -542,7 +575,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
-        resumeController: widget.resumeController,
+        coachingProfileController: widget.coachingProfileController,
       ),
     ];
 
@@ -558,12 +591,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
             onOpenProfile: () => _selectDestination(3),
-            hiddenThreadIds: {
-              ?widget
-                  .preparationLaunchController
-                  ?.workspaceController
-                  ?.currentPracticeThreadId,
-            },
           ),
           onDrawerChanged: (open) {
             if (_conversationDrawerOpen != open) {
@@ -580,7 +607,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
                   onDestinationSelected: _selectDestinationFromNavigation,
                 ),
         ),
-        if (_agentHandoffInFlight)
+        if (_clientActionInFlight)
           const Positioned.fill(child: _PracticeTransitionOverlay()),
       ],
     );
@@ -592,6 +619,128 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         ? null
         : AgentConversationFeedbackPresenter(controller: controller);
   }
+}
+
+class _IeltsPlanPreviewSheet extends StatelessWidget {
+  const _IeltsPlanPreviewSheet({required this.assignment});
+
+  final IeltsPracticeAssignment assignment;
+
+  @override
+  Widget build(BuildContext context) => DraggableScrollableSheet(
+    expand: false,
+    initialChildSize: 0.82,
+    minChildSize: 0.55,
+    maxChildSize: 0.94,
+    builder: (context, scrollController) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text('开始前预览', style: SpeakUpDesign.sectionTitle),
+              ),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(context).pop(false),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          Text(
+            'IELTS Speaking · ${assignment.mode.wireValue.replaceAll('_', ' ')}',
+            style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.secondary),
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child: ListView.separated(
+              key: const Key('agent-ielts-plan-preview'),
+              controller: scrollController,
+              itemCount: assignment.parts.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 18),
+              itemBuilder: (context, index) =>
+                  _IeltsPreviewPart(part: assignment.parts[index]),
+            ),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            key: const Key('agent-ielts-preview-start'),
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text('开始练习'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+              backgroundColor: SpeakUpDesign.ink,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _IeltsPreviewPart extends StatelessWidget {
+  const _IeltsPreviewPart({required this.part});
+
+  final IeltsPracticePartAssignment part;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        part.part.wireValue.replaceAll('_', ' '),
+        style: SpeakUpDesign.cardTitle,
+      ),
+      if (part.topicTitle case final title?) ...[
+        const SizedBox(height: 4),
+        Text(title, style: SpeakUpDesign.body),
+      ],
+      if (part.cueCard case final cueCard?) ...[
+        const SizedBox(height: 10),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(cueCard, style: SpeakUpDesign.body),
+          ),
+        ),
+      ],
+      if (part.turnBlueprints.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        for (var index = 0; index < part.turnBlueprints.length; index++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Text(
+                    '${index + 1}.',
+                    style: SpeakUpDesign.meta.copyWith(
+                      color: SpeakUpDesign.secondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    part.turnBlueprints[index],
+                    style: SpeakUpDesign.body,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ],
+  );
 }
 
 class _PracticeTransitionOverlay extends StatelessWidget {
@@ -626,12 +775,10 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.controller,
     required this.onOpenProfile,
-    this.hiddenThreadIds = const <String>{},
   });
 
   final ConversationController controller;
   final VoidCallback onOpenProfile;
-  final Set<String> hiddenThreadIds;
 
   @override
   Widget build(BuildContext context) {
@@ -639,10 +786,7 @@ class _ConversationDrawer extends StatelessWidget {
     final currentThreadId = controller.threadId;
     final recentThreads = <AgentThreadSummary>[
       for (final thread in controller.threads)
-        if (thread.id != currentThreadId &&
-            thread.activeGoalId == null &&
-            !hiddenThreadIds.contains(thread.id))
-          thread,
+        if (thread.id != currentThreadId) thread,
     ];
     final busy = controller.isBusy;
     final threadWidgets = <Widget>[
@@ -654,7 +798,7 @@ class _ConversationDrawer extends StatelessWidget {
           enabled: !busy,
           onTap: () => Navigator.of(context).pop(),
         )
-      else if (current?.activeGoalId == null)
+      else
         _ConversationThreadTile(
           key: Key('conversation-thread-$currentThreadId'),
           title: current?.title ?? '新对话',
@@ -896,262 +1040,5 @@ class _ConversationThreadTile extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _ProfilePage extends StatelessWidget {
-  const _ProfilePage({
-    required this.showBackButton,
-    required this.user,
-    required this.profile,
-    required this.profileErrorMessage,
-    required this.profileSaving,
-    required this.onSaveDisplayName,
-    required this.onLogout,
-    required this.reviewHistoryController,
-    required this.resumeController,
-  });
-
-  final bool showBackButton;
-  final User? user;
-  final UserProfile? profile;
-  final String? profileErrorMessage;
-  final bool profileSaving;
-  final Future<String?> Function(String)? onSaveDisplayName;
-  final VoidCallback? onLogout;
-  final ReviewHistoryController? reviewHistoryController;
-  final ResumeController? resumeController;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: const Key('profile-page'),
-      appBar: showBackButton
-          ? AppBar(
-              leading: IconButton(
-                key: const Key('profile-route-back-button'),
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        bottom: false,
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(
-            SpeakUpDesign.horizontalInset(context),
-            SpeakUpDesign.space24,
-            SpeakUpDesign.horizontalInset(context),
-            140,
-          ),
-          children: [
-            Stack(
-              children: [
-                Center(
-                  child: Column(
-                    children: [
-                      Container(
-                        key: const Key('profile-avatar'),
-                        width: 132,
-                        height: 132,
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: SpeakUpDesign.surface,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Color(0x14000000),
-                              blurRadius: 20,
-                              offset: Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: const CircleAvatar(
-                          backgroundColor: SpeakUpDesign.surfaceMuted,
-                          backgroundImage: AssetImage(
-                            'assets/images/scenes/profile-avatar-alex.png',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space20),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 220),
-                            child: Text(
-                              profile?.displayName ??
-                                  (user == null ? '本地界面预览' : '尚未设置昵称'),
-                              key: const Key('profile-display-name'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: SpeakUpDesign.pageTitle.copyWith(
-                                fontSize: 28,
-                              ),
-                            ),
-                          ),
-                          if (user != null)
-                            IconButton(
-                              key: const Key('profile-edit-display-name'),
-                              tooltip: '编辑昵称',
-                              onPressed:
-                                  profileSaving || onSaveDisplayName == null
-                                  ? null
-                                  : () => _editDisplayName(context),
-                              icon: Icon(
-                                Icons.edit_rounded,
-                                size: 18,
-                                color: profileSaving
-                                    ? SpeakUpDesign.tertiary
-                                    : SpeakUpDesign.secondary,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space4),
-                      Text(
-                        user?.email ?? '尚未连接正式账号',
-                        textAlign: TextAlign.center,
-                        style: SpeakUpDesign.body.copyWith(
-                          color: SpeakUpDesign.tertiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (user != null)
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: PopupMenuButton<String>(
-                      key: const Key('profile-account-menu'),
-                      tooltip: '账号菜单',
-                      enabled: onLogout != null,
-                      icon: const Icon(Icons.more_horiz_rounded),
-                      onSelected: (_) => onLogout?.call(),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem<String>(
-                          key: Key('profile-logout-button'),
-                          value: 'logout',
-                          child: Text('退出登录'),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-            if (profileErrorMessage != null) ...[
-              const SizedBox(height: SpeakUpDesign.space16),
-              Text(
-                profileErrorMessage!,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            const SizedBox(height: SpeakUpDesign.space32),
-            CurrentIeltsAbilityProfile(
-              historyController: reviewHistoryController,
-            ),
-            if (resumeController != null) ...[
-              const SizedBox(height: 72),
-              ResumeSummaryCard(controller: resumeController!),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _editDisplayName(BuildContext context) async {
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (_) => _DisplayNameDialog(
-        initialName: profile?.displayName ?? '',
-        onSave: onSaveDisplayName!,
-      ),
-    );
-    if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
-    }
-  }
-}
-
-class _DisplayNameDialog extends StatefulWidget {
-  const _DisplayNameDialog({required this.initialName, required this.onSave});
-
-  final String initialName;
-  final Future<String?> Function(String) onSave;
-
-  @override
-  State<_DisplayNameDialog> createState() => _DisplayNameDialogState();
-}
-
-class _DisplayNameDialogState extends State<_DisplayNameDialog> {
-  late final TextEditingController _controller;
-  String? _errorMessage;
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialName);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('编辑昵称'),
-      content: TextField(
-        key: const Key('profile-display-name-input'),
-        controller: _controller,
-        autofocus: true,
-        enabled: !_saving,
-        maxLength: 40,
-        decoration: InputDecoration(labelText: '昵称', errorText: _errorMessage),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          key: const Key('profile-save-display-name'),
-          onPressed: _saving ? null : _save,
-          child: Text(_saving ? '正在保存…' : '保存'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _save() async {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
-      setState(() => _errorMessage = '请输入昵称');
-      return;
-    }
-    setState(() {
-      _saving = true;
-      _errorMessage = null;
-    });
-    final error = await widget.onSave(value);
-    if (!mounted) {
-      return;
-    }
-    if (error != null) {
-      setState(() {
-        _saving = false;
-        _errorMessage = error;
-      });
-      return;
-    }
-    Navigator.of(context).pop(true);
   }
 }

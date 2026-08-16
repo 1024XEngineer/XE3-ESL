@@ -62,7 +62,7 @@ func TestFindMessageReadsOwnedConversationMessage(t *testing.T) {
 		t.Fatalf("query arguments = %#v, want %#v", database.arguments, wantArguments)
 	}
 	if !strings.Contains(database.query, "FROM agent_messages") ||
-		!strings.Contains(database.query, "owner_user_id = $2") ||
+		!strings.Contains(database.query, "thread.user_id = $2") ||
 		!strings.Contains(database.query, "thread_id = $3") {
 		t.Fatalf("query does not enforce Conversation ownership: %s", database.query)
 	}
@@ -140,7 +140,7 @@ func TestFindOwnedMessageScopesLookupToAuthenticatedOwner(t *testing.T) {
 	if !reflect.DeepEqual(database.arguments, wantArguments) {
 		t.Fatalf("query arguments = %#v, want %#v", database.arguments, wantArguments)
 	}
-	if !strings.Contains(database.query, "owner_user_id = $2") ||
+	if !strings.Contains(database.query, "thread.user_id = $2") ||
 		strings.Contains(database.query, "thread_id = $3") {
 		t.Fatalf("owned message query = %s", database.query)
 	}

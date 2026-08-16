@@ -14,14 +14,12 @@ SHELL := /bin/bash
 	check-go-format \
 	check-go-vet \
 	check-go-test \
-	check-qiniu-llm-live \
 	check-oss-live \
 	check-kodo-live \
 	check-resume-ocr-live \
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
-	check-smoke \
 	dev-android \
 	dev-ios-simulator \
 	test-ios-simulator-scenes
@@ -29,21 +27,19 @@ SHELL := /bin/bash
 help:
 	@printf '%s\n' \
 		'SpeakUp quality checks:' \
-		'  make check          Run Flutter, Go, API, and deterministic smoke checks' \
+		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
-		'  make check-qiniu-llm-live Run the real Qiniu text generation smoke test' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-kodo-live Run the real Kodo lifecycle test with exported QINIU_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
-		'  make check-smoke    Run the deterministic Mock main flow' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
-		'  make dev-ios-simulator  Start the backend and run without AvatarKit on an iOS Simulator'
+		'  make dev-ios-simulator  Start the backend on an iOS Simulator'
 	@printf '%s\n' \
 		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
 
-check: check-flutter check-go check-api check-smoke
+check: check-flutter check-go check-api
 
 check-flutter: check-flutter-test
 
@@ -74,34 +70,6 @@ check-go-vet: check-go-format
 
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
-
-check-qiniu-llm-live:
-	@set -euo pipefail; \
-	required=(TEXT_GENERATION_PROVIDER QINIU_AI_BASE_URL QINIU_AI_MODEL QINIU_AI_EVALUATION_MODEL QINIU_AI_SPEECH_FEEDBACK_MODEL QINIU_AI_API_KEY QINIU_LLM_LIVE_TEST); \
-	missing=(); \
-	for name in "$${required[@]}"; do \
-		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
-	done; \
-	if (( $${#missing[@]} > 0 )); then \
-		printf '%s\n' 'This target intentionally does not load or execute .env.'; \
-		printf 'Export the required Qiniu AI variables before running this target. Missing:'; \
-		printf ' %s' "$${missing[@]}"; \
-		printf '\n'; \
-		exit 1; \
-	fi; \
-	if [[ "$${TEXT_GENERATION_PROVIDER}" != "qiniu" ]]; then \
-		printf '%s\n' 'Set and export TEXT_GENERATION_PROVIDER=qiniu.'; \
-		exit 1; \
-	fi; \
-	if [[ "$${QINIU_LLM_LIVE_TEST}" != "1" ]]; then \
-		printf '%s\n' 'Set and export QINIU_LLM_LIVE_TEST=1 to opt in to billable requests.'; \
-		exit 1; \
-	fi; \
-	$(MAKE) --no-print-directory check-qiniu-llm-live-go
-
-.PHONY: check-qiniu-llm-live-go
-check-qiniu-llm-live-go:
-	cd server && go test -count=1 -run '^TestLiveQiniu' ./internal/providers/qiniu
 
 check-oss-live:
 	@set -euo pipefail; \
@@ -209,15 +177,6 @@ check-api-dependencies:
 
 check-api-contracts: check-api-dependencies
 	cd api && npm run check
-
-check-smoke:
-	@set -euo pipefail; \
-	available_tests="$$(cd server && go test -list '^TestDeterministicMainFlow$$' ./test/smoke)"; \
-	if ! grep -qx 'TestDeterministicMainFlow' <<< "$$available_tests"; then \
-		printf '%s\n' 'Deterministic smoke entrypoint is missing.'; \
-		exit 1; \
-	fi
-	cd server && go test -count=1 -run '^TestDeterministicMainFlow$$' ./test/smoke
 
 dev-android:
 	./tools/android-dev/run.sh

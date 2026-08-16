@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -24,8 +23,6 @@ func TestRegistryExposesInitialMockToolSet(t *testing.T) {
 		names = append(names, definition.Name)
 	}
 	want := []string{
-		goalcapability.GoalCreateCapabilityName,
-		goalcapability.GoalSearchCapabilityName,
 		MaterialSearchToolName,
 		MistakeSearchToolName,
 		reviewcapability.ReviewGetToolName,
@@ -80,16 +77,6 @@ func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
 		})
 	}
 
-	createTool, ok := registry.Get(goalcapability.GoalCreateCapabilityName)
-	if !ok {
-		t.Fatal("goal.create.v1 not registered")
-	}
-	createProperties := createTool.Definition().
-		InputSchema["properties"].(map[string]any)
-	if len(createProperties) != 1 || createProperties["title"] == nil {
-		t.Fatalf("goal create properties = %#v, want only title", createProperties)
-	}
-
 	materialTool, ok := registry.Get(MaterialSearchToolName)
 	if !ok {
 		t.Fatal("material.search.v1 not registered")
@@ -104,46 +91,6 @@ func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
 	}
 }
 
-func TestGoalCreateIsAvailableAndIdempotent(t *testing.T) {
-	registry, err := NewRegistry(NewStore())
-	if err != nil {
-		t.Fatalf("NewRegistry() error = %v", err)
-	}
-	executor := capability.NewExecutor(registry)
-	input := json.RawMessage(`{"title":"PM interview"}`)
-	first, err := executor.Execute(
-		context.Background(),
-		validCallContext("create-goal-1"),
-		capability.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	replayed, err := executor.Execute(
-		context.Background(),
-		validCallContext("create-goal-1"),
-		capability.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
-	)
-	if err != nil {
-		t.Fatalf("replay Execute() error = %v", err)
-	}
-	if first.Content["goal"] == nil ||
-		!equalAny(first.Content["goal"], replayed.Content["goal"]) {
-		t.Fatalf("idempotent goal mismatch: %#v vs %#v", first.Content, replayed.Content)
-	}
-	_, err = executor.Execute(
-		context.Background(),
-		validCallContext("create-goal-1"),
-		capability.Invocation{
-			Name:  goalcapability.GoalCreateCapabilityName,
-			Input: json.RawMessage(`{"title":"Different Goal"}`),
-		},
-	)
-	if !errors.Is(err, capability.ErrExecutionRejected) {
-		t.Fatalf("changed replay error = %v, want execution rejected", err)
-	}
-}
-
 func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -152,13 +99,6 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 		resultKey  string
 		sourceType string
 	}{
-		{
-			name:       "goal search",
-			toolName:   goalcapability.GoalSearchCapabilityName,
-			input:      json.RawMessage(`{"query":"interview","limit":1}`),
-			resultKey:  "goals",
-			sourceType: "mock_goal",
-		},
 		{
 			name:       "review search",
 			toolName:   reviewcapability.ReviewSearchToolName,
@@ -281,21 +221,8 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	summaries := CapabilitySummaries(registry)
-	if got, want := len(summaries), 6; got != want {
+	if got, want := len(summaries), 4; got != want {
 		t.Fatalf("len(CapabilitySummaries()) = %d, want %d", got, want)
-	}
-	var goalSummary CapabilitySummary
-	for _, summary := range summaries {
-		if summary.Name == goalcapability.GoalCreateCapabilityName {
-			goalSummary = summary
-			break
-		}
-	}
-	if goalSummary.Risk != string(capability.RiskLowRiskWrite) ||
-		goalSummary.ReadOnly ||
-		!containsString(goalSummary.SchemaFields, "title") ||
-		!containsString(goalSummary.RequiredNames, "title") {
-		t.Fatalf("goal summary = %#v", goalSummary)
 	}
 }
 
@@ -328,13 +255,4 @@ func equalAny(left, right any) bool {
 	leftJSON, leftErr := json.Marshal(left)
 	rightJSON, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

@@ -79,12 +79,6 @@ else
   device_id="$(print -r -- "$connected_devices" | head -n 1)"
 fi
 
-abi_list="$(adb -s "$device_id" shell getprop ro.product.cpu.abilist | tr -d '\r')"
-if [[ "$abi_list" != *"arm64-v8a"* ]]; then
-  print -u2 "当前设备不支持 AvatarKit 所需的 arm64-v8a：$abi_list"
-  exit 1
-fi
-
 device_model="$(
   adb -s "$device_id" shell getprop ro.product.model |
     tr -d '\r'

@@ -102,13 +102,9 @@ abstract interface class PracticeQuestionTipClient {
 /// Keeping this separate from [PracticeClient] lets existing test doubles and
 /// non-feedback practice clients remain unchanged.
 abstract interface class PracticeSpeechFeedbackRetryClient {
-  Future<PracticeRetryRequest> requestSameQuestionRetry({
+  Future<PracticeRetryTurn> requestSameQuestionRetry({
     required String feedbackItemId,
     required String idempotencyKey,
-  });
-
-  Future<PracticeRetryRequest> getSameQuestionRetryRequest({
-    required String retryRequestId,
   });
 
   Future<RetryTranscriptionCandidate> transcribeRetry({
@@ -138,12 +134,12 @@ final class FakePracticeClient
       retryAllowed: false,
       questionTranslationAllowed: false,
       questionTipsAllowed: true,
-      avatarAllowed: false,
       speechFeedbackAllowed: false,
     ),
     this.turnLimit = 3,
     this.completionMode = PracticeCompletionMode.turnLimited,
     this.ieltsAssignment,
+    this.planId,
     PracticeSessionSnapshot? initialSnapshot,
   }) : _snapshot = initialSnapshot {
     if ((completionMode == PracticeCompletionMode.turnLimited &&
@@ -167,6 +163,7 @@ final class FakePracticeClient
   final int turnLimit;
   final PracticeCompletionMode completionMode;
   final IeltsPracticeAssignment? ieltsAssignment;
+  final String? planId;
   int _generation = 0;
   int _messageSequence = 0;
   PracticeSessionSnapshot? _snapshot;
@@ -209,7 +206,7 @@ final class FakePracticeClient
     }
     final snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
-      planId: 'practice-plan-$sessionId',
+      planId: planId ?? 'practice-plan-$sessionId',
       practiceExperience: practiceExperience,
       sceneCategory: sceneCategory,
       practiceMode: practiceMode,

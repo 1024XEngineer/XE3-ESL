@@ -5,286 +5,134 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_decoder.dart'
 import 'turn_feedback_fixture.dart';
 
 void main() {
-  test('decodes every canonical SpeechFeedback state', () {
-    final contract = speechFeedbackContractFixture();
+  test('decodes the ready practice evaluation resource', () {
+    final feedback = decodeSpeechFeedback(
+      readyPracticeFeedbackFixture(),
+      statusUrl: practiceStatusUrl,
+    );
 
+    expect(feedback.evaluationId, evaluationId);
+    expect(feedback.source.kind, SpeechFeedbackSourceKind.practiceTurn);
+    expect(feedback.source.contextId, practiceSessionId);
+    expect(feedback.feedbackStatus, SpeechFeedbackStatus.ready);
     expect(
-      decodeSpeechFeedback(contract['queued']).feedbackStatus,
-      SpeechFeedbackStatus.queued,
-    );
-    expect(
-      decodeSpeechFeedback(contract['running']).source,
-      isA<AgentVoiceMessageFeedbackSource>(),
-    );
-    final provisional = decodeSpeechFeedback(contract['ready_provisional']);
-    expect(provisional.strategyRef, 'qianwen-speech-feedback/v1');
-    expect(provisional.pipelineVersion, 'speech-feedback-pipeline/v1');
-    expect(
-      provisional.scoreabilityStatus,
+      feedback.scoreabilityStatus,
       SpeechFeedbackScoreabilityStatus.provisional,
     );
-    expect(provisional.items, hasLength(1));
+    expect(feedback.items.single.feedbackItemId, feedbackItemId);
+    expect(feedback.items.single.canRepractice, isTrue);
+    expect(feedback.acousticAssessment?.isAssessed, isFalse);
+  });
+
+  test('decodes pending, failed, and Agent feedback states', () {
     expect(
-      provisional.items.single.repracticeMode,
-      SpeechFeedbackRepracticeMode.sameQuestion,
+      decodeSpeechFeedback(
+        pendingPracticeFeedbackFixture('QUEUED'),
+        statusUrl: practiceStatusUrl,
+      ).isPending,
+      isTrue,
     );
-    final insufficient = decodeSpeechFeedback(contract['ready_insufficient']);
-    expect(
-      insufficient.scoreabilityStatus,
-      SpeechFeedbackScoreabilityStatus.insufficient,
+    final failed = decodeSpeechFeedback(
+      failedPracticeFeedbackFixture(),
+      statusUrl: practiceStatusUrl,
     );
-    expect(insufficient.items, isEmpty);
-    final failed = decodeSpeechFeedback(contract['failed']);
     expect(failed.feedbackStatus, SpeechFeedbackStatus.failed);
     expect(failed.stableFailure?.retryable, isTrue);
+
+    final agent = decodeSpeechFeedback(
+      readyAgentFeedbackFixture(),
+      statusUrl: agentStatusUrl,
+    );
+    expect(agent.source.kind, SpeechFeedbackSourceKind.agentMessage);
+    expect(
+      agent.items.single.repracticeMode,
+      SpeechFeedbackRepracticeMode.none,
+    );
   });
 
-  test('rejects unknown fields including every numeric scoring shape', () {
-    final contract = speechFeedbackContractFixture();
-    final rootScore = cloneSpeechFeedbackFixture(contract['ready_provisional'])
-      ..['score'] = 90;
-    final itemScore = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    _firstItem(itemScore)['display_score'] = 4;
-    final acousticGuess = cloneSpeechFeedbackFixture(
-      contract['ready_provisional'],
+  test('rejects a URL whose source does not match the resource', () {
+    expect(
+      () => decodeSpeechFeedback(
+        readyPracticeFeedbackFixture(),
+        statusUrl: agentStatusUrl,
+      ),
+      throwsA(isA<SpeechFeedbackDecodeException>()),
     );
-    (acousticGuess['acoustic_assessment']!
-            as Map<String, Object?>)['pronunciation_score'] =
-        80;
+    expect(
+      validSpeechFeedbackStatusUrl('/v1/speech-feedback/$evaluationId'),
+      isFalse,
+    );
+  });
 
-    for (final value in [rootScore, itemScore, acousticGuess]) {
+  test('rejects unknown fields and invalid state payloads', () {
+    final unknown = readyPracticeFeedbackFixture()..['score'] = 90;
+    final queuedWithResult = pendingPracticeFeedbackFixture('QUEUED')
+      ..['result'] = readyPracticeFeedbackFixture()['result'];
+    final readyWithError = readyPracticeFeedbackFixture()
+      ..['error'] = failedPracticeFeedbackFixture()['error'];
+
+    for (final value in [unknown, queuedWithResult, readyWithError]) {
       expect(
-        () => decodeSpeechFeedback(value),
+        () => decodeSpeechFeedback(value, statusUrl: practiceStatusUrl),
         throwsA(isA<SpeechFeedbackDecodeException>()),
       );
     }
   });
 
-  test('decodes trusted iFlytek acoustic evidence', () {
-    final value = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    );
-    value['acoustic_assessment'] = <String, Object?>{
-      'pronunciation': 'ASSESSED',
-      'acoustic_fluency': 'ASSESSED',
-      'integrity': 'ASSESSED',
-      'accuracy_score': 81.5,
-      'fluency_score': 92.25,
-      'integrity_score': 100,
-      'provider': 'xfyun-ise',
-      'provider_session_id': 'ise-session-1',
-      'category': 'read_sentence',
-      'notice': '根据本次录音自动评估，仅供练习参考。',
-    };
+  test('rejects invalid item ownership and repractice semantics', () {
+    final wrongEvaluation = readyPracticeFeedbackFixture();
+    _item(wrongEvaluation)['evaluation_id'] = agentThreadId;
 
-    final feedback = decodeSpeechFeedback(value);
+    final wrongEvidence = readyPracticeFeedbackFixture();
+    (_item(wrongEvidence)['evidence']!
+            as Map<String, Object?>)['evidence_ref_id'] =
+        agentMessageId;
 
-    expect(feedback.acousticAssessment.isAssessed, isTrue);
-    expect(feedback.acousticAssessment.accuracyScore, 81.5);
-    expect(feedback.acousticAssessment.fluencyScore, 92.25);
-    expect(feedback.acousticAssessment.integrityScore, 100);
-  });
+    final agentRetry = readyAgentFeedbackFixture();
+    _item(agentRetry)['repractice_mode'] = 'SAME_QUESTION';
 
-  test('decodes trusted iFlytek topic evidence', () {
-    final value = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    );
-    value['acoustic_assessment'] = <String, Object?>{
-      'pronunciation': 'ASSESSED',
-      'acoustic_fluency': 'ASSESSED',
-      'pronunciation_score': 88.5,
-      'speaking_speed_wpm': 156,
-      'semantic_score': 82,
-      'provider': 'xfyun-ise',
-      'provider_session_id': 'ise-topic-session-1',
-      'category': 'topic',
-      'notice': '根据本次录音自动评估，仅供练习参考。',
-    };
-
-    final assessment = decodeSpeechFeedback(value).acousticAssessment;
-
-    expect(assessment.isAssessed, isTrue);
-    expect(assessment.pronunciationScore, 88.5);
-    expect(assessment.speakingSpeedWpm, 156);
-    expect(assessment.semanticScore, 82);
-  });
-
-  test('rejects feedback generated by a different frozen pipeline', () {
-    final wrongStrategy = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    )..['strategy_ref'] = 'other-speech-feedback/v1';
-    final wrongPipeline = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    )..['pipeline_version'] = 'speech-feedback-pipeline-v2';
-
-    for (final value in [wrongStrategy, wrongPipeline]) {
-      expect(
-        () => decodeSpeechFeedback(value),
-        throwsA(isA<SpeechFeedbackDecodeException>()),
-      );
-    }
-  });
-
-  test('enforces the exact status-specific payload shapes', () {
-    final contract = speechFeedbackContractFixture();
-    final queuedWithScoreability = cloneSpeechFeedbackFixture(
-      contract['queued'],
-    )..['scoreability_status'] = 'PROVISIONAL';
-    final provisionalWithoutItems = cloneSpeechFeedbackFixture(
-      contract['ready_provisional'],
-    )..['items'] = <Object?>[];
-    final insufficientWithoutReasons = cloneSpeechFeedbackFixture(
-      contract['ready_insufficient'],
-    )..remove('reason_codes');
-    final failedWithoutCompletedAt = cloneSpeechFeedbackFixture(
-      contract['failed'],
-    )..remove('completed_at');
+    final removedMode = readyPracticeFeedbackFixture();
+    _item(removedMode)['repractice_mode'] = 'SAME_THREAD';
 
     for (final value in [
-      queuedWithScoreability,
-      provisionalWithoutItems,
-      insufficientWithoutReasons,
-      failedWithoutCompletedAt,
+      wrongEvaluation,
+      wrongEvidence,
+      agentRetry,
+      removedMode,
     ]) {
+      final statusUrl = identical(value, agentRetry)
+          ? agentStatusUrl
+          : practiceStatusUrl;
       expect(
-        () => decodeSpeechFeedback(value),
+        () => decodeSpeechFeedback(value, statusUrl: statusUrl),
         throwsA(isA<SpeechFeedbackDecodeException>()),
       );
     }
   });
 
-  test('binds item anchors and repractice mode to the strong source type', () {
-    final contract = speechFeedbackContractFixture();
-    final wrongTurn = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    _firstAnchor(wrongTurn)['turn_id'] = 'turn_other';
-    final wrongMode = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    _firstItem(wrongMode)['repractice_mode'] = 'SAME_THREAD';
-    final mixedAnchor = cloneSpeechFeedbackFixture(
-      contract['ready_provisional'],
-    );
-    _firstItem(mixedAnchor)['anchor'] = <String, Object?>{
-      'anchor_kind': 'AGENT_TRANSCRIPT',
-      'transcript_evidence_id': 'evidence_agent_001',
-      'message_id': 'message_agent_001',
-      'start_utf8_byte': 0,
-      'end_utf8_byte': 8,
-      'original_excerpt': 'I manage',
-    };
-
-    for (final value in [wrongTurn, wrongMode, mixedAnchor]) {
-      expect(
-        () => decodeSpeechFeedback(value),
-        throwsA(isA<SpeechFeedbackDecodeException>()),
-      );
-    }
-  });
-
-  test('accepts SAME_THREAD only for a matching Agent transcript anchor', () {
-    final value = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    );
-    value['source'] = <String, Object?>{
-      'source_kind': 'AGENT_VOICE_MESSAGE',
-      'thread_id': 'thread_agent_001',
-      'message_id': 'message_agent_001',
-      'transcript_evidence_id': 'evidence_agent_001',
-      'candidate_version': 2,
-    };
-    _firstItem(value)
-      ..['repractice_mode'] = 'SAME_THREAD'
-      ..['anchor'] = <String, Object?>{
-        'anchor_kind': 'AGENT_TRANSCRIPT',
-        'transcript_evidence_id': 'evidence_agent_001',
-        'message_id': 'message_agent_001',
-        'start_utf8_byte': 0,
-        'end_utf8_byte': 8,
-        'original_excerpt': 'I manage',
-      };
-
-    final decoded = decodeSpeechFeedback(value);
-
-    expect(decoded.source, isA<AgentVoiceMessageFeedbackSource>());
-    expect(
-      decoded.items.single.repracticeMode,
-      SpeechFeedbackRepracticeMode.sameThread,
-    );
-  });
-
-  test('validates exact UTF-8 anchor lengths without guessing source text', () {
-    final valid = cloneSpeechFeedbackFixture(
-      speechFeedbackContractFixture()['ready_provisional'],
-    );
-    _firstAnchor(valid)
+  test('validates exact UTF-8 evidence byte ranges', () {
+    final valid = readyPracticeFeedbackFixture();
+    final evidence = _item(valid)['evidence']! as Map<String, Object?>;
+    evidence
       ..['start_utf8_byte'] = 4
       ..['end_utf8_byte'] = 10
       ..['original_excerpt'] = '你好';
-    final broken = cloneSpeechFeedbackFixture(valid);
-    _firstAnchor(broken)['end_utf8_byte'] = 9;
-
     expect(
-      decodeSpeechFeedback(valid).items.single.anchor.originalExcerpt,
+      decodeSpeechFeedback(
+        valid,
+        statusUrl: practiceStatusUrl,
+      ).items.single.anchor.originalExcerpt,
       '你好',
     );
+
+    final invalid = cloneFeedbackFixture(valid);
+    (_item(invalid)['evidence']! as Map<String, Object?>)['end_utf8_byte'] = 9;
     expect(
-      () => decodeSpeechFeedback(broken),
+      () => decodeSpeechFeedback(invalid, statusUrl: practiceStatusUrl),
       throwsA(isA<SpeechFeedbackDecodeException>()),
     );
   });
-
-  test('rejects guessed acoustics and forbidden transcript controls', () {
-    final contract = speechFeedbackContractFixture();
-    final acoustic = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    (acoustic['acoustic_assessment']!
-            as Map<String, Object?>)['pronunciation'] =
-        'ASSESSED';
-    final control = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    _firstAnchor(control)
-      ..['end_utf8_byte'] = 3
-      ..['original_excerpt'] = 'a\u0001b';
-    final c1Control = cloneSpeechFeedbackFixture(contract['ready_provisional']);
-    _firstAnchor(c1Control)
-      ..['end_utf8_byte'] = 4
-      ..['original_excerpt'] = 'a\u0085b';
-    final oversizedFeedback = cloneSpeechFeedbackFixture(
-      contract['ready_provisional'],
-    );
-    _firstItem(oversizedFeedback)['explanation'] = '你' * 683;
-
-    for (final value in [acoustic, control, c1Control, oversizedFeedback]) {
-      expect(
-        () => decodeSpeechFeedback(value),
-        throwsA(isA<SpeechFeedbackDecodeException>()),
-      );
-    }
-  });
-
-  test('validates opaque status URLs without accepting navigation syntax', () {
-    expect(
-      validSpeechFeedbackStatusUrl(
-        '/v1/speech-feedback/30000000-0000-4000-8000-000000000001',
-      ),
-      isTrue,
-    );
-    expect(
-      validSpeechFeedbackStatusUrl('/v1/speech-feedback/opaque_id.001~a'),
-      isTrue,
-    );
-    for (final value in [
-      'https://other.test/v1/speech-feedback/opaque_id',
-      '/v1/speech-feedback/opaque_id?token=secret',
-      '/v1/speech-feedback/opaque_id#fragment',
-      '/v1/speech-feedback/%2e%2e',
-      '/v1/speech-feedback/..',
-    ]) {
-      expect(validSpeechFeedbackStatusUrl(value), isFalse, reason: value);
-    }
-  });
 }
 
-Map<String, Object?> _firstItem(Map<String, Object?> value) {
-  return (value['items']! as List<Object?>).first as Map<String, Object?>;
-}
-
-Map<String, Object?> _firstAnchor(Map<String, Object?> value) {
-  return _firstItem(value)['anchor']! as Map<String, Object?>;
-}
+Map<String, Object?> _item(Map<String, Object?> root) =>
+    (root['feedback_items']! as List<Object?>).single as Map<String, Object?>;

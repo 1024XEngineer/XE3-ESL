@@ -4,8 +4,8 @@ import (
 	stdcontext "context"
 	"encoding/json"
 
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -21,26 +21,39 @@ type Repository interface {
 	CreateRetry(stdcontext.Context, string, string, string, Configuration) (Retry, error)
 	Claim(stdcontext.Context, string, string) (Run, bool, error)
 	Find(stdcontext.Context, string, string) (Run, error)
-	ProposeToolCall(stdcontext.Context, ToolCall) (ToolCall, error)
-	StartToolCall(stdcontext.Context, string, string, string, string) (ToolCall, error)
+	SaveContextSnapshot(
+		stdcontext.Context,
+		string,
+		string,
+		string,
+		agentcontext.Manifest,
+	) error
+	ProposeToolCall(stdcontext.Context, ToolCall, string) (ToolCall, error)
+	StartToolCall(stdcontext.Context, string, string, string, string, string) (ToolCall, error)
 	CompleteToolCall(
 		stdcontext.Context,
 		string,
 		string,
 		string,
+		string,
 		json.RawMessage,
 		[]ToolSourceRef,
-		[]agenthandoff.Item,
+		[]agentclientaction.Action,
 	) (ToolCall, error)
 	FailToolCall(
 		stdcontext.Context,
 		string,
 		string,
 		string,
+		string,
 		ToolCallStatus,
 		string,
 	) (ToolCall, error)
-	ListToolCalls(stdcontext.Context, string, string) ([]ToolCall, error)
+	ListClientActions(
+		stdcontext.Context,
+		string,
+		string,
+	) ([]agentclientaction.Action, error)
 	Complete(
 		stdcontext.Context,
 		string,
@@ -101,11 +114,5 @@ type Application interface {
 		StreamObserver,
 	) (Retry, error)
 	GetRun(stdcontext.Context, requestcontext.Actor, string) (Run, error)
-	GetContextManifest(
-		stdcontext.Context,
-		requestcontext.Actor,
-		string,
-	) (agentcontext.Manifest, error)
-	GetToolCalls(stdcontext.Context, requestcontext.Actor, string) ([]ToolCall, error)
 	ProcessPending(stdcontext.Context, requestcontext.Actor, Run) (Run, error)
 }

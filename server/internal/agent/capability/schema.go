@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -47,11 +47,12 @@ type SourceRef struct {
 }
 
 type CallContext struct {
-	Actor      requestcontext.Actor
-	ThreadID   string
-	RunID      string
-	ToolCallID string
-	RequestID  string
+	Actor          requestcontext.Actor
+	ThreadID       string
+	RunID          string
+	InputMessageID string
+	ToolCallID     string
+	RequestID      string
 }
 
 type Invocation struct {
@@ -81,9 +82,9 @@ type InvocationEffectClassifier interface {
 }
 
 type Result struct {
-	Content    map[string]any      `json:"content"`
-	SourceRefs []SourceRef         `json:"source_refs,omitempty"`
-	Handoffs   []agenthandoff.Item `json:"handoffs,omitempty"`
+	Content       map[string]any             `json:"content"`
+	SourceRefs    []SourceRef                `json:"source_refs,omitempty"`
+	ClientActions []agentclientaction.Action `json:"client_actions,omitempty"`
 }
 
 type Tool interface {

@@ -22,22 +22,24 @@ func (r *Repository) ListMessagesForContext(
 	rows, err := r.database.Query(ctx, `
 WITH recent AS (
     SELECT
-        id,
-        owner_user_id,
-        thread_id,
-        sequence_no,
-        role,
-        client_message_id,
-        produced_by_run_id,
-        modality,
-        content,
-        created_at
-    FROM agent_messages
-    WHERE owner_user_id = $1
-      AND thread_id = $2
-      AND sequence_no > $3
-      AND sequence_no <= $4
-    ORDER BY sequence_no DESC
+        message.id,
+        thread.user_id,
+        message.thread_id,
+        message.sequence_no,
+        message.role,
+        message.client_message_id,
+        message.produced_by_run_id,
+        message.modality,
+        message.content,
+        message.created_at
+    FROM agent_messages AS message
+    INNER JOIN agent_threads AS thread ON thread.id = message.thread_id
+    WHERE thread.user_id = $1
+      AND message.thread_id = $2
+      AND thread.deleted_at IS NULL
+      AND message.sequence_no > $3
+      AND message.sequence_no <= $4
+    ORDER BY message.sequence_no DESC
     LIMIT $5
 ),
 eligible AS (
@@ -56,7 +58,7 @@ selected AS (
 )
 SELECT
     id::text,
-    owner_user_id::text,
+    user_id::text,
     thread_id::text,
     sequence_no,
     role,

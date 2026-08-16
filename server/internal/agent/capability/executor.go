@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 )
 
 type Executor struct {
@@ -75,11 +75,11 @@ func (executor *Executor) Execute(
 	if result.Content == nil {
 		result.Content = map[string]any{}
 	}
-	if err := agenthandoff.ValidateItems(result.Handoffs); err != nil {
+	if err := agentclientaction.ValidateItems(result.ClientActions); err != nil {
 		executor.logFailure(call, definition, time.Since(startedAt), err)
 		return Result{}, ErrExecutionRejected
 	}
-	result.Handoffs = agenthandoff.CloneItems(result.Handoffs)
+	result.ClientActions = agentclientaction.CloneItems(result.ClientActions)
 	executor.logSucceeded(call, definition, result, time.Since(startedAt))
 	return result, nil
 }

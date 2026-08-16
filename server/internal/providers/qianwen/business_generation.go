@@ -5,93 +5,13 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
-	conversationtitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 )
-
-type MemoryGenerator struct {
-	generator *textClient
-}
-
-func NewMemoryGenerator(
-	configuration TextConfig,
-	apiKey string,
-) (*MemoryGenerator, error) {
-	generator, err := newTextClient(configuration, apiKey)
-	if err != nil {
-		return nil, err
-	}
-	return &MemoryGenerator{generator: generator}, nil
-}
-
-func (generator *MemoryGenerator) GenerateJSON(
-	ctx context.Context,
-	request memory.GenerationRequest,
-) (memory.GenerationResult, error) {
-	if generator == nil {
-		return memory.GenerationResult{}, missingBusinessGenerator()
-	}
-	result, err := generateBusinessText(
-		ctx,
-		generator.generator,
-		request.SystemPrompt,
-		request.UserPrompt,
-		protocol.TextResponseFormatJSON,
-	)
-	if err != nil {
-		return memory.GenerationResult{}, err
-	}
-	return memory.GenerationResult{
-		Provider: result.Provider,
-		Model:    result.Model,
-		Content:  result.Content,
-	}, nil
-}
 
 type SummaryGenerator struct {
 	generator *textClient
-}
-
-type TitleGenerator struct {
-	generator *textClient
-}
-
-func NewTitleGenerator(
-	configuration TextConfig,
-	apiKey string,
-) (*TitleGenerator, error) {
-	generator, err := newTextClient(configuration, apiKey)
-	if err != nil {
-		return nil, err
-	}
-	return &TitleGenerator{generator: generator}, nil
-}
-
-func (generator *TitleGenerator) GenerateJSON(
-	ctx context.Context,
-	request conversationtitle.GenerationRequest,
-) (conversationtitle.GenerationResult, error) {
-	if generator == nil {
-		return conversationtitle.GenerationResult{}, missingBusinessGenerator()
-	}
-	result, err := generateBusinessText(
-		ctx,
-		generator.generator,
-		request.SystemPrompt,
-		request.UserPrompt,
-		protocol.TextResponseFormatJSON,
-	)
-	if err != nil {
-		return conversationtitle.GenerationResult{}, err
-	}
-	return conversationtitle.GenerationResult{
-		Provider: result.Provider,
-		Model:    result.Model,
-		Content:  result.Content,
-	}, nil
 }
 
 func NewSummaryGenerator(
@@ -117,7 +37,11 @@ func (generator *SummaryGenerator) GenerateJSON(
 		generator.generator,
 		request.SystemPrompt,
 		request.UserPrompt,
-		protocol.TextResponseFormatJSON,
+		&protocol.JSONSchemaDefinition{
+			Name:   "conversation_summary",
+			Strict: true,
+			Schema: conversationSummarySchema(),
+		},
 	)
 	if err != nil {
 		return summary.GenerationResult{}, err
@@ -156,7 +80,7 @@ func (generator *PreparationJobTargetGenerator) GenerateJobTarget(
 		generator.generator,
 		request.SystemInstruction,
 		request.UserMaterial,
-		protocol.TextResponseFormatDefault,
+		nil,
 	)
 	if err != nil {
 		return preparation.JobTargetGenerationResult{}, err
@@ -207,7 +131,11 @@ func (generator *ResumeFieldGenerator) GenerateJSON(
 		generator.generator,
 		request.SystemPrompt,
 		request.DocumentPayload,
-		protocol.TextResponseFormatJSON,
+		&protocol.JSONSchemaDefinition{
+			Name:   "resume_fields",
+			Strict: true,
+			Schema: resumeFieldsSchema(),
+		},
 	)
 	if err != nil {
 		return fieldextractor.GenerationResult{}, err
@@ -224,7 +152,7 @@ func generateBusinessText(
 	generator *textClient,
 	systemPrompt string,
 	userPrompt string,
-	format protocol.TextResponseFormat,
+	schema *protocol.JSONSchemaDefinition,
 ) (protocol.TextResult, error) {
 	if generator == nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
@@ -235,13 +163,94 @@ func generateBusinessText(
 			errors.New("qianwen: business generator is required"),
 		)
 	}
-	return generator.Generate(ctx, protocol.TextRequest{
+	request := protocol.TextRequest{
 		Messages: []protocol.TextMessage{
 			{Role: protocol.TextRoleSystem, Content: systemPrompt},
 			{Role: protocol.TextRoleUser, Content: userPrompt},
 		},
-		ResponseFormat: format,
-	})
+	}
+	if schema != nil {
+		request.ResponseFormat = protocol.TextResponseFormatJSONSchema
+		request.ResponseSchema = schema
+	}
+	return generator.Generate(ctx, request)
+}
+
+func conversationSummarySchema() map[string]any {
+	properties := make(map[string]any, 6)
+	for _, name := range []string{
+		"current_intents", "background", "progress", "decisions",
+		"open_questions", "next_steps",
+	} {
+		properties[name] = stringArraySchema(6)
+	}
+	return strictObjectSchema(
+		[]any{
+			"current_intents", "background", "progress", "decisions",
+			"open_questions", "next_steps",
+		},
+		properties,
+	)
+}
+
+func resumeFieldsSchema() map[string]any {
+	workExperience := strictObjectSchema(
+		[]any{
+			"company", "position", "start_date", "end_date", "duties",
+			"achievements",
+		},
+		map[string]any{
+			"company":      stringSchema(),
+			"position":     stringSchema(),
+			"start_date":   stringSchema(),
+			"end_date":     stringSchema(),
+			"duties":       stringArraySchema(0),
+			"achievements": stringArraySchema(0),
+		},
+	)
+	projectExperience := strictObjectSchema(
+		[]any{
+			"project_name", "role", "description", "technologies", "duties",
+			"achievements",
+		},
+		map[string]any{
+			"project_name": stringSchema(),
+			"role":         stringSchema(),
+			"description":  stringSchema(),
+			"technologies": stringArraySchema(0),
+			"duties":       stringArraySchema(0),
+			"achievements": stringArraySchema(0),
+		},
+	)
+	educationExperience := strictObjectSchema(
+		[]any{"school", "major", "degree", "gpa", "start_date", "end_date"},
+		map[string]any{
+			"school":     stringSchema(),
+			"major":      stringSchema(),
+			"degree":     stringSchema(),
+			"gpa":        stringSchema(),
+			"start_date": stringSchema(),
+			"end_date":   stringSchema(),
+		},
+	)
+	return strictObjectSchema(
+		[]any{
+			"target_position", "professional_summary", "work_experiences",
+			"project_experiences", "education_experiences", "skills", "awards",
+		},
+		map[string]any{
+			"target_position":      stringSchema(),
+			"professional_summary": stringSchema(),
+			"work_experiences":     objectArraySchema(workExperience, 0),
+			"project_experiences":  objectArraySchema(projectExperience, 0),
+			"education_experiences": objectArraySchema(
+				educationExperience,
+				0,
+			),
+			"skills": stringArraySchema(0),
+			"awards": stringArraySchema(0),
+		},
+	)
 }
 
 func missingBusinessGenerator() error {
@@ -255,7 +264,6 @@ func missingBusinessGenerator() error {
 }
 
 var (
-	_ memory.Generator               = (*MemoryGenerator)(nil)
 	_ summary.Generator              = (*SummaryGenerator)(nil)
 	_ preparation.JobTargetGenerator = (*PreparationJobTargetGenerator)(nil)
 	_ fieldextractor.Generator       = (*ResumeFieldGenerator)(nil)

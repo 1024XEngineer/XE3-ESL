@@ -1,622 +1,309 @@
 paths:
-  /v1/evaluations:
-    post:
-      tags:
-        - Evaluation
-      summary: Create or return one logical Evaluation
-      description: |
-        Accepts trusted Practice and EvidenceSnapshot references for one Scene,
-        Core 4D, or dual-channel evaluation. The authenticated Actor is derived
-        by the server. Callers cannot submit an owner, tenant, revision number,
-        or server idempotency key.
-
-        The server derives root and per-channel idempotency keys from the
-        canonical request. `client_request_id` is trace-only and has no
-        authority over deduplication.
-      operationId: createEvaluation
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateEvaluationRequest'
-            examples:
-              dualChannel:
-                value:
-                  practice_session_id: session_demo_001
-                  input_snapshot_id: snapshot_demo_001
-                  input_revision: 1
-                  scope: SESSION
-                  scene_type: INTERVIEW
-                  channels:
-                    - SCENE
-                    - CORE_4D
-                  scene_strategy_ref: interview/project-deep-dive/1.0.0
-                  core_4d_strategy_ref: speaking-core4d/1.0.0
-                  pipeline_version: evaluation-pipeline/1.0.0
-                  client_request_id: trace_demo_001
+  /v1/practice-sessions/{practice_session_id}/evaluation:
+    get:
+      tags: [Evaluation]
+      summary: Get the evaluation for a practice session
+      operationId: getPracticeSessionEvaluation
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
       responses:
         '200':
-          description: |
-            An idempotent replay returned the same logical Evaluation and its
-            honest current non-QUEUED revision state. No work was requeued.
+          description: The SESSION_REPORT evaluation for this session.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EvaluationReplay'
-              example:
-                evaluation_id: 7b000001-0000-4000-8000-000000000001
-                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
-                revision: 1
-                evaluation_status: READY
-                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
-        '202':
-          description: The logical Evaluation exists and is queued.
+                $ref: '#/components/schemas/EvaluationResource'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-turns/{turn_id}/evaluation:
+    get:
+      tags: [Evaluation]
+      summary: Get the evaluation for a confirmed practice turn
+      operationId: getPracticeTurnEvaluation
+      parameters:
+        - $ref: '#/components/parameters/TurnId'
+      responses:
+        '200':
+          description: The PRACTICE_TURN_FEEDBACK evaluation for this turn.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EvaluationAccepted'
-              example:
-                evaluation_id: 7b000001-0000-4000-8000-000000000001
-                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
-                revision: 1
-                evaluation_status: QUEUED
-                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
+                $ref: '#/components/schemas/EvaluationResource'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-messages/{message_id}/evaluation:
+    get:
+      tags: [Evaluation]
+      summary: Get the evaluation for a committed agent message
+      operationId: getAgentMessageEvaluation
+      parameters:
+        - $ref: '#/components/parameters/MessageId'
+      responses:
+        '200':
+          description: The AGENT_MESSAGE_FEEDBACK evaluation for this message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResource'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/evaluation-reports:
+    get:
+      tags: [Evaluation]
+      summary: List completed practice-session reports
+      description: Results are ordered by completion time and evaluation ID descending. The cursor is opaque.
+      operationId: listEvaluationReports
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: '^[A-Za-z0-9_-]+$'
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 2000
+      responses:
+        '200':
+          description: A stable keyset page of actor-owned reports.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReportPage'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: '#/components/responses/EvaluationConflict'
-        '422':
-          $ref: '#/components/responses/EvaluationPolicyRejected'
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/evaluations/{evaluation_id}:
+  /v1/evaluation-reports/{report_id}:
     get:
-      tags:
-        - Evaluation
-      summary: Get the current publishable Evaluation revision
-      description: |
-        Returns the current publishable immutable revision for one logical
-        Evaluation. Audit and governance readers use a future revision-specific
-        contract; callers must not treat `evaluation_id` as a physical result
-        identifier.
-      operationId: getEvaluation
+      tags: [Evaluation]
+      summary: Get one completed practice-session report
+      operationId: getEvaluationReport
       parameters:
-        - $ref: '#/components/parameters/EvaluationId'
+        - $ref: '#/components/parameters/ReportId'
       responses:
         '200':
-          description: Current Actor-owned Evaluation state and frozen results.
+          description: One actor-owned READY session report.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Evaluation'
-              example:
-                evaluation_id: 7b000001-0000-4000-8000-000000000001
-                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
-                revision: 1
-                practice_session_id: session_demo_001
-                input_snapshot_id: snapshot_demo_001
-                input_revision: 1
-                scope: SESSION
-                scene_type: INTERVIEW
-                channels:
-                  - SCENE
-                  - CORE_4D
-                scene_strategy_ref: interview/project-deep-dive/1.0.0
-                core_4d_strategy_ref: speaking-core4d/1.0.0
-                pipeline_version: evaluation-pipeline/1.0.0
-                schema_version: evaluation-schema/1.0.0
-                evaluation_status: RUNNING
-                module_statuses:
-                  scene: RUNNING
-                  core_4d: PENDING
-                is_final: false
-                created_at: '2026-07-28T12:00:00Z'
-                updated_at: '2026-07-28T12:00:01Z'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: '#/components/responses/EvaluationNotFound'
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/evaluations/{evaluation_id}/re-evaluate:
-    post:
-      tags:
-        - Evaluation
-      summary: Create an immutable replacement Evaluation revision
-      description: |
-        Creates a new revision for the same logical Evaluation. The server
-        assigns the next revision and `supersedes_revision_id`; callers cannot
-        overwrite or select a revision number.
-      operationId: reevaluateEvaluation
-      parameters:
-        - $ref: '#/components/parameters/EvaluationId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReevaluateEvaluationRequest'
-            example:
-              channels:
-                - SCENE
-                - CORE_4D
-              scene_strategy_ref: interview/project-deep-dive/1.1.0
-              core_4d_strategy_ref: speaking-core4d/1.0.0
-              pipeline_version: evaluation-pipeline/1.1.0
-              client_request_id: trace_demo_reevaluate_001
-      responses:
-        '200':
-          description: |
-            An idempotent replay returned the same logical Evaluation and its
-            honest current non-QUEUED revision state. No revision or work was
-            created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EvaluationReplay'
-              example:
-                evaluation_id: 7b000001-0000-4000-8000-000000000001
-                evaluation_revision_id: a1000002-0000-4000-8000-000000000002
-                revision: 2
-                supersedes_revision_id: a1000001-0000-4000-8000-000000000001
-                evaluation_status: READY
-                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
-        '202':
-          description: A replacement immutable revision has been queued.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EvaluationAccepted'
-              example:
-                evaluation_id: 7b000001-0000-4000-8000-000000000001
-                evaluation_revision_id: a1000002-0000-4000-8000-000000000002
-                revision: 2
-                supersedes_revision_id: a1000001-0000-4000-8000-000000000001
-                evaluation_status: QUEUED
-                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: '#/components/responses/EvaluationNotFound'
-        '409':
-          $ref: '#/components/responses/EvaluationConflict'
-        '422':
-          $ref: '#/components/responses/EvaluationPolicyRejected'
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/practice-sessions/{practice_session_id}/interview-report:
-    get:
-      tags:
-        - Evaluation
-      summary: Get the current Interview Shadow report
-      description: |
-        Returns the current Actor-owned SESSION + INTERVIEW + SCENE Shadow
-        Evaluation revision projected as a private, qualitative report. A
-        resource owned by another Actor is indistinguishable from a missing
-        resource. This read never freezes evidence, creates or re-evaluates an
-        Evaluation, or invokes a provider.
-
-        The response is private and must not be persisted by intermediaries.
-        Servers must not log report findings, confirmed transcripts, resume
-        context, or evidence excerpts.
-      operationId: getInterviewReport
-      parameters:
-        - $ref: '#/components/parameters/PracticeSessionId'
-      responses:
-        '200':
-          description: |
-            Current report state. QUEUED and RUNNING are pollable, READY
-            contains a qualitative report, and FAILED contains only a stable
-            technical failure.
-          headers:
-            Cache-Control:
-              required: true
-              description: Prevents shared or private storage of the report.
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/InterviewReportEnvelope'
+                $ref: '#/components/schemas/StoredFormalReport'
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
-    get:
-      tags:
-        - Evaluation
-      summary: Get the current IELTS Speaking full-mock Shadow report
-      description: |
-        Returns the current Actor-owned SESSION + IELTS_SPEAKING + SCENE
-        Evaluation revision produced by ielts-speaking-full-mock-shadow/v1.
-        A resource owned by another Actor is indistinguishable from a missing
-        resource. This read never freezes evidence, creates or re-evaluates an
-        Evaluation, or invokes a provider.
 
-        The response is private and must not be persisted by intermediaries.
-        Servers must not log report findings, confirmed transcripts, Cue Card
-        notes, evidence excerpts, audio locators, prompts, or provider output.
-      operationId: getIeltsSpeakingReport
-      parameters:
-        - $ref: '#/components/parameters/PracticeSessionId'
-      responses:
-        '200':
-          description: |
-            Current report state. QUEUED and RUNNING are pollable, READY
-            contains an honest partial practice report, and FAILED contains
-            only a stable technical failure.
-          headers:
-            Cache-Control:
-              required: true
-              description: Prevents shared or private storage of the report.
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IeltsSpeakingReportEnvelope'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/practice-sessions/{practice_session_id}/report:
-    get:
-      tags:
-        - Evaluation
-      summary: Get the canonical IELTS Session report state
-      description: |
-        Returns one Actor-owned completed IELTS Practice Session's canonical
-        report envelope. The read includes the durable completion handoff, so
-        QUEUED may precede creation of the Evaluation ledger. FULL_MOCK resolves
-        only the IELTS Speaking Shadow strategy; PART_1, PART_2, and PART_3
-        resolve only the General Scene strategy. Cross-Actor resources are
-        indistinguishable from missing resources.
-
-        `available_sections` is ordered metadata copied from the frozen IELTS
-        assignment. PART_2 remains one combined Part 2 + Part 3 Session; this
-        endpoint does not synthesize per-section scores. READY points to the
-        canonical FormalReport through `report_ref`.
-
-        This GET is read-only and private. It never freezes evidence, queues
-        scoring, invokes a provider, or logs report content.
-      operationId: getPracticeSessionReport
-      parameters:
-        - $ref: '#/components/parameters/PracticeSessionId'
-      responses:
-        '200':
-          description: Pollable canonical report state.
-          headers:
-            Cache-Control:
-              required: true
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PracticeSessionReportEnvelope'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
-  responses:
-    EvaluationNotFound:
-      description: The logical Evaluation does not exist for the current Actor.
-      content:
-        application/json:
-          schema:
-            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
-          example:
-            error:
-              code: evaluation_not_found
-              message: Evaluation was not found.
-              retryable: false
-              correlation_id: corr_evaluation_not_found
-    EvaluationConflict:
-      description: The requested Evaluation revision or operation conflicts with current state.
-      content:
-        application/json:
-          schema:
-            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
-          example:
-            error:
-              code: evaluation_version_conflict
-              message: Evaluation state changed before the operation completed.
-              retryable: false
-              correlation_id: corr_evaluation_version_conflict
-    EvaluationPolicyRejected:
-      description: The requested strategy or policy is unavailable or incompatible.
-      content:
-        application/json:
-          schema:
-            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
-          example:
-            error:
-              code: evaluation_strategy_not_available
-              message: The requested Evaluation strategy is not available.
-              retryable: false
-              correlation_id: corr_evaluation_strategy_not_available
   parameters:
-    EvaluationId:
-      name: evaluation_id
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/EvaluationUUID'
     PracticeSessionId:
       name: practice_session_id
       in: path
       required: true
-      schema:
-        $ref: '#/components/schemas/StableIdentifier'
+      schema: {$ref: '#/components/schemas/UUID'}
+    TurnId:
+      name: turn_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUID'}
+    MessageId:
+      name: message_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUID'}
+    ReportId:
+      name: report_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/UUID'}
   schemas:
-    EvaluationUUID:
+    UUID:
       type: string
       format: uuid
-      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
-    StableIdentifier:
+    EvaluationKind:
       type: string
-      minLength: 1
-      maxLength: 128
-      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
-    VersionReference:
+      enum: [SESSION_REPORT, PRACTICE_TURN_FEEDBACK, AGENT_MESSAGE_FEEDBACK]
+    EvaluationStatus:
       type: string
-      minLength: 3
-      maxLength: 160
-      pattern: '^[A-Za-z][A-Za-z0-9._:/-]*$'
-    ConfigHash:
-      type: string
-      pattern: '^sha256:[a-f0-9]{64}$'
-    ArtifactDigest:
-      type: string
-      pattern: '^sha256:[a-f0-9]{64}$'
-    EvaluationChannel:
-      type: string
-      enum:
-        - SCENE
-        - CORE_4D
-    EvaluationScope:
-      type: string
-      enum:
-        - TURN
-        - SESSION
-    EvaluationSceneType:
-      type: string
-      enum:
-        - IELTS_SPEAKING
-        - INTERVIEW
-        - OVERSEAS_DAILY_LIFE
-        - OVERSEAS_WORKPLACE
-    PracticeSessionReportEnvelope:
+      enum: [QUEUED, RUNNING, READY, FAILED]
+    EvaluationResource:
       type: object
       additionalProperties: false
       required:
-        - practice_session_id
-        - practice_mode
-        - report_scope
-        - available_sections
-        - detail_schema
-        - evaluation_status
-        - status_url
+        - evaluation_id
+        - kind
+        - source_id
+        - context_id
+        - status
+        - created_at
+        - updated_at
+        - feedback_items
       properties:
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        practice_mode:
-          type: string
-          enum: [PART_1, PART_2, PART_3, FULL_MOCK]
-        report_scope:
-          type: string
-          enum: [PART_1, PART_2_3, PART_3, FULL_MOCK]
-        available_sections:
+        evaluation_id: {$ref: '#/components/schemas/UUID'}
+        kind: {$ref: '#/components/schemas/EvaluationKind'}
+        source_id: {$ref: '#/components/schemas/UUID'}
+        context_id: {$ref: '#/components/schemas/UUID'}
+        status: {$ref: '#/components/schemas/EvaluationStatus'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        feedback_items:
           type: array
-          minItems: 1
-          maxItems: 3
-          uniqueItems: true
-          items:
-            type: string
-            enum: [PART_1, PART_2, PART_3]
-        detail_schema:
+          maxItems: 32
+          items: {$ref: '#/components/schemas/FeedbackItem'}
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/FormalReport'
+            - $ref: '#/components/schemas/SpeechEvaluationResult'
+        error: {$ref: '#/components/schemas/EvaluationFailure'}
+      allOf:
+        - if:
+            properties: {status: {const: READY}}
+            required: [status]
+          then:
+            required: [result]
+            not: {required: [error]}
+        - if:
+            properties: {status: {const: FAILED}}
+            required: [status]
+          then:
+            required: [error]
+            not: {required: [result]}
+        - if:
+            properties:
+              status: {enum: [QUEUED, RUNNING]}
+            required: [status]
+          then:
+            not:
+              anyOf:
+                - {required: [result]}
+                - {required: [error]}
+    EvaluationFailure:
+      type: object
+      additionalProperties: false
+      required: [code, retryable, message]
+      properties:
+        code: {$ref: '#/components/schemas/Identifier'}
+        retryable: {type: boolean}
+        message:
           type: string
-          enum:
-            - ielts-speaking-practice-report/v1
-            - general-scene-evaluation/v1
-            - ielts-speaking-report/v1
-        evaluation_status:
+          minLength: 1
+          maxLength: 2048
+    FeedbackItem:
+      type: object
+      additionalProperties: false
+      required:
+        - feedback_item_id
+        - evaluation_id
+        - position
+        - category
+        - evidence
+        - recommendation
+        - repractice_mode
+        - created_at
+      properties:
+        feedback_item_id: {$ref: '#/components/schemas/UUID'}
+        evaluation_id: {$ref: '#/components/schemas/UUID'}
+        position: {type: integer, minimum: 1}
+        category: {$ref: '#/components/schemas/Identifier'}
+        severity: {$ref: '#/components/schemas/Identifier'}
+        evidence: {$ref: '#/components/schemas/FeedbackEvidence'}
+        recommendation:
           type: string
-          enum: [QUEUED, RUNNING, READY, FAILED]
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        status_url:
+          minLength: 1
+          maxLength: 4096
+        correction:
           type: string
-          maxLength: 157
-          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/report$'
-        report_ref:
-          $ref: '#/components/schemas/PracticeSessionReportRef'
+          maxLength: 4096
+        repractice_mode:
+          type: string
+          enum: [NONE, SAME_QUESTION]
+        created_at: {type: string, format: date-time}
+    FeedbackEvidence:
+      type: object
+      additionalProperties: false
+      required: [evidence_ref_id, start_utf8_byte, end_utf8_byte, original_excerpt]
+      properties:
+        evidence_ref_id: {$ref: '#/components/schemas/UUID'}
+        start_utf8_byte: {type: integer, minimum: 0}
+        end_utf8_byte: {type: integer, minimum: 1}
+        original_excerpt:
+          type: string
+          minLength: 1
+          maxLength: 16384
+    AcousticAssessment:
+      oneOf:
+        - $ref: '#/components/schemas/AcousticAssessed'
+        - $ref: '#/components/schemas/AcousticNotAssessed'
+      discriminator:
+        propertyName: status
+        mapping:
+          ASSESSED: '#/components/schemas/AcousticAssessed'
+          NOT_ASSESSED: '#/components/schemas/AcousticNotAssessed'
+    AcousticAssessed:
+      type: object
+      additionalProperties: false
+      required: [status, pronunciation]
+      properties:
+        status: {type: string, const: ASSESSED}
+        pronunciation: {type: number, minimum: 0, maximum: 100}
+        fluency: {type: number, minimum: 0, maximum: 100}
+        integrity: {type: number, minimum: 0, maximum: 100}
+        speaking_speed_wpm: {type: number, minimum: 0}
+    AcousticNotAssessed:
+      type: object
+      additionalProperties: false
+      required: [status, reason]
+      properties:
+        status: {type: string, const: NOT_ASSESSED}
+        reason: {$ref: '#/components/schemas/Identifier'}
+    SpeechEvaluationResult:
+      type: object
+      additionalProperties: false
+      required: [schema_version, scoreability_status, summary, reason_codes, acoustic]
+      properties:
+        schema_version: {type: string, const: speech-feedback/v1}
         scoreability_status:
-          $ref: '#/components/schemas/EvaluationReportScoreabilityStatus'
+          type: string
+          enum: [PROVISIONAL, INSUFFICIENT]
         summary:
           type: string
           minLength: 1
           maxLength: 2048
-          pattern: '^\S(?:[\s\S]*\S)?$'
-        stable_failure:
-          $ref: '#/components/schemas/PracticeSessionReportFailure'
-      dependentRequired:
-        evaluation_id: [evaluation_revision_id, revision]
-        evaluation_revision_id: [evaluation_id, revision]
-        revision: [evaluation_id, evaluation_revision_id]
-      allOf:
-        - if:
-            properties:
-              evaluation_status:
-                const: RUNNING
-            required: [evaluation_status]
-          then:
-            required: [evaluation_id, evaluation_revision_id, revision]
-        - if:
-            properties:
-              evaluation_status:
-                const: READY
-            required: [evaluation_status]
-          then:
-            required:
-              - evaluation_id
-              - evaluation_revision_id
-              - revision
-              - report_ref
-              - scoreability_status
-              - summary
-            not:
-              required: [stable_failure]
-        - if:
-            properties:
-              evaluation_status:
-                const: FAILED
-            required: [evaluation_status]
-          then:
-            required: [stable_failure]
-            not:
-              anyOf:
-                - required: [report_ref]
-                - required: [scoreability_status]
-                - required: [summary]
-        - if:
-            properties:
-              evaluation_status:
-                enum: [QUEUED, RUNNING]
-            required: [evaluation_status]
-          then:
-            not:
-              anyOf:
-                - required: [report_ref]
-                - required: [scoreability_status]
-                - required: [summary]
-                - required: [stable_failure]
-        - if:
-            properties:
-              practice_mode:
-                const: FULL_MOCK
-            required: [practice_mode]
-          then:
-            properties:
-              detail_schema:
-                const: ielts-speaking-report/v1
-        - if:
-            properties:
-              practice_mode:
-                enum: [PART_1, PART_2, PART_3]
-              evaluation_status:
-                const: READY
-            required: [practice_mode, evaluation_status]
-          then:
-            properties:
-              detail_schema:
-                enum:
-                  - ielts-speaking-practice-report/v1
-                  - general-scene-evaluation/v1
-        - if:
-            properties:
-              practice_mode:
-                enum: [PART_1, PART_2, PART_3]
-              evaluation_status:
-                enum: [QUEUED, RUNNING, FAILED]
-            required: [practice_mode, evaluation_status]
-          then:
-            properties:
-              detail_schema:
-                const: ielts-speaking-practice-report/v1
-    PracticeSessionReportRef:
+        reason_codes:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/Identifier'}
+        acoustic: {$ref: '#/components/schemas/AcousticAssessment'}
+    FormalReport:
       type: object
       additionalProperties: false
-      required: [report_id, href]
-      properties:
-        report_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        href:
-          type: string
-          maxLength: 64
-          pattern: '^/v1/evaluation-reports/[0-9a-fA-F-]{36}$'
-    PracticeSessionReportFailure:
-      type: object
-      additionalProperties: false
-      required: [reason_code, retryable]
-      properties:
-        reason_code:
-          type: string
-          enum:
-            - STRATEGY_NOT_AVAILABLE
-            - POLICY_VIOLATION
-            - EVIDENCE_REF_INVALID
-            - VERSION_CONFLICT
-            - INTERNAL_RETRYABLE
-            - INTERNAL_NON_RETRYABLE
-        retryable:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              reason_code:
-                const: INTERNAL_RETRYABLE
-            required: [reason_code]
-          then:
-            properties:
-              retryable:
-                const: true
-        - if:
-            properties:
-              reason_code:
-                enum:
-                  - STRATEGY_NOT_AVAILABLE
-                  - POLICY_VIOLATION
-                  - EVIDENCE_REF_INVALID
-                  - VERSION_CONFLICT
-                  - INTERNAL_NON_RETRYABLE
-            required: [reason_code]
-          then:
-            properties:
-              retryable:
-                const: false
-    EvaluationFormalReport:
-      type: object
-      additionalProperties: false
-      description: |
-        Canonical user-facing report projected from one READY Evaluation
-        revision. Review may query and present this resource but never creates
-        or stores a second scoring result.
       required:
-        - report_id
-        - evaluation_id
-        - evaluation_revision_id
-        - practice_session_id
-        - revision
         - schema_version
         - scene_type
         - practice_experience
@@ -624,74 +311,70 @@ components:
         - practice_mode
         - scoreability_status
         - summary
+        - questions
         - dimensions
         - priority_actions
-        - detail_schema
-        - detail
-        - created_at
       properties:
-        report_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        revision:
-          type: integer
-          minimum: 1
-        schema_version:
-          type: string
-          const: evaluation-report/v1
+        schema_version: {type: string, const: evaluation-report/v2}
         scene_type:
-          $ref: '#/components/schemas/EvaluationSceneType'
-        practice_experience:
-          $ref: ./scene.yaml#/components/schemas/PracticeExperience
-        scene_category:
-          $ref: ./scene.yaml#/components/schemas/SceneCategory
-        practice_mode:
-          $ref: ./scene.yaml#/components/schemas/PracticeMode
+          type: string
+          enum: [IELTS_SPEAKING, INTERVIEW, OVERSEAS_DAILY_LIFE, OVERSEAS_WORKPLACE]
+        practice_experience: {$ref: '#/components/schemas/Identifier'}
+        scene_category: {$ref: '#/components/schemas/Identifier'}
+        practice_mode: {$ref: '#/components/schemas/Identifier'}
         scoreability_status:
-          $ref: '#/components/schemas/EvaluationReportScoreabilityStatus'
+          type: string
+          enum: [PROVISIONAL, INSUFFICIENT]
         summary:
           type: string
           minLength: 1
           maxLength: 2048
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items: {$ref: '#/components/schemas/ReportQuestion'}
         dimensions:
           type: array
           minItems: 1
-          maxItems: 16
-          items:
-            $ref: '#/components/schemas/EvaluationReportDimension'
+          maxItems: 8
+          items: {$ref: '#/components/schemas/ReportDimension'}
         priority_actions:
           type: array
           maxItems: 5
-          items:
-            $ref: '#/components/schemas/EvaluationReportPriorityAction'
-        detail_schema:
-          $ref: '#/components/schemas/VersionReference'
-        detail:
-          type: object
-          description: Scene-specific report payload selected by detail_schema.
-        created_at:
+          items: {$ref: '#/components/schemas/ReportPriorityAction'}
+    ReportQuestion:
+      type: object
+      additionalProperties: false
+      required: [question_id, position, text, answer]
+      properties:
+        question_id: {$ref: '#/components/schemas/UUID'}
+        position: {type: integer, minimum: 1}
+        parent_question_id: {$ref: '#/components/schemas/UUID'}
+        text:
           type: string
-          format: date-time
-    EvaluationReportScoreabilityStatus:
-      type: string
-      enum:
-        - PROVISIONAL
-        - INSUFFICIENT
-    EvaluationReportScoreScale:
-      type: string
-      enum:
-        - PERCENTAGE_100
-        - IELTS_BAND
-    EvaluationReportDimension:
+          minLength: 1
+          maxLength: 16384
+        answer:
+          oneOf:
+            - {$ref: '#/components/schemas/ReportAnswer'}
+            - {type: 'null'}
+    ReportAnswer:
+      type: object
+      additionalProperties: false
+      required: [turn_id, transcript]
+      properties:
+        turn_id: {$ref: '#/components/schemas/UUID'}
+        transcript:
+          type: string
+          minLength: 1
+          maxLength: 65536
+    ReportDimension:
       type: object
       additionalProperties: false
       required:
         - key
+        - score
         - scale
         - coverage
         - confidence
@@ -701,66 +384,43 @@ components:
         - improvements
         - recommended_examples
       properties:
-        key:
-          $ref: '#/components/schemas/VersionReference'
+        key: {$ref: '#/components/schemas/Identifier'}
         score:
-          type: number
+          type: [number, 'null']
           minimum: 0
           maximum: 100
+          description: Null when the dimension was explicitly not assessed, including acoustic failure or disabled capability.
         scale:
-          $ref: '#/components/schemas/EvaluationReportScoreScale'
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
+          type: string
+          enum: [PERCENTAGE_100, IELTS_BAND_9]
+        coverage: {type: number, minimum: 0, maximum: 1}
+        confidence: {type: number, minimum: 0, maximum: 1}
         reason_codes:
           type: array
-          maxItems: 16
+          maxItems: 8
           uniqueItems: true
-          items:
-            $ref: '#/components/schemas/VersionReference'
+          items: {$ref: '#/components/schemas/Identifier'}
         evidence_ref_ids:
           type: array
-          maxItems: 64
+          maxItems: 128
           uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        strengths:
-          $ref: '#/components/schemas/EvaluationReportFindings'
-        improvements:
-          $ref: '#/components/schemas/EvaluationReportFindings'
-        recommended_examples:
-          $ref: '#/components/schemas/EvaluationReportFindings'
-      allOf:
-        - if:
-            properties:
-              scale:
-                const: IELTS_BAND
-            required:
-              - scale
-          then:
-            properties:
-              score:
-                maximum: 9
-    EvaluationReportFindings:
+          items: {$ref: '#/components/schemas/UUID'}
+        strengths: {$ref: '#/components/schemas/ReportFindings'}
+        improvements: {$ref: '#/components/schemas/ReportFindings'}
+        recommended_examples: {$ref: '#/components/schemas/ReportFindings'}
+    ReportFindings:
       type: array
       maxItems: 5
-      items:
-        $ref: '#/components/schemas/EvaluationReportFinding'
-    EvaluationReportFinding:
+      items: {$ref: '#/components/schemas/ReportFinding'}
+    ReportFinding:
       type: object
       additionalProperties: false
-      required:
-        - finding_id
-        - message
-        - evidence
+      required: [finding_id, message, evidence]
       properties:
         finding_id:
-          $ref: '#/components/schemas/VersionReference'
+          type: string
+          minLength: 1
+          maxLength: 128
         message:
           type: string
           minLength: 1
@@ -772,2789 +432,56 @@ components:
         evidence:
           type: array
           maxItems: 8
-          items:
-            $ref: '#/components/schemas/EvaluationReportEvidence'
-    EvaluationReportEvidence:
+          items: {$ref: '#/components/schemas/ReportEvidence'}
+    ReportEvidence:
       type: object
       additionalProperties: false
-      required:
-        - evidence_ref_id
-        - turn_id
-        - start_utf8_byte
-        - end_utf8_byte
-        - original_excerpt
+      required: [evidence_ref_id, turn_id, start_utf8_byte, end_utf8_byte, original_excerpt]
       properties:
-        evidence_ref_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        start_utf8_byte:
-          type: integer
-          minimum: 0
-        end_utf8_byte:
-          type: integer
-          minimum: 1
+        evidence_ref_id: {$ref: '#/components/schemas/UUID'}
+        turn_id: {$ref: '#/components/schemas/UUID'}
+        start_utf8_byte: {type: integer, minimum: 0}
+        end_utf8_byte: {type: integer, minimum: 1}
         original_excerpt:
           type: string
           minLength: 1
           maxLength: 16384
-    EvaluationReportPriorityAction:
+    ReportPriorityAction:
       type: object
       additionalProperties: false
-      required:
-        - dimension_key
-        - finding_id
+      required: [dimension_key, finding_id]
       properties:
-        dimension_key:
-          $ref: '#/components/schemas/VersionReference'
+        dimension_key: {$ref: '#/components/schemas/Identifier'}
         finding_id:
-          $ref: '#/components/schemas/VersionReference'
-    EvaluationStatus:
-      type: string
-      enum:
-        - RECEIVED
-        - VALIDATING
-        - QUEUED
-        - RUNNING
-        - PARTIAL_READY
-        - READY
-        - FAILED
-        - SUPERSEDED
-    ScoreabilityStatus:
-      type: string
-      enum:
-        - RELIABLE
-        - PROVISIONAL
-        - INSUFFICIENT
-    GateStatus:
-      type: string
-      enum:
-        - PASS
-        - FEEDBACK_ONLY
-        - BLOCKED
-    ModuleStatus:
-      type: string
-      enum:
-        - PENDING
-        - RUNNING
-        - READY
-        - FAILED
-        - SKIPPED
-    EvaluationReasonCode:
-      type: string
-      enum:
-        - STRATEGY_NOT_AVAILABLE
-        - AUDIO_UNUSABLE
-        - SPEAKER_ATTRIBUTION_FAILED
-        - INSUFFICIENT_EVIDENCE
-        - ASR_LOW_CONFIDENCE
-        - REQUIRED_DIMENSION_MISSING
-        - SCORE_INCONSISTENT
-        - EVIDENCE_REF_INVALID
-        - VERSION_CONFLICT
-        - DUPLICATE_REQUEST
-        - POLICY_VIOLATION
-        - INTERNAL_RETRYABLE
-        - INTERNAL_NON_RETRYABLE
-        - OPPORTUNITY_NOT_PROVIDED
-    RoundingRule:
-      type: string
-      enum:
-        - HALF_UP_TO_INTEGER
-        - HALF_UP_TO_0_5
-    CalibrationVersion:
-      anyOf:
-        - $ref: '#/components/schemas/VersionReference'
-        - type: string
-          const: NOT_CONFIGURED
-    CreateEvaluationRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_session_id
-        - input_snapshot_id
-        - input_revision
-        - scope
-        - scene_type
-        - channels
-        - pipeline_version
-      properties:
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        input_snapshot_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        input_revision:
-          type: integer
-          minimum: 1
-        scope:
-          $ref: '#/components/schemas/EvaluationScope'
-        scene_type:
-          $ref: '#/components/schemas/EvaluationSceneType'
-        channels:
-          type: array
-          minItems: 1
-          maxItems: 2
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationChannel'
-        scene_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        core_4d_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        pipeline_version:
-          $ref: '#/components/schemas/VersionReference'
-        client_request_id:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9._:-]+$'
-      allOf:
-        - if:
-            properties:
-              channels:
-                type: array
-                contains:
-                  const: SCENE
-            required:
-              - channels
-          then:
-            required:
-              - scene_strategy_ref
-        - if:
-            properties:
-              channels:
-                type: array
-                contains:
-                  const: CORE_4D
-            required:
-              - channels
-          then:
-            required:
-              - core_4d_strategy_ref
-    ReevaluateEvaluationRequest:
+    StoredFormalReport:
       type: object
       additionalProperties: false
-      required:
-        - channels
-        - pipeline_version
+      required: [report_id, evaluation_id, practice_session_id, report, created_at]
       properties:
-        channels:
+        report_id: {$ref: '#/components/schemas/UUID'}
+        evaluation_id: {$ref: '#/components/schemas/UUID'}
+        practice_session_id: {$ref: '#/components/schemas/UUID'}
+        report: {$ref: '#/components/schemas/FormalReport'}
+        created_at: {type: string, format: date-time}
+    EvaluationReportPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
           type: array
-          minItems: 1
-          maxItems: 2
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationChannel'
-        scene_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        core_4d_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        pipeline_version:
-          $ref: '#/components/schemas/VersionReference'
-        client_request_id:
+          maxItems: 50
+          items: {$ref: '#/components/schemas/StoredFormalReport'}
+        next_cursor:
           type: string
           minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9._:-]+$'
-      allOf:
-        - if:
-            properties:
-              channels:
-                type: array
-                contains:
-                  const: SCENE
-            required:
-              - channels
-          then:
-            required:
-              - scene_strategy_ref
-        - if:
-            properties:
-              channels:
-                type: array
-                contains:
-                  const: CORE_4D
-            required:
-              - channels
-          then:
-            required:
-              - core_4d_strategy_ref
-    EvaluationAccepted:
-      type: object
-      additionalProperties: false
-      required:
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - evaluation_status
-        - status_url
-      properties:
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        supersedes_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_status:
-          type: string
-          const: QUEUED
-        status_url:
-          type: string
-          pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
-    EvaluationReplay:
-      type: object
-      additionalProperties: false
-      required:
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - evaluation_status
-        - status_url
-      properties:
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        supersedes_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_status:
-          type: string
-          enum:
-            - RECEIVED
-            - VALIDATING
-            - RUNNING
-            - PARTIAL_READY
-            - READY
-            - FAILED
-            - SUPERSEDED
-        status_url:
-          type: string
-          pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
-    InterviewReportEnvelope:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_session_id
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - evaluation_status
-        - is_final
-        - status_url
-      properties:
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        evaluation_status:
-          type: string
-          enum:
-            - QUEUED
-            - RUNNING
-            - READY
-            - FAILED
-        is_final:
-          type: boolean
-          const: false
-        status_url:
-          type: string
-          maxLength: 167
-          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/interview-report$'
-        report:
-          $ref: '#/components/schemas/InterviewReport'
-        stable_failure:
-          $ref: '#/components/schemas/InterviewReportFailure'
-      allOf:
-        - if:
-            properties:
-              evaluation_status:
-                const: READY
-            required:
-              - evaluation_status
-          then:
-            required:
-              - report
-            not:
-              required:
-                - stable_failure
-        - if:
-            properties:
-              evaluation_status:
-                const: FAILED
-            required:
-              - evaluation_status
-          then:
-            required:
-              - stable_failure
-            not:
-              required:
-                - report
-        - if:
-            properties:
-              evaluation_status:
-                enum:
-                  - QUEUED
-                  - RUNNING
-            required:
-              - evaluation_status
-          then:
-            not:
-              anyOf:
-                - required:
-                    - report
-                - required:
-                    - stable_failure
-    InterviewReport:
-      type: object
-      additionalProperties: false
-      description: |
-        Versioned Interview practice feedback projected from one frozen Shadow
-        revision. Assessable dimensions include a 0-100 coaching score based
-        only on confirmed transcript evidence. The report contains no hiring
-        probability, readiness inference, pronunciation, pace, stress,
-        phoneme, or other acoustic assessment.
-      required:
-        - schema_version
-        - scoreability_status
-        - gate_status
-        - readiness_level
-        - readiness_notice
-        - dimensions
-        - questions
-        - priority_actions
-      properties:
-        schema_version:
-          type: string
-          const: interview-report/v1
-        scoreability_status:
-          $ref: '#/components/schemas/InterviewReportScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/InterviewReportGateStatus'
-        readiness_level:
-          type: string
-          const: NOT_ASSESSED
-        readiness_notice:
-          type: string
-          const: Practice feedback only; not a hiring decision or probability.
-        dimensions:
-          $ref: '#/components/schemas/InterviewReportDimensions'
-        questions:
-          type: array
-          minItems: 1
-          maxItems: 64
-          items:
-            $ref: '#/components/schemas/InterviewReportQuestion'
-        priority_actions:
-          type: array
-          maxItems: 3
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/InterviewReportPriorityAction'
-      allOf:
-        - if:
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            properties:
-              gate_status:
-                const: FEEDBACK_ONLY
-        - if:
-            properties:
-              scoreability_status:
-                const: INSUFFICIENT
-            required:
-              - scoreability_status
-          then:
-            properties:
-              gate_status:
-                const: BLOCKED
-    InterviewReportScoreabilityStatus:
-      type: string
-      enum:
-        - PROVISIONAL
-        - INSUFFICIENT
-    InterviewReportGateStatus:
-      type: string
-      enum:
-        - FEEDBACK_ONLY
-        - BLOCKED
-    InterviewReportReasonCode:
-      type: string
-      enum:
-        - ASR_CONFIDENCE_UNAVAILABLE
-        - INSUFFICIENT_EVIDENCE
-        - OPPORTUNITY_NOT_PROVIDED
-    InterviewReportDimensionId:
-      type: string
-      enum:
-        - INTERVIEW_RELEVANCE
-        - INTERVIEW_STRUCTURE
-        - INTERVIEW_EVIDENCE
-        - INTERVIEW_PROFESSIONAL
-        - INTERVIEW_INTERACTION
-    InterviewReportDimensions:
-      type: array
-      minItems: 5
-      maxItems: 5
-      prefixItems:
-        - $ref: '#/components/schemas/InterviewReportRelevanceDimension'
-        - $ref: '#/components/schemas/InterviewReportStructureDimension'
-        - $ref: '#/components/schemas/InterviewReportEvidenceDimension'
-        - $ref: '#/components/schemas/InterviewReportProfessionalDimension'
-        - $ref: '#/components/schemas/InterviewReportInteractionDimension'
-      items: false
-    InterviewReportRelevanceDimension:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_RELEVANCE
-    InterviewReportStructureDimension:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_STRUCTURE
-    InterviewReportEvidenceDimension:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_EVIDENCE
-    InterviewReportProfessionalDimension:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_PROFESSIONAL
-    InterviewReportInteractionDimension:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_INTERACTION
-    InterviewReportDimension:
-      type: object
-      additionalProperties: false
-      required:
-        - dimension_id
-        - scoreability_status
-        - gate_status
-        - coverage
-        - confidence
-        - reason_codes
-        - evidence_ref_ids
-        - strengths
-        - improvements
-        - recommended_expressions
-      properties:
-        dimension_id:
-          $ref: '#/components/schemas/InterviewReportDimensionId'
-        score:
-          type: integer
-          minimum: 0
-          maximum: 100
-          description: Transcript-evidence coaching score for this dimension.
-        scoreability_status:
-          $ref: '#/components/schemas/InterviewReportScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/InterviewReportGateStatus'
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Evidence opportunity coverage metadata, not a user score.
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Evidence attribution confidence metadata, not a user score.
-        reason_codes:
-          type: array
-          minItems: 1
-          maxItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/InterviewReportReasonCode'
-        evidence_ref_ids:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        strengths:
-          $ref: '#/components/schemas/InterviewReportFindings'
-        improvements:
-          $ref: '#/components/schemas/InterviewReportFindings'
-        recommended_expressions:
-          $ref: '#/components/schemas/InterviewReportFindings'
-      allOf:
-        - if:
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            required:
-              - score
-            properties:
-              gate_status:
-                const: FEEDBACK_ONLY
-              reason_codes:
-                type: array
-                items:
-                  const: ASR_CONFIDENCE_UNAVAILABLE
-              evidence_ref_ids:
-                type: array
-                minItems: 1
-            anyOf:
-              - properties:
-                  strengths:
-                    type: array
-                    minItems: 1
-              - properties:
-                  improvements:
-                    type: array
-                    minItems: 1
-        - if:
-            properties:
-              scoreability_status:
-                const: INSUFFICIENT
-            required:
-              - scoreability_status
-          then:
-            not:
-              required:
-                - score
-            properties:
-              gate_status:
-                const: BLOCKED
-              reason_codes:
-                type: array
-                items:
-                  enum:
-                    - INSUFFICIENT_EVIDENCE
-                    - OPPORTUNITY_NOT_PROVIDED
-              evidence_ref_ids:
-                type: array
-                maxItems: 0
-              strengths:
-                type: array
-                maxItems: 0
-              improvements:
-                type: array
-                maxItems: 0
-              recommended_expressions:
-                type: array
-                maxItems: 0
-    InterviewReportFindings:
-      type: array
-      maxItems: 3
-      items:
-        $ref: '#/components/schemas/InterviewReportFinding'
-    InterviewReportFinding:
-      type: object
-      additionalProperties: false
-      required:
-        - finding_id
-        - message
-        - evidence
-      properties:
-        finding_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        message:
-          $ref: '#/components/schemas/InterviewReportText'
-        suggestion:
-          $ref: '#/components/schemas/InterviewReportText'
-        evidence:
-          type: array
-          minItems: 1
-          maxItems: 4
-          items:
-            $ref: '#/components/schemas/InterviewReportEvidence'
-    InterviewReportEvidence:
-      type: object
-      additionalProperties: false
-      required:
-        - evidence_ref_id
-        - turn_id
-        - start_utf8_byte
-        - end_utf8_byte
-        - original_excerpt
-      properties:
-        evidence_ref_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        start_utf8_byte:
-          type: integer
-          minimum: 0
-        end_utf8_byte:
-          type: integer
-          minimum: 1
-        original_excerpt:
-          type: string
-          minLength: 1
-          maxLength: 16384
-    InterviewReportQuestion:
-      type: object
-      additionalProperties: false
-      required:
-        - question_id
-        - question_type
-        - opportunity_status
-        - assessment_status
-        - question_text
-        - evidence_ref_ids
-        - dimension_findings
-      properties:
-        question_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        question_type:
-          type: string
-          enum:
-            - PRIMARY
-            - FOLLOW_UP
-        parent_question_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        opportunity_status:
-          type: string
-          enum:
-            - PROVIDED
-            - NOT_PROVIDED
-        assessment_status:
-          type: string
-          enum:
-            - ASSESSED
-            - NOT_ASSESSED
-        question_text:
-          $ref: '#/components/schemas/InterviewReportSourceText'
-        confirmed_transcript:
-          $ref: '#/components/schemas/InterviewReportSourceText'
-        response_turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evidence_ref_ids:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        dimension_findings:
-          $ref: '#/components/schemas/InterviewReportQuestionDimensions'
-      allOf:
-        - if:
-            properties:
-              question_type:
-                const: PRIMARY
-            required:
-              - question_type
-          then:
-            not:
-              required:
-                - parent_question_id
-        - if:
-            properties:
-              question_type:
-                const: FOLLOW_UP
-            required:
-              - question_type
-          then:
-            required:
-              - parent_question_id
-        - if:
-            properties:
-              opportunity_status:
-                const: PROVIDED
-            required:
-              - opportunity_status
-          then:
-            required:
-              - confirmed_transcript
-              - response_turn_id
-            properties:
-              assessment_status:
-                const: ASSESSED
-              evidence_ref_ids:
-                type: array
-                minItems: 1
-        - if:
-            properties:
-              opportunity_status:
-                const: NOT_PROVIDED
-            required:
-              - opportunity_status
-          then:
-            properties:
-              assessment_status:
-                const: NOT_ASSESSED
-              evidence_ref_ids:
-                type: array
-                maxItems: 0
-            not:
-              anyOf:
-                - required:
-                    - confirmed_transcript
-                - required:
-                    - response_turn_id
-    InterviewReportQuestionDimensions:
-      type: array
-      minItems: 5
-      maxItems: 5
-      prefixItems:
-        - $ref: '#/components/schemas/InterviewReportQuestionRelevance'
-        - $ref: '#/components/schemas/InterviewReportQuestionStructure'
-        - $ref: '#/components/schemas/InterviewReportQuestionEvidence'
-        - $ref: '#/components/schemas/InterviewReportQuestionProfessional'
-        - $ref: '#/components/schemas/InterviewReportQuestionInteraction'
-      items: false
-    InterviewReportQuestionRelevance:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_RELEVANCE
-    InterviewReportQuestionStructure:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_STRUCTURE
-    InterviewReportQuestionEvidence:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_EVIDENCE
-    InterviewReportQuestionProfessional:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_PROFESSIONAL
-    InterviewReportQuestionInteraction:
-      allOf:
-        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
-        - type: object
-          required:
-            - dimension_id
-          properties:
-            dimension_id:
-              const: INTERVIEW_INTERACTION
-    InterviewReportQuestionDimension:
-      type: object
-      additionalProperties: false
-      required:
-        - dimension_id
-        - strength_finding_ids
-        - improvement_finding_ids
-        - recommended_expression_finding_ids
-      properties:
-        dimension_id:
-          $ref: '#/components/schemas/InterviewReportDimensionId'
-        strength_finding_ids:
-          $ref: '#/components/schemas/InterviewReportFindingIds'
-        improvement_finding_ids:
-          $ref: '#/components/schemas/InterviewReportFindingIds'
-        recommended_expression_finding_ids:
-          $ref: '#/components/schemas/InterviewReportFindingIds'
-    InterviewReportFindingIds:
-      type: array
-      maxItems: 3
-      uniqueItems: true
-      items:
-        $ref: '#/components/schemas/StableIdentifier'
-    InterviewReportPriorityAction:
-      type: object
-      additionalProperties: false
-      required:
-        - dimension_id
-        - finding_id
-      properties:
-        dimension_id:
-          $ref: '#/components/schemas/InterviewReportDimensionId'
-        finding_id:
-          $ref: '#/components/schemas/StableIdentifier'
-    InterviewReportFailure:
-      type: object
-      additionalProperties: false
-      required:
-        - reason_code
-        - retryable
-      properties:
-        reason_code:
-          type: string
-          enum:
-            - POLICY_VIOLATION
-            - EVIDENCE_REF_INVALID
-            - VERSION_CONFLICT
-            - INTERNAL_RETRYABLE
-            - INTERNAL_NON_RETRYABLE
-        retryable:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              reason_code:
-                const: INTERNAL_RETRYABLE
-            required:
-              - reason_code
-          then:
-            properties:
-              retryable:
-                const: true
-        - if:
-            properties:
-              reason_code:
-                enum:
-                  - POLICY_VIOLATION
-                  - EVIDENCE_REF_INVALID
-                  - VERSION_CONFLICT
-                  - INTERNAL_NON_RETRYABLE
-            required:
-              - reason_code
-          then:
-            properties:
-              retryable:
-                const: false
-    InterviewReportText:
+          maxLength: 512
+          pattern: '^[A-Za-z0-9_-]+$'
+    Identifier:
       type: string
       minLength: 1
-      maxLength: 2048
-      pattern: '^\S(?:[\s\S]*\S)?$'
-      description: |
-        Server-controlled feedback template text validated by the frozen
-        Interview Shadow revision; never unvalidated provider prose.
-    InterviewReportSourceText:
-      type: string
-      minLength: 1
-      maxLength: 16384
-      pattern: '^\S(?:[\s\S]*\S)?$'
-    IeltsSpeakingReportEnvelope:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_session_id
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - evaluation_status
-        - is_final
-        - status_url
-      properties:
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        evaluation_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportEvaluationStatus'
-        is_final:
-          type: boolean
-          const: false
-        status_url:
-          type: string
-          maxLength: 173
-          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/ielts-speaking-report$'
-        report:
-          $ref: '#/components/schemas/IeltsSpeakingReport'
-        stable_failure:
-          $ref: '#/components/schemas/IeltsSpeakingReportFailure'
-      allOf:
-        - if:
-            type: object
-            properties:
-              evaluation_status:
-                const: READY
-            required:
-              - evaluation_status
-          then:
-            type: object
-            required:
-              - report
-            not:
-              required:
-                - stable_failure
-        - if:
-            type: object
-            properties:
-              evaluation_status:
-                const: FAILED
-            required:
-              - evaluation_status
-          then:
-            type: object
-            required:
-              - stable_failure
-            not:
-              required:
-                - report
-        - if:
-            type: object
-            properties:
-              evaluation_status:
-                enum:
-                  - QUEUED
-                  - RUNNING
-            required:
-              - evaluation_status
-          then:
-            type: object
-            not:
-              anyOf:
-                - required:
-                    - report
-                - required:
-                    - stable_failure
-    IeltsSpeakingReportEvaluationStatus:
-      type: string
-      enum:
-        - QUEUED
-        - RUNNING
-        - READY
-        - FAILED
-    IeltsSpeakingReport:
-      type: object
-      additionalProperties: false
-      description: |
-        IELTS Speaking practice feedback projected from one frozen Shadow
-        revision. Complete, trustworthy acoustic evidence may support
-        provisional integer rubric Bands for all four criteria and a
-        calculated Speaking Overall. Without complete acoustic evidence, the
-        report remains partial: only supported criteria may contain Bands,
-        unsupported criteria are blocked, and Speaking Overall is unavailable
-        unless all four criterion Bands exist. No Part or question contains a
-        score.
-      required:
-        - schema_version
-        - disclaimer_code
-        - disclaimer
-        - scoreability_status
-        - gate_status
-        - test_summary
-        - criteria
-        - speaking_overall
-        - part_reviews
-        - questions
-        - target_plan
-        - priority_actions
-      properties:
-        schema_version:
-          type: string
-          const: ielts-speaking-report/v1
-        disclaimer_code:
-          type: string
-          const: AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS
-        disclaimer:
-          type: string
-          const: AI 练习估分，非 IELTS 官方成绩。
-        scoreability_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportGateStatus'
-        test_summary:
-          $ref: '#/components/schemas/IeltsSpeakingReportTestSummary'
-        criteria:
-          $ref: '#/components/schemas/IeltsSpeakingReportCriteria'
-        speaking_overall:
-          oneOf:
-            - $ref: '#/components/schemas/IeltsSpeakingOverallAvailable'
-            - $ref: '#/components/schemas/IeltsSpeakingOverallUnavailable'
-        part_reviews:
-          $ref: '#/components/schemas/IeltsSpeakingPartReviews'
-        questions:
-          type: array
-          minItems: 3
-          maxItems: 64
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingQuestionReview'
-        target_plan:
-          $ref: '#/components/schemas/IeltsSpeakingTargetPlan'
-        priority_actions:
-          type: array
-          maxItems: 3
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingPriorityAction'
-      allOf:
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            type: object
-            properties:
-              gate_status:
-                const: FEEDBACK_ONLY
-              criteria:
-                type: array
-                contains:
-                  type: object
-                  properties:
-                    scoreability_status:
-                      const: PROVISIONAL
-                  required:
-                    - scoreability_status
-                minContains: 1
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: INSUFFICIENT
-            required:
-              - scoreability_status
-          then:
-            type: object
-            properties:
-              gate_status:
-                const: BLOCKED
-              criteria:
-                type: array
-                not:
-                  contains:
-                    type: object
-                    properties:
-                      scoreability_status:
-                        const: PROVISIONAL
-                    required:
-                      - scoreability_status
-              priority_actions:
-                type: array
-                maxItems: 0
-    IeltsSpeakingReportScoreabilityStatus:
-      type: string
-      enum:
-        - PROVISIONAL
-        - INSUFFICIENT
-    IeltsSpeakingReportGateStatus:
-      type: string
-      enum:
-        - FEEDBACK_ONLY
-        - BLOCKED
-    IeltsSpeakingReportTestSummary:
-      type: object
-      additionalProperties: false
-      required:
-        - part_1_topic
-        - part_2_topic
-        - part_3_topic
-        - question_count
-        - answered_count
-        - recording_duration_ms
-      properties:
-        part_1_topic:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        part_2_topic:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        part_3_topic:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        question_count:
-          type: integer
-          minimum: 3
-          maximum: 64
-        answered_count:
-          type: integer
-          minimum: 0
-          maximum: 64
-        recording_duration_ms:
-          type: integer
-          format: int64
-          minimum: 0
-    IeltsSpeakingReportReasonCode:
-      type: string
-      enum:
-        - ASR_CONFIDENCE_UNAVAILABLE
-        - FLUENCY_TIMING_UNAVAILABLE
-        - PRONUNCIATION_ARTIFACT_UNAVAILABLE
-        - INSUFFICIENT_EVIDENCE
-        - OPPORTUNITY_NOT_PROVIDED
-        - PRACTICE_ESTIMATE_UNCALIBRATED
-    IeltsSpeakingCriterionId:
-      type: string
-      enum:
-        - IELTS_FC
-        - IELTS_LR
-        - IELTS_GRA
-        - IELTS_PR
-    IeltsSpeakingReportCriteria:
-      type: array
-      minItems: 4
-      maxItems: 4
-      prefixItems:
-        - $ref: '#/components/schemas/IeltsSpeakingFluencyCoherenceCriterion'
-        - $ref: '#/components/schemas/IeltsSpeakingLexicalResourceCriterion'
-        - $ref: '#/components/schemas/IeltsSpeakingGrammarCriterion'
-        - $ref: '#/components/schemas/IeltsSpeakingPronunciationCriterion'
-      items: false
-    IeltsSpeakingFluencyCoherenceCriterion:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
-        - type: object
-          required:
-            - criterion_id
-          properties:
-            criterion_id:
-              const: IELTS_FC
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            type: object
-            oneOf:
-              - required:
-                  - estimated_band
-                  - band_descriptor
-                properties:
-                  reason_codes:
-                    type: array
-                    contains:
-                      const: PRACTICE_ESTIMATE_UNCALIBRATED
-              - not:
-                  anyOf:
-                    - required:
-                        - estimated_band
-                    - required:
-                        - band_descriptor
-                properties:
-                  reason_codes:
-                    type: array
-                    contains:
-                      const: FLUENCY_TIMING_UNAVAILABLE
-    IeltsSpeakingLexicalResourceCriterion:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
-        - type: object
-          required:
-            - criterion_id
-          properties:
-            criterion_id:
-              const: IELTS_LR
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            type: object
-            required:
-              - estimated_band
-              - band_descriptor
-            properties:
-              reason_codes:
-                type: array
-                contains:
-                  const: ASR_CONFIDENCE_UNAVAILABLE
-    IeltsSpeakingGrammarCriterion:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
-        - type: object
-          required:
-            - criterion_id
-          properties:
-            criterion_id:
-              const: IELTS_GRA
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            type: object
-            required:
-              - estimated_band
-              - band_descriptor
-            properties:
-              reason_codes:
-                type: array
-                contains:
-                  const: ASR_CONFIDENCE_UNAVAILABLE
-    IeltsSpeakingPronunciationCriterion:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
-        - type: object
-          required:
-            - criterion_id
-          properties:
-            criterion_id:
-              const: IELTS_PR
-          oneOf:
-            - required:
-                - estimated_band
-                - band_descriptor
-              properties:
-                scoreability_status:
-                  const: PROVISIONAL
-                gate_status:
-                  const: FEEDBACK_ONLY
-                reason_codes:
-                  type: array
-                  contains:
-                    const: PRACTICE_ESTIMATE_UNCALIBRATED
-            - properties:
-                scoreability_status:
-                  const: INSUFFICIENT
-                gate_status:
-                  const: BLOCKED
-                reason_codes:
-                  type: array
-                  minItems: 1
-                  maxItems: 1
-                  prefixItems:
-                    - const: PRONUNCIATION_ARTIFACT_UNAVAILABLE
-                  items: false
-              not:
-                anyOf:
-                  - required:
-                      - estimated_band
-                  - required:
-                      - band_descriptor
-    IeltsSpeakingReportCriterion:
-      type: object
-      additionalProperties: false
-      required:
-        - criterion_id
-        - scoreability_status
-        - gate_status
-        - explanation
-        - coverage
-        - confidence
-        - reason_codes
-        - evidence_ref_ids
-        - strengths
-        - improvements
-        - upgrade_examples
-      properties:
-        criterion_id:
-          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
-        scoreability_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/IeltsSpeakingReportGateStatus'
-        estimated_band:
-          type: integer
-          minimum: 1
-          maximum: 9
-          description: |
-            Provisional transcript-rubric estimate; never a final or official
-            IELTS result.
-        band_descriptor:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        explanation:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Evidence opportunity coverage metadata, not a score.
-        confidence:
-          type: number
-          const: 0
-          description: |
-            No calibrated ASR confidence source exists in this revision, so
-            the server must publish zero rather than inventing confidence.
-        reason_codes:
-          type: array
-          minItems: 1
-          maxItems: 3
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingReportReasonCode'
-        evidence_ref_ids:
-          type: array
-          maxItems: 128
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        strengths:
-          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
-        improvements:
-          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
-        upgrade_examples:
-          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
-      allOf:
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: PROVISIONAL
-            required:
-              - scoreability_status
-          then:
-            type: object
-            properties:
-              gate_status:
-                const: FEEDBACK_ONLY
-              evidence_ref_ids:
-                type: array
-                minItems: 1
-            anyOf:
-              - properties:
-                  strengths:
-                    type: array
-                    minItems: 1
-              - properties:
-                  improvements:
-                    type: array
-                    minItems: 1
-        - if:
-            type: object
-            properties:
-              scoreability_status:
-                const: INSUFFICIENT
-            required:
-              - scoreability_status
-          then:
-            type: object
-            properties:
-              gate_status:
-                const: BLOCKED
-              reason_codes:
-                type: array
-                items:
-                  enum:
-                    - INSUFFICIENT_EVIDENCE
-                    - OPPORTUNITY_NOT_PROVIDED
-                    - PRONUNCIATION_ARTIFACT_UNAVAILABLE
-              evidence_ref_ids:
-                type: array
-                maxItems: 0
-              strengths:
-                type: array
-                maxItems: 0
-              improvements:
-                type: array
-                maxItems: 0
-              upgrade_examples:
-                type: array
-                maxItems: 0
-            not:
-              anyOf:
-                - required:
-                    - estimated_band
-                - required:
-                    - band_descriptor
-    IeltsSpeakingReportFindings:
-      type: array
-      maxItems: 3
-      items:
-        $ref: '#/components/schemas/IeltsSpeakingReportFinding'
-    IeltsSpeakingReportFinding:
-      type: object
-      additionalProperties: false
-      required:
-        - finding_id
-        - message
-        - evidence
-      properties:
-        finding_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        message:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        suggestion:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-        evidence:
-          type: array
-          minItems: 1
-          maxItems: 8
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingReportEvidence'
-    IeltsSpeakingReportEvidence:
-      type: object
-      additionalProperties: false
-      required:
-        - evidence_ref_id
-        - turn_id
-        - start_utf8_byte
-        - end_utf8_byte
-        - original_excerpt
-      properties:
-        evidence_ref_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        start_utf8_byte:
-          type: integer
-          minimum: 0
-        end_utf8_byte:
-          type: integer
-          minimum: 1
-        original_excerpt:
-          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
-    IeltsSpeakingOverallUnavailable:
-      type: object
-      additionalProperties: false
-      required:
-        - status
-        - explanation
-      properties:
-        status:
-          type: string
-          const: NOT_AVAILABLE
-        explanation:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-    IeltsSpeakingOverallAvailable:
-      type: object
-      additionalProperties: false
-      required:
-        - status
-        - estimated_band
-        - explanation
-      properties:
-        status:
-          type: string
-          const: AVAILABLE
-        estimated_band:
-          type: number
-          minimum: 1
-          maximum: 9
-          multipleOf: 0.5
-        explanation:
-          $ref: '#/components/schemas/IeltsSpeakingReportText'
-    IeltsSpeakingPartId:
-      type: string
-      enum:
-        - PART_1
-        - PART_2
-        - PART_3
-    IeltsSpeakingPracticeReport:
-      type: object
-      additionalProperties: false
-      description: |
-        Canonical section projection for one IELTS standalone practice
-        FormalReport. It groups only questions, evidence and findings that
-        belong to the frozen Part assignment; scores remain in the parent
-        EvaluationFormalReport and no full-mock Overall Band is inferred.
-      required:
-        - schema_version
-        - report_scope
-        - available_sections
-        - questions
-        - section_reviews
-      properties:
-        schema_version:
-          type: string
-          const: ielts-speaking-practice-report/v1
-        report_scope:
-          type: string
-          enum:
-            - PART_1
-            - PART_2_3
-            - PART_3
-        available_sections:
-          type: array
-          minItems: 1
-          maxItems: 2
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingPartId'
-        questions:
-          type: array
-          minItems: 1
-          maxItems: 64
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingPracticeQuestionReview'
-        section_reviews:
-          type: array
-          minItems: 1
-          maxItems: 2
-          items:
-            $ref: '#/components/schemas/IeltsSpeakingPartReview'
-      oneOf:
-        - properties:
-            report_scope:
-              const: PART_1
-            available_sections:
-              prefixItems:
-                - const: PART_1
-              items: false
-            section_reviews:
-              prefixItems:
-                - $ref: '#/components/schemas/IeltsSpeakingPartOneReview'
-              items: false
-        - properties:
-            report_scope:
-              const: PART_2_3
-            available_sections:
-              prefixItems:
-                - const: PART_2
-                - const: PART_3
-              items: false
-            section_reviews:
-              prefixItems:
-                - $ref: '#/components/schemas/IeltsSpeakingPartTwoReview'
-                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
-              items: false
-        - properties:
-            report_scope:
-              const: PART_3
-            available_sections:
-              prefixItems:
-                - const: PART_3
-              items: false
-            section_reviews:
-              prefixItems:
-                - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
-              items: false
-    IeltsSpeakingPracticeQuestionReview:
-      type: object
-      additionalProperties: false
-      required:
-        - question_id
-        - part_id
-        - index
-        - question_text
-        - evidence_ref_ids
-      properties:
-        question_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        part_id:
-          $ref: '#/components/schemas/IeltsSpeakingPartId'
-        index:
-          type: integer
-          minimum: 1
-          maximum: 64
-        question_text:
-          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
-        confirmed_transcript:
-          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
-        response_turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evidence_ref_ids:
-          type: array
-          maxItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-      allOf:
-        - if:
-            required:
-              - response_turn_id
-          then:
-            required:
-              - confirmed_transcript
-            properties:
-              evidence_ref_ids:
-                minItems: 1
-          else:
-            properties:
-              evidence_ref_ids:
-                maxItems: 0
-            not:
-              required:
-                - confirmed_transcript
-    IeltsSpeakingPartReviews:
-      type: array
-      minItems: 3
-      maxItems: 3
-      prefixItems:
-        - $ref: '#/components/schemas/IeltsSpeakingPartOneReview'
-        - $ref: '#/components/schemas/IeltsSpeakingPartTwoReview'
-        - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
-      items: false
-    IeltsSpeakingPartOneReview:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
-        - type: object
-          properties:
-            part_id:
-              const: PART_1
-    IeltsSpeakingPartTwoReview:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
-        - type: object
-          properties:
-            part_id:
-              const: PART_2
-    IeltsSpeakingPartThreeReview:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
-        - type: object
-          properties:
-            part_id:
-              const: PART_3
-    IeltsSpeakingPartReview:
-      type: object
-      additionalProperties: false
-      required:
-        - part_id
-        - question_indexes
-        - evidence_ref_ids
-        - strength_finding_ids
-        - improvement_finding_ids
-        - upgrade_example_finding_ids
-      properties:
-        part_id:
-          $ref: '#/components/schemas/IeltsSpeakingPartId'
-        question_indexes:
-          type: array
-          minItems: 1
-          maxItems: 64
-          uniqueItems: true
-          items:
-            type: integer
-            minimum: 1
-            maximum: 64
-        evidence_ref_ids:
-          type: array
-          maxItems: 128
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        strength_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
-        improvement_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
-        upgrade_example_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingPartFindingIds'
-    IeltsSpeakingQuestionReview:
-      type: object
-      additionalProperties: false
-      required:
-        - question_id
-        - part_id
-        - index
-        - question_text
-        - opportunity_status
-        - assessment_status
-        - evidence_ref_ids
-        - criterion_findings
-      properties:
-        question_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        part_id:
-          $ref: '#/components/schemas/IeltsSpeakingPartId'
-        index:
-          type: integer
-          minimum: 1
-          maximum: 64
-        question_text:
-          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
-        opportunity_status:
-          type: string
-          enum:
-            - PROVIDED
-            - NOT_PROVIDED
-        assessment_status:
-          type: string
-          enum:
-            - ASSESSED
-            - NOT_ASSESSED
-        confirmed_transcript:
-          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
-        response_turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        evidence_ref_ids:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        criterion_findings:
-          $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFindings'
-      allOf:
-        - if:
-            type: object
-            properties:
-              opportunity_status:
-                const: PROVIDED
-            required:
-              - opportunity_status
-          then:
-            type: object
-            required:
-              - confirmed_transcript
-              - response_turn_id
-            properties:
-              assessment_status:
-                const: ASSESSED
-              evidence_ref_ids:
-                type: array
-                minItems: 1
-        - if:
-            type: object
-            properties:
-              opportunity_status:
-                const: NOT_PROVIDED
-            required:
-              - opportunity_status
-          then:
-            type: object
-            properties:
-              assessment_status:
-                const: NOT_ASSESSED
-              evidence_ref_ids:
-                type: array
-                maxItems: 0
-            not:
-              anyOf:
-                - required:
-                    - confirmed_transcript
-                - required:
-                    - response_turn_id
-        - if:
-            type: object
-            properties:
-              assessment_status:
-                const: ASSESSED
-            required:
-              - assessment_status
-          then:
-            type: object
-            properties:
-              opportunity_status:
-                const: PROVIDED
-        - if:
-            type: object
-            properties:
-              assessment_status:
-                const: NOT_ASSESSED
-            required:
-              - assessment_status
-          then:
-            type: object
-            properties:
-              criterion_findings:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    strength_finding_ids:
-                      type: array
-                      maxItems: 0
-                    improvement_finding_ids:
-                      type: array
-                      maxItems: 0
-                    upgrade_example_finding_ids:
-                      type: array
-                      maxItems: 0
-    IeltsSpeakingQuestionCriterionFindings:
-      type: array
-      minItems: 4
-      maxItems: 4
-      prefixItems:
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionFcFindings'
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionLrFindings'
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionGraFindings'
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionPrFindings'
-      items: false
-    IeltsSpeakingQuestionFcFindings:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
-        - type: object
-          properties:
-            criterion_id:
-              const: IELTS_FC
-    IeltsSpeakingQuestionLrFindings:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
-        - type: object
-          properties:
-            criterion_id:
-              const: IELTS_LR
-    IeltsSpeakingQuestionGraFindings:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
-        - type: object
-          properties:
-            criterion_id:
-              const: IELTS_GRA
-    IeltsSpeakingQuestionPrFindings:
-      allOf:
-        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
-        - type: object
-          properties:
-            criterion_id:
-              const: IELTS_PR
-            strength_finding_ids:
-              type: array
-              maxItems: 0
-            improvement_finding_ids:
-              type: array
-              maxItems: 0
-            upgrade_example_finding_ids:
-              type: array
-              maxItems: 0
-    IeltsSpeakingQuestionCriterionFinding:
-      type: object
-      additionalProperties: false
-      required:
-        - criterion_id
-        - strength_finding_ids
-        - improvement_finding_ids
-        - upgrade_example_finding_ids
-      properties:
-        criterion_id:
-          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
-        strength_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
-        improvement_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
-        upgrade_example_finding_ids:
-          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
-    IeltsSpeakingFindingIds:
-      type: array
-      maxItems: 3
-      uniqueItems: true
-      items:
-        $ref: '#/components/schemas/StableIdentifier'
-    IeltsSpeakingPartFindingIds:
-      type: array
-      maxItems: 36
-      uniqueItems: true
-      items:
-        $ref: '#/components/schemas/StableIdentifier'
-    IeltsSpeakingTargetPlan:
-      type: object
-      additionalProperties: false
-      required:
-        - status
-      properties:
-        status:
-          type: string
-          const: NOT_CONFIGURED
-    IeltsSpeakingPriorityAction:
-      type: object
-      additionalProperties: false
-      required:
-        - criterion_id
-        - finding_id
-      properties:
-        criterion_id:
-          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
-        finding_id:
-          $ref: '#/components/schemas/StableIdentifier'
-    IeltsSpeakingReportFailure:
-      type: object
-      additionalProperties: false
-      required:
-        - reason_code
-        - retryable
-      properties:
-        reason_code:
-          type: string
-          enum:
-            - POLICY_VIOLATION
-            - EVIDENCE_REF_INVALID
-            - VERSION_CONFLICT
-            - INTERNAL_RETRYABLE
-            - INTERNAL_NON_RETRYABLE
-        retryable:
-          type: boolean
-      allOf:
-        - if:
-            type: object
-            properties:
-              reason_code:
-                const: INTERNAL_RETRYABLE
-            required:
-              - reason_code
-          then:
-            type: object
-            properties:
-              retryable:
-                const: true
-        - if:
-            type: object
-            properties:
-              reason_code:
-                enum:
-                  - POLICY_VIOLATION
-                  - EVIDENCE_REF_INVALID
-                  - VERSION_CONFLICT
-                  - INTERNAL_NON_RETRYABLE
-            required:
-              - reason_code
-          then:
-            type: object
-            properties:
-              retryable:
-                const: false
-    IeltsSpeakingReportText:
-      type: string
-      minLength: 1
-      maxLength: 2048
-      pattern: '^\S(?:[\s\S]*\S)?$'
-      description: |
-        Server-controlled rubric descriptor or validated feedback text; never
-        unvalidated provider prose. Runtime validation measures UTF-8 bytes
-        and requires a trimmed, non-empty value no larger than 2048 bytes; the
-        schema shape and maxLength remain unchanged.
-    IeltsSpeakingReportSourceText:
-      type: string
-      minLength: 1
-      maxLength: 16384
-      pattern: '^\S(?:[\s\S]*\S)?$'
-    Evaluation:
-      $ref: '#/components/schemas/EvaluationCommonProperties'
-    EvaluationCommonProperties:
-      type: object
-      additionalProperties: false
-      required:
-        - evaluation_id
-        - evaluation_revision_id
-        - revision
-        - practice_session_id
-        - input_snapshot_id
-        - input_revision
-        - scope
-        - scene_type
-        - channels
-        - pipeline_version
-        - schema_version
-        - evaluation_status
-        - module_statuses
-        - is_final
-        - created_at
-        - updated_at
-      properties:
-        evaluation_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        evaluation_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        revision:
-          type: integer
-          minimum: 1
-        supersedes_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        superseded_by_revision_id:
-          $ref: '#/components/schemas/EvaluationUUID'
-        practice_session_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        input_snapshot_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        input_revision:
-          type: integer
-          minimum: 1
-        scope:
-          $ref: '#/components/schemas/EvaluationScope'
-        scene_type:
-          $ref: '#/components/schemas/EvaluationSceneType'
-        channels:
-          type: array
-          minItems: 1
-          maxItems: 2
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationChannel'
-        scene_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        core_4d_strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        pipeline_version:
-          $ref: '#/components/schemas/VersionReference'
-        schema_version:
-          $ref: '#/components/schemas/VersionReference'
-        evaluation_status:
-          $ref: '#/components/schemas/EvaluationStatus'
-        scoreability_status:
-          $ref: '#/components/schemas/ScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/GateStatus'
-        module_statuses:
-          type: object
-          minProperties: 1
-          maxProperties: 32
-          propertyNames:
-            pattern: '^[a-z][a-z0-9_]{0,63}$'
-          additionalProperties:
-            $ref: '#/components/schemas/ModuleStatus'
-        scene_result:
-          $ref: '#/components/schemas/SceneEvaluationResult'
-        core_4d_observations:
-          type: array
-          maxItems: 4
-          items:
-            $ref: '#/components/schemas/CoreAbilityObservation'
-        stable_failure:
-          $ref: '#/components/schemas/EvaluationFailure'
-        is_final:
-          type: boolean
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-        completed_at:
-          type: string
-          format: date-time
-      allOf:
-        - if:
-            properties:
-              evaluation_status:
-                type: string
-                const: READY
-            required:
-              - evaluation_status
-          then:
-            required:
-              - scoreability_status
-              - gate_status
-              - completed_at
-            anyOf:
-              - required:
-                  - scene_result
-              - required:
-                  - core_4d_observations
-        - if:
-            properties:
-              evaluation_status:
-                type: string
-                const: FAILED
-            required:
-              - evaluation_status
-          then:
-            required:
-              - stable_failure
-              - completed_at
-            not:
-              anyOf:
-                - required:
-                    - scoreability_status
-                - required:
-                    - gate_status
-                - required:
-                    - scene_result
-                - required:
-                    - core_4d_observations
-        - if:
-            properties:
-              evaluation_status:
-                type: string
-                const: SUPERSEDED
-            required:
-              - evaluation_status
-          then:
-            required:
-              - superseded_by_revision_id
-    EvaluationFailure:
-      type: object
-      additionalProperties: false
-      required:
-        - reason_code
-        - retryable
-      properties:
-        reason_code:
-          $ref: '#/components/schemas/EvaluationReasonCode'
-        retryable:
-          type: boolean
-    SceneEvaluationResult:
-      $ref: '#/components/schemas/SceneResultCommonProperties'
-    SceneResultCommonProperties:
-      type: object
-      additionalProperties: false
-      required:
-        - scene_type
-        - dimensions
-        - task_results
-        - question_results
-        - core4_observation_refs
-        - evaluation_status
-        - scoreability_status
-        - gate_status
-        - module_statuses
-        - strategy_ref
-        - aggregation_version
-        - calibration_version
-        - full_config_hash
-        - is_final
-      properties:
-        scene_type:
-          $ref: '#/components/schemas/EvaluationSceneType'
-        dimensions:
-          type: array
-          minItems: 1
-          maxItems: 5
-          items:
-            $ref: '#/components/schemas/SceneDimension'
-        task_results:
-          type: array
-          maxItems: 64
-          items:
-            $ref: '#/components/schemas/SceneTaskResult'
-        question_results:
-          type: array
-          maxItems: 128
-          items:
-            $ref: '#/components/schemas/QuestionEvaluationResult'
-        core4_observation_refs:
-          type: array
-          maxItems: 4
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        evaluation_status:
-          type: string
-          enum:
-            - PARTIAL_READY
-            - READY
-        scoreability_status:
-          $ref: '#/components/schemas/ScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/GateStatus'
-        module_statuses:
-          type: object
-          minProperties: 1
-          maxProperties: 32
-          propertyNames:
-            pattern: '^[a-z][a-z0-9_]{0,63}$'
-          additionalProperties:
-            $ref: '#/components/schemas/ModuleStatus'
-        strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        aggregation_version:
-          $ref: '#/components/schemas/VersionReference'
-        calibration_version:
-          $ref: '#/components/schemas/CalibrationVersion'
-        full_config_hash:
-          $ref: '#/components/schemas/ConfigHash'
-        is_final:
-          type: boolean
-        overall_raw:
-          type: number
-          minimum: 0
-          maximum: 9
-        overall_display:
-          type: number
-          minimum: 0
-          maximum: 9
-          multipleOf: 0.5
-        overall_rounding_rule:
-          type: string
-          const: HALF_UP_TO_0_5
-        readiness_level:
-          type: string
-          enum:
-            - HIGH
-            - MEDIUM
-            - LOW
-            - NOT_ASSESSED
-      allOf:
-        - if:
-            properties:
-              scene_type:
-                type: string
-                const: IELTS_SPEAKING
-            required:
-              - scene_type
-          then:
-            not:
-              required:
-                - readiness_level
-            allOf:
-              - if:
-                  properties:
-                    gate_status:
-                      type: string
-                      const: PASS
-                  required:
-                    - gate_status
-                then:
-                  required:
-                    - overall_raw
-                    - overall_display
-                    - overall_rounding_rule
-                else:
-                  not:
-                    anyOf:
-                      - required:
-                          - overall_raw
-                      - required:
-                          - overall_display
-                      - required:
-                          - overall_rounding_rule
-          else:
-            not:
-              anyOf:
-                - required:
-                    - overall_raw
-                - required:
-                    - overall_display
-                - required:
-                    - overall_rounding_rule
-        - if:
-            properties:
-              scene_type:
-                type: string
-                const: INTERVIEW
-            required:
-              - scene_type
-          then:
-            required:
-              - readiness_level
-          else:
-            not:
-              required:
-                - readiness_level
-    SceneTaskResult:
-      type: object
-      additionalProperties: false
-      required:
-        - task_blueprint_ref
-        - opportunity_status
-        - outcome_status
-        - reason_codes
-        - evidence_refs
-      properties:
-        task_blueprint_ref:
-          $ref: '#/components/schemas/VersionReference'
-        opportunity_status:
-          type: string
-          enum:
-            - PROVIDED
-            - NOT_PROVIDED
-        outcome_status:
-          type: string
-          enum:
-            - ACHIEVED
-            - PARTIAL
-            - NOT_ACHIEVED
-            - NOT_ASSESSED
-        reason_codes:
-          type: array
-          maxItems: 16
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationReasonCode'
-        evidence_refs:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvidenceRef'
-      allOf:
-        - if:
-            properties:
-              opportunity_status:
-                type: string
-                const: NOT_PROVIDED
-            required:
-              - opportunity_status
-          then:
-            properties:
-              outcome_status:
-                type: string
-                const: NOT_ASSESSED
-              reason_codes:
-                type: array
-                minItems: 1
-    QuestionEvaluationResult:
-      type: object
-      additionalProperties: false
-      required:
-        - question_id
-        - opportunity_status
-        - response_turn_ids
-        - dimension_evidence
-        - evidence_refs
-        - confidence
-        - module_status
-      properties:
-        question_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        opportunity_status:
-          type: string
-          enum:
-            - PROVIDED
-            - NOT_PROVIDED
-        response_turn_ids:
-          type: array
-          maxItems: 32
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-        dimension_evidence:
-          type: array
-          maxItems: 17
-          items:
-            $ref: '#/components/schemas/QuestionDimensionEvidence'
-        evidence_refs:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvidenceRef'
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-        module_status:
-          $ref: '#/components/schemas/ModuleStatus'
-    QuestionDimensionEvidence:
-      type: object
-      additionalProperties: false
-      required:
-        - dimension_id
-        - coverage
-        - probe_weight
-        - gate_status
-        - reason_codes
-        - evidence_refs
-      properties:
-        dimension_id:
-          type: string
-          enum:
-            - IELTS_FC
-            - IELTS_LR
-            - IELTS_GRA
-            - IELTS_PR
-            - INTERVIEW_RELEVANCE
-            - INTERVIEW_STRUCTURE
-            - INTERVIEW_EVIDENCE
-            - INTERVIEW_PROFESSIONAL
-            - INTERVIEW_INTERACTION
-            - DAILY_GOAL_ACHIEVEMENT
-            - DAILY_CLARITY_ACCURACY
-            - DAILY_INTERACTION
-            - DAILY_APPROPRIATENESS
-            - WORKPLACE_TASK_PROGRESS
-            - WORKPLACE_CLARITY
-            - WORKPLACE_COLLABORATION
-            - WORKPLACE_PROFESSIONALISM
-        question_score:
-          type: number
-          minimum: 0
-          maximum: 100
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-        probe_weight:
-          type: number
-          exclusiveMinimum: 0
-          maximum: 1
-        gate_status:
-          $ref: '#/components/schemas/GateStatus'
-        reason_codes:
-          type: array
-          maxItems: 16
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationReasonCode'
-        evidence_refs:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvidenceRef'
-      allOf:
-        - if:
-            properties:
-              gate_status:
-                type: string
-                const: PASS
-            required:
-              - gate_status
-          then:
-            required:
-              - question_score
-            properties:
-              evidence_refs:
-                type: array
-                minItems: 1
-          else:
-            properties:
-              reason_codes:
-                type: array
-                minItems: 1
-            not:
-              required:
-                - question_score
-    SceneDimension:
-      $ref: '#/components/schemas/SceneDimensionCommonProperties'
-    SceneDimensionCommonProperties:
-      type: object
-      additionalProperties: false
-      required:
-        - dimension_id
-        - rounding_rule
-        - scoreability_status
-        - gate_status
-        - confidence
-        - coverage
-        - reason_codes
-        - evidence_refs
-      properties:
-        dimension_id:
-          type: string
-          enum:
-            - IELTS_FC
-            - IELTS_LR
-            - IELTS_GRA
-            - IELTS_PR
-            - INTERVIEW_RELEVANCE
-            - INTERVIEW_STRUCTURE
-            - INTERVIEW_EVIDENCE
-            - INTERVIEW_PROFESSIONAL
-            - INTERVIEW_INTERACTION
-            - DAILY_GOAL_ACHIEVEMENT
-            - DAILY_CLARITY_ACCURACY
-            - DAILY_INTERACTION
-            - DAILY_APPROPRIATENESS
-            - WORKPLACE_TASK_PROGRESS
-            - WORKPLACE_CLARITY
-            - WORKPLACE_COLLABORATION
-            - WORKPLACE_PROFESSIONALISM
-        rounding_rule:
-          $ref: '#/components/schemas/RoundingRule'
-        scoreability_status:
-          $ref: '#/components/schemas/ScoreabilityStatus'
-        gate_status:
-          $ref: '#/components/schemas/GateStatus'
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-        reason_codes:
-          type: array
-          maxItems: 16
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationReasonCode'
-        evidence_refs:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvidenceRef'
-        raw:
-          type: number
-          minimum: 0
-          maximum: 100
-        display:
-          type: number
-          minimum: 0
-          maximum: 100
-        interval:
-          $ref: '#/components/schemas/ScoreInterval'
-      allOf:
-        - if:
-            properties:
-              gate_status:
-                type: string
-                const: PASS
-            required:
-              - gate_status
-          then:
-            required:
-              - raw
-              - display
-            properties:
-              evidence_refs:
-                type: array
-                minItems: 1
-          else:
-            required:
-              - reason_codes
-            properties:
-              reason_codes:
-                type: array
-                minItems: 1
-            not:
-              anyOf:
-                - required:
-                    - raw
-                - required:
-                    - display
-                - required:
-                    - interval
-    ScoreInterval:
-      type: array
-      minItems: 2
-      maxItems: 2
-      prefixItems:
-        - type: number
-          minimum: 0
-          maximum: 100
-        - type: number
-          minimum: 0
-          maximum: 100
-      items: false
-    CoreAbilityObservation:
-      $ref: '#/components/schemas/CoreAbilityCommonProperties'
-    CoreAbilityCommonProperties:
-      type: object
-      additionalProperties: false
-      required:
-        - observation_id
-        - dimension
-        - weights
-        - rounding_rule
-        - confidence
-        - coverage
-        - gate_status
-        - reason_codes
-        - evidence_refs
-        - profile_update_eligible
-        - strategy_ref
-        - aggregation_version
-        - calibration_version
-        - full_config_hash
-      properties:
-        observation_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        dimension:
-          type: string
-          enum:
-            - PRONUNCIATION
-            - FLUENCY
-            - VOCABULARY
-            - GRAMMAR
-        weights:
-          type: array
-          minItems: 1
-          maxItems: 16
-          items:
-            $ref: '#/components/schemas/NamedWeight'
-        rounding_rule:
-          type: string
-          const: HALF_UP_TO_INTEGER
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-        coverage:
-          type: number
-          minimum: 0
-          maximum: 1
-        gate_status:
-          $ref: '#/components/schemas/GateStatus'
-        reason_codes:
-          type: array
-          maxItems: 16
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvaluationReasonCode'
-        evidence_refs:
-          type: array
-          maxItems: 64
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/EvidenceRef'
-        profile_update_eligible:
-          type: boolean
-        strategy_ref:
-          $ref: '#/components/schemas/VersionReference'
-        aggregation_version:
-          $ref: '#/components/schemas/VersionReference'
-        calibration_version:
-          $ref: '#/components/schemas/CalibrationVersion'
-        full_config_hash:
-          $ref: '#/components/schemas/ConfigHash'
-        raw_score:
-          type: number
-          minimum: 0
-          maximum: 100
-        display_score:
-          type: integer
-          minimum: 0
-          maximum: 100
-        interval:
-          $ref: '#/components/schemas/ScoreInterval'
-      allOf:
-        - if:
-            properties:
-              gate_status:
-                type: string
-                const: PASS
-            required:
-              - gate_status
-          then:
-            required:
-              - raw_score
-              - display_score
-            properties:
-              evidence_refs:
-                type: array
-                minItems: 1
-          else:
-            required:
-              - reason_codes
-              - profile_update_eligible
-            properties:
-              reason_codes:
-                type: array
-                minItems: 1
-              profile_update_eligible:
-                type: boolean
-                const: false
-            not:
-              anyOf:
-                - required:
-                    - raw_score
-                - required:
-                    - display_score
-                - required:
-                    - interval
-    NamedWeight:
-      type: object
-      additionalProperties: false
-      required:
-        - key
-        - value
-      properties:
-        key:
-          type: string
-          minLength: 1
-          maxLength: 64
-          pattern: '^[a-z][a-z0-9_]*$'
-        value:
-          type: number
-          exclusiveMinimum: 0
-          maximum: 1
-    EvidenceRef:
-      type: object
-      additionalProperties: false
-      required:
-        - evidence_ref_id
-        - snapshot_id
-        - turn_id
-        - speaker
-        - quality
-        - lineage
-      properties:
-        evidence_ref_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        snapshot_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        turn_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        speaker:
-          type: string
-          enum:
-            - USER
-            - FACILITATOR
-        transcript_span:
-          $ref: '#/components/schemas/TranscriptSpan'
-        audio_span:
-          $ref: '#/components/schemas/AudioSpan'
-        quality:
-          $ref: '#/components/schemas/EvidenceQuality'
-        lineage:
-          $ref: '#/components/schemas/EvidenceLineage'
-      anyOf:
-        - required:
-            - transcript_span
-        - required:
-            - audio_span
-    TranscriptSpan:
-      type: object
-      additionalProperties: false
-      required:
-        - start_utf8_byte
-        - end_utf8_byte
-      properties:
-        start_utf8_byte:
-          type: integer
-          minimum: 0
-        end_utf8_byte:
-          type: integer
-          minimum: 1
-        token_ids:
-          type: array
-          maxItems: 256
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/StableIdentifier'
-    AudioSpan:
-      type: object
-      additionalProperties: false
-      required:
-        - audio_asset_id
-        - start_ms
-        - end_ms
-      properties:
-        audio_asset_id:
-          $ref: '#/components/schemas/StableIdentifier'
-        start_ms:
-          type: integer
-          minimum: 0
-        end_ms:
-          type: integer
-          minimum: 1
-    EvidenceQuality:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        audio:
-          type: number
-          minimum: 0
-          maximum: 1
-        asr:
-          type: number
-          minimum: 0
-          maximum: 1
-        alignment:
-          type: number
-          minimum: 0
-          maximum: 1
-    EvidenceLineage:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        asr_artifact:
-          $ref: '#/components/schemas/ArtifactDigest'
-        feature_artifact:
-          $ref: '#/components/schemas/ArtifactDigest'
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'

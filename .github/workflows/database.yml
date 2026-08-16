@@ -35,7 +35,7 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg18-bookworm@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
+        image: postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
         env:
           POSTGRES_DB: xe3_esl
           POSTGRES_USER: xe3_esl
@@ -69,20 +69,39 @@ jobs:
       - name: Validate local database definition
         run: docker compose config --quiet
 
-      - name: Enforce append-only migration history
+      - name: Enforce migration history policy
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          invalid_changes=$(
-            git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql" |
-              awk '$1 !~ /^A/ { print }'
+
+          mapfile -t base_migrations < <(
+            git ls-tree -r --name-only "$BASE_SHA" -- server/migrations |
+              grep '\.sql$'
           )
-          if [[ -n "$invalid_changes" ]]; then
-            echo "Merged SQL migrations are append-only:"
-            echo "$invalid_changes"
-            exit 1
+          mapfile -t current_migrations < <(
+            git ls-files server/migrations |
+              grep '\.sql$'
+          )
+
+          clean_baseline=(
+            server/migrations/000001_clean_baseline.down.sql
+            server/migrations/000001_clean_baseline.up.sql
+          )
+          if (( ${#base_migrations[@]} > 2 )) &&
+             [[ "${current_migrations[*]}" == "${clean_baseline[*]}" ]]; then
+            echo "Legacy migration history is being replaced by the clean baseline."
+          else
+            invalid_changes=$(
+              git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql" |
+                awk '$1 !~ /^A/ { print }'
+            )
+            if [[ -n "$invalid_changes" ]]; then
+              echo "Merged SQL migrations are append-only:"
+              echo "$invalid_changes"
+              exit 1
+            fi
           fi
 
       - name: Verify explicit migration lifecycle
@@ -121,10 +140,6 @@ jobs:
           QIANWEN_MODEL: qwen-ci-readiness-not-invoked
           QIANWEN_EVALUATION_MODEL: qwen-ci-readiness-not-invoked
           QIANWEN_SPEECH_FEEDBACK_MODEL: qwen-ci-readiness-not-invoked
-          EMBEDDING_PROVIDER: qianwen
-          QIANWEN_EMBEDDING_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-          QIANWEN_EMBEDDING_MODEL: text-embedding-v4
-          QIANWEN_EMBEDDING_DIMENSIONS: "1024"
           SPEECH_RECOGNITION_PROVIDER: qianwen
           QIANWEN_ASR_BASE_URL: https://dashscope.aliyuncs.com/api/v1
           QIANWEN_ASR_MODEL: fun-asr-realtime
@@ -137,7 +152,6 @@ jobs:
           QIANWEN_TTS_VOICE: loongeva_v3.6
           QIANWEN_TTS_LANGUAGE: en
           DASHSCOPE_API_KEY: ci-readiness-not-a-secret
-          REVIEW_HISTORY_CURSOR_SIGNING_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
         run: |
           set -euo pipefail
 

@@ -20,8 +20,10 @@ var (
 )
 
 var (
-	roleTypePattern    = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
-	objectiveIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
+	resourceIDPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	policyReferencePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
+	roleTypePattern        = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	objectiveIDPattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
 )
 
 // CatalogReader is Scene's read-only application boundary.
@@ -55,10 +57,9 @@ func (validate EvaluationPolicyReferenceValidatorFunc) ValidateEvaluationPolicyR
 	return validate(reference)
 }
 
-// AccessibleSelectionReader resolves the latest active Scene version visible
-// to one user. Public Scenes are visible to every user; private Scenes are
-// visible only to their owner. It is separate from CatalogReader because the
-// anonymous HTTP catalog intentionally exposes public Scenes only.
+// AccessibleSelectionReader resolves an active built-in Scene for an
+// authenticated user. The user identifier remains part of the application
+// boundary even though built-in Scene content is public.
 type AccessibleSelectionReader interface {
 	ResolveAccessibleSelection(
 		ctx context.Context,
@@ -70,8 +71,7 @@ type AccessibleSelectionReader interface {
 	) (SelectionSnapshot, error)
 }
 
-// Catalog is an immutable in-process collection for deterministic tests and
-// local smoke composition. Production uses PostgresCatalog.
+// Catalog is the immutable in-process authority for built-in Scene content.
 type Catalog struct {
 	scenes []SceneDefinition
 }
@@ -399,7 +399,7 @@ func validateScene(
 }
 
 func validResourceID(value string) bool {
-	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value
+	return resourceIDPattern.MatchString(value)
 }
 
 func nonBlank(value string) bool {
@@ -407,7 +407,8 @@ func nonBlank(value string) bool {
 }
 
 func validPolicyRef(value, suffix string) bool {
-	return len(value) <= 128 && nonBlank(value) && strings.HasSuffix(value, suffix)
+	return len(value) <= 128 && policyReferencePattern.MatchString(value) &&
+		strings.HasSuffix(value, suffix)
 }
 
 func validStringSet(values []string) bool {

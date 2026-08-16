@@ -1,18 +1,15 @@
 package report
 
 import (
-	"encoding/json"
 	"math"
-	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/evidence"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 )
 
-const FormalReportSchemaVersion = "evaluation-report/v1"
+const FormalReportSchemaVersion = "evaluation-report/v2"
 
 type ReportScoreability string
 
@@ -25,9 +22,11 @@ type ReportScoreScale string
 
 const (
 	ReportScalePercentage100 ReportScoreScale = "PERCENTAGE_100"
-	ReportScaleIELTSBand     ReportScoreScale = "IELTS_BAND"
+	ReportScaleIELTSBand     ReportScoreScale = "IELTS_BAND_9"
 )
 
+// FormalReport is the only user-facing session report. Scene-specific
+// evaluators share this envelope instead of persisting parallel report models.
 type FormalReport struct {
 	SchemaVersion      string                 `json:"schema_version"`
 	SceneType          evaluation.SceneType   `json:"scene_type"`
@@ -36,15 +35,29 @@ type FormalReport struct {
 	PracticeMode       string                 `json:"practice_mode"`
 	ScoreabilityStatus ReportScoreability     `json:"scoreability_status"`
 	Summary            string                 `json:"summary"`
+	Questions          []ReportQuestion       `json:"questions"`
 	Dimensions         []ReportDimension      `json:"dimensions"`
 	PriorityActions    []ReportPriorityAction `json:"priority_actions"`
-	DetailSchema       string                 `json:"detail_schema"`
-	Detail             json.RawMessage        `json:"detail"`
+}
+
+// ReportQuestion is the deterministic Practice evidence projection shown in a
+// session report. Evaluators never generate or rewrite Questions or Answers.
+type ReportQuestion struct {
+	ID               string        `json:"question_id"`
+	Position         int           `json:"position"`
+	ParentQuestionID string        `json:"parent_question_id,omitempty"`
+	Text             string        `json:"text"`
+	Answer           *ReportAnswer `json:"answer"`
+}
+
+type ReportAnswer struct {
+	TurnID     string `json:"turn_id"`
+	Transcript string `json:"transcript"`
 }
 
 type ReportDimension struct {
 	Key          string           `json:"key"`
-	Score        *float64         `json:"score,omitempty"`
+	Score        *float64         `json:"score"`
 	Scale        ReportScoreScale `json:"scale"`
 	Coverage     float64          `json:"coverage"`
 	Confidence   float64          `json:"confidence"`
@@ -76,208 +89,97 @@ type ReportPriorityAction struct {
 }
 
 type StoredFormalReport struct {
-	ReportID             string       `json:"report_id"`
-	EvaluationID         string       `json:"evaluation_id"`
-	EvaluationRevisionID string       `json:"evaluation_revision_id"`
-	OwnerUserID          string       `json:"-"`
-	PracticeSessionID    string       `json:"practice_session_id"`
-	Revision             int          `json:"revision"`
-	Report               FormalReport `json:"report"`
-	CreatedAt            time.Time    `json:"created_at"`
+	ReportID          string       `json:"report_id"`
+	EvaluationID      string       `json:"evaluation_id"`
+	OwnerUserID       string       `json:"-"`
+	PracticeSessionID string       `json:"practice_session_id"`
+	Report            FormalReport `json:"report"`
+	CreatedAt         time.Time    `json:"created_at"`
 }
 
-func ProjectInterviewFormalReport(
-	snapshot evidence.EvidenceSnapshot,
-	result scoring.InterviewShadowResult,
-) (FormalReport, error) {
-	detail, err := ProjectInterviewReport(snapshot, result)
-	if err != nil {
-		return FormalReport{}, err
-	}
-	practiceContext, err := reportPracticeContext(snapshot)
-	if err != nil {
-		return FormalReport{}, err
-	}
-	report := FormalReport{
-		SchemaVersion:      FormalReportSchemaVersion,
-		SceneType:          evaluation.SceneInterview,
-		PracticeExperience: practiceContext.PracticeExperience,
-		SceneCategory:      practiceContext.SceneCategory,
-		PracticeMode:       practiceContext.PracticeMode,
-		ScoreabilityStatus: ReportScoreabilityProvisional,
-		Summary:            "本次练习已形成面试表达评估，可按优先行动继续复练。",
-		Dimensions:         make([]ReportDimension, len(detail.Dimensions)),
-		PriorityActions:    make([]ReportPriorityAction, len(detail.PriorityActions)),
-		DetailSchema:       detail.SchemaVersion,
-	}
-	if detail.ScoreabilityStatus == scoring.InterviewScoreabilityInsufficient {
-		report.ScoreabilityStatus = ReportScoreabilityInsufficient
-		report.Summary = "本次练习的有效证据不足，暂不形成能力结论。"
-	}
-	for index, dimension := range detail.Dimensions {
-		projected := ReportDimension{
-			Key:          string(dimension.DimensionID),
-			Scale:        ReportScalePercentage100,
-			Coverage:     dimension.Coverage,
-			Confidence:   dimension.Confidence,
-			ReasonCodes:  stringValues(dimension.ReasonCodes),
-			EvidenceRefs: slices.Clone(dimension.EvidenceRefIDs),
-			Strengths:    interviewReportFindings(dimension.Strengths),
-			Improvements: interviewReportFindings(dimension.Improvements),
-			Examples: interviewReportFindings(
-				dimension.RecommendedExpressions,
-			),
-		}
-		if dimension.Score != nil {
-			value := float64(*dimension.Score)
-			projected.Score = &value
-		}
-		report.Dimensions[index] = projected
-	}
-	for index, action := range detail.PriorityActions {
-		report.PriorityActions[index] = ReportPriorityAction{
-			DimensionKey: string(action.DimensionID),
-			FindingID:    action.FindingID,
-		}
-	}
-	report.Detail, err = json.Marshal(detail)
-	if err != nil || !report.Valid() {
-		return FormalReport{}, evaluation.ErrInvalidRequest
-	}
-	return report, nil
-}
-
-func ProjectIELTSFormalReport(
-	snapshot evidence.EvidenceSnapshot,
-	result scoring.IELTSSpeakingShadowResult,
-) (FormalReport, error) {
-	practiceContext, err := reportPracticeContext(snapshot)
-	if err != nil {
-		return FormalReport{}, err
-	}
-	var detail any
-	if practiceContext.PracticeMode == "FULL_MOCK" {
-		detail, err = ProjectIELTSSpeakingReport(snapshot, result)
-	} else {
-		detail, err = ProjectIELTSSpeakingBandPracticeReport(snapshot, result)
-	}
-	if err != nil {
-		return FormalReport{}, err
-	}
-	report := FormalReport{
-		SchemaVersion:      FormalReportSchemaVersion,
-		SceneType:          evaluation.SceneIELTSSpeaking,
-		PracticeExperience: practiceContext.PracticeExperience,
-		SceneCategory:      practiceContext.SceneCategory,
-		PracticeMode:       practiceContext.PracticeMode,
-		ScoreabilityStatus: ReportScoreabilityProvisional,
-		Summary:            "本次练习已形成 IELTS 口语评估，可按优先行动继续复练。",
-		Dimensions:         make([]ReportDimension, len(result.Criteria)),
-		PriorityActions:    []ReportPriorityAction{},
-	}
-	switch value := detail.(type) {
-	case IELTSSpeakingReport:
-		report.DetailSchema = value.SchemaVersion
-	case IELTSSpeakingPracticeReport:
-		report.DetailSchema = value.SchemaVersion
-	default:
-		return FormalReport{}, evaluation.ErrInvalidRequest
-	}
-	if result.Scoreability == scoring.IELTSSpeakingScoreabilityInsufficient {
-		report.ScoreabilityStatus = ReportScoreabilityInsufficient
-		report.Summary = "本次练习的有效证据不足，暂不形成能力结论。"
-	}
-	for index, criterion := range result.Criteria {
-		projected := ReportDimension{
-			Key:          string(criterion.CriterionID),
-			Scale:        ReportScaleIELTSBand,
-			Coverage:     criterion.Coverage,
-			Confidence:   criterion.Confidence,
-			ReasonCodes:  stringValues(criterion.ReasonCodes),
-			EvidenceRefs: slices.Clone(criterion.EvidenceRefIDs),
-			Strengths:    ieltsReportFindings(criterion.Strengths),
-			Improvements: ieltsReportFindings(criterion.Improvements),
-			Examples:     ieltsReportFindings(criterion.UpgradeExamples),
-		}
-		if criterion.EstimatedBand != nil {
-			value := float64(*criterion.EstimatedBand)
-			projected.Score = &value
-		}
-		report.Dimensions[index] = projected
-	}
-	for _, action := range projectIELTSSpeakingPriorityActions(result.Criteria) {
-		report.PriorityActions = append(
-			report.PriorityActions,
-			ReportPriorityAction{
-				DimensionKey: string(action.CriterionID),
-				FindingID:    action.FindingID,
-			},
-		)
-	}
-	report.Detail, err = json.Marshal(detail)
-	if err != nil || !report.Valid() {
-		return FormalReport{}, evaluation.ErrInvalidRequest
-	}
-	return report, nil
-}
-
-func (report FormalReport) Valid() bool {
-	if report.SchemaVersion != FormalReportSchemaVersion ||
-		!validSceneType(report.SceneType) ||
-		!validIdentifier(report.PracticeExperience) ||
-		!validIdentifier(report.SceneCategory) ||
-		!validIdentifier(report.PracticeMode) ||
-		(report.ScoreabilityStatus != ReportScoreabilityProvisional &&
-			report.ScoreabilityStatus != ReportScoreabilityInsufficient) ||
-		strings.TrimSpace(report.Summary) == "" ||
-		len(report.Summary) > 2048 || len(report.Dimensions) == 0 ||
-		len(report.Dimensions) > 16 || report.PriorityActions == nil ||
-		len(report.PriorityActions) > 5 ||
-		!validVersion(report.DetailSchema) || len(report.Detail) == 0 ||
-		len(report.Detail) > 256*1024 {
+func (value FormalReport) Valid() bool {
+	if value.SchemaVersion != FormalReportSchemaVersion ||
+		!validSceneType(value.SceneType) ||
+		!validIdentifier(value.PracticeExperience) ||
+		!validIdentifier(value.SceneCategory) ||
+		!validIdentifier(value.PracticeMode) ||
+		(value.ScoreabilityStatus != ReportScoreabilityProvisional &&
+			value.ScoreabilityStatus != ReportScoreabilityInsufficient) ||
+		!validText(value.Summary, 2048) || len(value.Questions) == 0 ||
+		len(value.Questions) > 128 || len(value.Dimensions) == 0 ||
+		len(value.Dimensions) > 8 || value.PriorityActions == nil ||
+		len(value.PriorityActions) > 5 {
 		return false
 	}
-	var detail map[string]json.RawMessage
-	if err := json.Unmarshal(report.Detail, &detail); err != nil || detail == nil {
-		return false
+	questionIDs := make(map[string]struct{}, len(value.Questions))
+	positions := make(map[int]struct{}, len(value.Questions))
+	answerTurnIDs := make(map[string]struct{}, len(value.Questions))
+	for _, question := range value.Questions {
+		if !question.valid() {
+			return false
+		}
+		if _, duplicate := questionIDs[question.ID]; duplicate {
+			return false
+		}
+		if _, duplicate := positions[question.Position]; duplicate {
+			return false
+		}
+		questionIDs[question.ID] = struct{}{}
+		positions[question.Position] = struct{}{}
+		if question.Answer != nil {
+			if _, duplicate := answerTurnIDs[question.Answer.TurnID]; duplicate {
+				return false
+			}
+			answerTurnIDs[question.Answer.TurnID] = struct{}{}
+		}
 	}
-	seen := make(map[string]struct{}, len(report.Dimensions))
+	for _, question := range value.Questions {
+		if question.ParentQuestionID != "" {
+			if _, exists := questionIDs[question.ParentQuestionID]; !exists ||
+				question.ParentQuestionID == question.ID {
+				return false
+			}
+		}
+	}
+	dimensions := make(map[string]struct{}, len(value.Dimensions))
+	improvements := make(map[string]string)
 	findings := make(map[string]struct{})
-	improvementDimensions := make(map[string]string)
-	for _, dimension := range report.Dimensions {
-		if !dimension.valid(report.ScoreabilityStatus) {
+	for _, dimension := range value.Dimensions {
+		if !dimension.valid(value.ScoreabilityStatus) {
 			return false
 		}
-		if _, exists := seen[dimension.Key]; exists {
+		if _, duplicate := dimensions[dimension.Key]; duplicate {
 			return false
 		}
-		seen[dimension.Key] = struct{}{}
+		dimensions[dimension.Key] = struct{}{}
 		for _, collection := range [][]ReportFinding{
 			dimension.Strengths,
 			dimension.Improvements,
 			dimension.Examples,
 		} {
 			for _, finding := range collection {
-				if _, exists := findings[finding.ID]; exists {
+				for _, evidence := range finding.Evidence {
+					if _, exists := answerTurnIDs[evidence.TurnID]; !exists {
+						return false
+					}
+				}
+				if _, duplicate := findings[finding.ID]; duplicate {
 					return false
 				}
 				findings[finding.ID] = struct{}{}
 			}
 		}
 		for _, finding := range dimension.Improvements {
-			improvementDimensions[finding.ID] = dimension.Key
+			improvements[finding.ID] = dimension.Key
 		}
 	}
-	actions := make(map[string]struct{}, len(report.PriorityActions))
-	for _, action := range report.PriorityActions {
-		if _, exists := seen[action.DimensionKey]; !exists {
-			return false
-		}
-		if improvementDimensions[action.FindingID] != action.DimensionKey {
+	actions := make(map[string]struct{}, len(value.PriorityActions))
+	for _, action := range value.PriorityActions {
+		if improvements[action.FindingID] != action.DimensionKey {
 			return false
 		}
 		key := action.DimensionKey + "\x00" + action.FindingID
-		if _, exists := actions[key]; exists {
+		if _, duplicate := actions[key]; duplicate {
 			return false
 		}
 		actions[key] = struct{}{}
@@ -285,50 +187,59 @@ func (report FormalReport) Valid() bool {
 	return true
 }
 
-func (report StoredFormalReport) Valid() bool {
-	return validUUID(report.ReportID) &&
-		validUUID(report.EvaluationID) &&
-		validUUID(report.EvaluationRevisionID) &&
-		validUUID(report.OwnerUserID) &&
-		validIdentifier(report.PracticeSessionID) &&
-		report.Revision >= 1 && report.Report.Valid() &&
-		!report.CreatedAt.IsZero()
+func (question ReportQuestion) valid() bool {
+	return validUUID(question.ID) && question.Position > 0 &&
+		(question.ParentQuestionID == "" || validUUID(question.ParentQuestionID)) &&
+		validText(question.Text, 16*1024) &&
+		(question.Answer == nil || question.Answer.valid())
 }
 
-func (dimension ReportDimension) valid(
-	reportScoreability ReportScoreability,
-) bool {
+func (answer ReportAnswer) valid() bool {
+	return validUUID(answer.TurnID) && validText(answer.Transcript, 64*1024)
+}
+
+func (value StoredFormalReport) Valid() bool {
+	return validUUID(value.ReportID) && value.ReportID == value.EvaluationID &&
+		validUUID(value.OwnerUserID) && validUUID(value.PracticeSessionID) &&
+		value.Report.Valid() && !value.CreatedAt.IsZero()
+}
+
+func (dimension ReportDimension) valid(scoreability ReportScoreability) bool {
 	if !validVersion(dimension.Key) ||
 		(dimension.Scale != ReportScalePercentage100 &&
 			dimension.Scale != ReportScaleIELTSBand) ||
-		math.IsNaN(dimension.Coverage) ||
-		math.IsInf(dimension.Coverage, 0) ||
-		dimension.Coverage < 0 || dimension.Coverage > 1 ||
-		math.IsNaN(dimension.Confidence) ||
-		math.IsInf(dimension.Confidence, 0) ||
-		dimension.Confidence < 0 || dimension.Confidence > 1 ||
+		!validRatio(dimension.Coverage) || !validRatio(dimension.Confidence) ||
 		dimension.ReasonCodes == nil || dimension.EvidenceRefs == nil ||
 		dimension.Strengths == nil || dimension.Improvements == nil ||
-		dimension.Examples == nil {
+		dimension.Examples == nil || len(dimension.ReasonCodes) > 8 ||
+		len(dimension.EvidenceRefs) > 128 {
 		return false
 	}
-	if reportScoreability == ReportScoreabilityInsufficient &&
-		dimension.Score != nil {
+	if scoreability == ReportScoreabilityInsufficient && dimension.Score != nil {
 		return false
 	}
 	if dimension.Score != nil {
 		if math.IsNaN(*dimension.Score) || math.IsInf(*dimension.Score, 0) {
 			return false
 		}
-		switch dimension.Scale {
-		case ReportScalePercentage100:
-			if *dimension.Score < 0 || *dimension.Score > 100 {
-				return false
-			}
-		case ReportScaleIELTSBand:
-			if *dimension.Score < 0 || *dimension.Score > 9 {
-				return false
-			}
+		if dimension.Scale == ReportScalePercentage100 &&
+			(*dimension.Score < 0 || *dimension.Score > 100) {
+			return false
+		}
+		if dimension.Scale == ReportScaleIELTSBand &&
+			(*dimension.Score < 0 || *dimension.Score > 9 ||
+				math.Mod(*dimension.Score*2, 1) != 0) {
+			return false
+		}
+	}
+	for _, reason := range dimension.ReasonCodes {
+		if !validIdentifier(reason) {
+			return false
+		}
+	}
+	for _, evidenceRef := range dimension.EvidenceRefs {
+		if !validUUID(evidenceRef) {
+			return false
 		}
 	}
 	for _, collection := range [][]ReportFinding{
@@ -349,78 +260,29 @@ func (dimension ReportDimension) valid(
 }
 
 func (finding ReportFinding) valid() bool {
-	if !validVersion(finding.ID) || strings.TrimSpace(finding.Message) == "" ||
-		len(finding.Message) > 2048 || len(finding.Suggestion) > 2048 ||
+	if !validVersion(finding.ID) || !validText(finding.Message, 2048) ||
+		(finding.Suggestion != "" && !validText(finding.Suggestion, 2048)) ||
 		finding.Evidence == nil || len(finding.Evidence) > 8 {
 		return false
 	}
-	for _, evidence := range finding.Evidence {
-		if !validIdentifier(evidence.EvidenceRefID) ||
-			!validIdentifier(evidence.TurnID) ||
-			evidence.StartUTF8Byte < 0 ||
-			evidence.EndUTF8Byte <= evidence.StartUTF8Byte ||
-			strings.TrimSpace(evidence.OriginalExcerpt) == "" {
+	for _, item := range finding.Evidence {
+		if !validUUID(item.EvidenceRefID) ||
+			!validUUID(item.TurnID) || item.EvidenceRefID != item.TurnID ||
+			item.StartUTF8Byte < 0 || item.EndUTF8Byte <= item.StartUTF8Byte ||
+			item.EndUTF8Byte-item.StartUTF8Byte != len(item.OriginalExcerpt) ||
+			!validText(item.OriginalExcerpt, 16*1024) {
 			return false
 		}
 	}
 	return true
 }
 
-func reportPracticeContext(
-	snapshot evidence.EvidenceSnapshot,
-) (evidence.PracticeContext, error) {
-	var payload evidence.SnapshotPayload
-	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil ||
-		payload.PracticeContext.PracticeExperience == "" ||
-		payload.PracticeContext.SceneCategory == "" ||
-		payload.PracticeContext.PracticeMode == "" {
-		return evidence.PracticeContext{}, evaluation.ErrInvalidRequest
-	}
-	return payload.PracticeContext, nil
+func validRatio(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
-func interviewReportFindings(
-	items []InterviewReportFinding,
-) []ReportFinding {
-	result := make([]ReportFinding, len(items))
-	for index, item := range items {
-		evidence := make([]ReportEvidence, len(item.Evidence))
-		for evidenceIndex, itemEvidence := range item.Evidence {
-			evidence[evidenceIndex] = ReportEvidence(itemEvidence)
-		}
-		result[index] = ReportFinding{
-			ID:         item.FindingID,
-			Message:    item.Message,
-			Suggestion: item.Suggestion,
-			Evidence:   evidence,
-		}
-	}
-	return result
-}
-
-func ieltsReportFindings(
-	items []scoring.IELTSSpeakingShadowFinding,
-) []ReportFinding {
-	result := make([]ReportFinding, len(items))
-	for index, item := range items {
-		evidence := make([]ReportEvidence, len(item.Evidence))
-		for evidenceIndex, itemEvidence := range item.Evidence {
-			evidence[evidenceIndex] = ReportEvidence(itemEvidence)
-		}
-		result[index] = ReportFinding{
-			ID:         item.ID,
-			Message:    item.Message,
-			Suggestion: item.Suggestion,
-			Evidence:   evidence,
-		}
-	}
-	return result
-}
-
-func stringValues[T ~string](values []T) []string {
-	result := make([]string, len(values))
-	for index, value := range values {
-		result[index] = string(value)
-	}
-	return result
+func validText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) && value == strings.TrimSpace(value) &&
+		value != "" && len(value) <= maximumBytes &&
+		!strings.ContainsRune(value, '\x00')
 }

@@ -7,14 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -22,22 +21,20 @@ const (
 	runPersistenceTimeout    = 5 * time.Second
 	maxPersistedTokenCount   = 1<<31 - 1
 	defaultMaxIterations     = 3
-	defaultMaxToolCalls      = 4
-	defaultMaxWriteCalls     = 1
+	MaxToolCallsPerRun       = 4
+	maxWriteCallsPerRun      = 1
 	defaultToolTimeout       = 5 * time.Second
 	defaultLoopTimeout       = 25 * time.Second
 	defaultMaxToolResult     = 16 * 1024
 	streamReplayPollInterval = 100 * time.Millisecond
 	toolSchemaVersionV1      = "tool-schema-v1"
 	maxImagesPerMessage      = 4
-	ieltsWarmUpToolName      = "ielts.warmup.v1"
 )
 
 type Service struct {
 	repository       Repository
 	messages         MessageReader
 	imageSubmissions ImageSubmissionRepository
-	manifests        agentcontext.ManifestRepository
 	assembler        *agentcontext.Assembler
 	generator        TextGenerator
 	configuration    Configuration
@@ -51,7 +48,6 @@ type Service struct {
 type LoopLimits struct {
 	MaxIterations      int
 	MaxToolCalls       int
-	MaxWriteToolCalls  int
 	ToolTimeout        time.Duration
 	LoopTimeout        time.Duration
 	MaxToolResultBytes int
@@ -68,21 +64,18 @@ type Option func(*Service) error
 func NewService(
 	repository Repository,
 	messages MessageReader,
-	manifests agentcontext.ManifestRepository,
 	assembler *agentcontext.Assembler,
 	generator TextGenerator,
 	configuration Configuration,
 	options ...Option,
 ) (*Service, error) {
-	if repository == nil || messages == nil || manifests == nil ||
-		assembler == nil || generator == nil ||
+	if repository == nil || messages == nil || assembler == nil || generator == nil ||
 		!configuration.Valid() {
 		return nil, errors.New("agent: run dependency or configuration is invalid")
 	}
 	service := &Service{
 		repository:    repository,
 		messages:      messages,
-		manifests:     manifests,
 		assembler:     assembler,
 		generator:     generator,
 		configuration: configuration,
@@ -151,10 +144,11 @@ func WithLoopLimits(limits LoopLimits) Option {
 		normalized := normalizeLoopLimits(limits)
 		if normalized.MaxIterations <= 0 ||
 			normalized.MaxToolCalls <= 0 ||
-			normalized.MaxWriteToolCalls < 0 ||
+			normalized.MaxToolCalls > MaxToolCallsPerRun ||
 			normalized.ToolTimeout <= 0 ||
 			normalized.LoopTimeout <= 0 ||
-			normalized.MaxToolResultBytes <= 0 {
+			normalized.MaxToolResultBytes <= 0 ||
+			normalized.MaxToolResultBytes > 64*1024 {
 			return errors.New("agent: loop limits are invalid")
 		}
 		service.loopLimits = normalized
@@ -429,29 +423,11 @@ func (service *Service) GetRun(
 	return service.repository.Find(ctx, actor.UserID, runID)
 }
 
-func (service *Service) GetContextManifest(
+func (service *Service) GetClientActions(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	runID string,
-) (agentcontext.Manifest, error) {
-	if !actor.Valid() || !ValidUUID(runID) {
-		return agentcontext.Manifest{}, ErrNotFound
-	}
-	if _, err := service.repository.Find(
-		ctx,
-		actor.UserID,
-		runID,
-	); err != nil {
-		return agentcontext.Manifest{}, err
-	}
-	return service.manifests.FindManifest(ctx, actor.UserID, runID)
-}
-
-func (service *Service) GetToolCalls(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	runID string,
-) ([]ToolCall, error) {
+) ([]agentclientaction.Action, error) {
 	if !actor.Valid() || !ValidUUID(runID) {
 		return nil, ErrNotFound
 	}
@@ -462,7 +438,7 @@ func (service *Service) GetToolCalls(
 	); err != nil {
 		return nil, err
 	}
-	return service.repository.ListToolCalls(ctx, actor.UserID, runID)
+	return service.repository.ListClientActions(ctx, actor.UserID, runID)
 }
 
 func (service *Service) RecoverInterrupted(
@@ -581,11 +557,6 @@ func (service *Service) process(
 		case errors.Is(err, agentcontext.ErrInvalidContext):
 			kind = FailureInvalidContext
 			retryable = false
-		case errors.Is(err, agentcontext.ErrMemoryConsistencyUnavailable):
-			kind = FailureMemoryConsistencyUnavailable
-		case errors.Is(err, agentcontext.ErrMemoryConsistencyRejected):
-			kind = FailureMemoryConsistencyUnavailable
-			retryable = false
 		}
 		failed, failErr := service.persistFailure(
 			ctx,
@@ -598,6 +569,14 @@ func (service *Service) process(
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
 		service.logGenerationFailureDetail(claimed, err)
 		return failed, failErr
+	}
+	if manifest.CoachingProfileContextStatus ==
+		agentcontext.CoachingProfileContextUnavailableError {
+		service.logContextDegradation(
+			claimed,
+			"coaching_profile",
+			manifest.CoachingProfileContextStatus,
+		)
 	}
 	request, err := textRequestFromContext(modelInput)
 	if err != nil {
@@ -617,24 +596,6 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
-	if _, err := service.manifests.SaveManifest(
-		ctx,
-		manifest,
-	); err != nil {
-		failed, failErr := service.persistFailure(
-			ctx,
-			actor.UserID,
-			claimed.ID,
-			claimed.WorkerLeaseToken,
-			FailureInternal,
-			true,
-		)
-		if failErr != nil {
-			return Run{}, err
-		}
-		return failed, nil
-	}
-
 	var result TextResult
 	if observer == nil {
 		result, err = service.generate(
@@ -736,217 +697,46 @@ func (service *Service) generateObserved(
 		deltaObserver = observer
 	}
 	if service.registry == nil || service.executor == nil {
+		if err := service.repository.SaveContextSnapshot(
+			ctx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
+		); err != nil {
+			return TextResult{}, err
+		}
 		return service.generateModel(ctx, request, deltaObserver)
 	}
+
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
 	defer cancel()
 	startedAt := time.Now()
+	service.logRunReceived(run, lastUserContent(request), request)
 
-	input := lastUserContent(request)
-	service.logRunReceived(run, input, request)
-	ieltsRouting := inspectIELTSCreationRouting(request)
-	previousIELTSTool := priorIELTSToolNone
-	priorIELTSStateResolved := false
-	if !ieltsRouting.active && len(manifest.SelectedMessages) >= 2 &&
-		hasRecentIELTSSetupSignal(request) &&
-		mayContinuePriorIELTSWarmUp(input) {
-		state, err := service.priorAdjacentIELTSToolState(
-			loopCtx,
-			actor,
-			run,
-			manifest,
-		)
-		if err != nil {
-			return TextResult{}, err
-		}
-		if state.tool != priorIELTSToolNone {
-			ieltsRouting = routingFromPriorIELTSToolState(state, input)
-			previousIELTSTool = state.tool
-			priorIELTSStateResolved = true
-		}
-	}
-	if !priorIELTSStateResolved && ieltsRouting.needsPriorToolState() {
-		var err error
-		previousIELTSTool, err = service.priorIELTSToolResult(
-			loopCtx,
-			actor,
-			run,
-			manifest,
-			ieltsRouting,
-		)
-		if err != nil {
-			return TextResult{}, err
-		}
-	}
-	clarification, deterministicClarification := ieltsRouting.clarification()
-	toolChoice := ieltsRouting.toolChoice(previousIELTSTool)
-	if deterministicClarification {
-		toolChoice = ToolChoice{Mode: ToolChoiceNone}
-	}
 	routing := buildModelToolRouting(
 		service.registry,
 		service.logger,
 		run.ID,
-		toolChoice,
+		ToolChoice{Mode: ToolChoiceAuto},
 	)
-	routing = applyUserIntentToolRouting(routing, input)
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
-	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
+	if err := service.repository.SaveContextSnapshot(
+		loopCtx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
+	); err != nil {
 		return TextResult{}, err
 	}
-	if deterministicClarification {
-		result := TextResult{
-			ID:           "ielts-routing-clarification:" + run.ID,
-			Provider:     service.configuration.Provider,
-			Model:        service.configuration.Model,
-			Content:      clarification,
-			FinishReason: "stop",
-		}
-		service.logRoutingDecision(
-			run,
-			"direct_response",
-			nil,
-			reasonIELTSCreationRouting,
-			reasonSummary(reasonIELTSCreationRouting, "direct_response"),
-			0,
-		)
-		service.logRunCompleted(
-			run,
-			"direct_response",
-			0,
-			0,
-			startedAt,
-			result.Content,
-		)
-		return result, nil
-	}
+
 	exposed := exposedToolNames(request.Tools)
+	seenToolCallIDs := make(map[string]struct{})
 	toolCalls := 0
 	writeCalls := 0
 	toolIterations := 0
 	modelIterations := 0
-	previewSucceeded := previousIELTSTool == priorIELTSToolPreview
-	ieltsPreviewCreatedThisTurn := false
-	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
-	routingReason := reasonModelToolSelection
-	if request.ToolChoice.Mode != ToolChoiceAuto {
-		routingReason = reasonIELTSCreationRouting
-	}
-	if request.ToolChoice.Mode == ToolChoiceSpecific {
-		call, ok := ieltsRouting.deterministicToolCall(
-			run.ID,
-			request.ToolChoice.Name,
-		)
-		if !ok || !toolExposed(exposed, call.Name) {
-			return TextResult{}, NewGenerationError(
-				ErrorConfiguration,
-				0,
-				"",
-				"",
-				errors.New("agent: deterministic IELTS tool is unavailable"),
-			)
-		}
-		if service.writeToolCallCount([]ModelToolCall{call}) >
-			service.loopLimits.MaxWriteToolCalls {
-			return TextResult{}, service.stopLoop(
-				run,
-				FailureWriteToolCallBudgetExhausted,
-				[]string{call.Name},
-				0,
-			)
-		}
-		service.logRoutingDecision(
-			run,
-			"tool_call",
-			[]string{call.Name},
-			routingReason,
-			reasonSummary(routingReason, "tool_call"),
-			0,
-		)
-		request.Messages = append(request.Messages, TextMessage{
-			Role:      TextRoleAssistant,
-			ToolCalls: []ModelToolCall{call},
-		})
-		if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
-			return TextResult{}, err
-		}
-		toolMessage, succeeded, previewReady, err := service.executeToolCall(
-			loopCtx,
-			actor,
-			run,
-			call,
-		)
-		if err != nil {
-			return TextResult{}, err
-		}
-		request.Messages = append(request.Messages, toolMessage)
-		toolCalls = 1
-		toolIterations = 1
-		writeCalls = service.writeToolCallCount([]ModelToolCall{call})
-		previewSucceeded = previewSucceeded || previewReady
-		ieltsPreviewCreatedThisTurn = previewReady &&
-			isIELTSPracticePreviewCall(call)
-		seenToolCallIDs[call.ID] = struct{}{}
-		finalDecision = "tool_call_then_response"
-		if ieltsPreviewCreatedThisTurn && ieltsRouting.currentWarmUpAnswer {
-			result := service.repairIELTSWarmUpAcknowledgement(
-				loopCtx,
-				run,
-				input,
-			)
-			service.logRoutingDecision(
-				run,
-				finalDecision,
-				nil,
-				routingReason,
-				reasonSummary(routingReason, finalDecision),
-				1,
-			)
-			service.logRunCompleted(
-				run,
-				finalDecision,
-				1,
-				toolCalls,
-				startedAt,
-				result.Content,
-			)
-			return result, nil
-		}
-		if succeeded && call.Name == ieltsWarmUpToolName {
-			if prompt, ok := ieltsWarmUpPrompt(toolMessage); ok {
-				return service.completeDirectIELTSResponse(
-					run,
-					prompt,
-					finalDecision,
-					routingReason,
-					0,
-					toolCalls,
-					startedAt,
-				), nil
-			}
-		}
-		if previewReady && (ieltsRouting.currentBypassesWarmUp ||
-			ieltsRouting.mode == ieltsRoutingModeFullMock) {
-			return service.completeDirectIELTSResponse(
-				run,
-				"好。",
-				finalDecision,
-				routingReason,
-				0,
-				toolCalls,
-				startedAt,
-			), nil
-		}
-		request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
-	}
+
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		modelObserver := deltaObserver
-		if toolCalls > 0 ||
-			ieltsRouting.active && request.ToolChoice.Mode != ToolChoiceNone {
+		if toolCalls > 0 {
 			modelObserver = nil
 		}
 		result, err := service.generateModel(loopCtx, request, modelObserver)
@@ -954,24 +744,6 @@ func (service *Service) generateObserved(
 			return TextResult{}, err
 		}
 		modelIterations++
-		if request.ToolChoice.Mode == ToolChoiceSpecific &&
-			(len(result.ToolCalls) != 1 ||
-				result.ToolCalls[0].Name != request.ToolChoice.Name) {
-			service.logInvalidModelResult(run, result)
-			return TextResult{}, NewGenerationError(
-				ErrorInvalidResponse,
-				0,
-				"",
-				"",
-				errors.New("agent: model violated specific tool choice"),
-			)
-		}
-		for _, call := range result.ToolCalls {
-			if call.Name == ieltsWarmUpToolName {
-				result.ToolCalls = []ModelToolCall{call}
-				break
-			}
-		}
 		if !validLoopTextResult(result) ||
 			result.Provider != service.configuration.Provider ||
 			result.Model != service.configuration.Model ||
@@ -979,48 +751,13 @@ func (service *Service) generateObserved(
 			service.logInvalidModelResult(run, result)
 			return result, nil
 		}
-		if request.ToolChoice.Mode == ToolChoiceSpecific &&
-			!ieltsRouting.matchesToolInput(
-				result.ToolCalls[0].Name,
-				result.ToolCalls[0].Arguments,
-			) {
-			service.logInvalidModelResult(run, result)
-			return TextResult{}, NewGenerationError(
-				ErrorInvalidResponse,
-				0,
-				"",
-				"",
-				errors.New("agent: model violated IELTS routing parameters"),
-			)
-		}
-		if request.ToolChoice.Mode == ToolChoiceNone &&
-			len(result.ToolCalls) > 0 {
-			service.logInvalidModelResult(run, result)
-			return result, nil
-		}
 		if len(result.ToolCalls) == 0 {
-			if toolCalls > 0 {
-				result.Content = sanitizeUserVisiblePracticeIdentifiers(
-					result.Content,
-				)
-			}
-			if ieltsRouting.active && !previewSucceeded &&
-				claimsIELTSPracticeReady(result.Content) {
-				service.logInvalidModelResult(run, result)
-				return TextResult{}, NewGenerationError(
-					ErrorInvalidResponse,
-					0,
-					"",
-					"",
-					errors.New("agent: IELTS practice readiness requires a successful preview"),
-				)
-			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
 				nil,
-				routingReason,
-				reasonSummary(routingReason, finalDecision),
+				reasonModelToolSelection,
+				reasonSummary(reasonModelToolSelection, finalDecision),
 				modelIterations,
 			)
 			service.logRunCompleted(
@@ -1033,17 +770,16 @@ func (service *Service) generateObserved(
 			)
 			return result, nil
 		}
+
 		selected := toolCallNames(result.ToolCalls)
-		finalDecision = "tool_call"
 		service.logRoutingDecision(
 			run,
-			finalDecision,
+			"tool_call",
 			selected,
-			routingReason,
-			reasonSummary(routingReason, finalDecision),
+			reasonModelToolSelection,
+			reasonSummary(reasonModelToolSelection, "tool_call"),
 			modelIterations,
 		)
-		// MaxIterations 表示最多执行多少轮工具；达到上限后仍允许模型生成一次最终回复。
 		if toolIterations >= service.loopLimits.MaxIterations {
 			return TextResult{}, service.stopLoop(
 				run,
@@ -1060,10 +796,7 @@ func (service *Service) generateObserved(
 				modelIterations,
 			)
 		}
-		if hasRepeatedToolCallID(
-			result.ToolCalls,
-			seenToolCallIDs,
-		) {
+		if hasRepeatedToolCallID(result.ToolCalls, seenToolCallIDs) {
 			return TextResult{}, service.stopLoop(
 				run,
 				FailureDuplicateToolCall,
@@ -1071,11 +804,9 @@ func (service *Service) generateObserved(
 				modelIterations,
 			)
 		}
-		// 先分类并预留整批调用的写预算，防止部分执行以及未知、
-		// 非法调用在后续循环中重新获得写额度。
+
 		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
-		if writeCalls+pendingWriteCalls >
-			service.loopLimits.MaxWriteToolCalls {
+		if writeCalls+pendingWriteCalls > maxWriteCallsPerRun {
 			return TextResult{}, service.stopLoop(
 				run,
 				FailureWriteToolCallBudgetExhausted,
@@ -1091,17 +822,10 @@ func (service *Service) generateObserved(
 		})
 		toolIterations++
 		toolCalls += len(result.ToolCalls)
-		warmUpPrompt := ""
-		warmUpSucceeded := false
-		ieltsPreviewCreated := false
-		forcedSpecific := request.ToolChoice.Mode == ToolChoiceSpecific
+
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
-			if err := service.saveToolCallProposed(
-				loopCtx,
-				run,
-				call,
-			); err != nil {
+			if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
 				return TextResult{}, err
 			}
 			if !toolExposed(exposed, call.Name) {
@@ -1119,23 +843,7 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			_, ok := service.toolDefinition(call.Name)
-			if !ok {
-				if err := service.markToolCallRejected(
-					loopCtx,
-					run,
-					call.ID,
-					"unknown_tool",
-				); err != nil {
-					return TextResult{}, err
-				}
-				request.Messages = append(
-					request.Messages,
-					toolFailureMessage(call.ID, capability.ErrUnknownTool),
-				)
-				continue
-			}
-			toolMessage, succeeded, previewReady, err := service.executeToolCall(
+			toolMessage, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
@@ -1145,129 +853,10 @@ func (service *Service) generateObserved(
 				return TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
-			if succeeded && call.Name == ieltsWarmUpToolName {
-				warmUpSucceeded = true
-				warmUpPrompt, _ = ieltsWarmUpPrompt(toolMessage)
-			}
-			previewSucceeded = previewSucceeded || previewReady
-			ieltsPreviewCreated = ieltsPreviewCreated ||
-				previewReady && isIELTSPracticePreviewCall(call)
-		}
-		ieltsPreviewCreatedThisTurn = ieltsPreviewCreatedThisTurn ||
-			ieltsPreviewCreated
-		if warmUpPrompt != "" {
-			return service.completeDirectIELTSResponse(
-				run,
-				warmUpPrompt,
-				"tool_call_then_response",
-				routingReason,
-				modelIterations,
-				toolCalls,
-				startedAt,
-			), nil
-		}
-		if ieltsPreviewCreated {
-			return service.completeDirectIELTSResponse(
-				run,
-				"好。",
-				"tool_call_then_response",
-				routingReason,
-				modelIterations,
-				toolCalls,
-				startedAt,
-			), nil
-		}
-		if warmUpSucceeded || forcedSpecific || ieltsPreviewCreated {
-			request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
-		} else {
-			request.ToolChoice = ToolChoice{Mode: ToolChoiceAuto}
 		}
 		finalDecision = "tool_call_then_response"
 	}
 }
-
-func (service *Service) completeDirectIELTSResponse(
-	run Run,
-	content string,
-	decision string,
-	routingReason string,
-	modelIterations int,
-	toolCalls int,
-	startedAt time.Time,
-) TextResult {
-	result := TextResult{
-		ID:           "ielts-runtime-response:" + run.ID,
-		Provider:     service.configuration.Provider,
-		Model:        service.configuration.Model,
-		Content:      content,
-		FinishReason: "stop",
-	}
-	service.logRoutingDecision(
-		run,
-		decision,
-		nil,
-		routingReason,
-		reasonSummary(routingReason, decision),
-		modelIterations,
-	)
-	service.logRunCompleted(
-		run,
-		decision,
-		modelIterations,
-		toolCalls,
-		startedAt,
-		content,
-	)
-	return result
-}
-
-func (service *Service) repairIELTSWarmUpAcknowledgement(
-	ctx context.Context,
-	run Run,
-	input string,
-) TextResult {
-	request := TextRequest{
-		Messages: []TextMessage{
-			{
-				Role: TextRoleSystem,
-				Content: "只回复一句简短、自然的中文反馈，表明你理解了学员刚才说的具体内容。" +
-					"概括学员提到的对象或经历，以及令其印象深刻的具体原因，优先原样包含两个具体英文内容词；" +
-					"不要评分、纠错、追问，也不要提练习、计划、准备、卡片、创建或开始。只输出这句话。",
-			},
-			{Role: TextRoleUser, Content: input},
-		},
-		ToolChoice: ToolChoice{Mode: ToolChoiceNone},
-	}
-	result, err := service.generateModel(ctx, request, nil)
-	if err == nil && validLoopTextResult(result) &&
-		result.Provider == service.configuration.Provider &&
-		result.Model == service.configuration.Model &&
-		result.Usage.OutputTokens <= service.configuration.MaxOutputTokens &&
-		validIELTSWarmUpAcknowledgement(result.Content, input) {
-		return result
-	}
-	if err == nil {
-		service.logInvalidModelResult(run, result)
-	}
-	return TextResult{
-		ID:           "ielts-warm-up-ack-fallback:" + run.ID,
-		Provider:     service.configuration.Provider,
-		Model:        service.configuration.Model,
-		Content:      fallbackIELTSWarmUpAcknowledgement(input),
-		FinishReason: "stop",
-	}
-}
-
-func claimsIELTSPracticeReady(content string) bool {
-	normalized := strings.ReplaceAll(strings.TrimSpace(content), " ", "")
-	return strings.Contains(normalized, "正式练习已准备好") ||
-		strings.Contains(normalized, "正式练习已经准备好") ||
-		strings.Contains(normalized, "练习已准备好") ||
-		strings.Contains(normalized, "练习已经准备好") ||
-		strings.Contains(normalized, "卡片就可以开始") ||
-		strings.Contains(normalized, "我们来正式练习")
-}
-
 func (service *Service) generateModel(
 	ctx context.Context,
 	request TextRequest,
@@ -1322,27 +911,32 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, bool, bool, error) {
+) (TextMessage, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
-	requestID := toolCallRequestID(run, call)
+	effect := service.registry.InvocationEffect(capability.Invocation{
+		Name: call.Name, Input: call.Arguments,
+	})
+	requestID := toolCallRequestID(run, call, effect.MayWrite())
 	if _, err := service.repository.StartToolCall(
 		toolCtx,
 		actor.UserID,
 		run.ID,
+		run.WorkerLeaseToken,
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, false, false, err
+		return TextMessage{}, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
 		capability.CallContext{
-			Actor:      actor,
-			ThreadID:   run.ThreadID,
-			RunID:      run.ID,
-			ToolCallID: call.ID,
-			RequestID:  requestID,
+			Actor:          actor,
+			ThreadID:       run.ThreadID,
+			RunID:          run.ID,
+			InputMessageID: run.InputMessageID,
+			ToolCallID:     call.ID,
+			RequestID:      requestID,
 		},
 		capability.Invocation{Name: call.Name, Input: call.Arguments},
 	)
@@ -1353,14 +947,15 @@ func (service *Service) executeToolCall(
 			persistCtx,
 			actor.UserID,
 			run.ID,
+			run.WorkerLeaseToken,
 			call.ID,
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, false, false, persistErr
+			return TextMessage{}, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), false, false, nil
+		return toolFailureMessage(call.ID, err), nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -1370,43 +965,34 @@ func (service *Service) executeToolCall(
 			persistCtx,
 			actor.UserID,
 			run.ID,
+			run.WorkerLeaseToken,
 			call.ID,
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, false, false, persistErr
+			return TextMessage{}, persistErr
 		}
-		return toolFailureMessage(call.ID, err), false, false, nil
+		return toolFailureMessage(call.ID, err), nil
 	}
-	previewReady := practicePreviewReady(call.Name, result)
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
 	if _, err := service.repository.CompleteToolCall(
 		persistCtx,
 		actor.UserID,
 		run.ID,
+		run.WorkerLeaseToken,
 		call.ID,
 		json.RawMessage(content),
 		toolSourceRefs(result.SourceRefs),
-		result.Handoffs,
+		result.ClientActions,
 	); err != nil {
-		return TextMessage{}, false, false, err
+		return TextMessage{}, err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, true, previewReady, nil
-}
-
-func practicePreviewReady(name string, result capability.Result) bool {
-	if name != practicePreviewToolName || result.Content["status"] != "preview_ready" ||
-		len(result.Handoffs) != 1 {
-		return false
-	}
-	handoff := result.Handoffs[0]
-	return handoff.Type == agenthandoff.ConfirmPracticePlanType &&
-		handoff.ExecutableStatus == agenthandoff.PracticePlanReadyStatus
+	}, nil
 }
 
 func (service *Service) saveToolCallProposed(
@@ -1426,6 +1012,7 @@ func (service *Service) saveToolCallProposed(
 			Input:         call.Arguments,
 			Status:        ToolCallProposed,
 		},
+		run.WorkerLeaseToken,
 	)
 	return err
 }
@@ -1440,18 +1027,11 @@ func (service *Service) markToolCallRejected(
 		ctx,
 		run.OwnerID,
 		run.ID,
+		run.WorkerLeaseToken,
 		toolCallID,
 		ToolCallRejected,
 		errorCategory,
 	)
-	return err
-}
-
-func (service *Service) saveContextToolSnapshot(
-	ctx context.Context,
-	manifest agentcontext.Manifest,
-) error {
-	_, err := service.manifests.SaveToolSnapshot(ctx, manifest)
 	return err
 }
 
@@ -1522,6 +1102,23 @@ func (service *Service) logRunReceived(
 		)
 	}
 	service.logger.Info("agent.run.received", attrs...)
+}
+
+func (service *Service) logContextDegradation(
+	run Run,
+	source string,
+	status string,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Warn(
+		"agent.context.degraded",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"source", source,
+		"status", status,
+	)
 }
 
 func textRequestImageCount(request TextRequest) int {
@@ -1767,8 +1364,7 @@ func runConfigurationMatches(
 func defaultLoopLimits() LoopLimits {
 	return LoopLimits{
 		MaxIterations:      defaultMaxIterations,
-		MaxToolCalls:       defaultMaxToolCalls,
-		MaxWriteToolCalls:  defaultMaxWriteCalls,
+		MaxToolCalls:       MaxToolCallsPerRun,
 		ToolTimeout:        defaultToolTimeout,
 		LoopTimeout:        defaultLoopTimeout,
 		MaxToolResultBytes: defaultMaxToolResult,
@@ -1783,9 +1379,6 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	if limits.MaxToolCalls == 0 {
 		limits.MaxToolCalls = defaults.MaxToolCalls
 	}
-	if limits.MaxWriteToolCalls == 0 {
-		limits.MaxWriteToolCalls = defaults.MaxWriteToolCalls
-	}
 	if limits.ToolTimeout == 0 {
 		limits.ToolTimeout = defaults.ToolTimeout
 	}
@@ -1798,24 +1391,17 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	return limits
 }
 
-func (service *Service) toolDefinition(name string) (capability.Definition, bool) {
-	if service.registry == nil {
-		return capability.Definition{}, false
+// toolCallRequestID keeps every write tool stable across retries of the same
+// trusted input Message. Read calls remain unique to one Run and model call.
+func toolCallRequestID(run Run, call ModelToolCall, mayWrite bool) string {
+	seed := run.ID + "\x00" + call.ID
+	prefix := "tool-read-"
+	if mayWrite {
+		seed = run.InputMessageID + "\x00" + call.Name
+		prefix = "tool-write-"
 	}
-	registered, ok := service.registry.Get(name)
-	if !ok {
-		return capability.Definition{}, false
-	}
-	return registered.Definition(), true
-}
-
-// toolCallRequestID 让练习预览在同一用户输入的跨 Run 重试中保持不变。
-// 其他工具仍只在同一 Run 的同一 Tool Call 内做幂等去重。
-func toolCallRequestID(run Run, call ModelToolCall) string {
-	if call.Name == practicePreviewToolName && run.InputMessageID != "" {
-		return run.InputMessageID + "-" + call.Name
-	}
-	return run.ID + "-" + call.ID
+	sum := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("%s%x", prefix, sum[:])
 }
 
 func (service *Service) writeToolCallCount(
