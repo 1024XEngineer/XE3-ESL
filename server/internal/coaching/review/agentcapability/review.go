@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 )
 
 const (
@@ -14,9 +14,8 @@ const (
 )
 
 type ReviewSearchInput struct {
-	Query             string `json:"query,omitempty"`
-	PracticeSessionID string `json:"practice_session_id,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
+	Query string `json:"query,omitempty"`
+	Limit int    `json:"limit,omitempty"`
 }
 
 type ReviewGetInput struct {
@@ -24,16 +23,16 @@ type ReviewGetInput struct {
 }
 
 type ReviewSummary struct {
-	ID                 string      `json:"report_id"`
-	PracticeSessionID  string      `json:"practice_session_id"`
-	SceneType          string      `json:"scene_type"`
-	PracticeExperience string      `json:"practice_experience"`
-	SceneCategory      string      `json:"scene_category"`
-	PracticeMode       string      `json:"practice_mode"`
-	Scoreability       string      `json:"scoreability_status"`
-	Summary            string      `json:"summary"`
-	CompletedAt        string      `json:"completed_at"`
-	SourceRefs         []SourceRef `json:"-"`
+	ID                 string                 `json:"report_id"`
+	PracticeSessionID  string                 `json:"practice_session_id"`
+	SceneType          string                 `json:"scene_type"`
+	PracticeExperience string                 `json:"practice_experience"`
+	SceneCategory      string                 `json:"scene_category"`
+	PracticeMode       string                 `json:"practice_mode"`
+	Scoreability       string                 `json:"scoreability_status"`
+	Summary            string                 `json:"summary"`
+	CompletedAt        string                 `json:"completed_at"`
+	SourceRefs         []capability.SourceRef `json:"-"`
 }
 
 type ReviewFinding struct {
@@ -71,18 +70,18 @@ type ReviewDetail struct {
 	Dimensions         []ReviewDimension      `json:"dimensions"`
 	PriorityActions    []ReviewPriorityAction `json:"priority_actions"`
 	CompletedAt        string                 `json:"completed_at"`
-	SourceRefs         []SourceRef            `json:"-"`
+	SourceRefs         []capability.SourceRef `json:"-"`
 }
 
 type ReviewPort interface {
 	SearchReviews(
 		context.Context,
-		CallContext,
+		capability.CallContext,
 		ReviewSearchInput,
 	) ([]ReviewSummary, error)
 	GetReview(
 		context.Context,
-		CallContext,
+		capability.CallContext,
 		ReviewGetInput,
 	) (ReviewDetail, error)
 }
@@ -93,8 +92,8 @@ func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 	return ReviewSearchTool{port: port}
 }
 
-func (tool ReviewSearchTool) Definition() Definition {
-	return Definition{
+func (tool ReviewSearchTool) Definition() capability.Definition {
+	return capability.Definition{
 		Name: ReviewSearchToolName,
 		Description: "Use this tool to search the current user's completed " +
 			"Evaluation reports. " +
@@ -102,46 +101,46 @@ func (tool ReviewSearchTool) Definition() Definition {
 			"older practice history. Internal report identifiers must never be " +
 			"asked from or exposed to the user. Do not use it for current-turn " +
 			"speech feedback or scenario discovery.",
-		InputSchema: ObjectSchema(map[string]any{
-			"query": TextSchema(
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"query": capability.TextSchema(
 				"Optional words describing an older practice report.",
 				500,
 			),
-			"limit": IntegerRangeSchema(
+			"limit": capability.IntegerRangeSchema(
 				"Maximum number of report summaries to return.",
 				1,
 				20,
 			),
 		}, nil),
 		ReadOnly: true,
-		Risk:     RiskReadOnly,
+		Risk:     capability.RiskReadOnly,
 	}
 }
 
 func (tool ReviewSearchTool) Execute(
 	ctx context.Context,
-	call CallContext,
+	call capability.CallContext,
 	input json.RawMessage,
-) (Result, error) {
+) (capability.Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrExecutionRejected
+		return capability.Result{}, capability.ErrExecutionRejected
 	}
 	var parsed ReviewSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil {
-		return Result{}, ErrInvalidInput
+		return capability.Result{}, capability.ErrInvalidInput
 	}
 	parsed.Query = strings.TrimSpace(parsed.Query)
 	reports, err := tool.port.SearchReviews(ctx, call, parsed)
 	if err != nil {
-		return Result{}, err
+		return capability.Result{}, err
 	}
 	items := make([]ReviewSummary, len(reports))
-	sourceRefs := make([]SourceRef, 0, len(reports))
+	sourceRefs := make([]capability.SourceRef, 0, len(reports))
 	for index, report := range reports {
 		items[index] = report
 		sourceRefs = append(sourceRefs, report.SourceRefs...)
 	}
-	return Result{
+	return capability.Result{
 		Content:    map[string]any{"reports": items},
 		SourceRefs: sourceRefs,
 	}, nil
@@ -153,41 +152,41 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 	return ReviewGetTool{port: port}
 }
 
-func (tool ReviewGetTool) Definition() Definition {
-	return Definition{
+func (tool ReviewGetTool) Definition() capability.Definition {
+	return capability.Definition{
 		Name: ReviewGetToolName,
 		Description: "Use this tool to read one completed Evaluation report " +
 			"selected by " +
 			"review.search.v2. Never ask the user to provide or repeat its " +
 			"internal report identifier. Do not use it without an identifier " +
 			"returned by review.search.v2.",
-		InputSchema: ObjectSchema(map[string]any{
-			"report_id": IdentifierSchema(
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"report_id": capability.IdentifierSchema(
 				"Exact report id returned by review.search.v2.",
 			),
 		}, []string{"report_id"}),
 		ReadOnly: true,
-		Risk:     RiskReadOnly,
+		Risk:     capability.RiskReadOnly,
 	}
 }
 
 func (tool ReviewGetTool) Execute(
 	ctx context.Context,
-	call CallContext,
+	call capability.CallContext,
 	input json.RawMessage,
-) (Result, error) {
+) (capability.Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrExecutionRejected
+		return capability.Result{}, capability.ErrExecutionRejected
 	}
 	var parsed ReviewGetInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.ReportID == "" {
-		return Result{}, ErrInvalidInput
+		return capability.Result{}, capability.ErrInvalidInput
 	}
 	report, err := tool.port.GetReview(ctx, call, parsed)
 	if err != nil {
-		return Result{}, err
+		return capability.Result{}, err
 	}
-	return Result{
+	return capability.Result{
 		Content:    map[string]any{"report": report},
 		SourceRefs: report.SourceRefs,
 	}, nil

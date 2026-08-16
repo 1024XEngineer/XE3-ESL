@@ -22,49 +22,6 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.da
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('shows an injected avatar above the live conversation', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          avatarStatusLabel: '画面已连接',
-          avatarSurfaceBuilder: (_) => const ColoredBox(
-            key: Key('test-avatar-surface'),
-            color: Colors.green,
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-
-    expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
-    expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
-    expect(find.text('画面已连接'), findsOneWidget);
-    expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
-    expect(
-      find.byKey(const Key('scenario-toggle-conversation-text')),
-      findsNothing,
-    );
-    expect(
-      tester.getSize(find.byKey(const Key('scenario-avatar-region'))).height,
-      closeTo(844 * 0.34, 0.1),
-    );
-    expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
-    expect(find.byKey(const Key('scenario-replay-question')), findsNothing);
-    expect(find.byKey(const Key('scenario-question-tip')), findsNothing);
-    expect(find.textContaining('评分'), findsNothing);
-    expect(find.text('翻译'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('keeps scenario text in the conversation panel', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -84,16 +41,6 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
-    expect(find.byKey(const Key('scenario-avatar-status')), findsNothing);
-    expect(find.text('正在准备画面'), findsNothing);
-    final staticAvatar = tester.widget<Image>(
-      find.byKey(const Key('scenario-avatar-placeholder')),
-    );
-    expect(staticAvatar.fit, BoxFit.cover);
-    expect(
-      (staticAvatar.image as AssetImage).assetName,
-      'assets/images/scenes/static-avatar-van-gogh.jpg',
-    );
     expect(find.text(question), findsOneWidget);
     final messageBubble = find.byKey(
       Key('practice-message-${questionMessage.id}'),
@@ -159,9 +106,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('hides the duplicate avatar subtitle for interviews', (
-    tester,
-  ) async {
+  testWidgets('keeps interview prompts in the conversation', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -176,7 +121,6 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('scenario-avatar-region')), findsOneWidget);
     expect(find.byKey(const Key('scenario-live-subtitle')), findsNothing);
     expect(find.text(question), findsOneWidget);
     expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
@@ -257,60 +201,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('removes the avatar surface before leaving practice', (
-    tester,
-  ) async {
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => TextButton(
-            key: const Key('open-scenario-practice'),
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => ScenarioPracticePage(
-                  practiceController: controller,
-                  avatarSurfaceBuilder: (_) => const ColoredBox(
-                    key: Key('test-avatar-surface'),
-                    color: Colors.green,
-                  ),
-                  onExitRequested: () async => true,
-                ),
-              ),
-            ),
-            child: const Text('Open'),
-          ),
-        ),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('open-scenario-practice')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('scenario-exit')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('scenario-practice-page')), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('keeps the existing typed-answer flow in the scenario shell', (
     tester,
   ) async {
     final controller = await _scenarioController();
     addTearDown(controller.dispose);
-    var interruptedBeforeSubmit = false;
     await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onBeforeSubmitText: () async {
-            interruptedBeforeSubmit = true;
-          },
-        ),
-      ),
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
     );
     await tester.pump();
 
@@ -340,7 +237,6 @@ void main() {
     );
     expect(find.text(answer), findsOneWidget);
     expect(controller.completedTurns, 1);
-    expect(interruptedBeforeSubmit, isTrue);
   });
 
   testWidgets('keeps a follow-up in the current displayed scenario round', (
@@ -373,85 +269,6 @@ void main() {
     expect(controller.completedTurns, 1);
     expect(controller.currentQuestion?.isFollowUp, isTrue);
     expect(find.text('第 1 轮 · 共 3 轮'), findsOneWidget);
-  });
-
-  testWidgets('bounds avatar interruption before opening the microphone', (
-    tester,
-  ) async {
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-    final neverCompletes = Completer<void>();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onBeforeStartRecording: () => neverCompletes.future,
-        ),
-      ),
-    );
-
-    await tester.tap(find.byKey(const Key('scenario-record')));
-    await tester.pump(const Duration(milliseconds: 499));
-    expect(controller.recordingState, PracticeRecordingState.idle);
-
-    await tester.pump(const Duration(milliseconds: 2));
-    await tester.pump();
-    expect(controller.recordingState, PracticeRecordingState.recording);
-    await controller.cancelRecording();
-  });
-
-  testWidgets('interrupts the avatar before tap and hold recording starts', (
-    tester,
-  ) async {
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-    final tapInterrupt = Completer<void>();
-    var interruptCalls = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onBeforeStartRecording: () {
-            interruptCalls++;
-            return tapInterrupt.future;
-          },
-        ),
-      ),
-    );
-
-    await tester.tap(find.byKey(const Key('scenario-record')));
-    await tester.pump();
-    expect(interruptCalls, 1);
-    expect(controller.recordingState, PracticeRecordingState.idle);
-
-    tapInterrupt.complete();
-    await tester.pumpAndSettle();
-    expect(controller.recordingState, PracticeRecordingState.recording);
-    await tester.tap(find.byKey(const Key('scenario-record')));
-    await tester.pumpAndSettle();
-    controller.rerecord();
-    await tester.pump();
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onBeforeStartRecording: () async {
-            interruptCalls++;
-          },
-        ),
-      ),
-    );
-    final hold = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('scenario-record'))),
-    );
-    await tester.pump(const Duration(milliseconds: 220));
-    expect(interruptCalls, 2);
-    expect(controller.recordingState, PracticeRecordingState.recording);
-    await hold.up();
-    await tester.pumpAndSettle();
-    expect(controller.recordingState, PracticeRecordingState.idle);
-    expect(controller.completedTurns, 2);
   });
 
   testWidgets('supports send and upward cancel', (tester) async {
@@ -614,53 +431,6 @@ void main() {
     expect(find.text('练习正在完成，请稍后重试。'), findsOneWidget);
   });
 
-  testWidgets('prefers the injected avatar replay action over audio playback', (
-    tester,
-  ) async {
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-    var replayCalls = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onReplayQuestion: () async {
-            replayCalls++;
-          },
-        ),
-      ),
-    );
-
-    final questionId = controller.currentQuestion!.id;
-    await tester.tap(find.byKey(Key('scenario-question-voice-$questionId')));
-    await tester.pump();
-
-    expect(replayCalls, 1);
-  });
-
-  testWidgets('disables injected replay while the microphone is recording', (
-    tester,
-  ) async {
-    final controller = await _scenarioController();
-    addTearDown(controller.dispose);
-    await controller.startRecording();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ScenarioPracticePage(
-          practiceController: controller,
-          onReplayQuestion: () async {},
-        ),
-      ),
-    );
-
-    final questionId = controller.currentQuestion!.id;
-    final button = tester.widget<TextButton>(
-      find.byKey(Key('scenario-question-voice-$questionId')),
-    );
-    expect(button.onPressed, isNull);
-    await controller.cancelRecording();
-  });
-
   testWidgets('keeps Tips on the current assistant message only', (
     tester,
   ) async {
@@ -802,10 +572,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      tester.getSize(find.byKey(const Key('scenario-avatar-region'))).width,
-      closeTo(844 * 0.44, 0.1),
-    );
+    expect(find.byKey(const Key('scenario-record')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
@@ -1152,7 +919,7 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       idempotencyKey: idempotencyKey,
     );
     const statusUrl =
-        '/v1/speech-feedback/10000000-0000-4000-8000-000000000001';
+        '/v1/practice-turns/10000000-0000-4000-8000-000000000001/evaluation';
     return PracticeTurnConfirmation(
       turnId: confirmation.turnId,
       sessionId: confirmation.sessionId,

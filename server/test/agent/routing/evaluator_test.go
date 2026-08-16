@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
-	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
@@ -45,13 +43,10 @@ func TestEvaluationRegistryContainsInterviewMainlineTools(t *testing.T) {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
 	want := map[string]bool{
-		goalcapability.GoalCreateCapabilityName:           true,
-		goalcapability.GoalSearchCapabilityName:           true,
-		preparationcapability.IELTSWarmUpToolName:         true,
-		preparationcapability.PracticePreviewToolName:     true,
-		evaluationcapability.LatestPracticeReportToolName: true,
-		reviewcapability.ReviewSearchToolName:             true,
-		reviewcapability.ReviewGetToolName:                true,
+		preparationcapability.IELTSWarmUpToolName:     true,
+		preparationcapability.PracticePreviewToolName: true,
+		reviewcapability.ReviewSearchToolName:         true,
+		reviewcapability.ReviewGetToolName:            true,
 	}
 	for _, definition := range evaluator.registry.Definitions() {
 		if definition.Name == removedPracticeStartToolName {
@@ -71,7 +66,6 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 	}
 	writes := registeredWriteToolNames(evaluator.registry)
 	for _, name := range []string{
-		goalcapability.GoalCreateCapabilityName,
 		preparationcapability.PracticePreviewToolName,
 	} {
 		if !containsString(writes, name) {
@@ -79,9 +73,7 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		goalcapability.GoalSearchCapabilityName,
 		preparationcapability.IELTSWarmUpToolName,
-		evaluationcapability.LatestPracticeReportToolName,
 		reviewcapability.ReviewSearchToolName,
 	} {
 		if containsString(writes, name) {

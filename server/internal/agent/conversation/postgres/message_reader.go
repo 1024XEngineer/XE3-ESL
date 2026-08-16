@@ -37,20 +37,22 @@ func findMessage(
 ) (conversation.Message, error) {
 	return scanMessage(queryer.QueryRow(ctx, `
 SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    modality,
-    content,
-    created_at
-FROM agent_messages
-WHERE id = $1
-  AND owner_user_id = $2
-  AND thread_id = $3`, messageID, ownerID, threadID))
+    message.id::text,
+    thread.user_id::text,
+    message.thread_id::text,
+    message.sequence_no,
+    message.role,
+    COALESCE(message.client_message_id, ''),
+    COALESCE(message.produced_by_run_id::text, ''),
+    message.modality,
+    message.content,
+    message.created_at
+FROM agent_messages AS message
+INNER JOIN agent_threads AS thread ON thread.id = message.thread_id
+WHERE message.id = $1
+  AND thread.user_id = $2
+  AND message.thread_id = $3
+  AND thread.deleted_at IS NULL`, messageID, ownerID, threadID))
 }
 
 func findOwnedMessage(
@@ -61,19 +63,21 @@ func findOwnedMessage(
 ) (conversation.Message, error) {
 	return scanMessage(queryer.QueryRow(ctx, `
 SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    modality,
-    content,
-    created_at
-FROM agent_messages
-WHERE id = $1
-  AND owner_user_id = $2`, messageID, ownerID))
+    message.id::text,
+    thread.user_id::text,
+    message.thread_id::text,
+    message.sequence_no,
+    message.role,
+    COALESCE(message.client_message_id, ''),
+    COALESCE(message.produced_by_run_id::text, ''),
+    message.modality,
+    message.content,
+    message.created_at
+FROM agent_messages AS message
+INNER JOIN agent_threads AS thread ON thread.id = message.thread_id
+WHERE message.id = $1
+  AND thread.user_id = $2
+  AND thread.deleted_at IS NULL`, messageID, ownerID))
 }
 
 func scanMessage(row pgx.Row) (conversation.Message, error) {

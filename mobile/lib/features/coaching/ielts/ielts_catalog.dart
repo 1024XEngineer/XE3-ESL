@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
-import 'package:speakup/features/coaching/ielts/ielts_answer_preparation.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_generation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
 import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
@@ -28,11 +28,13 @@ class IeltsCatalog extends StatefulWidget {
     SceneDefinition scene,
     PracticeMode mode,
     IeltsPracticeSelection selection,
+    List<IeltsPreparedAnswer> preparedAnswers,
   )
   onSelectionPressed;
   final Future<void> Function() onRetry;
   final IeltsSpeechClient? speechClient;
   final PracticeAudioPlayer? audioPlayer;
+  IeltsAnswerGenerator? get answerGenerator => controller.answerGenerator;
 
   @override
   State<IeltsCatalog> createState() => _IeltsCatalogState();
@@ -271,9 +273,9 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           cueCard: item.cueCard,
           speechClient: widget.speechClient,
           audioPlayer: widget.audioPlayer,
-          answerPreparationClient: widget.controller.answerPreparationClient,
+          answerGenerator: widget.answerGenerator,
           cueCardQuestionReference: item.mode == PracticeMode.part2
-              ? IeltsAnswerQuestionReference(
+              ? IeltsQuestionReference(
                   bankId: bank.bankId,
                   part: 'PART_2',
                   sourceId: item.id,
@@ -283,7 +285,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           questionReferences: switch (item.mode) {
             PracticeMode.part1 => [
               for (var index = 0; index < item.questions.length; index++)
-                IeltsAnswerQuestionReference(
+                IeltsQuestionReference(
                   bankId: bank.bankId,
                   part: 'PART_1',
                   sourceId: item.id,
@@ -292,7 +294,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
             ],
             PracticeMode.part3 => [
               for (var index = 0; index < item.questions.length; index++)
-                IeltsAnswerQuestionReference(
+                IeltsQuestionReference(
                   bankId: bank.bankId,
                   part: 'PART_3',
                   sourceId: item.id,
@@ -303,9 +305,14 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           },
           onStart: scene == null
               ? null
-              : () {
+              : (preparedAnswers) {
                   Navigator.of(context).pop();
-                  widget.onSelectionPressed(scene, item.mode, selection);
+                  widget.onSelectionPressed(
+                    scene,
+                    item.mode,
+                    selection,
+                    preparedAnswers,
+                  );
                 },
         ),
       ),

@@ -23,14 +23,14 @@ void main() {
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
     final bytes = await client.loadQuestionSpeech(
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
 
     expect(bytes, _wave());
     expect(api.requests.single.method, 'GET');
     expect(
       api.requests.single.uri.path,
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
     expect(
       api.requests.single.headers[HttpHeaders.authorizationHeader],
@@ -48,7 +48,7 @@ void main() {
       server.listen((request) async {
         expect(
           request.uri.path,
-          '/v1/voice-questions/question-1/speech/realtime',
+          '/v1/practice-questions/question-1/speech/realtime',
         );
         expect(
           request.headers.value(HttpHeaders.authorizationHeader),
@@ -208,12 +208,14 @@ void main() {
       ]);
       final client = _client(api: api, signed: signed, clock: () => now);
 
-      final bytes = await client.loadRecording('audio-asset-1');
+      final bytes = await client.loadRecording(
+        '00000000-0000-4000-8000-000000000001',
+      );
 
       expect(bytes, _wave());
       expect(
         api.requests.single.uri.path,
-        '/v1/audio-assets/audio-asset-1/playback',
+        '/v1/audio-assets/00000000-0000-4000-8000-000000000001/playback',
       );
       expect(
         api.requests.single.headers[HttpHeaders.authorizationHeader],
@@ -259,7 +261,7 @@ void main() {
         final client = _client(api: api, signed: signed, clock: () => now);
 
         await expectLater(
-          client.loadRecording('audio-asset-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -322,7 +324,7 @@ void main() {
           clock: () => now,
         );
         await expectLater(
-          client.loadRecording('audio-asset-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -366,10 +368,13 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
 
       if (testCase.accepted) {
-        expect(await client.loadRecording('audio-1'), _wave());
+        expect(
+          await client.loadRecording('00000000-0000-4000-8000-000000000001'),
+          _wave(),
+        );
       } else {
         await expectLater(
-          client.loadRecording('audio-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -410,7 +415,7 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
 
       await expectLater(
-        client.loadRecording('audio-asset-1'),
+        client.loadRecording('00000000-0000-4000-8000-000000000001'),
         throwsA(isA<PracticeClientException>()),
       );
 
@@ -436,7 +441,7 @@ void main() {
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
     await expectLater(
-      client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
+      client.loadQuestionSpeech('/v1/practice-questions/question-1/speech'),
       throwsA(
         isA<PracticeClientException>().having(
           (error) => error.kind,
@@ -477,7 +482,7 @@ void main() {
     );
 
     await expectLater(
-      client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
+      client.loadQuestionSpeech('/v1/practice-questions/question-1/speech'),
       throwsA(
         isA<PracticeClientException>().having(
           (error) => error.kind,
@@ -522,7 +527,7 @@ void main() {
       );
 
       await expectLater(
-        client.loadRecording('audio-1'),
+        client.loadRecording('00000000-0000-4000-8000-000000000001'),
         throwsA(
           isA<PracticeClientException>()
               .having(
@@ -560,7 +565,7 @@ void main() {
 
       expect(
         await questionClient.loadQuestionSpeech(
-          '/v1/voice-questions/question-1/speech',
+          '/v1/practice-questions/question-1/speech',
         ),
         _wave(),
       );
@@ -593,7 +598,12 @@ void main() {
         clock: () => now,
       );
 
-      expect(await recordingClient.loadRecording('audio-1'), _wave());
+      expect(
+        await recordingClient.loadRecording(
+          '00000000-0000-4000-8000-000000000001',
+        ),
+        _wave(),
+      );
       expect(metadataBuffer, everyElement(0));
       expect(recordingBuffer, everyElement(0));
     },
@@ -611,7 +621,7 @@ void main() {
       final source = _wave();
 
       final load = client.loadQuestionSpeech(
-        '/v1/voice-questions/question-1/speech',
+        '/v1/practice-questions/question-1/speech',
       );
       await api.requestStarted.future;
       final cleanup = client.clearAccountState();
@@ -650,7 +660,7 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
       final source = _wave();
 
-      final load = client.loadRecording('audio-1');
+      final load = client.loadRecording('00000000-0000-4000-8000-000000000001');
       await signed.requestStarted.future;
       final cleanup = client.clearAccountState();
       signed.response.complete(
@@ -688,7 +698,7 @@ void main() {
     );
 
     final load = client.loadQuestionSpeech(
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
     await api.requestStarted.future;
     await expectLater(
@@ -787,13 +797,16 @@ void main() {
     ]);
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
-    await client.deleteRecording('audio-asset-1');
-    await client.deleteRecording('audio-asset-1');
+    await client.deleteRecording('00000000-0000-4000-8000-000000000001');
+    await client.deleteRecording('00000000-0000-4000-8000-000000000001');
 
     expect(api.requests, hasLength(2));
     for (final request in api.requests) {
       expect(request.method, 'DELETE');
-      expect(request.uri.path, '/v1/audio-assets/audio-asset-1');
+      expect(
+        request.uri.path,
+        '/v1/audio-assets/00000000-0000-4000-8000-000000000001',
+      );
       expect(
         request.headers[HttpHeaders.authorizationHeader],
         'Bearer sess_practice-media',

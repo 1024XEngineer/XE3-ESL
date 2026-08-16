@@ -7,17 +7,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
 void main() {
-  group('WireAgentClient focused Thread', () {
-    test('loads the focused durable Thread and ordered Messages', () async {
+  test('Agent evaluation status URL uses the Message-owned endpoint', () {
+    expect(
+      validAgentSpeechFeedbackStatusUrl(
+        '/v1/agent-messages/20000000-0000-4000-8000-000000000001/evaluation',
+      ),
+      isTrue,
+    );
+    expect(
+      validAgentSpeechFeedbackStatusUrl(
+        '/v1/speech-feedback/20000000-0000-4000-8000-000000000001',
+      ),
+      isFalse,
+    );
+  });
+
+  group('WireAgentClient Thread snapshot', () {
+    test('loads one durable Thread and its ordered Messages', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson(title: '英文面试准备')),
         ),
         _Step(
@@ -38,24 +53,25 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
-                handoffs: const <Object?>[
+                clientActions: const <Object?>[
                   {
-                    'type': 'confirm_practice_plan',
-                    'label': '确认并开始练习',
-                    'practice_plan_id': _practicePlanId,
-                    'plan_revision': 2,
-                    'target': 'Java Interview Practice',
-                    'scene_name': '项目经历深挖',
-                    'practice_experience': 'INTERVIEW',
-                    'scene_category': 'INTERVIEW_PROFESSIONAL',
-                    'practice_mode': 'FULL_SIMULATION',
-                    'roles': ['面试官', '候选人'],
-                    'practice_scope': '围绕项目难点完成三轮追问',
-                    'suggested_duration_seconds': 720,
-                    'min_effective_turns': 3,
-                    'max_effective_turns': 5,
-                    'executable_status': 'ready',
-                    'confirmation_prompt': '请确认是否按此方案开始练习。',
+                    'type': practicePlanConfirmClientActionType,
+                    'payload': {
+                      'label': '确认并开始练习',
+                      'practice_plan_id': _practicePlanId,
+                      'plan_version': 2,
+                      'target': 'Java Interview Practice',
+                      'scene_name': '项目经历深挖',
+                      'practice_experience': 'INTERVIEW',
+                      'scene_category': 'INTERVIEW_PROFESSIONAL',
+                      'practice_mode': 'FULL_SIMULATION',
+                      'roles': ['面试官', '候选人'],
+                      'practice_scope': '围绕项目难点完成三轮追问',
+                      'suggested_duration_seconds': 720,
+                      'min_effective_turns': 3,
+                      'max_effective_turns': 5,
+                      'confirmation_prompt': '请确认是否按此方案开始练习。',
+                    },
                   },
                 ],
               ),
@@ -65,21 +81,19 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.threadId, _threadId);
       expect(snapshot.title, '英文面试准备');
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
-      expect(snapshot.messages.last.handoffs, hasLength(1));
-      final handoff = snapshot.messages.last.handoffs.single;
-      expect(handoff, isA<ConfirmPracticePlanHandoff>());
-      expect(
-        (handoff as ConfirmPracticePlanHandoff).practicePlanId,
-        _practicePlanId,
+      expect(snapshot.messages.last.clientActions, hasLength(1));
+      final action = decodeConfirmPracticePlanClientAction(
+        snapshot.messages.last.clientActions.single,
       );
-      expect(handoff.planRevision, 2);
+      expect(action.practicePlanId, _practicePlanId);
+      expect(action.planVersion, 2);
       expect(
         transport.calls.every(
           (call) =>
@@ -95,7 +109,7 @@ void main() {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -126,11 +140,45 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.messages.single.modality, AgentMessageModality.voice);
       expect(snapshot.textRecovery, isNull);
+      transport.expectDone();
+    });
+
+    test('restores voice provenance after its recording was deleted', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: 'Keep my transcript after deleting the recording.',
+                clientMessageId: 'voice_message_deleted',
+                modality: 'voice',
+              ),
+            ],
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = await harness.client.getThread(threadId: _threadId);
+
+      expect(snapshot.messages.single.modality, AgentMessageModality.voice);
+      expect(snapshot.messages.single.audio, isNull);
+      expect(snapshot.messages.single.text, contains('transcript'));
       transport.expectDone();
     });
 
@@ -155,7 +203,7 @@ void main() {
             method: 'POST',
             path: '/v1/agent-threads',
             verify: (call) {
-              expect(jsonDecode(call.body!), <String, Object?>{});
+              expect(call.body, isNull);
             },
             response: _jsonResponse(HttpStatus.created, _threadJson()),
           ),
@@ -177,7 +225,7 @@ void main() {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -234,7 +282,7 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.textRecovery?.clientMessageId, clientMessageId);
@@ -263,7 +311,7 @@ void main() {
         final transport = _ScriptedTransport([
           _Step(
             method: 'GET',
-            path: '/v1/agent-threads/focused',
+            path: '/v1/agent-threads/$_threadId',
             response: _jsonResponse(HttpStatus.ok, _threadJson()),
           ),
           _Step(
@@ -304,7 +352,7 @@ void main() {
         ]);
         final harness = _Harness(transport, maxRunPollAttempts: 2);
 
-        final snapshot = (await harness.client.getFocusedThread())!;
+        final snapshot = await harness.client.getThread(threadId: _threadId);
 
         expect(snapshot.textRecovery, isNull);
         expect(snapshot.messages, hasLength(2));
@@ -396,48 +444,40 @@ void main() {
   });
 
   group('WireAgentClient bounded Thread history', () {
-    test(
-      'encodes Thread keyset pagination and preserves focused metadata',
-      () async {
-        final transport = _ScriptedTransport([
-          _Step(
-            method: 'GET',
-            path: '/v1/agent-threads',
-            verify: (call) {
-              expect(call.queryParameters, {
-                'page_size': '20',
-                'cursor': 'older_threads',
-              });
-            },
-            response: _jsonResponse(HttpStatus.ok, {
-              'threads': [
-                _threadJson(),
-                _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
-              ],
-              'focused_thread_id': _threadBId,
-              'next_cursor': 'oldest_threads',
-            }),
-          ),
-        ]);
-        final harness = _Harness(transport);
-
-        final page = await harness.client.listThreads(cursor: 'older_threads');
-
-        expect(page.threads.map((thread) => thread.id), [
-          _threadId,
-          _threadBId,
-        ]);
-        expect(page.focusedThreadId, _threadBId);
-        expect(page.nextCursor, 'oldest_threads');
-        transport.expectDone();
-      },
-    );
-
-    test('gets, selects, clears focus and pages one Thread messages', () async {
+    test('encodes Thread keyset pagination metadata', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads',
+          verify: (call) {
+            expect(call.queryParameters, {
+              'page_size': '20',
+              'cursor': 'older_threads',
+            });
+          },
+          response: _jsonResponse(HttpStatus.ok, {
+            'threads': [
+              _threadJson(),
+              _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
+            ],
+            'next_cursor': 'oldest_threads',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final page = await harness.client.listThreads(cursor: 'older_threads');
+
+      expect(page.threads.map((thread) => thread.id), [_threadId, _threadBId]);
+      expect(page.nextCursor, 'oldest_threads');
+      transport.expectDone();
+    });
+
+    test('gets explicit Threads and pages one Thread messages', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -446,11 +486,8 @@ void main() {
           response: _jsonResponse(HttpStatus.ok, {'messages': <Object?>[]}),
         ),
         _Step(
-          method: 'PUT',
-          path: '/v1/agent-threads/focused',
-          verify: (call) {
-            expect(jsonDecode(call.body!), {'thread_id': _threadBId});
-          },
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadBId',
           response: _jsonResponse(HttpStatus.ok, _threadJson(id: _threadBId)),
         ),
         _Step(
@@ -482,48 +519,19 @@ void main() {
             ],
           }),
         ),
-        const _Step(
-          method: 'DELETE',
-          path: '/v1/agent-threads/focused',
-          response: IdentityHttpResponse(
-            statusCode: HttpStatus.noContent,
-            body: '',
-          ),
-        ),
       ]);
       final harness = _Harness(transport);
 
-      final restored = await harness.client.getFocusedThread();
-      final selected = await harness.client.setFocusedThread(
-        threadId: _threadBId,
-      );
+      final restored = await harness.client.getThread(threadId: _threadId);
+      final selected = await harness.client.getThread(threadId: _threadBId);
       final messages = await harness.client.listMessages(
         threadId: _threadId,
         cursor: 'older_messages',
       );
-      await harness.client.clearFocusedThread();
-
-      expect(restored?.threadId, _threadId);
+      expect(restored.threadId, _threadId);
       expect(selected.threadId, _threadBId);
       expect(selected.nextMessageCursor, 'older_b_messages');
       expect(messages.messages.single.sequence, 1);
-      transport.expectDone();
-    });
-
-    test('maps an empty focused selection from 204 only', () async {
-      final transport = _ScriptedTransport([
-        const _Step(
-          method: 'GET',
-          path: '/v1/agent-threads/focused',
-          response: IdentityHttpResponse(
-            statusCode: HttpStatus.noContent,
-            body: '',
-          ),
-        ),
-      ]);
-      final harness = _Harness(transport);
-
-      expect(await harness.client.getFocusedThread(), isNull);
       transport.expectDone();
     });
 
@@ -687,7 +695,7 @@ void main() {
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
             'threads': <Object?>[],
-            'focused_thread_id': null,
+            'next_cursor': null,
           }),
         ),
         _Step(
@@ -817,12 +825,11 @@ void main() {
                   images: [
                     {
                       'image_asset_id': imageId,
-                      'thread_id': _threadId,
                       'content_type': 'image/png',
                       'size_bytes': 128,
                       'width': 32,
                       'height': 24,
-                      'status': 'attached',
+                      'status': 'ready',
                       'created_at': _createdAt,
                       'attached_at': _createdAt,
                     },
@@ -1666,6 +1673,7 @@ final class _ScriptedTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     if (_steps.isEmpty) {
       throw StateError('Unexpected Agent HTTP request.');
@@ -1716,6 +1724,7 @@ final class _ControlledTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     if (_responses.isEmpty) {
       throw StateError('No controlled Agent response was queued.');
@@ -1767,12 +1776,10 @@ Map<String, Object?> _threadJson({
   String createdAt = _createdAt,
   String updatedAt = _updatedAt,
   String? title,
-  String? activeGoalId,
 }) {
   return {
     'thread_id': id,
     'title': title,
-    'active_goal_id': ?activeGoalId,
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
@@ -1785,7 +1792,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
-  List<Object?>? handoffs,
+  List<Object?>? clientActions,
   String? modality,
   Map<String, Object?>? audio,
   List<Object?>? images,
@@ -1797,7 +1804,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
-    'handoffs': ?handoffs,
+    'client_actions': ?clientActions,
     'modality': ?modality,
     'audio': ?audio,
     'images': ?images,

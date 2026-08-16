@@ -9,33 +9,23 @@ import (
 
 type Service struct {
 	repository Repository
-	goals      GoalReader
 }
 
-func NewService(
-	repository Repository,
-	goals GoalReader,
-) (*Service, error) {
-	if repository == nil || goals == nil {
+func NewService(repository Repository) (*Service, error) {
+	if repository == nil {
 		return nil, errors.New("agent: service dependency is required")
 	}
-	return &Service{repository: repository, goals: goals}, nil
+	return &Service{repository: repository}, nil
 }
 
 func (s *Service) CreateThread(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	activeGoalID string,
 ) (Thread, error) {
 	if !actor.Valid() {
 		return Thread{}, ErrInvalidRequest
 	}
-	if activeGoalID != "" {
-		if err := s.requireActiveGoal(ctx, actor, activeGoalID); err != nil {
-			return Thread{}, err
-		}
-	}
-	return s.repository.CreateThread(ctx, actor.UserID, activeGoalID)
+	return s.repository.CreateThread(ctx, actor.UserID)
 }
 
 func (s *Service) ListThreads(
@@ -74,14 +64,7 @@ func (s *Service) PageThreads(
 	if err != nil {
 		return ThreadPage{}, err
 	}
-	focused, found, err := s.repository.FindFocusedThread(ctx, actor.UserID)
-	if err != nil {
-		return ThreadPage{}, err
-	}
 	result := ThreadPage{Threads: threads}
-	if found {
-		result.FocusedThreadID = focused.ID
-	}
 	if len(result.Threads) > pageSize {
 		result.Threads = result.Threads[:pageSize]
 		last := result.Threads[len(result.Threads)-1]
@@ -116,57 +99,6 @@ func (s *Service) DeleteThread(
 		return ErrNotFound
 	}
 	return s.repository.DeleteThread(ctx, actor.UserID, threadID)
-}
-
-func (s *Service) GetFocusedThread(
-	ctx context.Context,
-	actor requestcontext.Actor,
-) (Thread, bool, error) {
-	if !actor.Valid() {
-		return Thread{}, false, ErrInvalidRequest
-	}
-	return s.repository.FindFocusedThread(ctx, actor.UserID)
-}
-
-func (s *Service) SetFocusedThread(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-) (Thread, error) {
-	if !actor.Valid() || !ValidUUID(threadID) {
-		return Thread{}, ErrNotFound
-	}
-	return s.repository.SetFocusedThread(ctx, actor.UserID, threadID)
-}
-
-func (s *Service) ClearFocusedThread(
-	ctx context.Context,
-	actor requestcontext.Actor,
-) error {
-	if !actor.Valid() {
-		return ErrInvalidRequest
-	}
-	return s.repository.ClearFocusedThread(ctx, actor.UserID)
-}
-
-func (s *Service) SetActiveGoal(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-	goalID string,
-) (ThreadGoalLink, error) {
-	if !actor.Valid() || !ValidUUID(threadID) {
-		return ThreadGoalLink{}, ErrNotFound
-	}
-	if err := s.requireActiveGoal(ctx, actor, goalID); err != nil {
-		return ThreadGoalLink{}, err
-	}
-	return s.repository.SetActiveGoal(
-		ctx,
-		actor.UserID,
-		threadID,
-		goalID,
-	)
 }
 
 func (s *Service) AppendUserMessage(
@@ -262,27 +194,6 @@ func (s *Service) PageMessages(
 	}
 	reverseMessages(result.Messages)
 	return result, nil
-}
-
-func (s *Service) requireActiveGoal(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	goalID string,
-) error {
-	if !ValidUUID(goalID) {
-		return ErrNotFound
-	}
-	item, found, err := s.goals.ReadGoalState(ctx, actor, goalID)
-	if err != nil {
-		return ErrRepository
-	}
-	if !found || item.ID != goalID {
-		return ErrNotFound
-	}
-	if !item.Active {
-		return ErrConflict
-	}
-	return nil
 }
 
 func reverseMessages(messages []Message) {

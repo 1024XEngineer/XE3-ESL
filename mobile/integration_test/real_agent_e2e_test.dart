@@ -6,11 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -506,15 +507,16 @@ void main() {
       controller: dependencies.conversationController,
       text: '呃你给我随便挑一个。',
     );
-    expect(warmUp.handoffs, isEmpty);
+    expect(warmUp.clientActions, isEmpty);
 
     final confirmation = await _sendRealAgentMessage(
       tester,
       controller: dependencies.conversationController,
       text: '呃。 no person.',
     );
-    final handoff = confirmation.handoffs
-        .whereType<ConfirmPracticePlanHandoff>()
+    final action = confirmation.clientActions
+        .where(_isPracticePlanConfirmAction)
+        .map(decodeConfirmPracticePlanClientAction)
         .single;
     expect(confirmation.text.trim(), isNot(warmUp.text.trim()));
     expect(
@@ -529,17 +531,17 @@ void main() {
     );
     expect(
       dependencies.conversationController.messages
-          .expand((message) => message.handoffs)
-          .whereType<ConfirmPracticePlanHandoff>()
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction)
           .length,
       1,
     );
-    expect(handoff.practiceMode, 'PART_1');
+    expect(action.practiceMode, 'PART_1');
     expect(
       find.byKey(
         Key(
-          'agent-handoff-practice-plan-'
-          '${handoff.practicePlanId}-${handoff.planRevision}',
+          'agent-client-action-practice-plan-'
+          '${action.practicePlanId}-${action.planVersion}',
         ),
       ),
       findsOneWidget,
@@ -547,7 +549,7 @@ void main() {
     final confirmationButton = find.byKey(
       Key(
         'confirm-practice-plan-'
-        '${handoff.practicePlanId}-${handoff.planRevision}',
+        '${action.practicePlanId}-${action.planVersion}',
       ),
     );
     await _waitUntil(
@@ -555,11 +557,7 @@ void main() {
       () => confirmationButton.hitTestable().evaluate().length == 1,
       const Duration(seconds: 10),
     );
-    await _expectRealUiScreenshot(
-      tester,
-      binding,
-      'agent-short-warmup-handoff',
-    );
+    await _expectRealUiScreenshot(tester, binding, 'agent-short-warmup-action');
     await tester.tap(confirmationButton);
     await _waitForPreparationTarget(
       tester,
@@ -569,6 +567,10 @@ void main() {
     );
     expect(dependencies.practiceController.practiceSessionId, isNotNull);
   });
+}
+
+bool _isPracticePlanConfirmAction(AgentClientAction action) {
+  return action.type == practicePlanConfirmClientActionType;
 }
 
 Future<AgentMessage> _sendRealAgentMessage(

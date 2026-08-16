@@ -80,7 +80,7 @@ func (p *AIJobTargetParser) ParseJobTarget(
 		strings.TrimSpace(p.trustedCatalog) == "" {
 		return JobTargetCandidate{}, newJobTargetParserError(
 			"invalid_request",
-			ErrJobTargetInvalid,
+			ErrInterviewPreparationInvalid,
 		)
 	}
 
@@ -104,7 +104,7 @@ func (p *AIJobTargetParser) ParseJobTarget(
 	if err != nil {
 		return JobTargetCandidate{}, newJobTargetParserError(
 			"invalid_request",
-			ErrJobTargetInvalid,
+			ErrInterviewPreparationInvalid,
 		)
 	}
 

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agentconversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
@@ -42,10 +41,6 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/agent-runs/:run_id", handler.get)
 	routes.POST("/v1/agent-runs/:run_id/retries", handler.retry)
 	routes.POST("/v1/agent-runs/:run_id/retries/stream", handler.retryStream)
-	routes.GET(
-		"/v1/agent-runs/:run_id/context-manifest",
-		handler.getContextManifest,
-	)
 }
 
 func (handler *Handler) submit(c *gin.Context) {
@@ -201,22 +196,6 @@ func (handler *Handler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, RunResponse(run))
 }
 
-func (handler *Handler) getContextManifest(c *gin.Context) {
-	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return
-	}
-	manifest, err := handler.application.GetContextManifest(
-		c.Request.Context(), actor, c.Param("run_id"),
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	c.JSON(http.StatusOK, ContextManifestResponse(manifest))
-}
-
 func (handler *Handler) finishStream(
 	c *gin.Context,
 	stream *sseWriter,
@@ -352,90 +331,6 @@ func RunResponse(run agentrun.Run) gin.H {
 	return result
 }
 
-func ContextManifestResponse(manifest agentcontext.Manifest) gin.H {
-	messages := make([]gin.H, 0, len(manifest.SelectedMessages))
-	for _, message := range manifest.SelectedMessages {
-		messages = append(messages, gin.H{
-			"message_id": message.MessageID, "sequence": message.Sequence,
-			"role": message.Role,
-		})
-	}
-	memories := make([]gin.H, 0, len(manifest.SelectedMemories))
-	for _, item := range manifest.SelectedMemories {
-		memory := gin.H{
-			"memory_id": item.MemoryID, "memory_version": item.MemoryVersion,
-			"type": item.Type, "scope": item.Scope, "similarity": item.Similarity,
-			"score": item.Score, "embedding_provider": item.EmbeddingProvider,
-			"embedding_model":          item.EmbeddingModel,
-			"embedding_dimensions":     item.EmbeddingDimensions,
-			"embedding_policy_version": item.EmbeddingPolicyVersion,
-			"retrieval_policy_version": item.RetrievalPolicyVersion,
-		}
-		if item.GoalID != "" {
-			memory["goal_id"] = item.GoalID
-		}
-		memories = append(memories, memory)
-	}
-	stableProfile := make([]gin.H, 0, len(manifest.SelectedStableProfile))
-	for _, item := range manifest.SelectedStableProfile {
-		stableProfile = append(stableProfile, gin.H{
-			"memory_id": item.MemoryID, "memory_version": item.MemoryVersion,
-			"canonical_key": item.CanonicalKey, "type": item.Type,
-			"scope": item.Scope,
-		})
-	}
-	result := gin.H{
-		"run_id": manifest.RunID, "thread_id": manifest.ThreadID,
-		"input_message_id":                         manifest.InputMessageID,
-		"instruction_version":                      manifest.InstructionVersion,
-		"stable_profile_context_policy_version":    manifest.StableProfileContextPolicyVersion,
-		"selected_stable_profile":                  stableProfile,
-		"memory_context_policy_version":            manifest.MemoryContextPolicyVersion,
-		"selected_memories":                        memories,
-		"memory_extraction_barrier_policy_version": manifest.MemoryExtractionBarrierPolicyVersion,
-		"memory_extraction_barrier_cutoff": manifest.MemoryExtractionBarrierCutoff.UTC().Format(
-			time.RFC3339Nano,
-		),
-		"memory_extraction_barrier_status":              manifest.MemoryExtractionBarrierStatus,
-		"memory_extraction_barrier_waited_milliseconds": manifest.MemoryExtractionBarrierWaitedMilliseconds,
-		"summary_context_policy_version":                manifest.SummaryContextPolicyVersion,
-		"summary_context_status":                        manifest.SummaryContextStatus,
-		"selected_messages":                             messages,
-		"omitted_message_count":                         manifest.OmittedMessageCount,
-		"trim_reason":                                   manifest.TrimReason,
-		"max_input_characters":                          manifest.MaxInputCharacters,
-		"used_input_characters":                         manifest.UsedInputCharacters,
-		"requested_provider":                            manifest.RequestedProvider,
-		"requested_model":                               manifest.RequestedModel,
-		"max_output_tokens":                             manifest.MaxOutputTokens,
-		"created_at":                                    manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if !manifest.MemoryExtractionBarrierCoveredThrough.IsZero() {
-		result["memory_extraction_barrier_covered_through"] =
-			manifest.MemoryExtractionBarrierCoveredThrough.UTC().Format(
-				time.RFC3339Nano,
-			)
-	}
-	if manifest.SelectedSummary != nil {
-		result["selected_summary"] = gin.H{
-			"checkpoint_id":            manifest.SelectedSummary.CheckpointID,
-			"source_from_sequence":     manifest.SelectedSummary.SourceFromSequence,
-			"covered_through_sequence": manifest.SelectedSummary.CoveredThroughSequence,
-			"policy_version":           manifest.SelectedSummary.PolicyVersion,
-			"prompt_version":           manifest.SelectedSummary.PromptVersion,
-			"provider":                 manifest.SelectedSummary.Provider,
-			"model":                    manifest.SelectedSummary.Model,
-		}
-	}
-	if manifest.ActiveGoalID != "" {
-		result["active_goal"] = gin.H{
-			"goal_id": manifest.ActiveGoalID,
-			"version": manifest.ActiveGoalVersion,
-		}
-	}
-	return result
-}
-
 func (handler *Handler) write(c *gin.Context, err error) {
 	if appError, ok := apperror.From(err); ok &&
 		appError.Category() == apperror.Unauthenticated {
@@ -448,7 +343,7 @@ func mapError(err error) error {
 	switch {
 	case errors.Is(err, agentrun.ErrInvalidRequest):
 		return invalidRequest(err)
-	case errors.Is(err, agentrun.ErrNotFound), errors.Is(err, agentcontext.ErrNotFound):
+	case errors.Is(err, agentrun.ErrNotFound):
 		return apperror.New(
 			apperror.NotFound, "resource_not_found", "Resource was not found.",
 			apperror.WithCause(err),
@@ -459,7 +354,7 @@ func mapError(err error) error {
 			"Idempotency key conflicts with the original request.",
 			apperror.WithCause(err),
 		)
-	case errors.Is(err, agentrun.ErrConflict), errors.Is(err, agentcontext.ErrConflict):
+	case errors.Is(err, agentrun.ErrConflict):
 		return apperror.New(
 			apperror.Conflict, "resource_conflict",
 			"Resource state conflicts with this operation.",

@@ -1,4 +1,4 @@
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 
 const agentMaximumImagesPerMessage = 4;
 const agentMaximumImageBytes = 10 * 1024 * 1024;
@@ -7,14 +7,8 @@ enum AgentMessageRole { user, assistant }
 
 enum AgentMessageModality { text, voice, multimodal }
 
-bool validAgentSpeechFeedbackStatusUrl(String value) {
-  if (value.length > 160 ||
-      !_agentSpeechFeedbackStatusUrlPattern.hasMatch(value)) {
-    return false;
-  }
-  final opaqueId = value.substring('/v1/speech-feedback/'.length);
-  return opaqueId != '.' && opaqueId != '..';
-}
+bool validAgentSpeechFeedbackStatusUrl(String value) =>
+    _agentSpeechFeedbackStatusUrlPattern.hasMatch(value);
 
 enum AgentMessageAudioStatus { readable, deleting, deleted }
 
@@ -61,15 +55,14 @@ final class AgentMessageAudio {
 }
 
 final _agentSpeechFeedbackStatusUrlPattern = RegExp(
-  r'^/v1/speech-feedback/[A-Za-z0-9._~-]{1,128}$',
+  r'^/v1/agent-messages/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/evaluation$',
 );
 
-enum AgentImageAssetStatus { staged, attached, deleting, deleted }
+enum AgentImageAssetStatus { staged, ready, deleting }
 
 final class AgentImageAsset {
   const AgentImageAsset({
     required this.id,
-    required this.threadId,
     required this.contentType,
     required this.sizeBytes,
     required this.width,
@@ -82,7 +75,6 @@ final class AgentImageAsset {
   });
 
   final String id;
-  final String threadId;
   final String contentType;
   final int sizeBytes;
   final int width;
@@ -94,8 +86,7 @@ final class AgentImageAsset {
   final DateTime? contentExpiresAt;
 
   bool get isReadable =>
-      (status == AgentImageAssetStatus.staged ||
-          status == AgentImageAssetStatus.attached) &&
+      status == AgentImageAssetStatus.ready &&
       contentUrl != null &&
       contentExpiresAt?.isAfter(DateTime.now().toUtc()) == true;
 
@@ -105,7 +96,6 @@ final class AgentImageAsset {
   }) {
     return AgentImageAsset(
       id: id,
-      threadId: threadId,
       contentType: contentType,
       sizeBytes: sizeBytes,
       width: width,
@@ -131,12 +121,9 @@ final class AgentMessage {
     this.images = const <AgentImageAsset>[],
     this.isStreaming = false,
     this.hasFailed = false,
-    this.handoffs = const <AgentHandoff>[],
+    this.clientActions = const <AgentClientAction>[],
     this.speechFeedbackStatusUrl,
-  }) : assert(
-         (modality == AgentMessageModality.voice && audio != null) ||
-             (modality != AgentMessageModality.voice && audio == null),
-       );
+  }) : assert(modality == AgentMessageModality.voice || audio == null);
 
   final String id;
   final AgentMessageRole role;
@@ -148,7 +135,7 @@ final class AgentMessage {
   final List<AgentImageAsset> images;
   final bool isStreaming;
   final bool hasFailed;
-  final List<AgentHandoff> handoffs;
+  final List<AgentClientAction> clientActions;
   final String? speechFeedbackStatusUrl;
 
   AgentMessage copyWith({
@@ -159,7 +146,7 @@ final class AgentMessage {
     List<AgentImageAsset>? images,
     bool? isStreaming,
     bool? hasFailed,
-    List<AgentHandoff>? handoffs,
+    List<AgentClientAction>? clientActions,
     String? speechFeedbackStatusUrl,
     bool clearSpeechFeedbackStatusUrl = false,
   }) {
@@ -174,7 +161,7 @@ final class AgentMessage {
       images: images ?? this.images,
       isStreaming: isStreaming ?? this.isStreaming,
       hasFailed: hasFailed ?? this.hasFailed,
-      handoffs: handoffs ?? this.handoffs,
+      clientActions: clientActions ?? this.clientActions,
       speechFeedbackStatusUrl: clearSpeechFeedbackStatusUrl
           ? null
           : speechFeedbackStatusUrl ?? this.speechFeedbackStatusUrl,
@@ -192,25 +179,18 @@ final class AgentThreadSummary {
     required this.createdAt,
     required this.updatedAt,
     this.title,
-    this.activeGoalId,
   });
 
   final String id;
   final String? title;
-  final String? activeGoalId;
   final DateTime createdAt;
   final DateTime updatedAt;
 }
 
 final class AgentThreadPage {
-  const AgentThreadPage({
-    required this.threads,
-    this.focusedThreadId,
-    this.nextCursor,
-  });
+  const AgentThreadPage({required this.threads, this.nextCursor});
 
   final List<AgentThreadSummary> threads;
-  final String? focusedThreadId;
   final String? nextCursor;
 }
 
@@ -225,7 +205,6 @@ final class AgentThreadSnapshot {
   const AgentThreadSnapshot({
     required this.threadId,
     this.title,
-    this.activeGoalId,
     this.textRecovery,
     this.messages = const <AgentMessage>[],
     this.createdAt,
@@ -235,7 +214,6 @@ final class AgentThreadSnapshot {
 
   final String threadId;
   final String? title;
-  final String? activeGoalId;
   final AgentTextRecovery? textRecovery;
   final List<AgentMessage> messages;
   final DateTime? createdAt;

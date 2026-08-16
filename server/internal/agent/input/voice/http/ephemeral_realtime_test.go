@@ -551,6 +551,67 @@ type ephemeralTestRecognizer struct {
 
 type failingEphemeralRecognizer struct{}
 
+type voiceInputHTTPApplication struct {
+	streamCalls          int
+	uploadBytes          int
+	confirmCalls         int
+	deleteCandidateCalls int
+}
+
+func (application *voiceInputHTTPApplication) UploadStream(
+	context.Context,
+	requestcontext.Actor,
+	agentvoice.UploadRequest,
+	agentvoice.TranscriptionObserver,
+) (agentvoice.Draft, error) {
+	application.streamCalls++
+	return agentvoice.Draft{}, errors.New("unexpected durable upload")
+}
+
+func (*voiceInputHTTPApplication) GetDraft(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (agentvoice.Draft, error) {
+	return agentvoice.Draft{}, errors.New("unexpected durable read")
+}
+
+func (*voiceInputHTTPApplication) Retry(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (agentvoice.Draft, error) {
+	return agentvoice.Draft{}, errors.New("unexpected durable retry")
+}
+
+func (application *voiceInputHTTPApplication) Confirm(
+	context.Context,
+	requestcontext.Actor,
+	agentvoice.ConfirmDraftCommand,
+) (agentvoice.Confirmation, error) {
+	application.confirmCalls++
+	return agentvoice.Confirmation{}, errors.New("unexpected confirmation")
+}
+
+func (application *voiceInputHTTPApplication) ConfirmStream(
+	context.Context,
+	requestcontext.Actor,
+	agentvoice.ConfirmDraftCommand,
+	agentvoice.ConfirmationStreamObserver,
+) (agentvoice.Confirmation, error) {
+	application.confirmCalls++
+	return agentvoice.Confirmation{}, errors.New("unexpected confirmation")
+}
+
+func (application *voiceInputHTTPApplication) DeleteDraft(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) error {
+	application.deleteCandidateCalls++
+	return errors.New("unexpected durable deletion")
+}
+
 func (failingEphemeralRecognizer) TranscribePCMStream(
 	context.Context,
 	agentvoice.PCMTranscriptionRequest,

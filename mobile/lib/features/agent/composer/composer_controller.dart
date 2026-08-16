@@ -105,12 +105,6 @@ final class ComposerController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    final threadId = conversationController.threadId;
-    if (_pendingImages.any((pending) => pending.asset?.threadId != threadId)) {
-      _imageErrorMessage = '图片不属于当前对话，请重新选择。';
-      notifyListeners();
-      return false;
-    }
     final assetIds = [for (final pending in _pendingImages) pending.asset!.id];
     final sent = await conversationController.sendText(
       value,
@@ -292,15 +286,23 @@ final class ComposerController extends ChangeNotifier {
         idempotencyKey: pending.uploadRequestId,
       );
       if (!_isCurrent(generation)) {
-        if (asset.threadId == threadId &&
-            asset.status == AgentImageAssetStatus.staged) {
+        if (asset.status == AgentImageAssetStatus.staged ||
+            asset.status == AgentImageAssetStatus.ready) {
           unawaited(_deleteImageBestEffort(asset.id));
         }
         return;
       }
-      if (asset.threadId != threadId ||
-          asset.status != AgentImageAssetStatus.staged) {
-        return;
+      if (asset.status == AgentImageAssetStatus.staged) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.conflict,
+          errorCode: 'resource_processing',
+          retryable: true,
+        );
+      }
+      if (asset.status != AgentImageAssetStatus.ready) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+        );
       }
       final current = _pendingImages
           .where((image) => image.localId == localId)

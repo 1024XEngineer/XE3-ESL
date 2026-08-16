@@ -2,413 +2,223 @@ package summary
 
 import (
 	"context"
-	"crypto/sha256"
-	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
-func TestWorkerSkipsBelowThresholdWithoutGeneration(t *testing.T) {
+func TestWorkerTriggersOnOneMaximumLengthMessage(t *testing.T) {
 	t.Parallel()
-
-	jobs := &jobRepositoryStub{claim: jobClaimFixture(39)}
-	checkpoints := &checkpointRepositoryStub{
-		findErr: conversation.ErrNotFound,
+	repository := &workerRepositoryStub{
+		claim: workerClaim(1),
+		messages: []conversation.Message{
+			summaryMessage(1, strings.Repeat("界", conversation.MaxMessageContentRunes)),
+		},
 	}
-	generator := &checkpointGeneratorStub{}
-	worker := newWorkerForTest(t, jobs, checkpoints, generator)
-
+	worker := newTestWorker(t, repository)
 	result, err := worker.ProcessPending(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("ProcessPending: %v", err)
+		t.Fatal(err)
 	}
-	if result.Skipped != 1 || generator.calls != 0 {
-		t.Fatalf("result = %#v generator calls = %d", result, generator.calls)
-	}
-	if jobs.finishedStatus != JobSkipped ||
-		jobs.finishedTarget != 0 ||
-		jobs.finishedReason != "below_threshold" {
-		t.Fatalf("unexpected finish: %#v", jobs)
+	if result.Completed != 1 || repository.completedThrough != 1 || repository.skipped {
+		t.Fatalf("result=%#v repository=%#v", result, repository)
 	}
 }
 
-func TestWorkerRetainsRecentMessagesAndCompletes(t *testing.T) {
+func TestWorkerSkipsHistoryBelowDerivedBudget(t *testing.T) {
 	t.Parallel()
-
-	claim := jobClaimFixture(40)
-	jobs := &jobRepositoryStub{claim: claim}
-	checkpoints := &checkpointRepositoryStub{findErr: conversation.ErrNotFound}
-	generator := &checkpointGeneratorStub{}
-	generator.generate = func(
-		command GenerateCheckpointCommand,
-	) (Checkpoint, error) {
-		if command.CoveredThroughSequence != 20 {
-			t.Fatalf(
-				"covered through = %d, want 20",
-				command.CoveredThroughSequence,
-			)
-		}
-		return checkpointForTarget(claim, 20), nil
+	repository := &workerRepositoryStub{
+		claim:    workerClaim(1),
+		messages: []conversation.Message{summaryMessage(1, "Hello")},
 	}
-	worker := newWorkerForTest(t, jobs, checkpoints, generator)
-
+	worker := newTestWorker(t, repository)
 	result, err := worker.ProcessPending(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("ProcessPending: %v", err)
+		t.Fatal(err)
 	}
-	if result.Completed != 1 || generator.calls != 1 {
-		t.Fatalf("result = %#v generator calls = %d", result, generator.calls)
-	}
-	if jobs.completedTarget != 20 ||
-		jobs.completedCheckpoint.CoveredThroughSequence != 20 {
-		t.Fatalf("unexpected completion: %#v", jobs)
+	if result.Skipped != 1 || !repository.skipped || repository.completedThrough != 0 {
+		t.Fatalf("result=%#v repository=%#v", result, repository)
 	}
 }
 
-func TestWorkerCapsBacklogAtSummarySourceLimit(t *testing.T) {
+func TestWorkerBudgetComesFromContextConfiguration(t *testing.T) {
 	t.Parallel()
-
-	claim := jobClaimFixture(200)
-	jobs := &jobRepositoryStub{claim: claim}
-	previous := checkpointForTarget(claim, 20)
-	checkpoints := &checkpointRepositoryStub{latest: previous}
-	generator := &checkpointGeneratorStub{}
-	generator.generate = func(
-		command GenerateCheckpointCommand,
-	) (Checkpoint, error) {
-		if command.CoveredThroughSequence != 120 {
-			t.Fatalf(
-				"covered through = %d, want 120",
-				command.CoveredThroughSequence,
-			)
-		}
-		return checkpointForTarget(claim, 120), nil
-	}
-	worker := newWorkerForTest(t, jobs, checkpoints, generator)
-
-	result, err := worker.ProcessPending(context.Background(), 1)
-	if err != nil {
-		t.Fatalf("ProcessPending: %v", err)
-	}
-	if result.Completed != 1 || jobs.completedTarget != 120 {
-		t.Fatalf("unexpected result = %#v jobs = %#v", result, jobs)
+	configuration := testWorkerConfiguration()
+	if configuration.TriggerCharacters() != 4000 ||
+		configuration.RetainCharacters() != 2000 {
+		t.Fatalf("trigger=%d retain=%d", configuration.TriggerCharacters(), configuration.RetainCharacters())
 	}
 }
 
-func TestWorkerSupersedesAlreadyCoveredJob(t *testing.T) {
+func TestWorkerBoundsTwoHundredMaximumMessagesByActualModelInput(t *testing.T) {
 	t.Parallel()
-
-	claim := jobClaimFixture(40)
-	jobs := &jobRepositoryStub{claim: claim}
-	checkpoints := &checkpointRepositoryStub{
-		latest: checkpointForTarget(claim, 40),
-	}
-	generator := &checkpointGeneratorStub{}
-	worker := newWorkerForTest(t, jobs, checkpoints, generator)
-
-	result, err := worker.ProcessPending(context.Background(), 1)
-	if err != nil {
-		t.Fatalf("ProcessPending: %v", err)
-	}
-	if result.Superseded != 1 ||
-		generator.calls != 0 ||
-		jobs.finishedReason != "already_covered" {
-		t.Fatalf(
-			"result = %#v generator calls = %d jobs = %#v",
-			result,
-			generator.calls,
-			jobs,
+	messages := make([]conversation.Message, MaxSourceMessages)
+	for index := range messages {
+		messages[index] = summaryMessage(
+			int64(index+1),
+			strings.Repeat("界", conversation.MaxMessageContentRunes),
 		)
 	}
-}
-
-func TestWorkerRecordsRetryableAndTerminalFailures(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		generation error
-		wantStatus JobStatus
-		wantReason string
-	}{
-		{
-			name: "retryable provider",
-			generation: testGenerationFailure{
-				category:  "provider_unavailable",
-				retryable: true,
-			},
-			wantStatus: JobPending,
-			wantReason: "provider_unavailable",
-		},
-		{
-			name:       "invalid response",
-			generation: ErrInvalidResponse,
-			wantStatus: JobFailed,
-			wantReason: "invalid_response",
-		},
+	repository := &workerRepositoryStub{
+		claim:    workerClaim(MaxSourceMessages + 1),
+		messages: messages,
 	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			jobs := &jobRepositoryStub{
-				claim:      jobClaimFixture(40),
-				failedWith: test.wantStatus,
-			}
-			checkpoints := &checkpointRepositoryStub{
-				findErr: conversation.ErrNotFound,
-			}
-			generator := &checkpointGeneratorStub{
-				generate: func(
-					GenerateCheckpointCommand,
-				) (Checkpoint, error) {
-					return Checkpoint{}, test.generation
-				},
-			}
-			worker := newWorkerForTest(
-				t,
-				jobs,
-				checkpoints,
-				generator,
-			)
-
-			result, err := worker.ProcessPending(
-				context.Background(),
-				1,
-			)
-			if err != nil {
-				t.Fatalf("ProcessPending: %v", err)
-			}
-			if jobs.failureReason != test.wantReason ||
-				jobs.failureRetryable !=
-					(test.wantStatus == JobPending) {
-				t.Fatalf("unexpected failure recording: %#v", jobs)
-			}
-			if test.wantStatus == JobPending && result.Retried != 1 {
-				t.Fatalf("result = %#v", result)
-			}
-			if test.wantStatus == JobFailed && result.Failed != 1 {
-				t.Fatalf("result = %#v", result)
-			}
-		})
-	}
-}
-
-type testGenerationFailure struct {
-	category  string
-	retryable bool
-}
-
-func (failure testGenerationFailure) Error() string {
-	return "generation failed"
-}
-
-func (failure testGenerationFailure) StableCategory() string {
-	return failure.category
-}
-
-func (failure testGenerationFailure) Retryable() bool {
-	return failure.retryable
-}
-
-func newWorkerForTest(
-	t *testing.T,
-	jobs JobRepository,
-	checkpoints CheckpointRepository,
-	generator CheckpointGenerator,
-) *Worker {
-	t.Helper()
-
-	worker, err := NewWorker(
-		jobs,
-		checkpoints,
-		generator,
-		workerConfigurationFixture(),
-	)
+	generator := &recordingContentGenerator{}
+	worker, err := NewWorker(repository, generator, testWorkerConfiguration())
 	if err != nil {
-		t.Fatalf("NewWorker: %v", err)
+		t.Fatal(err)
+	}
+	result, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != 1 || repository.completedThrough < 1 ||
+		repository.completedThrough >= MaxSourceMessages {
+		t.Fatalf("result=%#v repository=%#v", result, repository)
+	}
+	payload, err := encodeGenerationPayload(generator.command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := utf8.RuneCountInString(summarySystemPrompt) + utf8.RuneCount(payload)
+	if actual > testWorkerConfiguration().MaxContextCharacters {
+		t.Fatalf("Summary input characters = %d", actual)
+	}
+}
+
+func TestWorkerFailsExplicitlyWhenOneMessageCannotFitModelInput(t *testing.T) {
+	t.Parallel()
+	repository := &workerRepositoryStub{
+		claim: workerClaim(1),
+		messages: []conversation.Message{
+			summaryMessage(1, strings.Repeat("\\", conversation.MaxMessageContentRunes)),
+		},
+	}
+	configuration := testWorkerConfiguration()
+	configuration.MaxContextCharacters = 5000
+	worker, err := NewWorker(repository, contentGeneratorStub{}, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Failed != 1 || repository.failureKind != "source_exceeds_budget" ||
+		repository.failureRetryable {
+		t.Fatalf("result=%#v repository=%#v", result, repository)
+	}
+}
+
+func newTestWorker(t *testing.T, repository *workerRepositoryStub) *Worker {
+	t.Helper()
+	worker, err := NewWorker(repository, contentGeneratorStub{}, testWorkerConfiguration())
+	if err != nil {
+		t.Fatal(err)
 	}
 	return worker
 }
 
-func workerConfigurationFixture() WorkerConfiguration {
+func testWorkerConfiguration() WorkerConfiguration {
 	return WorkerConfiguration{
-		TriggerPolicyVersion: TriggerPolicyV2,
-		TriggerMessages:      DefaultTriggerMessages,
-		RetainRecentMessages: DefaultRetainedMessages,
+		MaxContextCharacters: 12000,
 		LeaseDuration:        time.Minute,
-		MaxAttempts:          DefaultWorkerMaxAttempts,
-		Summary: Configuration{
-			PolicyVersion: "summary-policy-v1",
-			PromptVersion: "summary-prompt-v1",
-			Provider:      "fake",
-			Model:         "fake-model",
-		},
+		MaxAttempts:          3,
+		Generation:           Configuration{Provider: "qianwen", Model: "qwen-plus"},
 	}
 }
 
-func jobClaimFixture(observedThrough int64) JobClaim {
-	return JobClaim{Job: Job{
-		SourceRunID:             "11111111-1111-4111-8111-111111111111",
-		OwnerID:                 "22222222-2222-4222-8222-222222222222",
-		ThreadID:                "33333333-3333-4333-8333-333333333333",
-		ObservedThroughSequence: observedThrough,
-		SourceCompletedAt:       time.Unix(1, 0).UTC(),
-		Status:                  JobRunning,
-		AttemptCount:            1,
-		LeaseToken:              "44444444-4444-4444-8444-444444444444",
-		LeaseExpiresAt:          time.Now().Add(time.Minute),
-		TriggerPolicyVersion:    TriggerPolicyV2,
-		SummaryPolicyVersion:    "summary-policy-v1",
-		PromptVersion:           "summary-prompt-v1",
-		Provider:                "fake",
-		Model:                   "fake-model",
-	}}
-}
-
-func checkpointForTarget(
-	claim JobClaim,
-	target int64,
-) Checkpoint {
-	sourceFrom := int64(1)
-	previousID := ""
-	if target > 40 {
-		sourceFrom = 21
-		previousID = "55555555-5555-4555-8555-555555555555"
-	}
-	return Checkpoint{
-		ID:                     "66666666-6666-4666-8666-666666666666",
-		OwnerID:                claim.OwnerID,
-		ThreadID:               claim.ThreadID,
-		PreviousCheckpointID:   previousID,
-		SourceFromSequence:     sourceFrom,
-		CoveredThroughSequence: target,
-		Content: Content{
-			Goals:         []string{"Continue the conversation"},
-			Background:    []string{},
-			Progress:      []string{},
-			Decisions:     []string{},
-			OpenQuestions: []string{},
-			NextSteps:     []string{},
-		},
-		PolicyVersion:  "summary-policy-v1",
-		PromptVersion:  "summary-prompt-v1",
-		Provider:       "fake",
-		Model:          "fake-model",
-		SourceChecksum: sha256.Sum256([]byte("source")),
-		CreatedAt:      time.Now(),
+func workerClaim(target int64) Claim {
+	return Claim{
+		OwnerID:        "10000000-0000-4000-8000-000000000001",
+		ThreadID:       "20000000-0000-4000-8000-000000000001",
+		TargetSequence: target,
+		AttemptCount:   1,
+		LeaseToken:     "40000000-0000-4000-8000-000000000001",
+		LeaseExpiresAt: time.Now().UTC().Add(time.Minute),
 	}
 }
 
-type jobRepositoryStub struct {
-	claim               JobClaim
-	claimed             bool
-	completedTarget     int64
-	completedCheckpoint Checkpoint
-	finishedStatus      JobStatus
-	finishedTarget      int64
-	finishedReason      string
-	failedWith          JobStatus
-	failureTarget       int64
-	failureReason       string
-	failureRetryable    bool
+type contentGeneratorStub struct{}
+
+func (contentGeneratorStub) Generate(
+	context.Context,
+	GenerateCommand,
+) (Content, error) {
+	return validContent(), nil
 }
 
-func (repository *jobRepositoryStub) ClaimJob(
+type recordingContentGenerator struct {
+	command GenerateCommand
+}
+
+func (generator *recordingContentGenerator) Generate(
+	_ context.Context,
+	command GenerateCommand,
+) (Content, error) {
+	generator.command = command
+	return validContent(), nil
+}
+
+type workerRepositoryStub struct {
+	claim            Claim
+	claimed          bool
+	messages         []conversation.Message
+	completedThrough int64
+	skipped          bool
+	failureKind      string
+	failureRetryable bool
+}
+
+func (repository *workerRepositoryStub) FindSummary(
+	context.Context, string, string, int64,
+) (State, error) {
+	return State{}, conversation.ErrNotFound
+}
+
+func (repository *workerRepositoryStub) ListMessagesForSummary(
+	context.Context, string, string, int64, int64,
+) ([]conversation.Message, error) {
+	return append([]conversation.Message(nil), repository.messages...), nil
+}
+
+func (repository *workerRepositoryStub) Claim(
 	context.Context,
 	WorkerConfiguration,
-) (JobClaim, bool, error) {
+) (Claim, bool, error) {
 	if repository.claimed {
-		return JobClaim{}, false, nil
+		return Claim{}, false, nil
 	}
 	repository.claimed = true
 	return repository.claim, true, nil
 }
 
-func (repository *jobRepositoryStub) CompleteJob(
+func (repository *workerRepositoryStub) Complete(
 	_ context.Context,
-	claim JobClaim,
-	target int64,
-	checkpoint Checkpoint,
-) (Job, error) {
-	repository.completedTarget = target
-	repository.completedCheckpoint = checkpoint
-	job := claim.Job
-	job.Status = JobCompleted
-	return job, nil
+	_ Claim,
+	through int64,
+	_ Content,
+) error {
+	repository.completedThrough = through
+	return nil
 }
 
-func (repository *jobRepositoryStub) FinishJob(
-	_ context.Context,
-	claim JobClaim,
-	status JobStatus,
-	target int64,
-	reason string,
-) (Job, error) {
-	repository.finishedStatus = status
-	repository.finishedTarget = target
-	repository.finishedReason = reason
-	job := claim.Job
-	job.Status = status
-	return job, nil
+func (repository *workerRepositoryStub) Skip(context.Context, Claim) error {
+	repository.skipped = true
+	return nil
 }
 
-func (repository *jobRepositoryStub) FailJob(
+func (repository *workerRepositoryStub) Fail(
 	_ context.Context,
-	claim JobClaim,
-	target int64,
-	reason string,
+	_ Claim,
+	kind string,
 	retryable bool,
 	_ WorkerConfiguration,
-) (Job, error) {
-	repository.failureTarget = target
-	repository.failureReason = reason
+) (bool, error) {
+	repository.failureKind = kind
 	repository.failureRetryable = retryable
-	job := claim.Job
-	job.Status = repository.failedWith
-	return job, nil
-}
-
-type checkpointRepositoryStub struct {
-	latest  Checkpoint
-	findErr error
-}
-
-func (*checkpointRepositoryStub) CreateCheckpoint(
-	context.Context,
-	CreateCheckpointCommand,
-) (Checkpoint, error) {
-	return Checkpoint{}, errors.New("unexpected create")
-}
-
-func (repository *checkpointRepositoryStub) FindLatestCheckpoint(
-	context.Context,
-	string,
-	string,
-	int64,
-) (Checkpoint, error) {
-	return repository.latest, repository.findErr
-}
-
-type checkpointGeneratorStub struct {
-	calls    int
-	generate func(
-		GenerateCheckpointCommand,
-	) (Checkpoint, error)
-}
-
-func (generator *checkpointGeneratorStub) GenerateCheckpoint(
-	_ context.Context,
-	command GenerateCheckpointCommand,
-) (Checkpoint, error) {
-	generator.calls++
-	if generator.generate == nil {
-		return Checkpoint{}, errors.New(
-			"unexpected generation",
-		)
-	}
-	return generator.generate(command)
+	return false, nil
 }

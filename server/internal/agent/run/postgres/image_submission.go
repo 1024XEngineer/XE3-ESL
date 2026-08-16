@@ -2,14 +2,15 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"slices"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	sharedmedia "github.com/1024XEngineer/XE3-ESL/server/internal/media"
+	mediapostgres "github.com/1024XEngineer/XE3-ESL/server/internal/media/postgres"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ImageSubmissionRepository atomically creates a multimodal user message,
@@ -42,7 +43,7 @@ func (r *ImageSubmissionRepository) CreateInitialWithImages(
 		!conversation.ValidUUID(threadID) ||
 		!conversation.ValidClientMessageID(clientMessageID) ||
 		!conversation.ValidMessageContent(content) ||
-		!agentimage.ValidAssetIDs(imageAssetIDs) ||
+		!validSubmissionImageIDs(imageAssetIDs) ||
 		!agentrun.ValidConfiguration(configuration) {
 		return agentrun.Submission{}, agentrun.ErrInvalidRequest
 	}
@@ -53,20 +54,9 @@ func (r *ImageSubmissionRepository) CreateInitialWithImages(
 	}
 	defer rollback(tx)
 
-	var nextSequence int64
-	if err := tx.QueryRow(ctx, `
-SELECT threads.next_message_sequence
-FROM agent_threads AS threads
-INNER JOIN identity_users AS owner
-  ON owner.id = threads.owner_user_id
- AND owner.account_status = 'active'
-WHERE threads.id = $1
-  AND threads.owner_user_id = $2
-FOR UPDATE OF threads`,
-		threadID,
-		ownerID,
-	).Scan(&nextSequence); err != nil {
-		return agentrun.Submission{}, mapRunPostgresError(err)
+	nextSequence, err := lockOwnedThread(ctx, tx, ownerID, threadID)
+	if err != nil {
+		return agentrun.Submission{}, err
 	}
 
 	message, found, err := findInputMessageByClientIDInTransaction(
@@ -95,7 +85,6 @@ FOR UPDATE OF threads`,
 		ctx,
 		tx,
 		ownerID,
-		threadID,
 		imageAssetIDs,
 	); err != nil {
 		return agentrun.Submission{}, err
@@ -125,7 +114,6 @@ FOR UPDATE OF threads`,
 		ctx,
 		tx,
 		ownerID,
-		threadID,
 		messageID,
 		imageAssetIDs,
 	); err != nil {
@@ -135,13 +123,15 @@ FOR UPDATE OF threads`,
 UPDATE agent_threads
 SET
     next_message_sequence = next_message_sequence + 1,
+    title = COALESCE(title, NULLIF($3, '')),
     updated_at = GREATEST(
         transaction_timestamp(),
         updated_at + interval '1 microsecond'
     )
-WHERE id = $1 AND owner_user_id = $2`,
+WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
 		threadID,
 		ownerID,
+		conversation.DeriveThreadTitle(content),
 	)
 	if err != nil {
 		return agentrun.Submission{}, mapRunPostgresError(err)
@@ -222,61 +212,15 @@ func lockAttachableImageAssets(
 	ctx context.Context,
 	tx pgx.Tx,
 	ownerID string,
-	threadID string,
 	imageAssetIDs []string,
 ) error {
-	rows, err := tx.Query(ctx, `
-SELECT
-    image_asset_id::text,
-    status,
-    etag,
-    upload_lease_until,
-    expires_at
-FROM agent_image_assets
-WHERE owner_user_id = $1
-  AND thread_id = $2
-  AND image_asset_id = ANY($3::uuid[])
-ORDER BY image_asset_id
-FOR UPDATE`,
+	return mapImageMediaError(mediapostgres.LockAttachableInTransaction(
+		ctx,
+		tx,
 		ownerID,
-		threadID,
+		sharedmedia.KindImage,
 		imageAssetIDs,
-	)
-	if err != nil {
-		return mapRunPostgresError(err)
-	}
-	defer rows.Close()
-
-	count := 0
-	for rows.Next() {
-		var assetID string
-		var status string
-		var etag string
-		var uploadLease pgtype.Timestamptz
-		var expiresAt pgtype.Timestamptz
-		if err := rows.Scan(
-			&assetID,
-			&status,
-			&etag,
-			&uploadLease,
-			&expiresAt,
-		); err != nil {
-			return agentrun.ErrRepository
-		}
-		if status != string(agentimage.StatusStaged) ||
-			etag == "" || uploadLease.Valid || !expiresAt.Valid ||
-			!expiresAt.Time.After(time.Now().UTC()) {
-			return agentrun.ErrConflict
-		}
-		count++
-	}
-	if rows.Err() != nil {
-		return agentrun.ErrRepository
-	}
-	if count != len(imageAssetIDs) {
-		return agentrun.ErrNotFound
-	}
-	return nil
+	))
 }
 
 func insertImageMessage(
@@ -289,13 +233,9 @@ func insertImageMessage(
 	clientMessageID string,
 	content string,
 ) (conversation.Message, error) {
-	var message conversation.Message
-	var role string
-	var modality string
-	err := tx.QueryRow(ctx, `
+	_, err := tx.Exec(ctx, `
 INSERT INTO agent_messages (
     id,
-    owner_user_id,
     thread_id,
     sequence_no,
     role,
@@ -303,39 +243,22 @@ INSERT INTO agent_messages (
     modality,
     content,
     created_at
-) VALUES ($1, $2, $3, $4, 'user', $5, 'multimodal', $6, CURRENT_TIMESTAMP)
-RETURNING
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    client_message_id,
-    modality,
-    content,
-    created_at`,
+) VALUES ($1, $2, $3, 'user', $4, 'multimodal', $5, CURRENT_TIMESTAMP)`,
 		messageID,
-		ownerID,
 		threadID,
 		sequence,
 		clientMessageID,
 		content,
-	).Scan(
-		&message.ID,
-		&message.OwnerID,
-		&message.ThreadID,
-		&message.Sequence,
-		&role,
-		&message.ClientMessageID,
-		&modality,
-		&message.Content,
-		&message.CreatedAt,
 	)
 	if err != nil {
 		return conversation.Message{}, mapRunPostgresError(err)
 	}
-	message.Role = conversation.MessageRole(role)
-	message.Modality = conversation.MessageModality(modality)
+	message, err := conversationpostgres.FindMessageInTransaction(
+		ctx, tx, ownerID, threadID, messageID,
+	)
+	if err != nil {
+		return conversation.Message{}, mapConversationError(err)
+	}
 	return message, nil
 }
 
@@ -343,54 +266,46 @@ func attachImageAssets(
 	ctx context.Context,
 	tx pgx.Tx,
 	ownerID string,
-	threadID string,
 	messageID string,
 	imageAssetIDs []string,
 ) error {
 	for position, assetID := range imageAssetIDs {
 		if _, err := tx.Exec(ctx, `
-INSERT INTO agent_message_images (
-    owner_user_id,
-    thread_id,
+INSERT INTO agent_message_attachments (
     message_id,
-    image_asset_id,
+    asset_id,
     position,
     created_at
-) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`,
-			ownerID,
-			threadID,
+) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
 			messageID,
 			assetID,
 			position,
 		); err != nil {
 			return mapRunPostgresError(err)
 		}
-		command, err := tx.Exec(ctx, `
-UPDATE agent_image_assets
-SET
-    status = 'attached',
-    attached_at = CURRENT_TIMESTAMP,
-    updated_at = GREATEST(
-        CURRENT_TIMESTAMP,
-        updated_at + interval '1 microsecond'
-    )
-WHERE image_asset_id = $1
-  AND owner_user_id = $2
-  AND thread_id = $3
-  AND status = 'staged'
-  AND etag <> ''`,
-			assetID,
-			ownerID,
-			threadID,
-		)
-		if err != nil {
-			return mapRunPostgresError(err)
-		}
-		if command.RowsAffected() != 1 {
-			return agentrun.ErrConflict
-		}
 	}
-	return nil
+	return mapImageMediaError(mediapostgres.RetainInTransaction(
+		ctx,
+		tx,
+		ownerID,
+		sharedmedia.KindImage,
+		imageAssetIDs,
+	))
+}
+
+func mapImageMediaError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sharedmedia.ErrInvalidRequest):
+		return agentrun.ErrInvalidRequest
+	case errors.Is(err, sharedmedia.ErrNotFound):
+		return agentrun.ErrNotFound
+	case errors.Is(err, sharedmedia.ErrConflict):
+		return agentrun.ErrConflict
+	default:
+		return agentrun.ErrRepository
+	}
 }
 
 func findMessageImageIDs(
@@ -399,9 +314,11 @@ func findMessageImageIDs(
 	messageID string,
 ) ([]string, error) {
 	rows, err := tx.Query(ctx, `
-SELECT image_asset_id::text
-FROM agent_message_images
+SELECT attachment.asset_id::text
+FROM agent_message_attachments AS attachment
+JOIN media_assets AS asset ON asset.id = attachment.asset_id
 WHERE message_id = $1
+  AND asset.kind = 'image'
 ORDER BY position`,
 		messageID,
 	)
@@ -422,6 +339,23 @@ ORDER BY position`,
 		return nil, agentrun.ErrRepository
 	}
 	return result, nil
+}
+
+func validSubmissionImageIDs(assetIDs []string) bool {
+	if len(assetIDs) < 1 || len(assetIDs) > 4 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(assetIDs))
+	for _, id := range assetIDs {
+		if !agentrun.ValidUUID(id) {
+			return false
+		}
+		if _, exists := seen[id]; exists {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
 }
 
 var _ agentrun.ImageSubmissionRepository = (*ImageSubmissionRepository)(nil)

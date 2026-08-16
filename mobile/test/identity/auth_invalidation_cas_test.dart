@@ -333,6 +333,7 @@ final class _ControlledHttpTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     this.headers = headers;
     started.complete();

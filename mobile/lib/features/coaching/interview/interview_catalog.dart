@@ -8,7 +8,6 @@ class InterviewCatalog extends StatelessWidget {
     required this.loading,
     required this.onCreatePressed,
     required this.onPlanPressed,
-    required this.onPlanDeleted,
     required this.onRetry,
     this.errorMessage,
     super.key,
@@ -19,7 +18,6 @@ class InterviewCatalog extends StatelessWidget {
   final String? errorMessage;
   final VoidCallback? onCreatePressed;
   final ValueChanged<PracticePlanSummary> onPlanPressed;
-  final ValueChanged<PracticePlanSummary> onPlanDeleted;
   final VoidCallback onRetry;
 
   @override
@@ -38,7 +36,6 @@ class InterviewCatalog extends StatelessWidget {
             _PlanCard(
               plan: plans[index],
               onPressed: () => onPlanPressed(plans[index]),
-              onDelete: () => _confirmDelete(context, plans[index]),
             ),
             if (index != plans.length - 1) const SizedBox(height: 12),
           ],
@@ -49,33 +46,6 @@ class InterviewCatalog extends StatelessWidget {
         ],
       ],
     );
-  }
-
-  Future<void> _confirmDelete(
-    BuildContext context,
-    PracticePlanSummary plan,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除模拟面试？'),
-        content: const Text('该面试将从列表移除，已产生的练习和复盘会保留。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            key: const Key('confirm-delete-interview-plan'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      onPlanDeleted(plan);
-    }
   }
 }
 
@@ -101,15 +71,10 @@ class InterviewCatalogCreateButton extends StatelessWidget {
 }
 
 class _PlanCard extends StatelessWidget {
-  const _PlanCard({
-    required this.plan,
-    required this.onPressed,
-    required this.onDelete,
-  });
+  const _PlanCard({required this.plan, required this.onPressed});
 
   final PracticePlanSummary plan;
   final VoidCallback onPressed;
-  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -159,44 +124,27 @@ class _PlanCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.16),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    '模拟面试',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: PreparationDesign.meta.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '模拟面试',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: PreparationDesign.meta.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const Spacer(),
-                              IconButton(
-                                key: Key('delete-interview-plan-${plan.id}'),
-                                tooltip: '删除模拟面试',
-                                onPressed: onDelete,
-                                color: Colors.white,
-                                visualDensity: VisualDensity.compact,
-                                style: IconButton.styleFrom(
-                                  backgroundColor: Colors.black.withValues(
-                                    alpha: 0.24,
-                                  ),
-                                ),
-                                icon: const Icon(Icons.delete_outline_rounded),
-                              ),
-                            ],
+                            ),
                           ),
                           const SizedBox(height: 6),
                           Text(

@@ -11,13 +11,13 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
+import 'package:speakup/features/agent/client_action/practice_plan_client_action_card.dart';
 import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
-import 'package:speakup/features/coaching/review/interview_report.dart';
-import 'package:speakup/features/coaching/review/interview_report_client.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
@@ -207,7 +207,8 @@ void main() {
     );
     expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
     expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
-    expect(find.text('个人能力'), findsOneWidget);
+    expect(find.text('当前 IELTS 能力'), findsOneWidget);
+    expect(find.text('完成一次全真模考后，这里会显示四维能力与当前估分。'), findsOneWidget);
     expect(find.text('管理账号与练习身份。'), findsNothing);
     await _tapPrimaryDestination(
       tester,
@@ -684,70 +685,74 @@ void main() {
     },
   );
 
-  testWidgets('keeps an appended Handoff above the composer near latest', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 700);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    var messages = _ieltsPart1HandoffConversation(includeHandoff: false);
-    AgentHandoff? selected;
-    late StateSetter update;
+  testWidgets(
+    'keeps an appended client action above the composer near latest',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var messages = _ieltsPart1ActionConversation(includeAction: false);
+      ConfirmPracticePlanClientAction? selected;
+      late StateSetter update;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: StatefulBuilder(
-          builder: (context, setState) {
-            update = setState;
-            return ConversationPage(
-              messages: messages,
-              onMessageHandoff: (handoff) => selected = handoff,
-              onSubmitText: (_) async => true,
-            );
-          },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return ConversationPage(
+                messages: messages,
+                clientActionBuilder: _practiceActionBuilder(
+                  (action) => selected = action,
+                ),
+                onSubmitText: (_) async => true,
+              );
+            },
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    update(() {
-      messages = _ieltsPart1HandoffConversation(includeHandoff: true);
-    });
-    await tester.pumpAndSettle();
+      update(() {
+        messages = _ieltsPart1ActionConversation(includeAction: true);
+      });
+      await tester.pumpAndSettle();
 
-    final card = find.byKey(
-      const Key(
-        'agent-handoff-practice-plan-'
-        '10000000-0000-4000-8000-000000000005-1',
-      ),
-    );
-    final confirm = find.byKey(
-      const Key(
-        'confirm-practice-plan-'
-        '10000000-0000-4000-8000-000000000005-1',
-      ),
-    );
-    final composerTop = tester
-        .getRect(find.byKey(const Key('agent-composer-overlay')))
-        .top;
+      final card = find.byKey(
+        const Key(
+          'agent-client-action-practice-plan-'
+          '10000000-0000-4000-8000-000000000005-1',
+        ),
+      );
+      final confirm = find.byKey(
+        const Key(
+          'confirm-practice-plan-'
+          '10000000-0000-4000-8000-000000000005-1',
+        ),
+      );
+      final composerTop = tester
+          .getRect(find.byKey(const Key('agent-composer-overlay')))
+          .top;
 
-    expect(tester.getRect(card).bottom, lessThanOrEqualTo(composerTop - 15));
-    expect(confirm.hitTestable(), findsOneWidget);
-    expect(find.byKey(const Key('agent-jump-to-latest')), findsNothing);
+      expect(tester.getRect(card).bottom, lessThanOrEqualTo(composerTop - 15));
+      expect(confirm.hitTestable(), findsOneWidget);
+      expect(find.byKey(const Key('agent-jump-to-latest')), findsNothing);
 
-    await tester.tap(confirm);
-    expect(selected, same(_ieltsPart1ScrollHandoff));
-  });
+      await tester.tap(confirm);
+      expect(selected?.practicePlanId, _ieltsPart1ScrollAction.practicePlanId);
+      expect(selected?.planVersion, _ieltsPart1ScrollAction.planVersion);
+    },
+  );
 
-  testWidgets('preserves reading position when an appended Handoff arrives', (
+  testWidgets('preserves reading position when an appended action arrives', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 700);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    var messages = _ieltsPart1HandoffConversation(includeHandoff: false);
+    var messages = _ieltsPart1ActionConversation(includeAction: false);
     late StateSetter update;
 
     await tester.pumpWidget(
@@ -757,7 +762,7 @@ void main() {
             update = setState;
             return ConversationPage(
               messages: messages,
-              onMessageHandoff: (_) {},
+              clientActionBuilder: _practiceActionBuilder((_) {}),
               onSubmitText: (_) async => true,
             );
           },
@@ -772,18 +777,18 @@ void main() {
         .controller!;
     await tester.drag(scroll, const Offset(0, 320));
     await tester.pumpAndSettle();
-    final pixelsBeforeHandoff = scrollController.position.pixels;
+    final pixelsBeforeAction = scrollController.position.pixels;
     expect(
-      scrollController.position.maxScrollExtent - pixelsBeforeHandoff,
+      scrollController.position.maxScrollExtent - pixelsBeforeAction,
       greaterThan(120),
     );
 
     update(() {
-      messages = _ieltsPart1HandoffConversation(includeHandoff: true);
+      messages = _ieltsPart1ActionConversation(includeAction: true);
     });
     await tester.pumpAndSettle();
 
-    expect(scrollController.position.pixels, closeTo(pixelsBeforeHandoff, 0.1));
+    expect(scrollController.position.pixels, closeTo(pixelsBeforeAction, 0.1));
     final jumpToLatest = find.byKey(const Key('agent-jump-to-latest'));
     expect(jumpToLatest, findsOneWidget);
 
@@ -792,7 +797,7 @@ void main() {
 
     final card = find.byKey(
       const Key(
-        'agent-handoff-practice-plan-'
+        'agent-client-action-practice-plan-'
         '10000000-0000-4000-8000-000000000005-1',
       ),
     );
@@ -1021,37 +1026,6 @@ void main() {
     expect(find.byKey(const Key('profile-page')), findsOneWidget);
   });
 
-  testWidgets('conversation drawer excludes practice-owned Threads', (
-    tester,
-  ) async {
-    final controller = ConversationController(client: FakeAgentClient());
-    addTearDown(controller.dispose);
-    await controller.initialize();
-    final practiceThreadId = controller.threadId!;
-    controller.applyActiveGoal(
-      threadId: practiceThreadId,
-      goalId: 'goal_practice_drawer',
-    );
-    expect(await controller.createThread(), isTrue);
-    final ordinaryThreadId = controller.threadId!;
-
-    await tester.pumpWidget(
-      SpeakUpApp.preview(conversationController: controller),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('conversation-menu-button')));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(Key('conversation-thread-$ordinaryThreadId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(Key('conversation-thread-$practiceThreadId')),
-      findsNothing,
-    );
-  });
-
   testWidgets(
     'new conversation becomes selected and the old one stays recent',
     (tester) async {
@@ -1196,42 +1170,6 @@ void main() {
       AppRoutes.review,
       backButton: find.byKey(const Key('review-route-back-button')),
     );
-  });
-
-  testWidgets('opens an interview report from the App route boundary', (
-    tester,
-  ) async {
-    final reportController = InterviewReportController(
-      client: _PendingInterviewReportClient(),
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    addTearDown(reportController.dispose);
-    await tester.pumpWidget(
-      SpeakUpApp.preview(interviewReportController: reportController),
-    );
-    final shellContext = tester.element(find.byType(SpeakUpShell));
-    Navigator.of(shellContext).pushNamed(AppRoutes.practice);
-    await tester.pumpAndSettle();
-
-    final practicePage = tester.widget<InterviewPracticePage>(
-      find.byType(InterviewPracticePage),
-    );
-    unawaited(
-      practicePage.onOpenInterviewReport!(
-        const InterviewPracticeCompletion(
-          practiceSessionId: 'practice-session-report-route',
-          title: '模拟面试 · 复盘',
-          speechFeedbackSourceKeys: <String>[],
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.byKey(const Key('interview-report-page')), findsOneWidget);
-    expect(find.text('模拟面试 · 复盘'), findsOneWidget);
-    expect(reportController.practiceSessionId, 'practice-session-report-route');
   });
 
   testWidgets('keeps primary tabs root-styled from the conversation route', (
@@ -1408,10 +1346,10 @@ void main() {
   );
 }
 
-const _ieltsPart1ScrollHandoff = ConfirmPracticePlanHandoff(
+const _ieltsPart1ScrollAction = ConfirmPracticePlanClientAction(
   label: '确认并开始练习',
   practicePlanId: '10000000-0000-4000-8000-000000000005',
-  planRevision: 1,
+  planVersion: 1,
   target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
   sceneName: 'IELTS 口语',
   practiceExperience: 'IELTS_SPEAKING',
@@ -1422,17 +1360,16 @@ const _ieltsPart1ScrollHandoff = ConfirmPracticePlanHandoff(
   suggestedDuration: Duration(minutes: 5),
   minEffectiveTurns: 3,
   maxEffectiveTurns: 3,
-  executableStatus: 'ready',
   confirmationPrompt: '确认后进入正式练习。',
 );
 
-List<AgentMessage> _ieltsPart1HandoffConversation({
-  required bool includeHandoff,
+List<AgentMessage> _ieltsPart1ActionConversation({
+  required bool includeAction,
 }) {
   return <AgentMessage>[
     for (var index = 0; index < 8; index++)
       AgentMessage(
-        id: 'earlier-handoff-message-$index',
+        id: 'earlier-action-message-$index',
         role: index.isEven ? AgentMessageRole.user : AgentMessageRole.assistant,
         text:
             'Earlier conversation message $index has enough detail to keep '
@@ -1458,11 +1395,25 @@ List<AgentMessage> _ieltsPart1HandoffConversation({
       id: 'assistant-ielts-confirmation',
       role: AgentMessageRole.assistant,
       text: '正式练习已准备好。',
-      handoffs: includeHandoff
-          ? const <AgentHandoff>[_ieltsPart1ScrollHandoff]
-          : const <AgentHandoff>[],
+      clientActions: includeAction
+          ? <AgentClientAction>[
+              encodeConfirmPracticePlanClientAction(_ieltsPart1ScrollAction),
+            ]
+          : const <AgentClientAction>[],
     ),
   ];
+}
+
+AgentClientActionBuilder _practiceActionBuilder(
+  ValueChanged<ConfirmPracticePlanClientAction> onAction,
+) {
+  return (context, envelope) {
+    final action = decodeConfirmPracticePlanClientAction(envelope);
+    return PracticePlanClientActionCard(
+      action: action,
+      onConfirm: () => onAction(action),
+    );
+  };
 }
 
 const _primaryTabKeys = [
@@ -1475,17 +1426,6 @@ const _primaryTabKeys = [
 Future<void> _openAgentTextInput(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('agent-show-text-composer')));
   await tester.pump();
-}
-
-final class _PendingInterviewReportClient implements InterviewReportClient {
-  final _pending = Completer<InterviewReportEnvelope>();
-
-  @override
-  Future<InterviewReportEnvelope> getReport(String practiceSessionId) =>
-      _pending.future;
-
-  @override
-  Future<void> clearAccountState() async {}
 }
 
 Future<void> _tapPrimaryDestination(
@@ -1548,27 +1488,17 @@ final class _DefiniteCreateFailureAgentClient implements AgentClient {
     int pageSize = 20,
     String? cursor,
   }) async {
-    final page = await _delegate.listThreads(
-      pageSize: pageSize,
-      cursor: cursor,
-    );
-    return AgentThreadPage(threads: page.threads, nextCursor: page.nextCursor);
+    return const AgentThreadPage(threads: <AgentThreadSummary>[]);
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() async => null;
+  Future<AgentThreadSnapshot> getThread({required String threadId}) =>
+      _delegate.getThread(threadId: threadId);
 
   @override
   Future<AgentThreadSummary> createThread() {
     throw StateError('Definite Thread creation failure.');
   }
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
-      _delegate.setFocusedThread(threadId: threadId);
-
-  @override
-  Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
 
   @override
   Future<void> deleteThread({required String threadId}) =>

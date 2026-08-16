@@ -1,6 +1,9 @@
 package practice
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 const (
 	GenericPracticeTurnPolicy             = "generic.practice.turn.v1"
@@ -29,6 +32,11 @@ const (
 	IELTSSpeakingFullMockSessionPolicy                  = "ielts.speaking_full_mock.session.v1"
 )
 
+func validEvaluationPolicyRef(value string) bool {
+	return len(value) <= 128 && value == strings.TrimSpace(value) &&
+		strings.HasSuffix(value, ".evaluation.v1")
+}
+
 var ErrExecutionPolicyNotFound = errors.New(
 	"practice: execution policy is not registered",
 )
@@ -56,7 +64,6 @@ type sessionPolicyRegistration struct {
 	retryAllowed               bool
 	questionTranslationAllowed bool
 	questionTipsAllowed        bool
-	avatarAllowed              bool
 	speechFeedbackAllowed      bool
 }
 
@@ -115,7 +122,7 @@ func ValidSessionPolicy(
 		return false
 	}
 	return policy.SuggestedDurationSeconds == expected.SuggestedDurationSeconds &&
-		NormalizeCompletionMode(policy.CompletionMode) == expected.CompletionMode &&
+		policy.CompletionMode == expected.CompletionMode &&
 		policy.MinEffectiveTurns == expected.MinEffectiveTurns &&
 		policy.MaxEffectiveTurns == expected.MaxEffectiveTurns &&
 		policy.CoverageCheckpointTurn == expected.CoverageCheckpointTurn &&
@@ -124,7 +131,6 @@ func ValidSessionPolicy(
 		policy.RetryAllowed == expected.RetryAllowed &&
 		policy.QuestionTranslationAllowed == expected.QuestionTranslationAllowed &&
 		policy.QuestionTipsAllowed == expected.QuestionTipsAllowed &&
-		policy.AvatarAllowed == expected.AvatarAllowed &&
 		policy.SpeechFeedbackAllowed == expected.SpeechFeedbackAllowed
 }
 
@@ -188,7 +194,6 @@ func resolveSessionPolicyRegistration(
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewUserControlledSessionPolicy:
@@ -199,7 +204,6 @@ func resolveSessionPolicyRegistration(
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case DailyPracticeSessionPolicy,
@@ -213,14 +217,12 @@ func resolveSessionPolicyRegistration(
 		standard.retryAllowed = true
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewProjectDeepDiveSessionPolicy:
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewProjectDeepDiveUserControlledSessionPolicy:
@@ -231,7 +233,6 @@ func resolveSessionPolicyRegistration(
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case IELTSSpeakingPart1SessionPolicy,
@@ -306,7 +307,6 @@ func buildSessionPolicy(
 		RetryAllowed:               registration.retryAllowed,
 		QuestionTranslationAllowed: registration.questionTranslationAllowed,
 		QuestionTipsAllowed:        registration.questionTipsAllowed,
-		AvatarAllowed:              registration.avatarAllowed,
 		SpeechFeedbackAllowed:      registration.speechFeedbackAllowed,
 	}, true
 }

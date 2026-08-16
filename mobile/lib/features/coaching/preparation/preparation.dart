@@ -268,6 +268,7 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    List<IeltsPreparedAnswer> ieltsPreparedAnswers = const [],
     ScenarioPreparationContext? scenarioContext,
   }) async {
     final catalog = widget.preparationController;
@@ -293,6 +294,7 @@ class _PreparationPageState extends State<PreparationPage> {
         role: role,
         option: option,
         ieltsSelection: ieltsSelection,
+        ieltsPreparedAnswers: ieltsPreparedAnswers,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
       scenarioContext: scenarioContext,
@@ -351,6 +353,7 @@ class _PreparationPageState extends State<PreparationPage> {
     SceneDefinition scene, {
     PracticeMode? practiceMode,
     IeltsPracticeSelection? ieltsSelection,
+    List<IeltsPreparedAnswer> ieltsPreparedAnswers = const [],
     bool forceReplaceCurrentPractice = false,
     bool useDefaultScenarioContext = false,
   }) async {
@@ -406,6 +409,7 @@ class _PreparationPageState extends State<PreparationPage> {
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+      ieltsPreparedAnswers: ieltsPreparedAnswers,
       scenarioContext: useDefaultScenarioContext
           ? _defaultScenarioContext(controller.detail!)
           : null,
@@ -708,9 +712,6 @@ class _PreparationPageState extends State<PreparationPage> {
             errorMessage: widget.jobPreparationController?.plansErrorMessage,
             onCreatePressed: widget.onOpenJobPreparation,
             onPlanPressed: (plan) => widget.onOpenInterviewPlan?.call(plan.id),
-            onPlanDeleted: (plan) => unawaited(
-              widget.jobPreparationController?.deleteInterviewPlan(plan.id),
-            ),
             onRetry: () => unawaited(
               widget.jobPreparationController?.loadInterviewPlans(force: true),
             ),
@@ -726,14 +727,16 @@ class _PreparationPageState extends State<PreparationPage> {
                   ),
             audioPlayer: widget.practiceController?.audioPlayer,
             onRetry: ielts.retryLoad,
-            onSelectionPressed: (scene, mode, selection) => unawaited(
-              _startSceneDirectly(
-                controller,
-                scene,
-                practiceMode: mode,
-                ieltsSelection: selection,
-              ),
-            ),
+            onSelectionPressed: (scene, mode, selection, preparedAnswers) =>
+                unawaited(
+                  _startSceneDirectly(
+                    controller,
+                    scene,
+                    practiceMode: mode,
+                    ieltsSelection: selection,
+                    ieltsPreparedAnswers: preparedAnswers,
+                  ),
+                ),
           )
         else
           ScenarioCatalog(

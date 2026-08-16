@@ -21,7 +21,7 @@ enum AgentVoiceInputState {
 
 /// Owns ephemeral microphone input until its transcript is submitted as text.
 ///
-/// This controller never creates a voice candidate or MessageAudio. The final
+/// This controller never creates a durable voice draft or MessageAudio. The final
 /// transcript is submitted through the ordinary text-message workflow.
 final class AgentVoiceInputController extends ChangeNotifier
     with WidgetsBindingObserver {

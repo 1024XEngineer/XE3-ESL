@@ -2,24 +2,26 @@ package agentcapability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 type ServicePort struct {
-	plans    PlanApplication
-	catalog  scene.PreviewCatalogResolver
-	profiles ProfileApplication
+	plans   PlanApplication
+	catalog scene.PreviewCatalogResolver
 }
 
 type PlanApplication interface {
-	CreatePlan(
+	PreviewPlan(
 		context.Context,
 		requestcontext.Actor,
 		string,
@@ -27,33 +29,16 @@ type PlanApplication interface {
 	) (preparation.PracticePlan, bool, error)
 }
 
-type ProfileApplication interface {
-	CreateProfile(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		preparation.CreateProfileRequest,
-	) (preparation.Profile, bool, error)
-	CreateSnapshot(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-		preparation.CreateSnapshotRequest,
-	) (preparation.Snapshot, bool, error)
-}
-
 func NewServicePort(
 	plans PlanApplication,
 	catalog scene.PreviewCatalogResolver,
-	profiles ProfileApplication,
 ) (*ServicePort, error) {
-	if plans == nil || catalog == nil || profiles == nil {
+	if plans == nil || catalog == nil {
 		return nil, errors.New(
-			"preparation agent capability: plans, catalog, and profiles are required",
+			"preparation agent capability: plans and catalog are required",
 		)
 	}
-	return &ServicePort{plans: plans, catalog: catalog, profiles: profiles}, nil
+	return &ServicePort{plans: plans, catalog: catalog}, nil
 }
 
 func (port *ServicePort) PreviewPractice(
@@ -62,7 +47,7 @@ func (port *ServicePort) PreviewPractice(
 	input PreviewInput,
 ) (PreviewResult, error) {
 	if port == nil || port.plans == nil || port.catalog == nil ||
-		port.profiles == nil || ctx == nil || !call.Actor.Valid() ||
+		ctx == nil || !call.Actor.Valid() ||
 		call.ThreadID == "" || call.RequestID == "" {
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
@@ -101,85 +86,79 @@ func (port *ServicePort) PreviewPractice(
 		}, nil
 	}
 
-	profile, _, err := port.profiles.CreateProfile(
-		ctx,
-		call.Actor,
-		call.RequestID,
-		preparation.CreateProfileRequest{
-			BackgroundSummary: input.BackgroundSummary,
-		},
-	)
-	if err != nil {
-		return PreviewResult{}, mapPreparationToolError(err)
-	}
-	snapshot, _, err := port.profiles.CreateSnapshot(
-		ctx,
-		call.Actor,
-		profile.ID,
-		call.RequestID,
-		preparation.CreateSnapshotRequest{SourceVersion: profile.Version},
-	)
-	if err != nil {
-		return PreviewResult{}, mapPreparationToolError(err)
-	}
-
-	plan, replayed, err := port.plans.CreatePlan(
+	plan, replayed, err := port.plans.PreviewPlan(
 		ctx,
 		call.Actor,
 		call.RequestID,
 		preparation.CreatePlanRequest{
-			SourceThreadID:        call.ThreadID,
-			GoalID:                input.GoalID,
-			PreparationSnapshotID: snapshot.ID,
-			SceneID:               input.SceneID,
-			SceneVersion:          input.SceneVersion,
-			SelectedRoleIDs:       append([]string(nil), input.SelectedRoleIDs...),
-			PracticeOptionID:      input.PracticeOptionID,
-			MaxEffectiveTurns:     input.MaxEffectiveTurns,
-			IELTSSelection:        previewIELTSQuestionSelection(input),
+			SourceThreadID:    call.ThreadID,
+			BackgroundSummary: input.BackgroundSummary,
+			SceneID:           input.SceneID,
+			SceneVersion:      input.SceneVersion,
+			SelectedRoleIDs:   append([]string(nil), input.SelectedRoleIDs...),
+			PracticeOptionID:  input.PracticeOptionID,
+			MaxEffectiveTurns: input.MaxEffectiveTurns,
+			IELTSSelection:    previewIELTSQuestionSelection(input),
 		},
 	)
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
-	handoff, err := practicePlanHandoff(plan)
+	clientAction, err := practicePlanClientAction(plan)
 	if err != nil {
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
 	return PreviewResult{
-		Status:   "preview_ready",
-		Replayed: replayed,
-		Handoff:  handoff,
+		Status:       "preview_ready",
+		Replayed:     replayed,
+		ClientAction: clientAction,
 		SourceRefs: []capability.SourceRef{
 			{Type: "practice_plan", ID: plan.ID},
-			{Type: "preparation_snapshot", ID: plan.PreparationSnapshot.ID},
 		},
 	}, nil
 }
 
-func practicePlanHandoff(
+type confirmPracticePlanActionPayload struct {
+	Label                    string   `json:"label"`
+	PracticePlanID           string   `json:"practice_plan_id"`
+	PlanVersion              int      `json:"plan_version"`
+	Target                   string   `json:"target"`
+	SceneName                string   `json:"scene_name"`
+	PracticeExperience       string   `json:"practice_experience"`
+	SceneCategory            string   `json:"scene_category"`
+	PracticeMode             string   `json:"practice_mode"`
+	Roles                    []string `json:"roles"`
+	PracticeScope            string   `json:"practice_scope"`
+	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
+	MinEffectiveTurns        int      `json:"min_effective_turns"`
+	MaxEffectiveTurns        int      `json:"max_effective_turns"`
+	ConfirmationPrompt       string   `json:"confirmation_prompt"`
+}
+
+var practicePlanUUIDPattern = regexp.MustCompile(
+	`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`,
+)
+
+func practicePlanClientAction(
 	plan preparation.PracticePlan,
-) (agenthandoff.Item, error) {
+) (agentclientaction.Action, error) {
 	roles, err := plan.SceneSelection.SelectedRoles()
 	if err != nil || len(roles) == 0 {
-		return agenthandoff.Item{}, agenthandoff.ErrInvalid
+		return agentclientaction.Action{}, capability.ErrExecutionRejected
 	}
 	option, err := plan.SceneSelection.PracticeOption()
 	if err != nil {
-		return agenthandoff.Item{}, agenthandoff.ErrInvalid
+		return agentclientaction.Action{}, capability.ErrExecutionRejected
 	}
 	roleNames := make([]string, len(roles))
 	for index, role := range roles {
 		roleNames[index] = role.DisplayName
 	}
 	target := strings.TrimSpace(plan.SceneSelection.Scene.Prompt.PracticeGoal)
-	if plan.GoalSnapshot != nil {
-		target = strings.TrimSpace(plan.GoalSnapshot.Title)
-	}
-	return agenthandoff.NewConfirmPracticePlan(agenthandoff.Item{
+	payload := confirmPracticePlanActionPayload{
 		Label:                    "确认并开始练习",
 		PracticePlanID:           plan.ID,
-		PlanRevision:             plan.Revision,
+		PlanVersion:              plan.Version,
 		Target:                   target,
 		SceneName:                plan.SceneSelection.Scene.Name,
 		PracticeExperience:       string(plan.SceneSelection.Scene.Experience),
@@ -190,9 +169,59 @@ func practicePlanHandoff(
 		SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
 		MinEffectiveTurns:        plan.SessionPolicy.MinEffectiveTurns,
 		MaxEffectiveTurns:        plan.SessionPolicy.MaxEffectiveTurns,
-		ExecutableStatus:         string(plan.Status),
 		ConfirmationPrompt:       "确认后将创建练习会话；确认前不会开始练习。",
-	})
+	}
+	if !validConfirmPracticePlanActionPayload(payload) {
+		return agentclientaction.Action{}, capability.ErrExecutionRejected
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return agentclientaction.Action{}, capability.ErrExecutionRejected
+	}
+	action, err := agentclientaction.New(ConfirmPracticePlanActionType, raw)
+	if err != nil {
+		return agentclientaction.Action{}, capability.ErrExecutionRejected
+	}
+	return action, nil
+}
+
+func validConfirmPracticePlanActionPayload(
+	payload confirmPracticePlanActionPayload,
+) bool {
+	if !validActionText(payload.Label, 100) ||
+		!practicePlanUUIDPattern.MatchString(payload.PracticePlanID) ||
+		payload.PlanVersion < 1 ||
+		!validActionText(payload.Target, 500) ||
+		!validActionText(payload.SceneName, 200) ||
+		!validActionText(payload.PracticeExperience, 100) ||
+		!validActionText(payload.SceneCategory, 200) ||
+		!validActionText(payload.PracticeMode, 100) ||
+		!validActionText(payload.PracticeScope, 200) ||
+		payload.SuggestedDurationSeconds < 1 ||
+		payload.MinEffectiveTurns < 1 ||
+		(payload.MaxEffectiveTurns != 0 &&
+			payload.MaxEffectiveTurns < payload.MinEffectiveTurns) ||
+		payload.MaxEffectiveTurns > 100 ||
+		!validActionText(payload.ConfirmationPrompt, 300) ||
+		len(payload.Roles) < 1 || len(payload.Roles) > 8 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(payload.Roles))
+	for _, role := range payload.Roles {
+		if !validActionText(role, 200) {
+			return false
+		}
+		if _, duplicate := seen[role]; duplicate {
+			return false
+		}
+		seen[role] = struct{}{}
+	}
+	return true
+}
+
+func validActionText(value string, maxRunes int) bool {
+	return value == strings.TrimSpace(value) && value != "" &&
+		utf8.RuneCountInString(value) <= maxRunes
 }
 
 func (port *ServicePort) resolveCandidates(
@@ -460,13 +489,9 @@ func mapPreparationToolError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, scene.ErrCatalogSelectionInvalid),
-		errors.Is(err, preparation.ErrProfileInvalid),
 		errors.Is(err, preparation.ErrPlanInvalid):
 		return capability.ErrInvalidInput
-	case errors.Is(err, preparation.ErrProfileNotFound),
-		errors.Is(err, preparation.ErrProfileConflict),
-		errors.Is(err, preparation.ErrProfileIdempotencyConflict),
-		errors.Is(err, preparation.ErrPlanNotFound),
+	case errors.Is(err, preparation.ErrPlanNotFound),
 		errors.Is(err, preparation.ErrPlanConflict),
 		errors.Is(err, preparation.ErrPlanIdempotencyConflict):
 		return capability.ErrExecutionRejected

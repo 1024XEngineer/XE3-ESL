@@ -2,7 +2,6 @@ package voice
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"time"
 
@@ -63,18 +62,4 @@ func runPersistenceContext(ctx context.Context) (context.Context, context.Cancel
 		context.WithoutCancel(ctx),
 		runPersistenceTimeout,
 	)
-}
-
-func nilDependency(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
-		reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

@@ -1,0 +1,314 @@
+paths:
+  /v1/me/coaching-profile:
+    get:
+      tags:
+        - Coaching Profile
+      summary: Get the current user's coaching profile
+      description: |
+        Returns the fixed-schema coaching facts and preferences owned by the
+        authenticated user. When no row has been created yet, the logical
+        profile is enabled and empty with `version: 0` and no timestamps.
+      operationId: getCurrentCoachingProfile
+      responses:
+        '200':
+          description: The current logical coaching profile.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachingProfile'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    patch:
+      tags:
+        - Coaching Profile
+      summary: Update the current user's coaching profile settings
+      description: |
+        Applies one optimistic-lock update to the authenticated user's fixed
+        coaching profile. At least one update, forget operation, clear
+        operation, or memory toggle is required. `clear_profile` cannot be
+        combined with `updates` or `forget_fields`; an updated field cannot
+        also appear in `forget_fields`. Closing memory retains profile fields,
+        while clearing the profile does not alter the account or conversations.
+      operationId: updateCurrentCoachingProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCoachingProfileRequest'
+      responses:
+        '200':
+          description: The committed coaching profile.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachingProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: '#/components/responses/CoachingProfileVersionConflict'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  responses:
+    CoachingProfileVersionConflict:
+      description: The expected coaching profile version is stale.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: profile_version_conflict
+              message: Coaching profile version conflicts with this update.
+              retryable: false
+              correlation_id: corr_profile_version_conflict
+  schemas:
+    CoachingProfileField:
+      type: string
+      enum:
+        - form_of_address
+        - occupation
+        - professional_context
+        - native_language
+        - explanation_language
+        - response_detail
+        - interests
+    CoachingProfileData:
+      type: object
+      additionalProperties: false
+      properties:
+        form_of_address:
+          $ref: '#/components/schemas/CoachingProfileFormOfAddress'
+        occupation:
+          $ref: '#/components/schemas/CoachingProfileOccupation'
+        professional_context:
+          $ref: '#/components/schemas/CoachingProfileProfessionalContext'
+        native_language:
+          $ref: '#/components/schemas/CoachingProfileLanguage'
+        explanation_language:
+          $ref: '#/components/schemas/CoachingProfileLanguage'
+        response_detail:
+          $ref: '#/components/schemas/CoachingProfileResponseDetail'
+        interests:
+          $ref: '#/components/schemas/CoachingProfileInterests'
+    CoachingProfileDataPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        form_of_address:
+          $ref: '#/components/schemas/CoachingProfileFormOfAddress'
+        occupation:
+          $ref: '#/components/schemas/CoachingProfileOccupation'
+        professional_context:
+          $ref: '#/components/schemas/CoachingProfileProfessionalContext'
+        native_language:
+          $ref: '#/components/schemas/CoachingProfileLanguage'
+        explanation_language:
+          $ref: '#/components/schemas/CoachingProfileLanguage'
+        response_detail:
+          $ref: '#/components/schemas/CoachingProfileResponseDetail'
+        interests:
+          $ref: '#/components/schemas/CoachingProfileInterests'
+    CoachingProfileFormOfAddress:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^(?![\s\S]*[\u0000-\u001F\u007F-\u009F\u2028\u2029])\S(?:[\s\S]*\S)?$'
+    CoachingProfileOccupation:
+      type: string
+      minLength: 1
+      maxLength: 120
+      pattern: '^(?![\s\S]*[\u0000-\u001F\u007F-\u009F\u2028\u2029])\S(?:[\s\S]*\S)?$'
+    CoachingProfileProfessionalContext:
+      type: string
+      minLength: 1
+      maxLength: 500
+      pattern: '^(?![\s\S]*[\u0000-\u001F\u007F-\u009F\u2028\u2029])\S(?:[\s\S]*\S)?$'
+    CoachingProfileLanguage:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^(?![\s\S]*[\u0000-\u001F\u007F-\u009F\u2028\u2029])\S(?:[\s\S]*\S)?$'
+    CoachingProfileResponseDetail:
+      type: string
+      enum:
+        - CONCISE
+        - BALANCED
+        - DETAILED
+    CoachingProfileInterests:
+      type: array
+      minItems: 1
+      maxItems: 8
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: '^(?![\s\S]*[\u0000-\u001F\u007F-\u009F\u2028\u2029])\S(?:[\s\S]*\S)?$'
+      description: Values must also be unique under case-insensitive comparison.
+    CoachingProfileFieldSource:
+      oneOf:
+        - $ref: '#/components/schemas/CoachingProfileUserSettingSource'
+        - $ref: '#/components/schemas/CoachingProfileMessageSource'
+    CoachingProfileUserSettingSource:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - recorded_at
+      properties:
+        type:
+          type: string
+          const: user_setting
+          readOnly: true
+        recorded_at:
+          type: string
+          format: date-time
+          readOnly: true
+    CoachingProfileMessageSource:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - message_id
+        - recorded_at
+      properties:
+        type:
+          type: string
+          enum:
+            - explicit_current_fact
+            - explicit_remember_instruction
+          readOnly: true
+        message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        recorded_at:
+          type: string
+          format: date-time
+          readOnly: true
+    CoachingProfileFieldSources:
+      type: object
+      additionalProperties: false
+      properties:
+        form_of_address:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        occupation:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        professional_context:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        native_language:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        explanation_language:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        response_detail:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+        interests:
+          $ref: '#/components/schemas/CoachingProfileFieldSource'
+    CoachingProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - memory_enabled
+        - profile
+        - field_sources
+        - version
+      properties:
+        memory_enabled:
+          type: boolean
+          readOnly: true
+        profile:
+          $ref: '#/components/schemas/CoachingProfileData'
+        field_sources:
+          $ref: '#/components/schemas/CoachingProfileFieldSources'
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      dependentRequired:
+        created_at:
+          - updated_at
+        updated_at:
+          - created_at
+    UpdateCoachingProfileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+        updates:
+          $ref: '#/components/schemas/CoachingProfileDataPatch'
+        forget_fields:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/CoachingProfileField'
+        clear_profile:
+          type: boolean
+        memory_enabled:
+          type: boolean
+      anyOf:
+        - required:
+            - updates
+        - required:
+            - forget_fields
+        - required:
+            - clear_profile
+          properties:
+            clear_profile:
+              const: true
+        - required:
+            - memory_enabled
+      allOf:
+        - if:
+            properties:
+              clear_profile:
+                const: true
+            required:
+              - clear_profile
+          then:
+            not:
+              anyOf:
+                - required:
+                    - updates
+                - required:
+                    - forget_fields

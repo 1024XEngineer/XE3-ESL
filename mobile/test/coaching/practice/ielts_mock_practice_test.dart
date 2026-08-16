@@ -22,14 +22,6 @@ import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
-import 'package:speakup/features/coaching/review/practice_report_status.dart';
-import 'package:speakup/features/coaching/review/practice_report_status_client.dart';
-import 'package:speakup/features/coaching/review/practice_report_status_controller.dart';
 
 void main() {
   testWidgets('Part 1 keeps Tips visible while recording', (tester) async {
@@ -37,7 +29,6 @@ void main() {
       retryAllowed: false,
       questionTranslationAllowed: false,
       questionTipsAllowed: true,
-      avatarAllowed: false,
       speechFeedbackAllowed: false,
     );
     final practice = _IeltsPracticeClient(
@@ -83,45 +74,33 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets(
-    'Part 1 uses the shared avatar, conversation, and composer stage',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 0);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, _ieltsScene);
+  testWidgets('Part 1 uses the conversation and composer stage', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(find.byKey(const Key('ielts-avatar-region')), findsOneWidget);
-      expect(find.byKey(const Key('ielts-avatar-placeholder')), findsOneWidget);
-      final examinerImage = tester.widget<Image>(
-        find.byKey(const Key('ielts-avatar-placeholder')),
-      );
-      expect(examinerImage.fit, BoxFit.cover);
-      expect(examinerImage.alignment, const Alignment(0, -0.32));
-      expect(
-        (examinerImage.image as AssetImage).assetName,
-        'assets/images/scenes/ielts-examiner.jpg',
-      );
-      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-mock-record')).hitTestable(),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-mock-record')).hitTestable(),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('Part 1 prefers the shared practice question voice', (
     tester,
@@ -1366,137 +1345,6 @@ void main() {
     },
   );
 
-  testWidgets('clearing practice state fences the bound report poll', (
-    tester,
-  ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 14);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    final reportClient = _PendingReportClient();
-    final reportController = IeltsSpeakingReportController(
-      client: reportClient,
-    );
-    addTearDown(controller.dispose);
-    addTearDown(reportController.dispose);
-    await _activatePractice(controller, practice, _ieltsScene);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          completedReportBuilder: (_, practiceSessionId) =>
-              IeltsSpeakingSessionReportPanel(
-                practiceSessionId: practiceSessionId,
-                controller: reportController,
-              ),
-        ),
-      ),
-    );
-    await tester.pump();
-    await reportClient.started.future;
-    expect(reportController.practiceSessionId, _sessionId);
-
-    await controller.clearPrivateState();
-    await tester.pump();
-
-    expect(controller.practiceSessionId, isNull);
-    expect(reportController.practiceSessionId, isNull);
-    expect(reportController.isLoading, isFalse);
-  });
-
-  testWidgets(
-    'Part 1 completion keeps the final answer visible before section review',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 4);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      final preparation = IeltsPreparationController(
-        client: _UnusedQuestionBankClient(),
-      );
-      final reportClient = _PendingReportClient();
-      final reportController = IeltsSpeakingReportController(
-        client: reportClient,
-      );
-      addTearDown(controller.dispose);
-      addTearDown(preparation.dispose);
-      addTearDown(reportController.dispose);
-      await _activatePractice(
-        controller,
-        practice,
-        _ieltsScene,
-        mode: PracticeMode.part1,
-      );
-      expect(controller.errorMessage, isNull);
-      expect(controller.practiceSessionId, _sessionId);
-      await preparation.beginSession(
-        _sessionId,
-        PracticeMode.part1,
-        const IeltsPracticeSelection(part1SetId: 'p1-set-02'),
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-            ieltsController: preparation,
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
-            completedReportBuilder: (_, practiceSessionId) =>
-                IeltsSpeakingSessionReportPanel(
-                  practiceSessionId: practiceSessionId,
-                  controller: reportController,
-                ),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      for (var turn = 0; turn < 4; turn++) {
-        await _answerCurrentShortQuestion(tester, controller);
-      }
-
-      expect(controller.completedTurns, 4);
-      final conversation = tester
-          .widget<ListView>(find.byKey(const Key('ielts-mock-conversation')))
-          .controller!;
-      expect(
-        conversation.position.pixels,
-        closeTo(conversation.position.maxScrollExtent, 0.5),
-      );
-      expect(find.text('Answer 4'), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('Part 1 已完成'), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsNothing,
-      );
-      expect(reportClient.started.isCompleted, isFalse);
-      expect(reportController.practiceSessionId, isNull);
-
-      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(
-        find.byKey(const Key('part1-review-loading-page')),
-        findsOneWidget,
-      );
-      expect(find.text('Part 1 专项复盘'), findsOneWidget);
-      expect(find.text('正在生成你的专项复盘'), findsOneWidget);
-      expect(reportClient.started.isCompleted, isFalse);
-      expect(reportController.practiceSessionId, isNull);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
   testWidgets('Part 1 completion returns to the section list', (tester) async {
     final practice = _IeltsPracticeClient(initialCompleted: 3, turnLimit: 4);
     final controller = PracticeController(
@@ -1554,317 +1402,6 @@ void main() {
     expect(request?.mode, PracticeMode.part1);
     expect(request?.selection, isNull);
     expect(find.byKey(const Key('open-section-completion')), findsOneWidget);
-  });
-
-  testWidgets(
-    'Part 1 running report stays with the final answer instead of opening the completion page',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      final reportController = PracticeReportStatusController(
-        client: _Part1ReportStatusClient(
-          evaluationStatus: PracticeReportEvaluationStatus.running,
-        ),
-        pollInterval: Duration.zero,
-        maximumPollAttempts: 1,
-      );
-      addTearDown(controller.dispose);
-      addTearDown(reportController.dispose);
-      await _activatePractice(
-        controller,
-        practice,
-        _ieltsScene,
-        mode: PracticeMode.part1,
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-            reportStatusController: reportController,
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      await _answerCurrentShortQuestion(tester, controller);
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('查看复盘报告'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(
-        find.byKey(const Key('part1-review-loading-page')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('part1-review-loading-animation')),
-        findsOneWidget,
-      );
-      expect(find.text('正在生成你的专项复盘'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
-  testWidgets(
-    'restored completed Part 1 keeps the pending report with the final answer',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      final reportController = PracticeReportStatusController(
-        client: _Part1ReportStatusClient(
-          evaluationStatus: PracticeReportEvaluationStatus.running,
-        ),
-        pollInterval: Duration.zero,
-        maximumPollAttempts: 1,
-      );
-      addTearDown(controller.dispose);
-      addTearDown(reportController.dispose);
-      await _activatePractice(
-        controller,
-        practice,
-        _ieltsScene,
-        mode: PracticeMode.part1,
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-            reportStatusController: reportController,
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('查看复盘报告'), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsNothing,
-      );
-    },
-  );
-
-  testWidgets('Part 1 report failure never falls back to the completion page', (
-    tester,
-  ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    final reportController = PracticeReportStatusController(
-      client: _Part1ReportStatusClient(
-        evaluationStatus: PracticeReportEvaluationStatus.failed,
-      ),
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    addTearDown(controller.dispose);
-    addTearDown(reportController.dispose);
-    await _activatePractice(
-      controller,
-      practice,
-      _ieltsScene,
-      mode: PracticeMode.part1,
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          reportStatusController: reportController,
-          examinerSpeaker: _ImmediateExaminerSpeaker(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-section-completion-sheet')),
-      findsOneWidget,
-    );
-    expect(find.text('查看复盘报告'), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-section-practice-complete-part1')),
-      findsNothing,
-    );
-    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-
-    expect(find.byKey(const Key('part1-review-loading-page')), findsOneWidget);
-    expect(find.text('复盘暂时没有生成'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
-
-  testWidgets(
-    'Part 1 ready report opens after tapping and returns to the section list',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      final preparation = IeltsPreparationController(
-        client: _UnusedQuestionBankClient(),
-      );
-      final reportClient = _Part1ReportStatusClient(
-        evaluationStatus: PracticeReportEvaluationStatus.ready,
-      );
-      final reportController = PracticeReportStatusController(
-        client: reportClient,
-        pollInterval: Duration.zero,
-        maximumPollAttempts: 1,
-      );
-      addTearDown(controller.dispose);
-      addTearDown(preparation.dispose);
-      addTearDown(reportController.dispose);
-      await _activatePractice(
-        controller,
-        practice,
-        _ieltsScene,
-        mode: PracticeMode.part1,
-      );
-      await preparation.beginSession(
-        _sessionId,
-        PracticeMode.part1,
-        const IeltsPracticeSelection(part1SetId: 'p1-set-02'),
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: TextButton(
-                key: const Key('open-part1-practice'),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<IeltsPracticeRouteResult>(
-                    builder: (_) => IeltsSpeakingMockPage(
-                      controller: controller,
-                      progressStore: _MemoryProgressStore(),
-                      ieltsController: preparation,
-                      reportStatusController: reportController,
-                      examinerSpeaker: _ImmediateExaminerSpeaker(),
-                      onExitRequested: () async => true,
-                    ),
-                  ),
-                ),
-                child: const Text('Open Part 1 practice'),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.byKey(const Key('open-part1-practice')));
-      await tester.pumpAndSettle();
-
-      await _answerCurrentShortQuestion(tester, controller);
-      await tester.pump();
-
-      expect(
-        find.byKey(const Key('ielts-section-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('查看复盘报告'), findsOneWidget);
-      expect(reportClient.readyReportCalls, 0);
-
-      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.text('Part 1 专项复盘'), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-section-practice-complete-part1')),
-        findsNothing,
-      );
-      expect(reportClient.readyReportCalls, 1);
-
-      await tester.tap(find.byKey(const Key('review-detail-back')));
-      await tester.pumpAndSettle();
-
-      final request = preparation.takeNavigationRequest();
-      expect(request?.mode, PracticeMode.part1);
-      expect(request?.selection, isNull);
-      expect(find.byKey(const Key('open-part1-practice')), findsOneWidget);
-    },
-  );
-
-  testWidgets('Part 1 review replaces loading with the ready report in place', (
-    tester,
-  ) async {
-    final statusGate = Completer<void>();
-    final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    final reportClient = _Part1ReportStatusClient(
-      evaluationStatus: PracticeReportEvaluationStatus.ready,
-      statusGate: statusGate.future,
-    );
-    final reportController = PracticeReportStatusController(
-      client: reportClient,
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    addTearDown(controller.dispose);
-    addTearDown(reportController.dispose);
-    await _activatePractice(
-      controller,
-      practice,
-      _ieltsScene,
-      mode: PracticeMode.part1,
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          reportStatusController: reportController,
-          examinerSpeaker: _ImmediateExaminerSpeaker(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(reportClient.readyReportCalls, 0);
-
-    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.byKey(const Key('part1-review-loading-page')), findsOneWidget);
-    expect(find.text('正在生成你的专项复盘'), findsOneWidget);
-
-    statusGate.complete();
-    await tester.pumpAndSettle();
-
-    expect(reportClient.readyReportCalls, 1);
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('the full-mock PracticeOption opens the three-part flow', (
@@ -2235,57 +1772,8 @@ void main() {
         find.byKey(const Key('ielts-section-practice-complete-part3')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const Key('ielts-completion-report-unavailable')),
-        findsOneWidget,
-      );
     },
   );
-
-  testWidgets('finishing a section starts the report status load immediately', (
-    tester,
-  ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    final reportClient = _PracticeReportStatusClient();
-    final reportController = PracticeReportStatusController(
-      client: reportClient,
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    addTearDown(controller.dispose);
-    addTearDown(reportController.dispose);
-    await _activatePractice(
-      controller,
-      practice,
-      _ieltsScene,
-      mode: PracticeMode.part3,
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          reportStatusController: reportController,
-          examinerSpeaker: _ImmediateExaminerSpeaker(),
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-part3-start')));
-    await tester.pump();
-
-    await _answerCurrentShortQuestion(tester, controller);
-    await tester.pump();
-
-    expect(reportClient.statusCalls, 1);
-    expect(reportClient.practiceSessionIds, <String>[_sessionId]);
-    expect(reportController.practiceSessionId, _sessionId);
-  });
 
   testWidgets('full mock completes after a single original Part 3 question', (
     tester,
@@ -2494,109 +1982,6 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   Future<IeltsQuestionBank> getQuestionBank() {
     throw UnimplementedError();
   }
-}
-
-final class _Part1ReportStatusClient implements PracticeReportStatusClient {
-  _Part1ReportStatusClient({required this.evaluationStatus, this.statusGate});
-
-  static const _evaluationId = '7b000001-0000-4000-8000-000000000001';
-  static const _evaluationRevisionId = 'a1000001-0000-4000-8000-000000000001';
-  static const _reportId = '20000000-0000-4000-8000-000000000002';
-
-  final PracticeReportEvaluationStatus evaluationStatus;
-  final Future<void>? statusGate;
-  int readyReportCalls = 0;
-
-  @override
-  Future<PracticeReportStatus> getStatus(String practiceSessionId) async {
-    await statusGate;
-    return PracticeReportStatus(
-      practiceSessionId: practiceSessionId,
-      practiceMode: PracticeMode.part1,
-      reportScope: PracticeReportScope.part1,
-      availableSections: const <IeltsSpeakingPartId>[IeltsSpeakingPartId.part1],
-      detailSchema: 'ielts-speaking-practice-report/v1',
-      evaluationStatus: evaluationStatus,
-      statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
-      evaluationId: _evaluationId,
-      evaluationRevisionId: _evaluationRevisionId,
-      revision: 1,
-      reportRef: evaluationStatus == PracticeReportEvaluationStatus.ready
-          ? const PracticeReportRef(
-              reportId: _reportId,
-              href: '/v1/evaluation-reports/$_reportId',
-            )
-          : null,
-      scoreability: evaluationStatus == PracticeReportEvaluationStatus.ready
-          ? EvaluationReportScoreability.provisional
-          : null,
-      summary: evaluationStatus == PracticeReportEvaluationStatus.ready
-          ? 'Part 1 专项复盘已生成。'
-          : null,
-    );
-  }
-
-  @override
-  Future<EvaluationReport> getReadyReport(PracticeReportRef reportRef) async {
-    readyReportCalls++;
-    return EvaluationReport(
-      id: _reportId,
-      evaluationId: _evaluationId,
-      evaluationRevisionId: _evaluationRevisionId,
-      practiceSessionId: _sessionId,
-      revision: 1,
-      sceneType: EvaluationReportSceneType.ieltsSpeaking,
-      practiceExperience: 'IELTS_SPEAKING',
-      sceneCategory: 'IELTS_SPEAKING',
-      practiceMode: 'PART_1',
-      scoreability: EvaluationReportScoreability.provisional,
-      summary: 'Part 1 专项复盘已生成。',
-      dimensions: const <EvaluationReportDimension>[],
-      priorityActions: const <EvaluationReportPriorityAction>[],
-      detailSchema: 'ielts-speaking-practice-report/v1',
-      detail: const <String, Object?>{
-        'schema_version': 'ielts-speaking-practice-report/v1',
-        'report_scope': 'PART_1',
-        'available_sections': <Object?>['PART_1'],
-        'questions': <Object?>[],
-        'section_reviews': <Object?>[],
-      },
-      createdAt: DateTime.utc(2026, 8, 12),
-    );
-  }
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
-final class _PracticeReportStatusClient implements PracticeReportStatusClient {
-  int statusCalls = 0;
-  final List<String> practiceSessionIds = <String>[];
-
-  @override
-  Future<PracticeReportStatus> getStatus(String practiceSessionId) async {
-    statusCalls++;
-    practiceSessionIds.add(practiceSessionId);
-    return PracticeReportStatus(
-      practiceSessionId: practiceSessionId,
-      practiceMode: PracticeMode.part3,
-      reportScope: PracticeReportScope.part3,
-      availableSections: const <IeltsSpeakingPartId>[IeltsSpeakingPartId.part3],
-      detailSchema: 'ielts-speaking-practice-report/v1',
-      evaluationStatus: PracticeReportEvaluationStatus.running,
-      statusUrl: '/v1/practice-sessions/$practiceSessionId/report',
-      evaluationId: '7b000001-0000-4000-8000-000000000001',
-      evaluationRevisionId: 'a1000001-0000-4000-8000-000000000001',
-      revision: 1,
-    );
-  }
-
-  @override
-  Future<EvaluationReport> getReadyReport(PracticeReportRef reportRef) =>
-      throw UnimplementedError();
-
-  @override
-  Future<void> clearAccountState() async {}
 }
 
 final class _IeltsPracticeClient
@@ -2967,20 +2352,6 @@ final class _ControlledExaminerSpeaker implements PracticePromptSpeaker {
   Future<void> dispose() async {}
 }
 
-final class _PendingReportClient implements IeltsSpeakingReportClient {
-  final started = Completer<void>();
-  final response = Completer<IeltsSpeakingReportEnvelope>();
-
-  @override
-  Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
-    started.complete();
-    return response.future;
-  }
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
 PracticeQuestion _question(int turn) {
   return PracticeQuestion(
     id: 'question-$turn',
@@ -3045,7 +2416,6 @@ const _practiceCapabilities = PracticeCapabilities(
   retryAllowed: false,
   questionTranslationAllowed: false,
   questionTipsAllowed: false,
-  avatarAllowed: false,
   speechFeedbackAllowed: false,
 );
 final _ieltsScene = _sceneFixture(

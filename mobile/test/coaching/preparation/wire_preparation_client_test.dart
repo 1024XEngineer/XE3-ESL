@@ -314,6 +314,7 @@ final class _QueueTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     expect(method, 'GET');
     expect(body, isNull);

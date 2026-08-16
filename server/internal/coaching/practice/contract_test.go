@@ -13,7 +13,6 @@ func TestContractValues(t *testing.T) {
 	tests := map[string]string{
 		"scene interview":           string(scene.PracticeExperienceInterview),
 		"plan ready":                string(preparation.PlanStatusReady),
-		"plan archived":             string(preparation.PlanStatusArchived),
 		"session starting":          string(practice.SessionStarting),
 		"session in progress":       string(practice.SessionInProgress),
 		"session paused":            string(practice.SessionPaused),
@@ -24,7 +23,6 @@ func TestContractValues(t *testing.T) {
 	want := map[string]string{
 		"scene interview":           "INTERVIEW",
 		"plan ready":                "ready",
-		"plan archived":             "archived",
 		"session starting":          "starting",
 		"session in progress":       "in_progress",
 		"session paused":            "paused",
@@ -52,8 +50,8 @@ func TestCrossModuleContractsExposeRequiredFields(t *testing.T) {
 				ID:          "objective-1",
 				Description: "Explain the trade-off.",
 			}},
-			Revision: 1,
-			Status:   preparation.PlanStatusReady,
+			Version: 1,
+			Status:  preparation.PlanStatusReady,
 		},
 		practice.Session{
 			ID:        "session-1",
@@ -67,11 +65,7 @@ func TestCrossModuleContractsExposeRequiredFields(t *testing.T) {
 			SubjectRef:       practice.SubjectRef{Namespace: "user", SubjectID: "user-1"},
 			RoleDefinitionID: "role-1",
 		},
-		practice.SessionSnapshot{
-			ID:        "snapshot-1",
-			SessionID: "session-1",
-			CreatedAt: createdAt,
-		},
+		practice.SessionSnapshot{SessionID: "session-1"},
 	}
 	if len(contracts) != 4 {
 		t.Fatalf("contracts = %d, want 4", len(contracts))

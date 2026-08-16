@@ -3,6 +3,7 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -120,18 +121,19 @@ final class _RetryPracticeClient
   }
 
   @override
-  Future<PracticeRetryRequest> requestSameQuestionRetry({
+  Future<PracticeRetryTurn> requestSameQuestionRetry({
     required String feedbackItemId,
     required String idempotencyKey,
   }) async {
     expect(feedbackItemId, _feedbackItem.feedbackItemId);
-    return failCreation ? _failedRetryRequest : _retryRequest;
+    if (failCreation) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.conflict,
+        errorCode: 'source_no_longer_available',
+      );
+    }
+    return _retryTurn;
   }
-
-  @override
-  Future<PracticeRetryRequest> getSameQuestionRetryRequest({
-    required String retryRequestId,
-  }) async => _retryRequest;
 
   @override
   Future<RetryTranscriptionCandidate> transcribeRetry({
@@ -143,9 +145,8 @@ final class _RetryPracticeClient
     return RetryTranscriptionCandidate(
       id: 'candidate_retry_daily_001',
       retryTurnId: 'turn_retry_daily_001',
-      retryRequestId: _retryRequest.retryRequestId,
-      sessionId: _retryRequest.sessionId,
-      questionId: _retryRequest.questionId,
+      sessionId: _retryTurn.sessionId,
+      questionId: _retryTurn.questionId,
       respondentParticipantId: 'participant_user',
       transcriptId: 'transcript_retry_daily_001',
       evidenceVersion: 1,
@@ -163,10 +164,9 @@ final class _RetryPracticeClient
     confirmations++;
     return ConfirmedRetryTurn(
       turnId: retryTurnId,
-      retryRequestId: _retryRequest.retryRequestId,
-      originalTurnId: _retryRequest.originalTurnId,
-      sessionId: _retryRequest.sessionId,
-      questionId: _retryRequest.questionId,
+      originalTurnId: _retryTurn.originalTurnId,
+      sessionId: _retryTurn.sessionId,
+      questionId: _retryTurn.questionId,
       respondentParticipantId: 'participant_user',
       candidateId: candidateId,
       answerText: 'I explained the issue clearly.',
@@ -207,11 +207,11 @@ final class _RetryPracticeClient
 
 final _feedbackItem = SpeechFeedbackItem(
   feedbackItemId: 'feedback_item_daily_001',
-  speechFeedbackId: 'speech_feedback_daily_001',
+  evaluationId: 'evaluation_daily_001',
+  position: 1,
   kind: SpeechFeedbackItemKind.correction,
-  anchor: const ConversationTranscriptFeedbackAnchor(
-    evidenceRefId: 'evidence_daily_001',
-    turnId: 'turn_daily_001',
+  anchor: const SpeechFeedbackAnchor(
+    evidenceRefId: 'turn_daily_001',
     startUtf8Byte: 0,
     endUtf8Byte: 9,
     originalExcerpt: 'I explain',
@@ -222,36 +222,15 @@ final _feedbackItem = SpeechFeedbackItem(
   createdAt: DateTime.utc(2026, 7, 30, 10, 59),
 );
 
-final _retryRequest = PracticeRetryRequest(
-  retryRequestId: 'retry_request_daily_001',
-  feedbackItemId: _feedbackItem.feedbackItemId,
+final _retryTurn = PracticeRetryTurn(
+  turnId: 'turn_retry_daily_001',
   sessionId: 'session_daily_001',
   originalTurnId: 'turn_daily_001',
   questionId: 'question_daily_001',
-  retryStatus: PracticeRetryRequestStatus.turnCreated,
-  statusUrl: '/v1/retry-requests/retry_request_daily_001',
+  sequence: 4,
+  status: PracticeRetryTurnStatus.answering,
   createdAt: DateTime.utc(2026, 7, 30, 11),
-  updatedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
-  newTurnId: 'turn_retry_daily_001',
-  answerPath: '/v1/retry-turns/turn_retry_daily_001/transcription-candidates',
-  completedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
-);
-
-final _failedRetryRequest = PracticeRetryRequest(
-  retryRequestId: 'retry_request_daily_failed',
-  feedbackItemId: _feedbackItem.feedbackItemId,
-  sessionId: 'session_daily_001',
-  originalTurnId: 'turn_daily_001',
-  questionId: 'question_daily_001',
-  retryStatus: PracticeRetryRequestStatus.failed,
-  statusUrl: '/v1/retry-requests/retry_request_daily_failed',
-  createdAt: DateTime.utc(2026, 7, 30, 11),
-  updatedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
-  stableFailure: const PracticeRetryFailure(
-    reason: PracticeRetryFailureReason.sourceNoLongerAvailable,
-    retryable: false,
-  ),
-  completedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
+  replayed: false,
 );
 
 final _dailyScene = testScene(

@@ -32,13 +32,13 @@ type deferredRunProcessor struct {
 }
 
 // NewDeferredRunProcessor owns the production queue, capacity, and execution
-// timeout used after a voice candidate has been confirmed.
+// timeout used after a voice draft has been confirmed.
 func NewDeferredRunProcessor(
 	ctx context.Context,
 	delegate PendingRunProcessor,
 	logger *slog.Logger,
 ) (PendingRunProcessor, error) {
-	if ctx == nil || nilDependency(delegate) || logger == nil {
+	if ctx == nil || delegate == nil || logger == nil {
 		return nil, errors.New(
 			"agent voice input: deferred Run dependencies are required",
 		)
@@ -80,13 +80,7 @@ func (processor *deferredRunProcessor) ProcessPendingStream(
 	pendingRun run.Run,
 	observer run.StreamObserver,
 ) (run.Run, error) {
-	delegate, ok := processor.delegate.(streamingPendingRunProcessor)
-	if !ok {
-		return run.Run{}, errors.New(
-			"agent voice input: streaming Run processor is required",
-		)
-	}
-	return delegate.ProcessPendingStream(
+	return processor.delegate.ProcessPendingStream(
 		ctx,
 		actor,
 		pendingRun,

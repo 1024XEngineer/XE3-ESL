@@ -1220,8 +1220,8 @@ func normalizeTextAPIKey(raw string, settings textProviderSettings) (string, err
 	return apiKey, nil
 }
 
-// These Qianwen-only helpers remain shared by the existing embedding and
-// speech adapters. Text generation uses the provider-aware variants above.
+// These Qianwen-only helpers remain shared by the speech adapters. Text
+// generation uses the provider-aware variants above.
 func normalizeBaseURL(raw string) (string, error) {
 	settings, _ := textProviderSettingsFor(providerName)
 	return normalizeTextBaseURL(raw, settings)

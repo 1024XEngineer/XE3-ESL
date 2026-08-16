@@ -151,3 +151,30 @@ final class IeltsPracticeSelection {
   @override
   int get hashCode => Object.hash(part1SetId, topicGroupId, cueCardType);
 }
+
+final class IeltsPreparedAnswer {
+  const IeltsPreparedAnswer({
+    required this.bankId,
+    required this.part,
+    required this.sourceId,
+    required this.questionPosition,
+    required this.answer,
+    required this.personalized,
+  });
+
+  final String bankId;
+  final String part;
+  final String sourceId;
+  final int questionPosition;
+  final String answer;
+  final bool personalized;
+
+  Map<String, Object> toJson() => <String, Object>{
+    'bank_id': bankId,
+    'part': part,
+    'source_id': sourceId,
+    'question_position': questionPosition,
+    'answer': answer,
+    'personalized': personalized,
+  };
+}

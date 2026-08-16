@@ -1,23 +1,101 @@
 paths:
+  /v1/interview-preparations:
+    post:
+      tags: [Preparation]
+      summary: Analyze interview material into a preparation card
+      operationId: createInterviewPreparation
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateInterviewPreparationRequest'
+            encoding:
+              input:
+                contentType: application/json
+      responses:
+        '201':
+          description: The actor-owned draft interview preparation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterviewPreparation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '502':
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/interview-preparations/{interview_preparation_id}:
+    get:
+      tags: [Preparation]
+      summary: Get an interview preparation
+      operationId: getInterviewPreparation
+      parameters:
+        - $ref: '#/components/parameters/InterviewPreparationId'
+      responses:
+        '200':
+          description: The actor-owned interview preparation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterviewPreparation'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    patch:
+      tags: [Preparation]
+      summary: Regenerate, confirm, or discard an interview preparation
+      operationId: patchInterviewPreparation
+      parameters:
+        - $ref: '#/components/parameters/InterviewPreparationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchInterviewPreparationRequest'
+      responses:
+        '200':
+          description: The updated interview preparation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterviewPreparation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-plans:
     get:
-      tags:
-        - Preparation
-      summary: List the current user's practice plans
+      tags: [Preparation]
+      summary: List the current user's practice cards
       operationId: listPracticePlans
       parameters:
         - name: practice_experience
           in: query
           required: true
           schema:
-            type: string
-            enum:
-              - INTERVIEW
-              - IELTS_SPEAKING
-              - ROLEPLAY
+            $ref: ../modules/scene.yaml#/components/schemas/PracticeExperience
       responses:
         '200':
-          description: Newest-first ready plans for the requested experience.
+          description: Newest-first practice cards for the requested experience.
           content:
             application/json:
               schema:
@@ -29,15 +107,13 @@ paths:
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
     post:
-      tags:
-        - Preparation
-      summary: Create a complete practice plan revision
+      tags: [Preparation]
+      summary: Create a practice card from current user input
       description: |
-        Creates one ready PracticePlan from an immutable Preparation Snapshot
-        and an exact active Scene version. Goal and Agent Thread references are
-        optional, actor-owned context; neither is used as a fallback or as an
-        anchor for the other. The persisted revision freezes every input needed
-        by Practice and does not create a PracticeSession.
+        Creates one complete PracticePlan. Interview plans reference one exact
+        confirmed InterviewPreparation version. Direct Scene plans carry only
+        their background summary. The Plan freezes all execution inputs used by
+        later Sessions; there is no separate Profile, Snapshot, or revision row.
       operationId: createPracticePlan
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -48,17 +124,16 @@ paths:
             schema:
               $ref: '#/components/schemas/CreatePracticePlanRequest'
             example:
-              source_thread_id: 20000000-0000-4000-8000-000000000001
-              goal_id: 10000000-0000-4000-8000-000000000001
-              preparation_snapshot_id: psnap_demo_backend_v1
-              scene_id: scn_programmer_interview
+              source_thread_id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+              background_summary: Backend engineer preparing concise project stories.
+              scene_id: interview
               scene_version: 1
-              selected_role_ids:
-                - role_technical_interviewer
-              practice_option_id: option_technical_focus
+              selected_role_ids: [interviewer]
+              practice_option_id: full_simulation
+              max_effective_turns: 6
       responses:
         '201':
-          description: A complete ready PracticePlan or its idempotent result.
+          description: The created practice card or its idempotent replay.
           content:
             application/json:
               schema:
@@ -75,15 +150,14 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-plans/{practice_plan_id}:
     get:
-      tags:
-        - Preparation
-      summary: Get the current practice plan revision
+      tags: [Preparation]
+      summary: Get a practice card
       operationId: getPracticePlan
       parameters:
         - $ref: '#/components/parameters/PracticePlanId'
       responses:
         '200':
-          description: The actor-owned current PracticePlan revision.
+          description: The actor-owned practice card.
           content:
             application/json:
               schema:
@@ -94,17 +168,11 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-    put:
-      tags:
-        - Preparation
-      summary: Append a practice plan revision
-      description: |
-        Appends a complete immutable revision using the expected current
-        revision. The frozen Goal, Preparation Snapshot, and Scene version do
-        not change; only the selected roles, option, policy, and objectives are
-        recalculated from the already frozen Scene definition. IELTS question
-        assignments remain frozen across revisions.
-      operationId: updatePracticePlan
+  /v1/practice-plans/{practice_plan_id}/confirm:
+    post:
+      tags: [Preparation]
+      summary: Confirm an Agent-created draft practice card
+      operationId: confirmPracticePlan
       parameters:
         - $ref: '#/components/parameters/PracticePlanId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -113,10 +181,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdatePracticePlanRequest'
+              $ref: '#/components/schemas/ConfirmPracticePlanRequest'
       responses:
         '200':
-          description: The appended ready revision or its idempotent result.
+          description: The ready practice card.
           content:
             application/json:
               schema:
@@ -131,1477 +199,67 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-    delete:
-      tags:
-        - Preparation
-      summary: Remove a practice plan from the current user's plan list
-      description: |
-        Archives the actor-owned plan. Existing Practice sessions and review
-        records are retained, while the plan is omitted from subsequent list
-        responses and cannot create new sessions.
-      operationId: archivePracticePlan
-      parameters:
-        - $ref: '#/components/parameters/PracticePlanId'
-      responses:
-        '204':
-          description: The practice plan was archived.
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/preparation-profiles:
-    post:
-      tags:
-        - Preparation
-      summary: Create or return the preparation profile for one intent
-      description: |
-        The authenticated actor is resolved from the Bearer Session and owns the
-        created profile. The request does not accept a trusted `user_id`. A fixed
-        actor may be supplied only by an explicit Mock or Test adapter. When
-        supplied, `job_target_id` and `job_target_confirmation_version` bind
-        the profile to one exact server-confirmed JobTarget version; the pair
-        must be supplied together. `resume_id` and `resume_revision` likewise
-        bind one exact, parsed Resume Revision owned by the actor.
-      operationId: createPreparationProfile
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePreparationProfileRequest'
-            example:
-              resume_id: 50000000-0000-4000-8000-000000000001
-              resume_revision: 1
-              job_description_ref: jd_demo_backend_v1
-              background_summary: |-
-                Backend engineer with three years of Go experience, responsible
-                for an API reliability project and cross-team delivery.
-      responses:
-        '201':
-          description: The preparation profile created for the current actor.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreparationProfile'
-              example:
-                preparation_profile_id: prep_demo_backend
-                user_id: user_demo
-                resume_id: 50000000-0000-4000-8000-000000000001
-                resume_revision: 1
-                job_description_ref: jd_demo_backend_v1
-                background_summary: |
-                  Backend engineer with three years of Go experience, responsible
-                  for an API reliability project and cross-team delivery.
-                version: 1
-                updated_at: '2026-07-23T10:00:00Z'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/preparation-profiles/{preparation_profile_id}/snapshots:
-    post:
-      tags:
-        - Preparation
-      summary: Freeze a confirmed preparation profile
-      operationId: createPreparationSnapshot
-      parameters:
-        - $ref: '#/components/parameters/PreparationProfileId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePreparationSnapshotRequest'
-            example:
-              source_version: 1
-      responses:
-        '201':
-          description: Immutable preparation content for a future session snapshot.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreparationSnapshot'
-              example:
-                preparation_snapshot_id: psnap_demo_backend_v1
-                source_profile_id: prep_demo_backend
-                source_version: 1
-                resume_snapshot:
-                  resume_id: 50000000-0000-4000-8000-000000000001
-                  revision: 1
-                  material:
-                    target_position: Backend Engineer
-                    professional_summary: Go backend engineer.
-                    work_experiences: []
-                    project_experiences: []
-                    education_experiences: []
-                    skills: [Go, PostgreSQL]
-                    awards: []
-                job_description_snapshot: Build reliable APIs and explain engineering trade-offs.
-                background_snapshot: |
-                  Backend engineer with three years of Go experience, responsible
-                  for an API reliability project and cross-team delivery.
-                created_at: '2026-07-23T10:01:00Z'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/job-targets:
-    post:
-      tags:
-        - Preparation
-      summary: Create a JobTarget draft
-      description: |
-        Creates actor-owned, versioned untrusted input. `job_description`
-        requires inline job_description. `quick_start` requires job_title and
-        omits job_description. This operation does not create a Snapshot, Plan,
-        or Session.
-      operationId: createJobTarget
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateJobTargetRequest'
-      responses:
-        '201':
-          description: Created draft or the original idempotent result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/job-targets/{job_target_id}:
-    get:
-      tags:
-        - Preparation
-      summary: Restore a JobTarget stage
-      description: |
-        Returns only the authenticated actor's current server-authoritative
-        input, analysis, and confirmation stage. Cross-account and discarded
-        targets return 404.
-      operationId: getJobTarget
-      parameters:
-        - $ref: '#/components/parameters/JobTargetId'
-      responses:
-        '200':
-          description: Current JobTarget recovery projection.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-    put:
-      tags:
-        - Preparation
-      summary: Replace JobTarget input
-      description: |
-        Replaces the editable input at the expected version. A material change
-        increments input_version and immediately makes prior analysis and
-        confirmation inapplicable to the current projection.
-      operationId: updateJobTarget
-      parameters:
-        - $ref: '#/components/parameters/JobTargetId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateJobTargetRequest'
-      responses:
-        '200':
-          description: Updated draft or the original idempotent result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/job-targets/{job_target_id}/analyses:
-    post:
-      tags:
-        - Preparation
-      summary: Start or recover JobTarget parsing
-      description: |
-        Claims at most one live parser attempt for the expected input version.
-        A live attempt returns 202; a completed candidate returns 200. Parser
-        output remains unconfirmed and cannot itself become user fact.
-      operationId: analyzeJobTarget
-      parameters:
-        - $ref: '#/components/parameters/JobTargetId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AnalyzeJobTargetRequest'
-      responses:
-        '200':
-          description: Parsed candidate or recovered terminal parse stage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '202':
-          description: Another worker holds the current live parse lease.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        '503':
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/job-targets/{job_target_id}/confirmations:
-    post:
-      tags:
-        - Preparation
-      summary: Confirm an edited JobTarget candidate
-      description: |
-        Persists an explicit user-edited confirmation for the exact input and
-        analysis versions. No Snapshot, Plan, or Session is created.
-      operationId: confirmJobTarget
-      parameters:
-        - $ref: '#/components/parameters/JobTargetId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConfirmJobTargetRequest'
-      responses:
-        '200':
-          description: Confirmed JobTarget or original idempotent result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/job-targets/{job_target_id}/discard:
-    post:
-      tags:
-        - Preparation
-      summary: Discard an unconfirmed JobTarget draft
-      operationId: discardJobTarget
-      parameters:
-        - $ref: '#/components/parameters/JobTargetId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DiscardJobTargetRequest'
-      responses:
-        '200':
-          description: Discarded target tombstone or original idempotent result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobTarget'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
+
 components:
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    InterviewPreparationId:
+      name: interview_preparation_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/AggregateId'
     PracticePlanId:
       name: practice_plan_id
       in: path
       required: true
       schema:
-        $ref: '#/components/schemas/ResourceId'
-    PreparationProfileId:
-      name: preparation_profile_id
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/ResourceId'
-    JobTargetId:
-      name: job_target_id
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/ResourceId'
-    IdempotencyKey:
-      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+        $ref: '#/components/schemas/AggregateId'
   schemas:
+    AggregateId:
+      type: string
+      format: uuid
     ResourceId:
       type: string
       minLength: 1
       maxLength: 128
-    Version:
-      type: integer
-      minimum: 1
-    CreatePracticePlanRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - preparation_snapshot_id
-        - scene_id
-        - scene_version
-        - selected_role_ids
-        - practice_option_id
-      properties:
-        source_thread_id:
-          $ref: '#/components/schemas/ResourceId'
-        goal_id:
-          $ref: '#/components/schemas/ResourceId'
-        preparation_snapshot_id:
-          $ref: '#/components/schemas/ResourceId'
-        scene_id:
-          $ref: '#/components/schemas/ResourceId'
-        scene_version:
-          $ref: '#/components/schemas/Version'
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        practice_option_id:
-          $ref: '#/components/schemas/ResourceId'
-        ielts_selection:
-          description: Optional exact IELTS question ids, or a cue-card category for specialty practice. Omit for a server-random assignment. FULL_MOCK does not accept a category.
-          $ref: '#/components/schemas/IELTSPracticeSelection'
-        max_effective_turns:
-          type: integer
-          minimum: 1
-          maximum: 64
-    UpdatePracticePlanRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - expected_plan_revision
-        - selected_role_ids
-        - practice_option_id
-        - max_effective_turns
-      properties:
-        expected_plan_revision:
-          $ref: '#/components/schemas/Version'
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        practice_option_id:
-          $ref: '#/components/schemas/ResourceId'
-        ielts_selection:
-          description: Optional exact IELTS question ids matching the current frozen assignment. Omit to preserve that assignment. Category selection is not accepted on update.
-          $ref: '#/components/schemas/IELTSPracticeExactSelection'
-        max_effective_turns:
-          type: integer
-          minimum: 1
-          maximum: 64
-    GoalSnapshot:
-      type: object
-      additionalProperties: false
-      required:
-        - goal_id
-        - title
-        - version
-      properties:
-        goal_id:
-          $ref: '#/components/schemas/ResourceId'
-        title:
-          type: string
-          minLength: 1
-          maxLength: 512
-        version:
-          type: integer
-          format: int64
-          minimum: 1
-    SceneSelectionSnapshot:
-      type: object
-      additionalProperties: false
-      required:
-        - scene
-        - selected_role_ids
-        - practice_option_id
-      properties:
-        scene:
-          $ref: ./scene.yaml#/components/schemas/SceneDefinition
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        practice_option_id:
-          $ref: '#/components/schemas/ResourceId'
-    PracticeObjective:
-      type: object
-      additionalProperties: false
-      required:
-        - objective_id
-        - description
-      properties:
-        objective_id:
-          type: string
-          pattern: '^[a-z][a-z0-9_]{0,127}$'
-        description:
-          type: string
-          minLength: 1
-    PracticeSessionPolicy:
-      type: object
-      additionalProperties: false
-      description: |
-        The completion behavior frozen into a PracticePlan revision. A
-        TURN_LIMITED policy completes at max_effective_turns. A
-        USER_CONTROLLED policy uses max_effective_turns 0 and completes only
-        after the learner explicitly requests completion.
-      required:
-        - completion_mode
-        - suggested_duration_seconds
-        - min_effective_turns
-        - max_effective_turns
-        - coverage_checkpoint_turn
-        - max_follow_ups_per_question
-        - early_completion_rule
-        - retry_allowed
-        - question_translation_allowed
-        - question_tips_allowed
-        - avatar_allowed
-        - speech_feedback_allowed
-      properties:
-        completion_mode:
-          type: string
-          enum:
-            - TURN_LIMITED
-            - USER_CONTROLLED
-        suggested_duration_seconds:
-          type: integer
-          minimum: 1
-        min_effective_turns:
-          type: integer
-          minimum: 1
-        max_effective_turns:
-          type: integer
-          minimum: 0
-          maximum: 64
-        coverage_checkpoint_turn:
-          type: integer
-          minimum: 1
-          maximum: 64
-        max_follow_ups_per_question:
-          type: integer
-          minimum: 0
-          maximum: 3
-        early_completion_rule:
-          type: string
-          enum:
-            - COVERAGE_SATISFIED_AFTER_CHECKPOINT
-        retry_allowed:
-          type: boolean
-        question_translation_allowed:
-          type: boolean
-        question_tips_allowed:
-          type: boolean
-        avatar_allowed:
-          type: boolean
-        speech_feedback_allowed:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              completion_mode:
-                const: USER_CONTROLLED
-            required:
-              - completion_mode
-          then:
-            properties:
-              max_effective_turns:
-                type: integer
-                const: 0
-              coverage_checkpoint_turn:
-                type: integer
-                const: 1
-          else:
-            properties:
-              max_effective_turns:
-                type: integer
-                minimum: 1
-    IELTSPracticeSelection:
-      type: object
-      additionalProperties: false
-      properties:
-        part_1_set_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_group_id:
-          $ref: '#/components/schemas/ResourceId'
-        cue_card_type:
-          type: string
-          description: Server-select one question set in this fixed IELTS topic category.
-          enum:
-            - person
-            - place
-            - thing
-            - experience
-      oneOf:
-        - required:
-            - part_1_set_id
-            - topic_group_id
-          not:
-            required:
-              - cue_card_type
-        - required:
-            - part_1_set_id
-          not:
-            anyOf:
-              - required:
-                  - topic_group_id
-              - required:
-                  - cue_card_type
-        - required:
-            - topic_group_id
-          not:
-            anyOf:
-              - required:
-                  - part_1_set_id
-              - required:
-                  - cue_card_type
-        - required:
-            - cue_card_type
-          not:
-            anyOf:
-              - required:
-                  - part_1_set_id
-              - required:
-                  - topic_group_id
-    IELTSPracticeExactSelection:
-      type: object
-      additionalProperties: false
-      properties:
-        part_1_set_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_group_id:
-          $ref: '#/components/schemas/ResourceId'
-      oneOf:
-        - required:
-            - part_1_set_id
-            - topic_group_id
-        - required:
-            - part_1_set_id
-          not:
-            required:
-              - topic_group_id
-        - required:
-            - topic_group_id
-          not:
-            required:
-              - part_1_set_id
-    IELTSPracticePartAssignment:
-      type: object
-      additionalProperties: false
-      description: |
-        One frozen IELTS Speaking Part. Part 1 has no topic metadata; Part 2
-        carries one Cue Card and therefore exactly one primary Turn blueprint;
-        Part 3 carries the linked topic title and no Cue Card.
-      required:
-        - part
-        - source_id
-        - turn_blueprints
-      properties:
-        part:
-          type: string
-          enum:
-            - PART_1
-            - PART_2
-            - PART_3
-        source_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_title:
-          type: string
-          minLength: 1
-        cue_card:
-          type: string
-          minLength: 1
-        turn_blueprints:
-          type: array
-          minItems: 1
-          maxItems: 64
-          items:
-            type: string
-            minLength: 1
-      allOf:
-        - if:
-            properties:
-              part:
-                const: PART_1
-            required:
-              - part
-          then:
-            not:
-              anyOf:
-                - required:
-                    - topic_title
-                - required:
-                    - cue_card
-        - if:
-            properties:
-              part:
-                const: PART_2
-            required:
-              - part
-          then:
-            required:
-              - topic_title
-              - cue_card
-            properties:
-              turn_blueprints:
-                minItems: 1
-                maxItems: 1
-        - if:
-            properties:
-              part:
-                const: PART_3
-            required:
-              - part
-          then:
-            required:
-              - topic_title
-            not:
-              required:
-                - cue_card
-    IELTSPracticeAssignment:
-      type: object
-      additionalProperties: false
-      description: |
-        Frozen IELTS Speaking composition. `parts` follows the exact sequence
-        selected by `mode`. When Part 2 and Part 3 coexist, their `source_id`
-        and `topic_title` values are identical. The concatenated Part
-        `turn_blueprints` are the Session's authoritative primary Question
-        sequence and contain at most 64 entries.
-      required:
-        - bank_id
-        - season
-        - mode
-        - parts
-      properties:
-        bank_id:
-          $ref: '#/components/schemas/ResourceId'
-        season:
-          type: string
-          minLength: 1
-        mode:
-          type: string
-          enum:
-            - FULL_MOCK
-            - PART_1
-            - PART_2
-            - PART_3
-        parts:
-          type: array
-          minItems: 1
-          maxItems: 3
-          items:
-            $ref: '#/components/schemas/IELTSPracticePartAssignment'
-      allOf:
-        - if:
-            properties:
-              mode:
-                const: FULL_MOCK
-            required:
-              - mode
-          then:
-            properties:
-              parts:
-                minItems: 3
-                maxItems: 3
-                prefixItems:
-                  - properties:
-                      part:
-                        const: PART_1
-                  - properties:
-                      part:
-                        const: PART_2
-                  - properties:
-                      part:
-                        const: PART_3
-        - if:
-            properties:
-              mode:
-                const: PART_1
-            required:
-              - mode
-          then:
-            properties:
-              parts:
-                minItems: 1
-                maxItems: 1
-                prefixItems:
-                  - properties:
-                      part:
-                        const: PART_1
-        - if:
-            properties:
-              mode:
-                const: PART_2
-            required:
-              - mode
-          then:
-            properties:
-              parts:
-                minItems: 2
-                maxItems: 2
-                prefixItems:
-                  - properties:
-                      part:
-                        const: PART_2
-                  - properties:
-                      part:
-                        const: PART_3
-        - if:
-            properties:
-              mode:
-                const: PART_3
-            required:
-              - mode
-          then:
-            properties:
-              parts:
-                minItems: 1
-                maxItems: 1
-                prefixItems:
-                  - properties:
-                      part:
-                        const: PART_3
-    PracticePlan:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_plan_id
-        - user_id
-        - preparation_snapshot
-        - scene_selection
-        - session_policy
-        - practice_objectives
-        - plan_revision
-        - practice_plan_status
-        - created_at
-        - updated_at
-      properties:
-        practice_plan_id:
-          $ref: '#/components/schemas/ResourceId'
-        user_id:
-          $ref: '#/components/schemas/ResourceId'
-        source_thread_id:
-          $ref: '#/components/schemas/ResourceId'
-        goal_snapshot:
-          $ref: '#/components/schemas/GoalSnapshot'
-        preparation_snapshot:
-          $ref: '#/components/schemas/PreparationSnapshot'
-        scene_selection:
-          $ref: '#/components/schemas/SceneSelectionSnapshot'
-        session_policy:
-          $ref: '#/components/schemas/PracticeSessionPolicy'
-        practice_objectives:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/PracticeObjective'
-        ielts_assignment:
-          $ref: '#/components/schemas/IELTSPracticeAssignment'
-        plan_revision:
-          $ref: '#/components/schemas/Version'
-        practice_plan_status:
-          type: string
-          enum:
-            - ready
-            - archived
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-      allOf:
-        - if:
-            properties:
-              scene_selection:
-                properties:
-                  scene:
-                    properties:
-                      practice_experience:
-                        const: IELTS_SPEAKING
-                    required:
-                      - practice_experience
-                required:
-                  - scene
-            required:
-              - scene_selection
-          then:
-            required:
-              - ielts_assignment
-          else:
-            not:
-              required:
-                - ielts_assignment
-    PracticePlanList:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_plans
-      properties:
-        practice_plans:
-          type: array
-          maxItems: 100
-          items:
-            $ref: '#/components/schemas/PracticePlanSummary'
-    PracticePlanSummary:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_plan_id
-        - plan_revision
-        - practice_plan_status
-        - practice_experience
-        - scene_name
-        - practice_scope
-        - job_title
-        - practice_objectives
-        - resume_used
-        - suggested_duration_seconds
-        - min_effective_turns
-        - max_effective_turns
-        - created_at
-        - updated_at
-      properties:
-        practice_plan_id:
-          $ref: '#/components/schemas/ResourceId'
-        plan_revision:
-          $ref: '#/components/schemas/Version'
-        practice_plan_status:
-          type: string
-          const: ready
-        practice_experience:
-          type: string
-          enum:
-            - INTERVIEW
-            - IELTS_SPEAKING
-            - ROLEPLAY
-        scene_name:
-          type: string
-          minLength: 1
-          maxLength: 512
-        practice_scope:
-          type: string
-          minLength: 1
-          maxLength: 512
-        job_title:
-          type: string
-          maxLength: 512
-        practice_objectives:
-          type: array
-          minItems: 1
-          items:
-            type: string
-            minLength: 1
-            maxLength: 2048
-        resume_used:
-          type: boolean
-        suggested_duration_seconds:
-          type: integer
-          minimum: 1
-        min_effective_turns:
-          type: integer
-          minimum: 1
-        max_effective_turns:
-          description: Zero denotes a USER_CONTROLLED plan with no fixed turn limit.
-          type: integer
-          minimum: 0
-          maximum: 64
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    CreatePreparationProfileRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        kind:
-          $ref: '#/components/schemas/PreparationKind'
-        scenario:
-          $ref: '#/components/schemas/ScenarioPreparationInput'
-        resume_id:
-          type: string
-          format: uuid
-        resume_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        job_description_ref:
-          type: string
-          minLength: 1
-          maxLength: 16384
-          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
-        background_summary:
-          type: string
-          minLength: 1
-          maxLength: 65536
-          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
-        job_target_id:
-          $ref: '#/components/schemas/ResourceId'
-        job_target_confirmation_version:
-          $ref: '#/components/schemas/Version'
-      dependentRequired:
-        resume_id:
-          - resume_revision
-        resume_revision:
-          - resume_id
-        job_target_id:
-          - job_target_confirmation_version
-        job_target_confirmation_version:
-          - job_target_id
-      allOf:
-        - if:
-            properties:
-              kind:
-                const: scenario
-            required:
-              - kind
-          then:
-            required:
-              - scenario
-          else:
-            required:
-              - background_summary
-        - if:
-            properties:
-              kind:
-                const: interview
-            required:
-              - kind
-          then:
-            required:
-              - job_target_id
-              - job_target_confirmation_version
-    PreparationProfile:
-      type: object
-      additionalProperties: false
-      required:
-        - preparation_profile_id
-        - user_id
-        - background_summary
-        - version
-        - updated_at
-      properties:
-        preparation_profile_id:
-          $ref: '#/components/schemas/ResourceId'
-        user_id:
-          $ref: '#/components/schemas/ResourceId'
-        preparation_context:
-          $ref: '#/components/schemas/ResolvedPreparationContext'
-        resume_id:
-          type: string
-          format: uuid
-        resume_revision:
-          type: integer
-          format: int64
-          minimum: 1
-        job_description_ref:
-          type: string
-          minLength: 1
-        background_summary:
-          type: string
-          minLength: 1
-        job_target_id:
-          $ref: '#/components/schemas/ResourceId'
-        job_target_confirmation_version:
-          $ref: '#/components/schemas/Version'
-        version:
-          $ref: '#/components/schemas/Version'
-        updated_at:
-          type: string
-          format: date-time
-      dependentRequired:
-        resume_id:
-          - resume_revision
-        resume_revision:
-          - resume_id
-        job_target_id:
-          - job_target_confirmation_version
-        job_target_confirmation_version:
-          - job_target_id
-    CreatePreparationSnapshotRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - source_version
-      properties:
-        source_version:
-          $ref: '#/components/schemas/Version'
-    PreparationSnapshot:
-      type: object
-      additionalProperties: false
-      required:
-        - preparation_snapshot_id
-        - source_profile_id
-        - source_version
-        - background_snapshot
-        - created_at
-      properties:
-        preparation_snapshot_id:
-          $ref: '#/components/schemas/ResourceId'
-        source_profile_id:
-          $ref: '#/components/schemas/ResourceId'
-        source_version:
-          $ref: '#/components/schemas/Version'
-        preparation_context:
-          $ref: '#/components/schemas/ResolvedPreparationContext'
-        source_job_target_id:
-          $ref: '#/components/schemas/ResourceId'
-        source_job_target_confirmation_version:
-          $ref: '#/components/schemas/Version'
-        job_target_input_snapshot:
-          $ref: '#/components/schemas/JobTargetInput'
-        job_target_candidate_snapshot:
-          $ref: '#/components/schemas/JobTargetCandidate'
-        resume_snapshot:
-          $ref: '#/components/schemas/PreparationResumeRevisionSnapshot'
-        job_description_snapshot:
-          type: string
-          minLength: 1
-        background_snapshot:
-          type: string
-          minLength: 1
-        created_at:
-          type: string
-          format: date-time
-      dependentRequired:
-        source_job_target_id:
-          - source_job_target_confirmation_version
-          - job_target_input_snapshot
-          - job_target_candidate_snapshot
-        source_job_target_confirmation_version:
-          - source_job_target_id
-          - job_target_input_snapshot
-          - job_target_candidate_snapshot
-        job_target_input_snapshot:
-          - source_job_target_id
-          - source_job_target_confirmation_version
-          - job_target_candidate_snapshot
-        job_target_candidate_snapshot:
-          - source_job_target_id
-          - source_job_target_confirmation_version
-          - job_target_input_snapshot
-    PreparationKind:
-      type: string
-      enum:
-        - interview
-        - scenario
-    ScenarioPreparationInput:
-      type: object
-      additionalProperties: false
-      required:
-        - situation
-        - user_role
-        - counterpart_role
-        - goal
-        - counterpart_persona
-      properties:
-        situation:
-          $ref: '#/components/schemas/PreparationContextText'
-        user_role:
-          $ref: '#/components/schemas/PreparationContextText'
-        counterpart_role:
-          $ref: '#/components/schemas/PreparationContextText'
-        goal:
-          $ref: '#/components/schemas/PreparationContextText'
-        counterpart_persona:
-          $ref: '#/components/schemas/PreparationContextText'
-    PreparationContextText:
-      type: string
-      minLength: 1
-      maxLength: 16384
-      pattern: '^[^\u0000]*$'
-    ResolvedPreparationContext:
-      oneOf:
-        - $ref: '#/components/schemas/InterviewPreparationContext'
-        - $ref: '#/components/schemas/ScenarioPreparationContext'
-      discriminator:
-        propertyName: kind
-        mapping:
-          interview: '#/components/schemas/InterviewPreparationContext'
-          scenario: '#/components/schemas/ScenarioPreparationContext'
-    InterviewPreparationContext:
-      type: object
-      additionalProperties: false
-      required:
-        - kind
-        - interview
-      properties:
-        kind:
-          type: string
-          const: interview
-        interview:
-          type: object
-          additionalProperties: false
-          required:
-            - job_target
-          properties:
-            resume:
-              type: object
-              additionalProperties: false
-              required:
-                - resume_id
-                - revision
-              properties:
-                resume_id:
-                  type: string
-                  format: uuid
-                revision:
-                  type: integer
-                  format: int64
-                  minimum: 1
-            job_target:
-              type: object
-              additionalProperties: false
-              required:
-                - job_target_id
-                - confirmation_version
-              properties:
-                job_target_id:
-                  $ref: '#/components/schemas/ResourceId'
-                confirmation_version:
-                  $ref: '#/components/schemas/Version'
-    ScenarioPreparationContext:
-      type: object
-      additionalProperties: false
-      required:
-        - kind
-        - scenario
-      properties:
-        kind:
-          type: string
-          const: scenario
-        scenario:
-          $ref: '#/components/schemas/ScenarioPreparationInput'
-    PreparationResumeRevisionSnapshot:
-      type: object
-      additionalProperties: false
-      required:
-        - resume_id
-        - revision
-        - material
-      properties:
-        resume_id:
-          type: string
-          format: uuid
-        revision:
-          type: integer
-          format: int64
-          minimum: 1
-        material:
-          $ref: '#/components/schemas/PreparationResumeMaterial'
-    PreparationResumeMaterial:
-      type: object
-      additionalProperties: false
-      required:
-        - target_position
-        - professional_summary
-        - work_experiences
-        - project_experiences
-        - education_experiences
-        - skills
-        - awards
-      properties:
-        target_position:
-          type: string
-          maxLength: 200
-        professional_summary:
-          type: string
-          maxLength: 4000
-        work_experiences:
-          type: array
-          maxItems: 30
-          items:
-            $ref: '#/components/schemas/PreparationResumeWorkExperience'
-        project_experiences:
-          type: array
-          maxItems: 50
-          items:
-            $ref: '#/components/schemas/PreparationResumeProjectExperience'
-        education_experiences:
-          type: array
-          maxItems: 20
-          items:
-            $ref: '#/components/schemas/PreparationResumeEducationExperience'
-        skills:
-          type: array
-          maxItems: 100
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 100
-        awards:
-          type: array
-          maxItems: 100
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 300
-    PreparationResumeWorkExperience:
-      type: object
-      additionalProperties: false
-      required:
-        - company
-        - position
-        - duties
-        - achievements
-      properties:
-        company:
-          type: string
-          maxLength: 200
-        position:
-          type: string
-          maxLength: 200
-        start_date:
-          type: string
-          maxLength: 32
-        end_date:
-          type: string
-          maxLength: 32
-        duties:
-          $ref: '#/components/schemas/PreparationResumeBulletItems'
-        achievements:
-          $ref: '#/components/schemas/PreparationResumeBulletItems'
-    PreparationResumeProjectExperience:
-      type: object
-      additionalProperties: false
-      required:
-        - project_name
-        - role
-        - description
-        - technologies
-        - duties
-        - achievements
-      properties:
-        project_name:
-          type: string
-          maxLength: 200
-        role:
-          type: string
-          maxLength: 200
-        description:
-          type: string
-          maxLength: 4000
-        technologies:
-          type: array
-          maxItems: 100
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 100
-        duties:
-          $ref: '#/components/schemas/PreparationResumeBulletItems'
-        achievements:
-          $ref: '#/components/schemas/PreparationResumeBulletItems'
-    PreparationResumeEducationExperience:
-      type: object
-      additionalProperties: false
-      required:
-        - school
-        - major
-        - degree
-      properties:
-        school:
-          type: string
-          maxLength: 200
-        major:
-          type: string
-          maxLength: 200
-        degree:
-          type: string
-          maxLength: 100
-        gpa:
-          type: string
-          maxLength: 64
-        start_date:
-          type: string
-          maxLength: 32
-        end_date:
-          type: string
-          maxLength: 32
-    PreparationResumeBulletItems:
-      type: array
-      maxItems: 100
-      items:
-        type: string
-        minLength: 1
-        maxLength: 1000
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
     JobTargetSource:
       type: string
-      enum:
-        - job_description
-        - quick_start
-    JobTargetInput:
+      enum: [job_description, quick_start]
+    InterviewPreparationInput:
       type: object
       additionalProperties: false
-      required:
-        - source
+      required: [source]
       properties:
         source:
           $ref: '#/components/schemas/JobTargetSource'
         job_title:
           type: string
-          minLength: 1
           maxLength: 512
         job_description:
           type: string
-          minLength: 1
           maxLength: 65536
         company:
           type: string
-          minLength: 1
           maxLength: 512
         seniority:
           type: string
-          minLength: 1
           maxLength: 256
         candidate_background:
           type: string
-          minLength: 1
           maxLength: 16384
         practice_focus:
           type: string
-          minLength: 1
           maxLength: 8192
-      oneOf:
-        - required:
-            - source
-            - job_description
-          properties:
-            source:
-              const: job_description
-        - required:
-            - source
-            - job_title
-          properties:
-            source:
-              const: quick_start
-            job_description: false
-    CreateJobTargetRequest:
-      $ref: '#/components/schemas/JobTargetInput'
-    UpdateJobTargetRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - expected_input_version
-        - source
-      properties:
-        expected_input_version:
-          $ref: '#/components/schemas/Version'
-        source:
-          $ref: '#/components/schemas/JobTargetSource'
-        job_title:
-          type: string
-          minLength: 1
-          maxLength: 512
-        job_description:
-          type: string
-          minLength: 1
-          maxLength: 65536
-        company:
-          type: string
-          minLength: 1
-          maxLength: 512
-        seniority:
-          type: string
-          minLength: 1
-          maxLength: 256
-        candidate_background:
-          type: string
-          minLength: 1
-          maxLength: 16384
-        practice_focus:
-          type: string
-          minLength: 1
-          maxLength: 8192
-      oneOf:
-        - required:
-            - source
-            - job_description
-          properties:
-            source:
-              const: job_description
-        - required:
-            - source
-            - job_title
-          properties:
-            source:
-              const: quick_start
-            job_description: false
-    JobTargetCatalogRecommendation:
+    InterviewCatalogRecommendation:
       type: object
       additionalProperties: false
       required:
@@ -1613,24 +271,18 @@ components:
         scene_id:
           $ref: '#/components/schemas/ResourceId'
         scene_version:
-          $ref: '#/components/schemas/Version'
+          type: integer
+          minimum: 1
         selected_role_ids:
           type: array
           minItems: 1
           uniqueItems: true
-          description: |
-            INTERVIEW recommendations contain exactly one independently
-            selected interviewer. A Session never combines hiring stages.
           items:
             $ref: '#/components/schemas/ResourceId'
         practice_option_id:
           $ref: '#/components/schemas/ResourceId'
-    JobTargetCandidate:
+    InterviewPreparationCandidate:
       type: object
-      description: |
-        Unconfirmed or user-confirmed structured candidate. Its compact UTF-8
-        JSON encoding is limited to 65536 bytes by every server boundary.
-      x-max-utf8-json-bytes: 65536
       additionalProperties: false
       required:
         - source
@@ -1651,29 +303,25 @@ components:
         job_title:
           type: string
           minLength: 1
-          maxLength: 512
         company:
           type: string
-          maxLength: 512
         seniority:
           type: string
           minLength: 1
-          maxLength: 256
         responsibilities:
-          $ref: '#/components/schemas/JobTargetCandidateItems'
+          $ref: '#/components/schemas/NonEmptyTextList'
         core_skills:
-          $ref: '#/components/schemas/JobTargetCandidateItems'
+          $ref: '#/components/schemas/NonEmptyTextList'
         communication_focus:
-          $ref: '#/components/schemas/JobTargetCandidateItems'
+          $ref: '#/components/schemas/NonEmptyTextList'
         practice_goals:
-          $ref: '#/components/schemas/JobTargetCandidateItems'
+          $ref: '#/components/schemas/NonEmptyTextList'
         scope_notice:
           type: string
           minLength: 1
-          maxLength: 2048
         catalog_recommendation:
-          $ref: '#/components/schemas/JobTargetCatalogRecommendation'
-    JobTargetCandidateItems:
+          $ref: '#/components/schemas/InterviewCatalogRecommendation'
+    NonEmptyTextList:
       type: array
       minItems: 1
       maxItems: 20
@@ -1682,126 +330,428 @@ components:
         type: string
         minLength: 1
         maxLength: 2048
-    JobTargetAnalysis:
+    ResumeMaterial:
       type: object
       additionalProperties: false
       required:
-        - input_version
-        - analysis_version
-        - attempt
-        - status
-        - started_at
+        - target_position
+        - professional_summary
+        - work_experiences
+        - project_experiences
+        - education_experiences
+        - skills
+        - awards
       properties:
-        input_version:
-          $ref: '#/components/schemas/Version'
-        analysis_version:
-          $ref: '#/components/schemas/Version'
-        attempt:
-          $ref: '#/components/schemas/Version'
-        status:
+        target_position:
           type: string
-          enum:
-            - running
-            - succeeded
-            - failed
-        candidate:
-          $ref: '#/components/schemas/JobTargetCandidate'
-        stable_error_category:
+        professional_summary:
           type: string
-          pattern: '^[a-z][a-z0-9_]{0,63}$'
-        started_at:
-          type: string
-          format: date-time
-        finished_at:
-          type: string
-          format: date-time
-    JobTargetConfirmation:
+        work_experiences:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [company, position, duties, achievements]
+            properties:
+              company: {type: string}
+              position: {type: string}
+              start_date: {type: string}
+              end_date: {type: string}
+              duties:
+                type: array
+                items: {type: string}
+              achievements:
+                type: array
+                items: {type: string}
+        project_experiences:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [project_name, role, description, technologies, duties, achievements]
+            properties:
+              project_name: {type: string}
+              role: {type: string}
+              description: {type: string}
+              technologies:
+                type: array
+                items: {type: string}
+              duties:
+                type: array
+                items: {type: string}
+              achievements:
+                type: array
+                items: {type: string}
+        education_experiences:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [school, major, degree]
+            properties:
+              school: {type: string}
+              major: {type: string}
+              degree: {type: string}
+              gpa: {type: string}
+              start_date: {type: string}
+              end_date: {type: string}
+        skills:
+          type: array
+          items: {type: string}
+        awards:
+          type: array
+          items: {type: string}
+    CreateInterviewPreparationRequest:
       type: object
       additionalProperties: false
-      required:
-        - input_version
-        - analysis_version
-        - confirmation_version
-        - candidate
-        - confirmed_at
+      required: [input]
       properties:
-        input_version:
-          $ref: '#/components/schemas/Version'
-        analysis_version:
-          $ref: '#/components/schemas/Version'
-        confirmation_version:
-          $ref: '#/components/schemas/Version'
-        candidate:
-          $ref: '#/components/schemas/JobTargetCandidate'
-        confirmed_at:
+        input:
+          $ref: '#/components/schemas/InterviewPreparationInput'
+        resume:
           type: string
-          format: date-time
-    JobTarget:
+          format: binary
+          contentMediaType: application/pdf
+    PatchInterviewPreparationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, action]
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        action:
+          type: string
+          enum: [regenerate, confirm, discard]
+        input:
+          $ref: '#/components/schemas/InterviewPreparationInput'
+        candidate:
+          $ref: '#/components/schemas/InterviewPreparationCandidate'
+    InterviewPreparation:
       type: object
       additionalProperties: false
       required:
-        - job_target_id
+        - interview_preparation_id
         - user_id
         - input
-        - input_version
-        - stage
+        - candidate
+        - status
+        - version
         - created_at
         - updated_at
       properties:
-        job_target_id:
-          $ref: '#/components/schemas/ResourceId'
+        interview_preparation_id:
+          $ref: '#/components/schemas/AggregateId'
         user_id:
-          $ref: '#/components/schemas/ResourceId'
-        input:
-          $ref: '#/components/schemas/JobTargetInput'
-        input_version:
-          $ref: '#/components/schemas/Version'
-        stage:
           type: string
-          enum:
-            - draft
-            - parsing
-            - analysis_failed
-            - awaiting_confirmation
-            - confirmed
-            - discarded
-        analysis:
-          $ref: '#/components/schemas/JobTargetAnalysis'
-        confirmation:
-          $ref: '#/components/schemas/JobTargetConfirmation'
+          format: uuid
+        input:
+          $ref: '#/components/schemas/InterviewPreparationInput'
+        candidate:
+          $ref: '#/components/schemas/InterviewPreparationCandidate'
+        resume_content:
+          $ref: '#/components/schemas/ResumeMaterial'
+        status:
+          type: string
+          enum: [draft, confirmed, discarded]
+        version:
+          type: integer
+          minimum: 1
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-    AnalyzeJobTargetRequest:
+    CreatePracticePlanRequest:
       type: object
       additionalProperties: false
       required:
-        - expected_input_version
+        - scene_id
+        - scene_version
+        - selected_role_ids
+        - practice_option_id
       properties:
-        expected_input_version:
-          $ref: '#/components/schemas/Version'
-    ConfirmJobTargetRequest:
+        source_thread_id:
+          type: string
+          format: uuid
+        background_summary:
+          type: string
+          maxLength: 65536
+        interview_preparation_id:
+          $ref: '#/components/schemas/AggregateId'
+        expected_interview_version:
+          type: integer
+          minimum: 1
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_version:
+          type: integer
+          minimum: 1
+        selected_role_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        max_effective_turns:
+          type: integer
+          minimum: 0
+          maximum: 64
+        ielts_selection:
+          $ref: '#/components/schemas/IELTSQuestionSelection'
+        ielts_prepared_answers:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/IELTSPreparedAnswerRequest'
+    ConfirmPracticePlanRequest:
       type: object
       additionalProperties: false
-      required:
-        - expected_input_version
-        - expected_analysis_version
-        - candidate
+      required: [expected_version]
       properties:
-        expected_input_version:
-          $ref: '#/components/schemas/Version'
-        expected_analysis_version:
-          $ref: '#/components/schemas/Version'
+        expected_version:
+          type: integer
+          minimum: 1
+    PlanPreparationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [background_summary]
+      properties:
+        background_summary:
+          type: string
+        interview:
+          $ref: '#/components/schemas/InterviewPreparationSnapshot'
+    InterviewPreparationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [interview_preparation_id, version, input, candidate]
+      properties:
+        interview_preparation_id:
+          $ref: '#/components/schemas/AggregateId'
+        version:
+          type: integer
+          minimum: 1
+        input:
+          $ref: '#/components/schemas/InterviewPreparationInput'
         candidate:
-          $ref: '#/components/schemas/JobTargetCandidate'
-    DiscardJobTargetRequest:
+          $ref: '#/components/schemas/InterviewPreparationCandidate'
+        resume_content:
+          $ref: '#/components/schemas/ResumeMaterial'
+    SceneSelectionSnapshot:
+      type: object
+      additionalProperties: false
+      required: [scene, selected_role_ids, practice_option_id]
+      properties:
+        scene:
+          $ref: ../modules/scene.yaml#/components/schemas/SceneDefinition
+        selected_role_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+    PracticeSessionPolicy:
       type: object
       additionalProperties: false
       required:
-        - expected_input_version
+        - completion_mode
+        - suggested_duration_seconds
+        - min_effective_turns
+        - max_effective_turns
+        - coverage_checkpoint_turn
+        - max_follow_ups_per_question
+        - early_completion_rule
+        - retry_allowed
+        - question_translation_allowed
+        - question_tips_allowed
+        - speech_feedback_allowed
       properties:
-        expected_input_version:
-          $ref: '#/components/schemas/Version'
+        completion_mode:
+          type: string
+          enum: [TURN_LIMITED, USER_CONTROLLED]
+        suggested_duration_seconds: {type: integer, minimum: 1}
+        min_effective_turns: {type: integer, minimum: 1}
+        max_effective_turns: {type: integer, minimum: 0, maximum: 64}
+        coverage_checkpoint_turn: {type: integer, minimum: 1}
+        max_follow_ups_per_question: {type: integer, minimum: 0}
+        early_completion_rule:
+          type: string
+          enum: [COVERAGE_SATISFIED_AFTER_CHECKPOINT]
+        retry_allowed: {type: boolean}
+        question_translation_allowed: {type: boolean}
+        question_tips_allowed: {type: boolean}
+        speech_feedback_allowed: {type: boolean}
+    PracticeObjective:
+      type: object
+      additionalProperties: false
+      required: [objective_id, description]
+      properties:
+        objective_id:
+          $ref: '#/components/schemas/ResourceId'
+        description:
+          type: string
+          minLength: 1
+    IELTSQuestionSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        part_1_set_id: {type: string}
+        topic_group_id: {type: string}
+        cue_card_type: {type: string}
+    IELTSPreparedAnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [bank_id, part, source_id, question_position, answer, personalized]
+      properties:
+        bank_id: {type: string}
+        part:
+          type: string
+          enum: [PART_1, PART_2, PART_3]
+        source_id: {type: string}
+        question_position: {type: integer, minimum: 1}
+        answer: {type: string, minLength: 1, maxLength: 2000}
+        personalized: {type: boolean}
+    IELTSPreparedAnswer:
+      type: object
+      additionalProperties: false
+      required: [question_position, answer, personalized]
+      properties:
+        question_position: {type: integer, minimum: 1}
+        answer: {type: string, minLength: 1, maxLength: 2000}
+        personalized: {type: boolean}
+    IELTSAssignmentPart:
+      type: object
+      additionalProperties: false
+      required: [part, source_id, turn_blueprints]
+      properties:
+        part:
+          type: string
+          enum: [PART_1, PART_2, PART_3]
+        source_id: {type: string}
+        topic_title: {type: string}
+        cue_card: {type: string}
+        turn_blueprints:
+          type: array
+          minItems: 1
+          items: {type: string}
+        prepared_answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/IELTSPreparedAnswer'
+    IELTSAssignment:
+      type: object
+      additionalProperties: false
+      required: [bank_id, season, mode, parts]
+      properties:
+        bank_id: {type: string}
+        season: {type: string}
+        mode:
+          type: string
+          enum: [FULL_MOCK, PART_1, PART_2, PART_3]
+        parts:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/IELTSAssignmentPart'
+    PracticePlan:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_plan_id
+        - user_id
+        - preparation_snapshot
+        - scene_selection
+        - session_policy
+        - practice_objectives
+        - version
+        - practice_plan_status
+        - created_at
+        - updated_at
+      properties:
+        practice_plan_id:
+          $ref: '#/components/schemas/AggregateId'
+        user_id:
+          type: string
+          format: uuid
+        source_thread_id:
+          type: string
+          format: uuid
+        preparation_snapshot:
+          $ref: '#/components/schemas/PlanPreparationSnapshot'
+        scene_selection:
+          $ref: '#/components/schemas/SceneSelectionSnapshot'
+        session_policy:
+          $ref: '#/components/schemas/PracticeSessionPolicy'
+        practice_objectives:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PracticeObjective'
+        ielts_assignment:
+          $ref: '#/components/schemas/IELTSAssignment'
+        version:
+          type: integer
+          minimum: 1
+        practice_plan_status:
+          type: string
+          enum: [draft, ready]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PracticePlanSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_plan_id
+        - version
+        - practice_plan_status
+        - practice_experience
+        - scene_name
+        - practice_scope
+        - job_title
+        - practice_objectives
+        - resume_used
+        - suggested_duration_seconds
+        - min_effective_turns
+        - max_effective_turns
+        - created_at
+        - updated_at
+      properties:
+        practice_plan_id:
+          $ref: '#/components/schemas/AggregateId'
+        version: {type: integer, minimum: 1}
+        practice_plan_status:
+          type: string
+          enum: [draft, ready]
+        practice_experience:
+          $ref: ../modules/scene.yaml#/components/schemas/PracticeExperience
+        scene_name: {type: string}
+        practice_scope: {type: string}
+        job_title: {type: string}
+        practice_objectives:
+          type: array
+          minItems: 1
+          items: {type: string}
+        resume_used: {type: boolean}
+        suggested_duration_seconds: {type: integer, minimum: 1}
+        min_effective_turns: {type: integer, minimum: 1}
+        max_effective_turns: {type: integer, minimum: 0}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PracticePlanList:
+      type: object
+      additionalProperties: false
+      required: [practice_plans]
+      properties:
+        practice_plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/PracticePlanSummary'

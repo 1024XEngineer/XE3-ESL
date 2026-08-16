@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/client_action/practice_plan_client_action_card.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 
 void main() {
   testWidgets('renders assistant emphasis instead of Markdown markers', (
@@ -117,12 +119,11 @@ void main() {
       images: <AgentImageAsset>[
         AgentImageAsset(
           id: 'image-1',
-          threadId: 'thread-1',
           contentType: 'image/png',
           sizeBytes: 128,
           width: 32,
           height: 24,
-          status: AgentImageAssetStatus.attached,
+          status: AgentImageAssetStatus.ready,
           createdAt: DateTime.utc(2026, 7, 30),
         ),
       ],
@@ -224,6 +225,28 @@ void main() {
     );
   });
 
+  testWidgets(
+    'keeps deleted voice transcript with an explicit privacy notice',
+    (tester) async {
+      await _pumpMessage(
+        tester,
+        const AgentMessage(
+          id: 'user-voice-deleted',
+          role: AgentMessageRole.user,
+          text: 'Keep this corrected transcript.',
+          modality: AgentMessageModality.voice,
+        ),
+      );
+
+      expect(find.text('Keep this corrected transcript.'), findsOneWidget);
+      expect(find.text('录音已删除，文字已保留'), findsOneWidget);
+      expect(
+        find.byKey(const Key('agent-user-voice-play-user-voice-deleted')),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('keeps voice actions compact without shrinking tap targets', (
     tester,
   ) async {
@@ -280,11 +303,13 @@ void main() {
     expect(tester.getSize(bubble).width, lessThan(340));
   });
 
-  testWidgets('renders and dispatches a practice plan handoff', (tester) async {
-    const handoff = ConfirmPracticePlanHandoff(
+  testWidgets('renders and dispatches a practice plan client action', (
+    tester,
+  ) async {
+    const action = ConfirmPracticePlanClientAction(
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000001',
-      planRevision: 2,
+      planVersion: 2,
       target: 'Java Interview Practice',
       sceneName: '项目经历深挖',
       practiceExperience: 'INTERVIEW',
@@ -295,21 +320,24 @@ void main() {
       suggestedDuration: Duration(minutes: 12),
       minEffectiveTurns: 3,
       maxEffectiveTurns: 5,
-      executableStatus: 'ready',
       confirmationPrompt: '请确认是否按此方案开始练习。',
     );
-    AgentHandoff? selected;
+    ConfirmPracticePlanClientAction? selected;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: AgentMessageBubble(
-            message: const AgentMessage(
+            message: AgentMessage(
               id: 'assistant-interview',
               role: AgentMessageRole.assistant,
               text: '面试场景已创建。',
-              handoffs: <AgentHandoff>[handoff],
+              clientActions: <AgentClientAction>[
+                encodeConfirmPracticePlanClientAction(action),
+              ],
             ),
-            onHandoff: (value) => selected = value,
+            clientActionBuilder: _practiceActionBuilder(
+              (value) => selected = value,
+            ),
           ),
         ),
       ),
@@ -337,16 +365,17 @@ void main() {
         ),
       ),
     );
-    expect(selected, same(handoff));
+    expect(selected?.practicePlanId, action.practicePlanId);
+    expect(selected?.planVersion, action.planVersion);
   });
 
   testWidgets('renders the interview self-introduction recording sample', (
     tester,
   ) async {
-    const handoff = ConfirmPracticePlanHandoff(
+    const action = ConfirmPracticePlanClientAction(
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000006',
-      planRevision: 1,
+      planVersion: 1,
       target: '说清背景、优势和岗位匹配，并自然回应一到两个追问。',
       sceneName: '英文自我介绍',
       practiceExperience: 'INTERVIEW',
@@ -357,16 +386,17 @@ void main() {
       suggestedDuration: Duration(minutes: 8),
       minEffectiveTurns: 3,
       maxEffectiveTurns: 8,
-      executableStatus: 'ready',
       confirmationPrompt: '确认后将创建练习会话；确认前不会开始练习。',
     );
     await _pumpMessage(
       tester,
-      const AgentMessage(
+      AgentMessage(
         id: 'assistant-interview-self-introduction',
         role: AgentMessageRole.assistant,
         text: '我们从自我介绍开始。',
-        handoffs: <AgentHandoff>[handoff],
+        clientActions: <AgentClientAction>[
+          encodeConfirmPracticePlanClientAction(action),
+        ],
       ),
     );
 
@@ -378,7 +408,7 @@ void main() {
     expect(find.text('开始练习'), findsOneWidget);
   });
 
-  testWidgets('renders an unscored IELTS warm-up without a handoff', (
+  testWidgets('renders an unscored IELTS warm-up without a client action', (
     tester,
   ) async {
     await _pumpMessage(
@@ -406,13 +436,13 @@ void main() {
     expect(find.text('范围：Part 1'), findsNothing);
   });
 
-  testWidgets('renders and dispatches the later Part 1 confirmation handoff', (
+  testWidgets('renders and dispatches the later Part 1 confirmation action', (
     tester,
   ) async {
-    const handoff = ConfirmPracticePlanHandoff(
+    const action = ConfirmPracticePlanClientAction(
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000003',
-      planRevision: 1,
+      planVersion: 1,
       target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       sceneName: 'IELTS 口语',
       practiceExperience: 'IELTS_SPEAKING',
@@ -423,19 +453,20 @@ void main() {
       suggestedDuration: Duration(minutes: 5),
       minEffectiveTurns: 3,
       maxEffectiveTurns: 3,
-      executableStatus: 'ready',
       confirmationPrompt: '确认后进入正式练习。',
     );
-    AgentHandoff? selected;
+    ConfirmPracticePlanClientAction? selected;
     await _pumpMessage(
       tester,
-      const AgentMessage(
+      AgentMessage(
         id: 'assistant-ielts-part-1-confirmation',
         role: AgentMessageRole.assistant,
         text: '听到了，你是在确认我能不能听见。',
-        handoffs: <AgentHandoff>[handoff],
+        clientActions: <AgentClientAction>[
+          encodeConfirmPracticePlanClientAction(action),
+        ],
       ),
-      onHandoff: (value) => selected = value,
+      onClientAction: (value) => selected = value,
     );
 
     final markdown = _messageSelectableText(
@@ -449,14 +480,14 @@ void main() {
     expect(markdown, isNot(contains('Part 1')));
     expect(markdown, isNot(contains('练前跟练')));
     expect(find.text('IELTS Speaking · Part 1'), findsOneWidget);
-    expect(find.text(handoff.target), findsNothing);
+    expect(find.text(action.target), findsNothing);
     expect(find.text('IELTS 口语考官 · IELTS Examiner'), findsOneWidget);
     expect(find.text('约 5 分钟'), findsOneWidget);
     expect(find.text('3 个问题'), findsOneWidget);
     expect(find.bySemanticsLabel('IELTS 考官头像'), findsOneWidget);
     final card = find.byKey(
       const Key(
-        'agent-handoff-practice-plan-'
+        'agent-client-action-practice-plan-'
         '10000000-0000-4000-8000-000000000003-1',
       ),
     );
@@ -468,7 +499,7 @@ void main() {
     expect(find.text('角色：IELTS 口语考官'), findsNothing);
     expect(find.text('范围：Part 1'), findsNothing);
     expect(find.textContaining('3–3 轮'), findsNothing);
-    expect(find.text(handoff.confirmationPrompt), findsNothing);
+    expect(find.text(action.confirmationPrompt), findsNothing);
     expect(find.text('开始练习'), findsOneWidget);
 
     await tester.tap(
@@ -479,16 +510,17 @@ void main() {
         ),
       ),
     );
-    expect(selected, same(handoff));
+    expect(selected?.practicePlanId, action.practicePlanId);
+    expect(selected?.planVersion, action.planVersion);
   });
 
-  testWidgets('keeps a full mock handoff free of warm-up and question text', (
+  testWidgets('keeps a full mock action free of warm-up and question text', (
     tester,
   ) async {
-    const handoff = ConfirmPracticePlanHandoff(
+    const action = ConfirmPracticePlanClientAction(
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000004',
-      planRevision: 1,
+      planVersion: 1,
       target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       sceneName: 'IELTS 口语',
       practiceExperience: 'IELTS_SPEAKING',
@@ -499,16 +531,17 @@ void main() {
       suggestedDuration: Duration(minutes: 14),
       minEffectiveTurns: 14,
       maxEffectiveTurns: 14,
-      executableStatus: 'ready',
       confirmationPrompt: '题目将在正式开始后展示。',
     );
     await _pumpMessage(
       tester,
-      const AgentMessage(
+      AgentMessage(
         id: 'assistant-ielts-full-mock',
         role: AgentMessageRole.assistant,
         text: '好。',
-        handoffs: <AgentHandoff>[handoff],
+        clientActions: <AgentClientAction>[
+          encodeConfirmPracticePlanClientAction(action),
+        ],
       ),
     );
 
@@ -522,7 +555,7 @@ void main() {
     expect(find.text('14 个问题'), findsOneWidget);
     final card = find.byKey(
       const Key(
-        'agent-handoff-practice-plan-'
+        'agent-client-action-practice-plan-'
         '10000000-0000-4000-8000-000000000004-1',
       ),
     );
@@ -556,13 +589,13 @@ void main() {
     }
   });
 
-  testWidgets('does not show a round count for an open-ended handoff', (
+  testWidgets('does not show a round count for an open-ended action', (
     tester,
   ) async {
-    const handoff = ConfirmPracticePlanHandoff(
+    const action = ConfirmPracticePlanClientAction(
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000002',
-      planRevision: 1,
+      planVersion: 1,
       target: 'Travel English Practice',
       sceneName: '酒店入住',
       practiceExperience: 'LIFE_AND_TRAVEL',
@@ -573,19 +606,21 @@ void main() {
       suggestedDuration: Duration(minutes: 10),
       minEffectiveTurns: 1,
       maxEffectiveTurns: 0,
-      executableStatus: 'ready',
       confirmationPrompt: '请确认是否开始练习。',
     );
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: AgentMessageBubble(
-            message: const AgentMessage(
+            message: AgentMessage(
               id: 'assistant-open-practice',
               role: AgentMessageRole.assistant,
               text: '旅行场景已创建。',
-              handoffs: <AgentHandoff>[handoff],
+              clientActions: <AgentClientAction>[
+                encodeConfirmPracticePlanClientAction(action),
+              ],
             ),
+            clientActionBuilder: _practiceActionBuilder(null),
           ),
         ),
       ),
@@ -683,16 +718,31 @@ void main() {
 Future<void> _pumpMessage(
   WidgetTester tester,
   AgentMessage message, {
-  ValueChanged<AgentHandoff>? onHandoff,
+  ValueChanged<ConfirmPracticePlanClientAction>? onClientAction,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: AgentMessageBubble(message: message, onHandoff: onHandoff),
+        body: AgentMessageBubble(
+          message: message,
+          clientActionBuilder: _practiceActionBuilder(onClientAction),
+        ),
       ),
     ),
   );
   await tester.pump();
+}
+
+AgentClientActionBuilder _practiceActionBuilder(
+  ValueChanged<ConfirmPracticePlanClientAction>? onAction,
+) {
+  return (context, envelope) {
+    final action = decodeConfirmPracticePlanClientAction(envelope);
+    return PracticePlanClientActionCard(
+      action: action,
+      onConfirm: onAction == null ? null : () => onAction(action),
+    );
+  };
 }
 
 Iterable<SelectableText> _messageSelectableText(

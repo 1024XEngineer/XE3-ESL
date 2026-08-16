@@ -9,6 +9,12 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
+type SourceThread struct{ ID string }
+
+type SourceThreadReader interface {
+	ReadOwnedThread(context.Context, requestcontext.Actor, string) (SourceThread, error)
+}
+
 var (
 	ErrPlanInvalid             = errors.New("preparation: invalid practice plan request")
 	ErrPlanNotFound            = errors.New("preparation: practice plan not found")
@@ -20,8 +26,8 @@ var (
 type PlanStatus string
 
 const (
-	PlanStatusReady    PlanStatus = "ready"
-	PlanStatusArchived PlanStatus = "archived"
+	PlanStatusDraft PlanStatus = "draft"
+	PlanStatusReady PlanStatus = "ready"
 )
 
 type EarlyCompletionRule string
@@ -35,24 +41,6 @@ const (
 	CompletionModeUserControlled CompletionMode = "USER_CONTROLLED"
 )
 
-func NormalizeCompletionMode(value CompletionMode) CompletionMode {
-	if value == "" {
-		return CompletionModeTurnLimited
-	}
-	return value
-}
-
-// GoalSnapshot freezes only the Goal identity needed to explain why a Plan
-// was created. Goal remains optional and owns its live lifecycle separately.
-type GoalSnapshot struct {
-	ID      string `json:"goal_id"`
-	Title   string `json:"title"`
-	Version int64  `json:"version"`
-}
-
-// SessionPolicy is the complete, frozen execution policy for one Plan
-// revision. Objectives are held once on PracticePlan rather than duplicated
-// inside this value.
 type SessionPolicy struct {
 	CompletionMode             CompletionMode      `json:"completion_mode"`
 	SuggestedDurationSeconds   int                 `json:"suggested_duration_seconds"`
@@ -64,7 +52,6 @@ type SessionPolicy struct {
 	RetryAllowed               bool                `json:"retry_allowed"`
 	QuestionTranslationAllowed bool                `json:"question_translation_allowed"`
 	QuestionTipsAllowed        bool                `json:"question_tips_allowed"`
-	AvatarAllowed              bool                `json:"avatar_allowed"`
 	SpeechFeedbackAllowed      bool                `json:"speech_feedback_allowed"`
 }
 
@@ -73,18 +60,12 @@ type PracticeObjective struct {
 	Description string `json:"description"`
 }
 
-// IELTSQuestionSelection either identifies an exact published question set or
-// requests server assignment within one IELTS topic category on create.
-// Revision requests may only omit it or repeat the current exact identifiers.
 type IELTSQuestionSelection struct {
 	Part1SetID   string `json:"part_1_set_id,omitempty"`
 	TopicGroupID string `json:"topic_group_id,omitempty"`
 	CueCardType  string `json:"cue_card_type,omitempty"`
 }
 
-// IELTSAssignmentSnapshot is the complete IELTS question assignment frozen
-// into a Plan revision. Practice copies this value without consulting the
-// live Scene catalog.
 type IELTSAssignmentSnapshot struct {
 	BankID string                        `json:"bank_id"`
 	Season string                        `json:"season"`
@@ -93,27 +74,46 @@ type IELTSAssignmentSnapshot struct {
 }
 
 type IELTSAssignmentPartSnapshot struct {
-	Part           scene.PracticeMode `json:"part"`
-	SourceID       string             `json:"source_id"`
-	TopicTitle     string             `json:"topic_title,omitempty"`
-	CueCard        string             `json:"cue_card,omitempty"`
-	TurnBlueprints []string           `json:"turn_blueprints"`
+	Part            scene.PracticeMode            `json:"part"`
+	SourceID        string                        `json:"source_id"`
+	TopicTitle      string                        `json:"topic_title,omitempty"`
+	CueCard         string                        `json:"cue_card,omitempty"`
+	TurnBlueprints  []string                      `json:"turn_blueprints"`
+	PreparedAnswers []IELTSPreparedAnswerSnapshot `json:"prepared_answers,omitempty"`
 }
 
-// PracticePlan is Preparation's single executable-plan authority. Every
-// revision contains complete immutable Goal, material, Scene, policy, and
-// objective values; consumers never reinterpret live source records.
+type IELTSPreparedAnswerSnapshot struct {
+	QuestionPosition int    `json:"question_position"`
+	Answer           string `json:"answer"`
+	Personalized     bool   `json:"personalized"`
+}
+
+type IELTSPreparedAnswerRequest struct {
+	BankID           string             `json:"bank_id"`
+	Part             scene.PracticeMode `json:"part"`
+	SourceID         string             `json:"source_id"`
+	QuestionPosition int                `json:"question_position"`
+	Answer           string             `json:"answer"`
+	Personalized     bool               `json:"personalized"`
+}
+
+// Snapshot is an immutable value embedded in PracticePlan and later copied
+// into PracticeSession.plan_snapshot. It has no identity or table of its own.
+type Snapshot struct {
+	BackgroundSummary string                        `json:"background_summary,omitempty"`
+	Interview         *InterviewPreparationSnapshot `json:"interview,omitempty"`
+}
+
 type PracticePlan struct {
 	ID                  string                   `json:"practice_plan_id"`
 	UserID              string                   `json:"user_id"`
 	SourceThreadID      string                   `json:"source_thread_id,omitempty"`
-	GoalSnapshot        *GoalSnapshot            `json:"goal_snapshot,omitempty"`
 	PreparationSnapshot Snapshot                 `json:"preparation_snapshot"`
 	SceneSelection      scene.SelectionSnapshot  `json:"scene_selection"`
 	SessionPolicy       SessionPolicy            `json:"session_policy"`
 	PracticeObjectives  []PracticeObjective      `json:"practice_objectives"`
 	IELTSAssignment     *IELTSAssignmentSnapshot `json:"ielts_assignment,omitempty"`
-	Revision            int                      `json:"plan_revision"`
+	Version             int                      `json:"version"`
 	Status              PlanStatus               `json:"practice_plan_status"`
 	CreatedAt           time.Time                `json:"created_at"`
 	UpdatedAt           time.Time                `json:"updated_at"`
@@ -121,12 +121,12 @@ type PracticePlan struct {
 
 type PracticePlanSummary struct {
 	ID                       string                   `json:"practice_plan_id"`
-	Revision                 int                      `json:"plan_revision"`
+	Version                  int                      `json:"version"`
 	Status                   PlanStatus               `json:"practice_plan_status"`
 	PracticeExperience       scene.PracticeExperience `json:"practice_experience"`
 	SceneName                string                   `json:"scene_name"`
 	PracticeScope            string                   `json:"practice_scope"`
-	JobTitle                 string                   `json:"job_title"`
+	JobTitle                 string                   `json:"job_title,omitempty"`
 	PracticeObjectives       []string                 `json:"practice_objectives"`
 	ResumeUsed               bool                     `json:"resume_used"`
 	SuggestedDurationSeconds int                      `json:"suggested_duration_seconds"`
@@ -137,123 +137,55 @@ type PracticePlanSummary struct {
 }
 
 type CreatePlanRequest struct {
-	SourceThreadID        string                  `json:"source_thread_id,omitempty"`
-	GoalID                string                  `json:"goal_id,omitempty"`
-	PreparationSnapshotID string                  `json:"preparation_snapshot_id"`
-	SceneID               string                  `json:"scene_id"`
-	SceneVersion          int                     `json:"scene_version"`
-	SelectedRoleIDs       []string                `json:"selected_role_ids"`
-	PracticeOptionID      string                  `json:"practice_option_id"`
-	MaxEffectiveTurns     int                     `json:"max_effective_turns,omitempty"`
-	IELTSSelection        *IELTSQuestionSelection `json:"ielts_selection,omitempty"`
+	SourceThreadID           string                       `json:"source_thread_id,omitempty"`
+	BackgroundSummary        string                       `json:"background_summary,omitempty"`
+	InterviewPreparationID   string                       `json:"interview_preparation_id,omitempty"`
+	ExpectedInterviewVersion int                          `json:"expected_interview_version,omitempty"`
+	SceneID                  string                       `json:"scene_id"`
+	SceneVersion             int                          `json:"scene_version"`
+	SelectedRoleIDs          []string                     `json:"selected_role_ids"`
+	PracticeOptionID         string                       `json:"practice_option_id"`
+	MaxEffectiveTurns        int                          `json:"max_effective_turns,omitempty"`
+	IELTSSelection           *IELTSQuestionSelection      `json:"ielts_selection,omitempty"`
+	IELTSPreparedAnswers     []IELTSPreparedAnswerRequest `json:"ielts_prepared_answers,omitempty"`
 }
 
-type RevisePlanRequest struct {
-	ExpectedPlanRevision int                     `json:"expected_plan_revision"`
-	SelectedRoleIDs      []string                `json:"selected_role_ids"`
-	PracticeOptionID     string                  `json:"practice_option_id"`
-	MaxEffectiveTurns    int                     `json:"max_effective_turns"`
-	IELTSSelection       *IELTSQuestionSelection `json:"ielts_selection,omitempty"`
-}
-
-// SourceThread is the only Thread value Preparation freezes. Thread content
-// and lifecycle stay owned by Agent.
-type SourceThread struct {
-	ID string
-}
-
-// SourceThreadReader is implemented by the caller that owns Agent Threads.
-// It validates ownership independently from optional Goal validation.
-type SourceThreadReader interface {
-	ReadOwnedThread(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (SourceThread, error)
+type ConfirmPlanRequest struct {
+	ExpectedVersion int `json:"expected_version"`
 }
 
 type CreatePlanCommand struct {
 	PlanID              string
 	SourceThreadID      string
-	GoalSnapshot        *GoalSnapshot
 	PreparationSnapshot Snapshot
 	SceneSelection      scene.SelectionSnapshot
 	SessionPolicy       SessionPolicy
 	PracticeObjectives  []PracticeObjective
 	IELTSAssignment     *IELTSAssignmentSnapshot
-	Intent              IdempotencyIntent
+	Status              PlanStatus
+	ClientRequestID     string
+	RequestFingerprint  [32]byte
 }
 
-type RevisePlanCommand struct {
-	PlanID               string
-	ExpectedPlanRevision int
-	SceneSelection       scene.SelectionSnapshot
-	SessionPolicy        SessionPolicy
-	PracticeObjectives   []PracticeObjective
-	IELTSAssignment      *IELTSAssignmentSnapshot
-	Intent               IdempotencyIntent
+type ConfirmPlanCommand struct {
+	PlanID             string
+	ExpectedVersion    int
+	ClientRequestID    string
+	RequestFingerprint [32]byte
 }
 
-// PlanRepository persists a complete ready revision atomically with its
-// idempotency result. Revision updates use compare-and-swap and append a new
-// immutable revision; they never overwrite a prior revision.
 type PlanRepository interface {
-	ReplayPlan(
-		context.Context,
-		requestcontext.Actor,
-		IdempotencyIntent,
-	) (plan PracticePlan, found bool, err error)
-	CreatePlan(
-		context.Context,
-		requestcontext.Actor,
-		CreatePlanCommand,
-	) (plan PracticePlan, replayed bool, err error)
-	ReadCurrentPlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (PracticePlan, error)
-	ListCurrentPlans(
-		context.Context,
-		requestcontext.Actor,
-		scene.PracticeExperience,
-	) ([]PracticePlan, error)
-	RevisePlan(
-		context.Context,
-		requestcontext.Actor,
-		RevisePlanCommand,
-	) (plan PracticePlan, replayed bool, err error)
-	ArchivePlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) error
-	// ReadExecutablePlan succeeds only when exactRevision is the Plan's
-	// current revision and its status is ready.
-	ReadExecutablePlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		int,
-	) (PracticePlan, error)
+	CreatePlan(context.Context, requestcontext.Actor, CreatePlanCommand) (PracticePlan, bool, error)
+	ReadCurrentPlan(context.Context, requestcontext.Actor, string) (PracticePlan, error)
+	ListCurrentPlans(context.Context, requestcontext.Actor, scene.PracticeExperience) ([]PracticePlan, error)
+	ConfirmPlan(context.Context, requestcontext.Actor, ConfirmPlanCommand) (PracticePlan, bool, error)
+	ReadExecutablePlan(context.Context, requestcontext.Actor, string, int) (PracticePlan, error)
 }
 
-// PlanReader is the only Preparation capability Practice needs.
 type PlanReader interface {
-	ReadExecutablePlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		int,
-	) (PracticePlan, error)
+	ReadExecutablePlan(context.Context, requestcontext.Actor, string, int) (PracticePlan, error)
 }
 
-// PolicyResolver resolves one explicitly registered Scene policy reference.
-// It never infers policy from Scene family or model.
 type PolicyResolver interface {
-	ResolveSessionPolicy(
-		scene.SceneDefinition,
-		scene.PracticeOption,
-		int,
-	) (SessionPolicy, error)
+	ResolveSessionPolicy(scene.SceneDefinition, scene.PracticeOption, int) (SessionPolicy, error)
 }

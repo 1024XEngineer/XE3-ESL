@@ -114,7 +114,7 @@ func TestIELTSWarmUpUsesOnlyBroadCategoryWithoutFormalContent(t *testing.T) {
 	if result.Content["prompt"] !=
 		"可以。最近有没有哪次经历让你印象挺深？用一两句英语说说。" ||
 		len(result.Content) != 1 ||
-		len(result.SourceRefs) != 0 || len(result.Handoffs) != 0 {
+		len(result.SourceRefs) != 0 || len(result.ClientActions) != 0 {
 		t.Fatalf("result = %#v", result)
 	}
 	if _, found := result.Content["mode"]; found {

@@ -10,28 +10,24 @@ import (
 )
 
 type Router struct {
-	profiles   *preparationhttp.ProfileHTTPHandler
-	jobTargets *preparationhttp.JobTargetHTTPHandler
+	interviews *preparationhttp.InterviewPreparationHTTPHandler
 	plans      *preparationhttp.PlanHTTPHandler
 }
 
 func New(
-	profiles *preparationhttp.ProfileHTTPHandler,
-	jobTargets *preparationhttp.JobTargetHTTPHandler,
+	interviews *preparationhttp.InterviewPreparationHTTPHandler,
 	plans *preparationhttp.PlanHTTPHandler,
 ) (*Router, error) {
-	if profiles == nil || jobTargets == nil || plans == nil {
+	if interviews == nil || plans == nil {
 		return nil, errors.New("preparation: HTTP handlers are required")
 	}
 	return &Router{
-		profiles:   profiles,
-		jobTargets: jobTargets,
+		interviews: interviews,
 		plans:      plans,
 	}, nil
 }
 
 func (router *Router) RegisterRoutes(routes gin.IRoutes) {
-	router.profiles.RegisterRoutes(routes)
-	router.jobTargets.RegisterRoutes(routes)
+	router.interviews.RegisterRoutes(routes)
 	router.plans.RegisterRoutes(routes)
 }

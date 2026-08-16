@@ -9,15 +9,13 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
-	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
-const DatasetVersion = "agent-routing-eval-v5"
+const DatasetVersion = "agent-routing-eval-v6"
 
 type EvaluationResult struct {
 	DatasetVersion      string
@@ -198,8 +196,6 @@ func (DeterministicRouter) Route(
 		return Route{Decision: DecisionRefuse}
 	case hasAny(input, "刚才这句话", "current utterance"):
 		return Route{Decision: DecisionDirect}
-	case item.ActiveGoalID != "" && hasAny(input, "继续", "continue"):
-		return Route{Decision: DecisionDirect}
 	case hasAny(input, "委婉", "polish", "翻译", "有什么问题", "grammar"):
 		if !hasBusinessSignal(input) {
 			return Route{Decision: DecisionDirect}
@@ -221,11 +217,11 @@ func (DeterministicRouter) Route(
 	case isIELTSPracticeCreationRequest(input):
 		return routeIELTSPractice(item.Messages, allowed, false)
 	case hasAny(input, "刚完成", "刚练完", "最新报告", "latest report"):
-		if containsString(allowed, evaluationcapability.LatestPracticeReportToolName) {
+		if containsString(allowed, reviewcapability.ReviewSearchToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name:  evaluationcapability.LatestPracticeReportToolName,
+					Name:  reviewcapability.ReviewSearchToolName,
 					Input: mustRaw(map[string]any{}),
 				}},
 			}
@@ -285,46 +281,6 @@ func (DeterministicRouter) Route(
 					}),
 				}},
 			}
-		}
-	case hasAny(input, "确认创建"):
-		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalCreateCapabilityName,
-					Input: mustRaw(map[string]any{
-						"title": "英文 PM 面试",
-					}),
-				}},
-			}
-		}
-	case hasAny(input, "上次", "那个", "继续"):
-		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalSearchCapabilityName,
-					Input: mustRaw(map[string]any{
-						"query": "interview",
-						"limit": 2,
-					}),
-				}},
-			}
-		}
-	case hasAny(input, "面试", "会议", "客户", "演讲", "interview"):
-		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalCreateCapabilityName,
-					Input: mustRaw(map[string]any{
-						"title": "English PM interview",
-					}),
-				}},
-			}
-		}
-		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
-			return Route{Decision: DecisionClarify}
 		}
 	}
 	return Route{Decision: DecisionDirect}

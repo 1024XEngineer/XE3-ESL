@@ -16,7 +16,7 @@ typedef ConversationAssistantStreamCompleted =
 typedef ConversationAssistantStreamFailed =
     void Function(String transientMessageId);
 
-/// Owns the focused Agent Thread, committed Messages, and text Run lifecycle.
+/// Owns the locally selected Agent Thread, committed Messages, and text Run lifecycle.
 ///
 /// Composer drafts and formal Practice state deliberately live elsewhere.
 final class ConversationController extends ChangeNotifier {
@@ -39,14 +39,12 @@ final class ConversationController extends ChangeNotifier {
   final ConversationClientIdFactory _clientIdFactory;
 
   String? _threadId;
-  String? _activeGoalId;
   AgentThreadSummary? _currentThreadSummary;
   List<AgentThreadSummary> _threads = const <AgentThreadSummary>[];
   String? _nextThreadCursor;
   String? _nextMessageCursor;
   String? _threadHistoryErrorMessage;
   _ThreadHistoryRecovery? _threadHistoryRecovery;
-  String? _pendingFocusThreadId;
   int _draftThreadRecoveryGeneration = 0;
   bool _loadingMoreThreads = false;
   bool _loadingEarlierMessages = false;
@@ -63,41 +61,11 @@ final class ConversationController extends ChangeNotifier {
   Future<void>? _accountCleanupFuture;
 
   String? get threadId => _threadId;
-  String? get activeGoalId => _activeGoalId;
   AgentThreadSummary? get currentThreadSummary => _currentThreadSummary;
   List<AgentThreadSummary> get threads =>
       List<AgentThreadSummary>.unmodifiable(_threads);
   List<AgentMessage> get messages => List<AgentMessage>.unmodifiable(_messages);
   bool get isInitialized => _initialized;
-
-  /// Applies a server-confirmed Goal link to the currently focused Thread.
-  ///
-  /// Goal creation and eligibility remain Coaching responsibilities. This
-  /// method only updates Conversation's local Thread projection after that
-  /// authoritative operation succeeds.
-  void applyActiveGoal({required String threadId, required String goalId}) {
-    if (_disposed ||
-        threadId.trim().isEmpty ||
-        goalId.trim().isEmpty ||
-        _threadId != threadId) {
-      throw StateError('Active Goal does not belong to the focused Thread.');
-    }
-    _activeGoalId = goalId;
-    final current = _currentThreadSummary;
-    if (current != null) {
-      final now = DateTime.now().toUtc();
-      final updated = AgentThreadSummary(
-        id: current.id,
-        title: current.title,
-        activeGoalId: goalId,
-        createdAt: current.createdAt,
-        updatedAt: now.isBefore(current.updatedAt) ? current.updatedAt : now,
-      );
-      _currentThreadSummary = updated;
-      _mergeThreadSummary(updated, placeFirst: true);
-    }
-    notifyListeners();
-  }
 
   bool get isThreadTransitionInFlight => _threadTransitionInFlight;
   bool get hasMoreThreads => _nextThreadCursor != null;
@@ -105,8 +73,7 @@ final class ConversationController extends ChangeNotifier {
   String? get threadHistoryErrorMessage => _threadHistoryErrorMessage;
   bool get canRetryThreadHistory => _threadHistoryRecovery != null;
   bool get hasPendingThreadCreationRecovery =>
-      _threadHistoryRecovery == _ThreadHistoryRecovery.create ||
-      _threadHistoryRecovery == _ThreadHistoryRecovery.focus;
+      _threadHistoryRecovery == _ThreadHistoryRecovery.create;
   int get draftThreadRecoveryGeneration => _draftThreadRecoveryGeneration;
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
@@ -176,22 +143,17 @@ final class ConversationController extends ChangeNotifier {
     _threadHistoryErrorMessage = null;
     notifyListeners();
 
-    final focused = await historyClient.getFocusedThread();
-    if (!_isOperationCurrent(fence)) {
-      return;
-    }
-    if (focused == null) {
+    final newest = page.threads.firstOrNull;
+    if (newest == null) {
       _resetSelectedThreadPresentation();
       _initialized = true;
       return;
     }
-    await _applyThreadSnapshot(
-      focused,
-      fence: fence,
-      summary: _threads
-          .where((thread) => thread.id == focused.threadId)
-          .firstOrNull,
-    );
+    final snapshot = await historyClient.getThread(threadId: newest.id);
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    await _applyThreadSnapshot(snapshot, fence: fence, summary: newest);
   }
 
   Future<void> _applyThreadSnapshot(
@@ -210,7 +172,6 @@ final class ConversationController extends ChangeNotifier {
     _currentThreadSummary = resolvedSummary;
     _nextMessageCursor = thread.nextMessageCursor;
     _messages = messages;
-    _activeGoalId = thread.activeGoalId;
     _initialized = true;
     _applyRestoredTextState(thread);
     unawaited(_hydrateMessageImageContents(fence));
@@ -236,23 +197,7 @@ final class ConversationController extends ChangeNotifier {
     if (_disposed) {
       return false;
     }
-    final pendingFocusThreadId = _pendingFocusThreadId;
-    if (pendingFocusThreadId != null) {
-      return selectThread(pendingFocusThreadId);
-    }
     return _createNewThread(reuseBlankCurrent: true);
-  }
-
-  /// Creates a new Thread for a caller that requires an isolated workspace.
-  ///
-  /// Unlike the ordinary conversation entry point, this never consumes a
-  /// pending Home draft recovery. The caller must let that recovery settle
-  /// before acquiring a dedicated Thread.
-  Future<bool> createIndependentThread() async {
-    if (hasPendingThreadCreationRecovery) {
-      return false;
-    }
-    return _createNewThread();
   }
 
   Future<bool> _createNewThread({bool reuseBlankCurrent = false}) async {
@@ -283,7 +228,6 @@ final class ConversationController extends ChangeNotifier {
     final current = _currentThreadSummary;
     return _threadId != null &&
         current?.id == _threadId &&
-        current?.activeGoalId == null &&
         _messages.isEmpty &&
         _retry == null;
   }
@@ -348,12 +292,10 @@ final class ConversationController extends ChangeNotifier {
     required bool createNew,
   }) async {
     final recoveryAtStart = _threadHistoryRecovery;
-    final pendingFocusAtStart = _pendingFocusThreadId;
     final recoveringDraftThread =
         _threadId == null &&
-        ((createNew && recoveryAtStart == _ThreadHistoryRecovery.create) ||
-            (recoveryAtStart == _ThreadHistoryRecovery.focus &&
-                selectedThreadId == pendingFocusAtStart));
+        createNew &&
+        recoveryAtStart == _ThreadHistoryRecovery.create;
     _epoch++;
     _loadingMoreThreads = false;
     _loadingEarlierMessages = false;
@@ -376,8 +318,6 @@ final class ConversationController extends ChangeNotifier {
         if (!_isOperationCurrent(fence)) {
           return false;
         }
-        _pendingFocusThreadId = summary.id;
-        _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
         _mergeThreadSummary(summary, placeFirst: true);
         notifyListeners();
         targetThreadId = summary.id;
@@ -389,11 +329,17 @@ final class ConversationController extends ChangeNotifier {
       if (!_isOperationCurrent(fence) || targetThreadId == null) {
         return false;
       }
-      final snapshot = await historyClient.setFocusedThread(
-        threadId: targetThreadId,
-      );
+      final snapshot = createNew
+          ? AgentThreadSnapshot(
+              threadId: summary!.id,
+              title: summary.title,
+              messages: const <AgentMessage>[],
+              createdAt: summary.createdAt,
+              updatedAt: summary.updatedAt,
+            )
+          : await historyClient.getThread(threadId: targetThreadId);
       if (snapshot.threadId != targetThreadId) {
-        throw StateError('Focused Thread identity did not match the request.');
+        throw StateError('Thread identity did not match the request.');
       }
       await _applyThreadSnapshot(snapshot, fence: fence, summary: summary);
       if (!_isOperationCurrent(fence) || _threadId != targetThreadId) {
@@ -404,35 +350,19 @@ final class ConversationController extends ChangeNotifier {
         _mergeThreadSummary(canonicalSummary, placeFirst: createNew);
         _currentThreadSummary = canonicalSummary;
       }
-      final resolvedPendingFocus = targetThreadId == _pendingFocusThreadId;
-      if (resolvedPendingFocus) {
-        _pendingFocusThreadId = null;
-      }
       if (recoveringDraftThread) {
         _draftThreadRecoveryGeneration++;
       }
-      if (resolvedPendingFocus ||
-          _threadHistoryRecovery != _ThreadHistoryRecovery.create) {
-        if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
-          _pendingFocusThreadId = null;
-        }
-        _threadHistoryRecovery = null;
-        _threadHistoryErrorMessage = null;
-      }
+      _threadHistoryRecovery = null;
+      _threadHistoryErrorMessage = null;
       return true;
     } catch (error) {
       if (_isOperationCurrent(fence)) {
         if (createNew &&
             error is AgentClientException &&
             error.errorCode == 'thread_creation_ambiguous') {
-          _pendingFocusThreadId = null;
           _threadHistoryRecovery = _ThreadHistoryRecovery.create;
           _threadHistoryErrorMessage = '新对话的创建结果尚未确认。请重试恢复；系统不会重复创建。';
-        } else if (targetThreadId != null &&
-            (createNew || targetThreadId == _pendingFocusThreadId)) {
-          _pendingFocusThreadId = targetThreadId;
-          _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
-          _threadHistoryErrorMessage = '新对话已创建，但暂时无法打开。重试不会重复创建。';
         } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
           _threadHistoryErrorMessage = createNew
               ? '暂时无法创建新对话，请稍后再试。'
@@ -447,7 +377,7 @@ final class ConversationController extends ChangeNotifier {
     }
   }
 
-  Future<void> clearFocusedThread() async {
+  Future<void> clearCurrentThread() async {
     if (_disposed) {
       return;
     }
@@ -456,13 +386,12 @@ final class ConversationController extends ChangeNotifier {
     if (transitionGeneration == null) {
       return;
     }
-    final historyClient = client;
     try {
       await _ensureInitialized();
       if (!_isCurrent(accountEpoch)) {
         return;
       }
-      await _clearFocusedThread(historyClient);
+      _clearCurrentThread();
     } finally {
       _finishThreadTransition(transitionGeneration);
     }
@@ -494,7 +423,6 @@ final class ConversationController extends ChangeNotifier {
       ];
       if (_threadId == threadId) {
         _epoch++;
-        _pendingFocusThreadId = null;
         _threadHistoryRecovery = null;
         _resetSelectedThreadPresentation();
         _initialized = true;
@@ -513,40 +441,15 @@ final class ConversationController extends ChangeNotifier {
     }
   }
 
-  Future<void> _clearFocusedThread(AgentClient historyClient) async {
+  void _clearCurrentThread() {
     _epoch++;
-    final fence = _captureOperationFence();
     _retry = null;
     _errorMessage = null;
-    if (_isPageRefreshRecovery(_threadHistoryRecovery)) {
-      _threadHistoryRecovery = null;
-      _threadHistoryErrorMessage = null;
-    } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
-      _threadHistoryErrorMessage = null;
-    }
-    _setBusy(true);
-    try {
-      await historyClient.clearFocusedThread();
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      _pendingFocusThreadId = null;
-      if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
-        _threadHistoryRecovery = null;
-        _threadHistoryErrorMessage = null;
-      }
-      _resetSelectedThreadPresentation();
-      _initialized = true;
-    } catch (_) {
-      if (_isOperationCurrent(fence) &&
-          _threadHistoryRecovery != _ThreadHistoryRecovery.create) {
-        _threadHistoryErrorMessage = '暂时无法清除当前对话，请稍后再试。';
-      }
-    } finally {
-      if (_isOperationCurrent(fence)) {
-        _setBusy(false);
-      }
-    }
+    _threadHistoryRecovery = null;
+    _threadHistoryErrorMessage = null;
+    _resetSelectedThreadPresentation();
+    _initialized = true;
+    notifyListeners();
   }
 
   Future<void> loadMoreThreads() async {
@@ -645,9 +548,9 @@ final class ConversationController extends ChangeNotifier {
     }
   }
 
-  /// Starts an ordinary Agent voice Message in the focused Thread.
+  /// Starts an ordinary Agent voice Message in the selected Thread.
   ///
-  /// If the account has no focused Thread, the existing safe Thread creation
+  /// If the client has no selected Thread, the existing safe Thread creation
   /// path runs first. This microphone is intentionally independent from the
   /// Practice turn recorder.
 
@@ -1041,12 +944,6 @@ final class ConversationController extends ChangeNotifier {
       case _ThreadHistoryRecovery.create:
         await createThread();
         return;
-      case _ThreadHistoryRecovery.focus:
-        final threadId = _pendingFocusThreadId;
-        if (threadId != null) {
-          await selectThread(threadId);
-        }
-        return;
       case _ThreadHistoryRecovery.refreshThreadPage:
       case _ThreadHistoryRecovery.refreshMessagePage:
       case _ThreadHistoryRecovery.refreshThreadAndMessagePages:
@@ -1145,8 +1042,7 @@ final class ConversationController extends ChangeNotifier {
         _ThreadHistoryRecovery.refreshThreadAndMessagePages,
       _ThreadHistoryRecovery.refreshThreadAndMessagePages =>
         _ThreadHistoryRecovery.refreshThreadAndMessagePages,
-      _ThreadHistoryRecovery.create ||
-      _ThreadHistoryRecovery.focus => _threadHistoryRecovery,
+      _ThreadHistoryRecovery.create => _threadHistoryRecovery,
       _ => _ThreadHistoryRecovery.refreshThreadPage,
     };
   }
@@ -1157,8 +1053,7 @@ final class ConversationController extends ChangeNotifier {
         _ThreadHistoryRecovery.refreshThreadAndMessagePages,
       _ThreadHistoryRecovery.refreshThreadAndMessagePages =>
         _ThreadHistoryRecovery.refreshThreadAndMessagePages,
-      _ThreadHistoryRecovery.create ||
-      _ThreadHistoryRecovery.focus => _threadHistoryRecovery,
+      _ThreadHistoryRecovery.create => _threadHistoryRecovery,
       _ => _ThreadHistoryRecovery.refreshMessagePage,
     };
   }
@@ -1176,7 +1071,6 @@ final class ConversationController extends ChangeNotifier {
         _threadHistoryErrorMessage = null;
         break;
       case _ThreadHistoryRecovery.create:
-      case _ThreadHistoryRecovery.focus:
       case _ThreadHistoryRecovery.refreshMessagePage:
         break;
     }
@@ -1195,7 +1089,6 @@ final class ConversationController extends ChangeNotifier {
         _threadHistoryErrorMessage = null;
         break;
       case _ThreadHistoryRecovery.create:
-      case _ThreadHistoryRecovery.focus:
       case _ThreadHistoryRecovery.refreshThreadPage:
         break;
     }
@@ -1301,7 +1194,6 @@ final class ConversationController extends ChangeNotifier {
       final updated = AgentThreadSummary(
         id: current.id,
         title: current.title,
-        activeGoalId: current.activeGoalId,
         createdAt: current.createdAt,
         updatedAt: now.isBefore(current.updatedAt) ? current.updatedAt : now,
       );
@@ -1357,14 +1249,12 @@ final class ConversationController extends ChangeNotifier {
     _epoch++;
     _initializationFuture = null;
     _threadId = null;
-    _activeGoalId = null;
     _currentThreadSummary = null;
     _threads = const <AgentThreadSummary>[];
     _nextThreadCursor = null;
     _nextMessageCursor = null;
     _threadHistoryErrorMessage = null;
     _threadHistoryRecovery = null;
-    _pendingFocusThreadId = null;
     _draftThreadRecoveryGeneration = 0;
     _loadingMoreThreads = false;
     _loadingEarlierMessages = false;
@@ -1407,7 +1297,6 @@ final class ConversationController extends ChangeNotifier {
 
   void _resetSelectedThreadPresentation() {
     _threadId = null;
-    _activeGoalId = null;
     _currentThreadSummary = null;
     _nextMessageCursor = null;
     _messages = const <AgentMessage>[];
@@ -1424,7 +1313,6 @@ final class ConversationController extends ChangeNotifier {
     return AgentThreadSummary(
       id: snapshot.threadId,
       title: snapshot.title,
-      activeGoalId: snapshot.activeGoalId,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -1519,8 +1407,6 @@ final class ConversationController extends ChangeNotifier {
         (snapshot.nextMessageCursor != null &&
             (snapshot.nextMessageCursor!.isEmpty ||
                 snapshot.nextMessageCursor!.runes.length > 1024)) ||
-        (snapshot.activeGoalId != null &&
-            snapshot.activeGoalId!.trim().isEmpty) ||
         (recovery != null &&
             (recovery.text.trim().isEmpty ||
                 recovery.clientMessageId.trim().isEmpty ||
@@ -1531,17 +1417,13 @@ final class ConversationController extends ChangeNotifier {
 
   void _validateThreadSummary(AgentThreadSummary summary) {
     if (summary.id.trim().isEmpty ||
-        summary.updatedAt.isBefore(summary.createdAt) ||
-        (summary.activeGoalId != null &&
-            summary.activeGoalId!.trim().isEmpty)) {
+        summary.updatedAt.isBefore(summary.createdAt)) {
       throw StateError('Invalid Agent Thread summary.');
     }
   }
 
   void _validateThreadPage(AgentThreadPage page) {
     if (page.threads.length > 100 ||
-        (page.focusedThreadId != null &&
-            page.focusedThreadId!.trim().isEmpty) ||
         (page.nextCursor != null &&
             (page.nextCursor!.isEmpty ||
                 page.nextCursor!.runes.length > 1024))) {
@@ -1619,7 +1501,6 @@ sealed class _ConversationRetry {
 
 enum _ThreadHistoryRecovery {
   create,
-  focus,
   refreshThreadPage,
   refreshMessagePage,
   refreshThreadAndMessagePages,

@@ -12,10 +12,9 @@ func (boundary HistoryBoundary) Valid() bool {
 }
 
 type HistoryQuery struct {
-	Limit             int
-	Before            *HistoryBoundary
-	Search            string
-	PracticeSessionID string
+	Limit  int
+	Before *HistoryBoundary
+	Search string
 }
 
 type HistoryPage struct {

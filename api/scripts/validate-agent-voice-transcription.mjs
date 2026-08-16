@@ -67,7 +67,7 @@ const invalidServerEvents = [
     type: 'transcription.completed',
     data: { transcript: 'Still partial.', final: false },
   },
-  { type: 'candidate.ready', data: {} },
+  { type: 'draft.ready', data: {} },
   {
     type: 'transcription.failed',
     data: { kind: 'timeout', retryable: true, provider_payload: 'forbidden' },

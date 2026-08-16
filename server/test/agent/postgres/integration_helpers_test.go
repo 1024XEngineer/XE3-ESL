@@ -6,19 +6,108 @@ import (
 	"encoding/binary"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
-	agenttitle "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/title"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	objectfake "github.com/1024XEngineer/XE3-ESL/server/test/support/objectstorefake"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var testRunConfiguration = agentrun.Configuration{
+	Provider:           "fake",
+	Model:              "configured-model",
+	MaxOutputTokens:    256,
+	MaxInputCharacters: 12_000,
+}
+
+func successfulTextResult() agentrun.TextResult {
+	return agentrun.TextResult{
+		ID:           "fake-completion-1",
+		Provider:     testRunConfiguration.Provider,
+		Model:        testRunConfiguration.Model,
+		Content:      "Here is a concise coaching response.",
+		FinishReason: "stop",
+		Usage: agentrun.TokenUsage{
+			InputTokens:  32,
+			OutputTokens: 21,
+			TotalTokens:  53,
+		},
+	}
+}
+
+func testActorA() requestcontext.Actor {
+	return requestcontext.Actor{
+		UserID:    agentTestUserA,
+		SessionID: "20000000-0000-4000-8000-000000000001",
+	}
+}
+
+func testActorB() requestcontext.Actor {
+	return requestcontext.Actor{
+		UserID:    agentTestUserB,
+		SessionID: "20000000-0000-4000-8000-000000000002",
+	}
+}
+
+type testProfileContributor struct{}
+
+func (testProfileContributor) Contribute(
+	context.Context,
+	requestcontext.Actor,
+) (agentcontext.CoachingProfileContribution, error) {
+	return agentcontext.CoachingProfileContribution{}, nil
+}
+
+func newAgentRunServices(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	generator agentrun.TextGenerator,
+	configuration agentrun.Configuration,
+) (*conversation.Service, *agentrun.Service, *agentRepositories) {
+	t.Helper()
+	repositories := newAgentRepositories(
+		t,
+		pool,
+		identity.NewUUIDv4Generator(nil),
+	)
+	conversationService, err := conversation.NewService(repositories.conversation)
+	if err != nil {
+		t.Fatalf("new Agent Conversation service: %v", err)
+	}
+	assembler, err := agentcontext.NewAssembler(
+		repositories.context,
+		agentcontext.Instruction{
+			Version: "test-instruction-v1",
+			Content: "You are a test coach.",
+		},
+		testProfileContributor{},
+	)
+	if err != nil {
+		t.Fatalf("new Agent Context assembler: %v", err)
+	}
+	runService, err := agentrun.NewService(
+		repositories.run,
+		repositories.conversation,
+		assembler,
+		generator,
+		configuration,
+	)
+	if err != nil {
+		t.Fatalf("new Agent Run service: %v", err)
+	}
+	return conversationService, runService, repositories
+}
 
 func successfulVoiceTranscription() agentvoice.TranscriptionResult {
 	return agentvoice.TranscriptionResult{
@@ -40,35 +129,6 @@ type fixedSummaryGenerator struct {
 	result   agentsummary.GenerationResult
 	err      error
 	requests []agentsummary.GenerationRequest
-}
-
-type fixedTitleGenerator struct {
-	mu       sync.Mutex
-	result   agenttitle.GenerationResult
-	err      error
-	requests []agenttitle.GenerationRequest
-}
-
-func (generator *fixedTitleGenerator) GenerateJSON(
-	ctx context.Context,
-	request agenttitle.GenerationRequest,
-) (agenttitle.GenerationResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agenttitle.GenerationResult{}, err
-	}
-	generator.mu.Lock()
-	defer generator.mu.Unlock()
-	generator.requests = append(generator.requests, request)
-	if generator.err != nil {
-		return agenttitle.GenerationResult{}, generator.err
-	}
-	return generator.result, nil
-}
-
-func (generator *fixedTitleGenerator) CallCount() int {
-	generator.mu.Lock()
-	defer generator.mu.Unlock()
-	return len(generator.requests)
 }
 
 func newFixedSummaryGenerator(
@@ -137,27 +197,6 @@ func (generator *fixedTextGenerator) Generate(
 		return agentrun.TextResult{}, generator.err
 	}
 	return generator.result, nil
-}
-
-type fixedMemoryEmbedder struct {
-	result memory.EmbeddingResult
-	err    error
-}
-
-func (embedder *fixedMemoryEmbedder) Embed(
-	ctx context.Context,
-	request memory.EmbeddingRequest,
-) (memory.EmbeddingResult, error) {
-	if err := ctx.Err(); err != nil {
-		return memory.EmbeddingResult{}, err
-	}
-	if err := memory.ValidateEmbeddingRequest(request); err != nil {
-		return memory.EmbeddingResult{}, err
-	}
-	if embedder.err != nil {
-		return memory.EmbeddingResult{}, embedder.err
-	}
-	return embedder.result, nil
 }
 
 type fixedSpeechRecognizer struct {
@@ -246,9 +285,9 @@ func (synthesizer *fixedSpeechSynthesizer) Synthesize(
 }
 
 var (
-	_ agentrun.TextGenerator               = (*fixedTextGenerator)(nil)
-	_ agentsummary.Generator               = (*fixedSummaryGenerator)(nil)
-	_ memory.Embedder                      = (*fixedMemoryEmbedder)(nil)
+	_ agentrun.TextGenerator = (*fixedTextGenerator)(nil)
+	_ agentsummary.Generator = (*fixedSummaryGenerator)(nil)
+
 	_ agentvoice.StreamingSpeechRecognizer = (*fixedSpeechRecognizer)(nil)
 	_ agentvoice.SpeechSynthesizer         = (*fixedSpeechSynthesizer)(nil)
 )
@@ -286,15 +325,15 @@ type storedVoiceSourceLoader struct {
 
 func (loader *storedVoiceSourceLoader) LoadVoiceAudio(
 	_ context.Context,
-	candidate agentvoice.Candidate,
+	draft agentvoice.Draft,
 ) (platformmedia.ManagedAudioSource, error) {
-	body, found := loader.store.Bytes(candidate.ObjectKey)
+	body, found := loader.store.Bytes(draft.ObjectKey)
 	if !found {
 		return nil, objectstore.ErrOperationFailed
 	}
 	return platformmedia.CaptureTemporaryAudio(
 		loader.directory,
-		candidate.ContentType,
+		draft.ContentType,
 		bytes.NewReader(body),
 	)
 }
@@ -351,23 +390,15 @@ func messageResponse(message conversation.Message) gin.H {
 	return result
 }
 
-func agentMessageAudioResponse(audio conversation.MessageAudio) gin.H {
-	result := gin.H{
-		"audio_id":     audio.ID,
-		"status":       audio.Status,
-		"content_type": audio.ContentType,
-		"size_bytes":   audio.Size,
-		"duration_ms":  durationMilliseconds(audio.Duration),
+func agentMessageAudioResponse(audio conversation.AudioAttachment) gin.H {
+	return gin.H{
+		"audio_id":      audio.ID,
+		"status":        "readable",
+		"content_type":  audio.ContentType,
+		"size_bytes":    audio.Size,
+		"duration_ms":   durationMilliseconds(audio.Duration),
+		"playback_path": "/v1/agent-message-audios/" + audio.ID + "/playback",
 	}
-	if audio.Status == conversation.MessageAudioReadable {
-		result["playback_path"] =
-			"/v1/agent-message-audios/" + audio.ID + "/playback"
-	}
-	if !audio.DeletedAt.IsZero() {
-		result["deleted_at"] = audio.DeletedAt.UTC().
-			Format(time.RFC3339Nano)
-	}
-	return result
 }
 
 func durationMilliseconds(duration time.Duration) int64 {

@@ -75,13 +75,12 @@ void main() {
           sessionToken: 'sess_opaque-secret',
           displayName: '林同学',
           expectedProfileVersion: 1,
-          idempotencyKey: 'profile-request-0001',
         );
         expect(profile.displayName, '林同学');
         expect(profile.profileVersion, 2);
         expect(transport.method, 'PATCH');
         expect(transport.uri!.path, '/v1/me/profile');
-        expect(transport.headers?['Idempotency-Key'], 'profile-request-0001');
+        expect(transport.headers?['Idempotency-Key'], isNull);
         expect(
           transport.headers?[HttpHeaders.authorizationHeader],
           'Bearer sess_opaque-secret',
@@ -604,6 +603,7 @@ final class _FakeTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     this.method = method;
     this.uri = uri;

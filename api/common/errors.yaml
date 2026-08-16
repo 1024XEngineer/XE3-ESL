@@ -56,14 +56,9 @@ components:
         - authentication_required
         - invalid_credentials
         - account_registration_unavailable
+        - account_unavailable
         - profile_not_found
         - profile_version_conflict
-        - resume_not_found
-        - resume_limit_exceeded
-        - resume_version_conflict
-        - unsupported_resume_format
-        - resume_file_too_large
-        - resume_parse_failed
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -73,110 +68,37 @@ components:
         - quota_exhausted
         - voice_capacity_exhausted
         - scene_not_found
-        - role_definition_not_found
-        - preparation_profile_not_found
-        - preparation_version_conflict
-        - job_target_not_found
-        - job_target_version_conflict
-        - job_target_analysis_claim_lost
-        - job_target_analysis_failed
         - practice_plan_not_found
-        - practice_plan_not_ready
-        - practice_plan_archived
-        - practice_plan_has_active_session
-        - practice_plan_revision_conflict
         - practice_session_not_found
-        - practice_session_transition_not_allowed
         - practice_session_already_terminal
-        - practice_session_version_conflict
-        - practice_participant_invalid
-        - practice_participant_not_authorized
-        - practice_option_invalid
         - confirmation_required
         - version_conflict
-        - active_session_conflict
-        - question_not_found
-        - answer_invalid
-        - turn_not_found
-        - turn_conflict
-        - turn_outcome_session_mismatch
-        - turn_analysis_not_found
-        - turn_analysis_conflict
-        - feedback_item_not_found
-        - retry_request_not_found
-        - retry_request_conflict
-        - transcript_unavailable
-        - evaluation_not_found
-        - evaluation_strategy_not_available
-        - evaluation_version_conflict
-        - evaluation_policy_violation
-        - evaluation_retryable_failure
-        - unsupported_message
         - internal_error
       x-http-status-map:
         invalid_request: 400
         invalid_image: 400
         unsupported_image_format: 400
         image_too_large: 413
-        answer_invalid: 400
-        unsupported_message: 400
         authentication_required: 401
         confirmation_required: 409
         version_conflict: 409
-        active_session_conflict: 409
         invalid_credentials: 401
-        practice_participant_not_authorized: 403
+        account_unavailable: 403
         scene_not_found: 404
-        role_definition_not_found: 404
-        preparation_profile_not_found: 404
-        job_target_not_found: 404
         practice_plan_not_found: 404
         practice_session_not_found: 404
-        question_not_found: 404
-        turn_not_found: 404
-        turn_analysis_not_found: 404
-        feedback_item_not_found: 404
-        retry_request_not_found: 404
         resource_not_found: 404
         profile_not_found: 404
         account_registration_unavailable: 409
         profile_version_conflict: 409
-        resume_not_found: 404
-        resume_limit_exceeded: 409
-        resume_version_conflict: 409
-        unsupported_resume_format: 400
-        resume_file_too_large: 400
-        resume_parse_failed: 503
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409
-        preparation_version_conflict: 409
-        job_target_version_conflict: 409
-        job_target_analysis_claim_lost: 409
-        practice_plan_not_ready: 409
-        practice_plan_archived: 409
-        practice_plan_has_active_session: 409
-        practice_plan_revision_conflict: 409
-        practice_session_transition_not_allowed: 409
         practice_session_already_terminal: 409
-        practice_session_version_conflict: 409
-        practice_participant_invalid: 409
-        practice_option_invalid: 409
-        turn_conflict: 409
-        turn_outcome_session_mismatch: 409
-        turn_analysis_conflict: 409
-        retry_request_conflict: 409
-        transcript_unavailable: 422
-        evaluation_not_found: 404
-        evaluation_strategy_not_available: 422
-        evaluation_version_conflict: 409
-        evaluation_policy_violation: 422
-        evaluation_retryable_failure: 503
         rate_limited: 429
         provider_unavailable: 503
         quota_exhausted: 503
         voice_capacity_exhausted: 503
-        job_target_analysis_failed: 503
         internal_error: 500
   responses:
     BadRequest:

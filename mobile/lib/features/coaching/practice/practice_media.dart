@@ -172,9 +172,9 @@ final class WirePracticeMediaClient
   Stream<Uint8List> streamQuestionSpeech(String questionId) async* {
     final id = _requireResourceId(questionId);
     final generation = _accountGeneration;
-    final uri = _practiceWebSocketBaseUri(
-      _baseUri,
-    ).resolve('/v1/voice-questions/${Uri.encodeComponent(id)}/speech/realtime');
+    final uri = _practiceWebSocketBaseUri(_baseUri).resolve(
+      '/v1/practice-questions/${Uri.encodeComponent(id)}/speech/realtime',
+    );
     SessionAuthenticatedWebSocketConnection? connection;
     StreamIterator<dynamic>? messages;
     var receivedBytes = 0;
@@ -228,7 +228,7 @@ final class WirePracticeMediaClient
   @override
   Future<Uint8List> loadRecording(String audioAssetId) {
     return _run((generation) async {
-      final id = _requireResourceId(audioAssetId);
+      final id = _requireAudioAssetId(audioAssetId);
       final credential = _requireCredential();
       final metadata = await _sendApiWithCredential(
         generation: generation,
@@ -294,7 +294,7 @@ final class WirePracticeMediaClient
   @override
   Future<void> deleteRecording(String audioAssetId) {
     return _run((generation) async {
-      final id = _requireResourceId(audioAssetId);
+      final id = _requireAudioAssetId(audioAssetId);
       final response = await _sendApi(
         generation: generation,
         method: 'DELETE',
@@ -741,6 +741,17 @@ String _requireResourceId(String value) {
       value.length > 128 ||
       value.codeUnits.any((unit) => unit < 0x21 || unit == 0x7f)) {
     throw ArgumentError.value(value, 'audioAssetId', 'Invalid resource ID.');
+  }
+  return value;
+}
+
+final _audioAssetIdPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
+String _requireAudioAssetId(String value) {
+  if (!_audioAssetIdPattern.hasMatch(value)) {
+    throw ArgumentError.value(value, 'audioAssetId', 'Invalid media asset ID.');
   }
   return value;
 }

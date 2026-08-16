@@ -64,9 +64,11 @@ func findRun(
 ) (agentrun.Run, error) {
 	run, err := scanRun(queryer.QueryRow(ctx, `
 SELECT `+runSelectColumns+`
-FROM agent_runs
-WHERE id = $1
-  AND owner_user_id = $2`,
+FROM agent_runs AS runs
+INNER JOIN agent_threads AS threads ON threads.id = runs.thread_id
+WHERE runs.id = $1
+  AND threads.user_id = $2
+  AND threads.deleted_at IS NULL`,
 		runID,
 		ownerID,
 	))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"net"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
+	objectfake "github.com/1024XEngineer/XE3-ESL/server/test/support/objectstorefake"
 )
 
 type voiceHostResolverFunc func(
@@ -105,7 +106,7 @@ func TestSignedVoiceAudioLoaderRequiresExplicitHostAndPublicResolution(
 			)
 			if _, err := loader.LoadVoiceAudio(
 				context.Background(),
-				voiceSourceTestCandidate(),
+				voiceSourceTestDraft(),
 			); err != ErrRepository {
 				t.Fatalf("LoadVoiceAudio() error = %v", err)
 			}
@@ -142,7 +143,7 @@ func TestSignedVoiceAudioLoaderAllowsExactPublicHostAndRejectsRedirect(
 	)
 	source, err := success.LoadVoiceAudio(
 		context.Background(),
-		voiceSourceTestCandidate(),
+		voiceSourceTestDraft(),
 	)
 	if err != nil {
 		t.Fatalf("LoadVoiceAudio() error = %v", err)
@@ -171,7 +172,7 @@ func TestSignedVoiceAudioLoaderAllowsExactPublicHostAndRejectsRedirect(
 	)
 	if _, err := redirect.LoadVoiceAudio(
 		context.Background(),
-		voiceSourceTestCandidate(),
+		voiceSourceTestDraft(),
 	); err != ErrRepository {
 		t.Fatalf("redirect LoadVoiceAudio() error = %v", err)
 	}
@@ -216,10 +217,10 @@ func newVoiceSourceTestLoader(
 	return loader
 }
 
-func voiceSourceTestCandidate() Candidate {
+func voiceSourceTestDraft() Draft {
 	audio := voiceTestWAV(0x62)
 	checksum := sha256.Sum256(audio)
-	return Candidate{
+	return Draft{
 		ObjectKey:      "audio/v1/agent/test.wav",
 		ContentType:    "audio/wav",
 		Size:           int64(len(audio)),
@@ -231,4 +232,42 @@ func voiceSourceTestCandidate() Candidate {
 
 func publicVoiceTestAddress() []net.IPAddr {
 	return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}
+}
+
+type signedVoiceStore struct {
+	objectstore.Store
+	result objectstore.SignedGetResult
+}
+
+func (store signedVoiceStore) SignedGet(
+	context.Context,
+	string,
+) (objectstore.SignedGetResult, error) {
+	return store.result, nil
+}
+
+func voiceTestWAV(sample byte) []byte {
+	const (
+		sampleRate = 16_000
+		samples    = 1_600
+		dataSize   = samples * 2
+	)
+	result := make([]byte, 44+dataSize)
+	copy(result[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(result[4:8], uint32(len(result)-8))
+	copy(result[8:12], "WAVE")
+	copy(result[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(result[16:20], 16)
+	binary.LittleEndian.PutUint16(result[20:22], 1)
+	binary.LittleEndian.PutUint16(result[22:24], 1)
+	binary.LittleEndian.PutUint32(result[24:28], sampleRate)
+	binary.LittleEndian.PutUint32(result[28:32], sampleRate*2)
+	binary.LittleEndian.PutUint16(result[32:34], 2)
+	binary.LittleEndian.PutUint16(result[34:36], 16)
+	copy(result[36:40], "data")
+	binary.LittleEndian.PutUint32(result[40:44], dataSize)
+	for index := 44; index < len(result); index++ {
+		result[index] = sample
+	}
+	return result
 }

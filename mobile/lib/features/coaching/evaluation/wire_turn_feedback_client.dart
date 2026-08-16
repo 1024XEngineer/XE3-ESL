@@ -103,11 +103,7 @@ final class WireSpeechFeedbackClient implements SpeechFeedbackClient {
     switch (response.statusCode) {
       case HttpStatus.ok:
         try {
-          final result = decodeSpeechFeedbackJson(response.body);
-          if (result.statusUrl != statusUrl) {
-            throw const SpeechFeedbackDecodeException();
-          }
-          return result;
+          return decodeSpeechFeedbackJson(response.body, statusUrl: statusUrl);
         } on SpeechFeedbackDecodeException {
           throw const SpeechFeedbackException(
             kind: SpeechFeedbackFailureKind.invalidResponse,
@@ -173,7 +169,11 @@ final class _IoSpeechFeedbackHttpTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
+    if (body != null && bodyBytes != null) {
+      throw ArgumentError('Only one request body may be provided.');
+    }
     final client = HttpClient()..connectionTimeout = _requestTimeout;
     HttpClientRequest? request;
     try {
@@ -181,7 +181,9 @@ final class _IoSpeechFeedbackHttpTransport implements IdentityHttpTransport {
         request = await client.openUrl(method, uri);
         request!.followRedirects = false;
         headers.forEach(request!.headers.set);
-        if (body != null) {
+        if (bodyBytes != null) {
+          request!.add(bodyBytes);
+        } else if (body != null) {
           request!.add(utf8.encode(body));
         }
         final response = await request!.close();

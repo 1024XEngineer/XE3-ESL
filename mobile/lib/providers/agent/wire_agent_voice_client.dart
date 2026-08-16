@@ -8,8 +8,8 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/authenticated_web_socket.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/platform/audio/realtime_voice_input.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action_codec.dart';
 
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
@@ -179,26 +179,26 @@ final class WireAgentVoiceClient
   final Set<Future<void>> _inFlight = <Future<void>>{};
 
   @override
-  Future<AgentVoiceCandidate> createCandidate({
+  Future<AgentVoiceDraft> createDraft({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
   }) async {
-    AgentVoiceCandidate? completed;
-    await for (final event in createCandidateStream(
+    AgentVoiceDraft? completed;
+    await for (final event in createDraftStream(
       threadId: threadId,
       recording: recording,
       idempotencyKey: idempotencyKey,
     )) {
-      if (event case AgentVoiceCandidateCompleted(:final candidate)) {
-        completed = candidate;
+      if (event case AgentVoiceDraftCompleted(:final draft)) {
+        completed = draft;
       }
     }
     return completed ?? (throw _invalidResponse());
   }
 
   @override
-  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+  Stream<AgentVoiceTranscriptionEvent> createDraftStream({
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
@@ -249,7 +249,7 @@ final class WireAgentVoiceClient
             kind: AgentClientFailureKind.invalidRequest,
           );
         }
-        await for (final event in createCandidateRealtime(
+        await for (final event in createDraftRealtime(
           threadId: threadId,
           audioChunks: Stream<Uint8List>.value(
             Uint8List.sublistView(bytes, 44),
@@ -290,7 +290,7 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Stream<AgentVoiceTranscriptionEvent> createCandidateRealtime({
+  Stream<AgentVoiceTranscriptionEvent> createDraftRealtime({
     required String threadId,
     required Stream<Uint8List> audioChunks,
     required String idempotencyKey,
@@ -299,7 +299,7 @@ final class WireAgentVoiceClient
     _requireClientIdentity(idempotencyKey, minimumLength: 8);
     final generation = _accountGeneration;
     final uri = realtimeVoiceWebSocketBaseUri(_baseUri).resolve(
-      '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-message-candidates/realtime',
+      '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-drafts/realtime',
     );
     try {
       final transport = RealtimeVoiceInputTransport(
@@ -311,6 +311,7 @@ final class WireAgentVoiceClient
         idempotencyKey: idempotencyKey,
         ensureCurrent: () => _requireGeneration(generation),
         maximumChunkBytes: _maximumAudioBytes,
+        terminalEventTypes: const <String>{'draft.ready', 'draft.failed'},
       )) {
         final decoded = _decodeTranscriptionEvent(
           envelope.type,
@@ -553,24 +554,23 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Future<AgentVoiceCandidate> getCandidate({required String candidateId}) {
-    _requireUuid(candidateId);
+  Future<AgentVoiceDraft> getDraft({required String draftId}) {
+    _requireUuid(draftId);
     return _run((generation) async {
       final response = await _sendApi(
         generation: generation,
         method: 'GET',
-        path:
-            '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}',
+        path: '/v1/agent-voice-drafts/${Uri.encodeComponent(draftId)}',
         accept: ContentType.json.mimeType,
         maximumResponseBytes: _maximumJsonBytes,
       );
       try {
         _requireStatus(response, const <int>{HttpStatus.ok});
-        final candidate = _decodeJson(response.body, _decodeCandidateObject);
-        if (candidate.id != candidateId) {
+        final draft = _decodeJson(response.body, _decodeDraftObject);
+        if (draft.id != draftId) {
           throw _invalidResponse();
         }
-        return candidate;
+        return draft;
       } finally {
         _zero(response.body);
       }
@@ -578,24 +578,23 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Future<AgentVoiceCandidate> retryCandidate({required String candidateId}) {
-    _requireUuid(candidateId);
+  Future<AgentVoiceDraft> retryDraft({required String draftId}) {
+    _requireUuid(draftId);
     return _run((generation) async {
       final response = await _sendApi(
         generation: generation,
         method: 'POST',
-        path:
-            '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}/retries',
+        path: '/v1/agent-voice-drafts/${Uri.encodeComponent(draftId)}/retries',
         accept: ContentType.json.mimeType,
         maximumResponseBytes: _maximumJsonBytes,
       );
       try {
         _requireStatus(response, const <int>{HttpStatus.ok});
-        final candidate = _decodeJson(response.body, _decodeCandidateObject);
-        if (candidate.id != candidateId) {
+        final draft = _decodeJson(response.body, _decodeDraftObject);
+        if (draft.id != draftId) {
           throw _invalidResponse();
         }
-        return candidate;
+        return draft;
       } finally {
         _zero(response.body);
       }
@@ -603,14 +602,13 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Future<void> deleteCandidate({required String candidateId}) {
-    _requireUuid(candidateId);
+  Future<void> deleteDraft({required String draftId}) {
+    _requireUuid(draftId);
     return _run((generation) async {
       final response = await _sendApi(
         generation: generation,
         method: 'DELETE',
-        path:
-            '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}',
+        path: '/v1/agent-voice-drafts/${Uri.encodeComponent(draftId)}',
         accept: ContentType.json.mimeType,
         maximumResponseBytes: _maximumJsonBytes,
       );
@@ -624,16 +622,16 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Future<AgentVoiceConfirmation> confirmCandidate({
-    required String candidateId,
-    required int candidateVersion,
+  Future<AgentVoiceConfirmation> confirmDraft({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   }) {
-    _requireUuid(candidateId);
+    _requireUuid(draftId);
     _requireClientIdentity(clientMessageId);
     _requireContent(confirmedText);
-    if (candidateVersion < 1) {
+    if (draftVersion < 1) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidRequest,
       );
@@ -643,13 +641,13 @@ final class WireAgentVoiceClient
         generation: generation,
         method: 'POST',
         path:
-            '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}/confirmations',
+            '/v1/agent-voice-drafts/${Uri.encodeComponent(draftId)}/confirmations',
         accept: ContentType.json.mimeType,
         contentType: ContentType.json.mimeType,
         body: Uint8List.fromList(
           utf8.encode(
             jsonEncode(<String, Object?>{
-              'candidate_version': candidateVersion,
+              'draft_version': draftVersion,
               'client_message_id': clientMessageId,
               'confirmed_text': confirmedText,
             }),
@@ -666,11 +664,11 @@ final class WireAgentVoiceClient
           response.body,
           _decodeConfirmationObject,
         );
-        if (confirmation.candidate.id != candidateId ||
-            confirmation.candidate.version != candidateVersion ||
+        if (confirmation.draft.id != draftId ||
+            confirmation.draft.version != draftVersion ||
             confirmation.message.text != confirmedText ||
             confirmation.run.inputMessageId != confirmation.message.id ||
-            confirmation.run.threadId != confirmation.candidate.threadId ||
+            confirmation.run.threadId != confirmation.draft.threadId ||
             (response.statusCode == HttpStatus.created &&
                 !confirmation.run.isTerminal) ||
             (response.statusCode == HttpStatus.accepted &&
@@ -685,16 +683,16 @@ final class WireAgentVoiceClient
   }
 
   @override
-  Stream<AgentVoiceConfirmationStreamEvent> confirmCandidateStream({
-    required String candidateId,
-    required int candidateVersion,
+  Stream<AgentVoiceConfirmationStreamEvent> confirmDraftStream({
+    required String draftId,
+    required int draftVersion,
     required String clientMessageId,
     required String confirmedText,
   }) async* {
-    _requireUuid(candidateId);
+    _requireUuid(draftId);
     _requireClientIdentity(clientMessageId);
     _requireContent(confirmedText);
-    if (candidateVersion < 1) {
+    if (draftVersion < 1) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidRequest,
       );
@@ -708,7 +706,7 @@ final class WireAgentVoiceClient
       generation: generation,
       method: 'POST',
       path:
-          '/v1/agent-voice-message-candidates/${Uri.encodeComponent(candidateId)}/confirmations/stream',
+          '/v1/agent-voice-drafts/${Uri.encodeComponent(draftId)}/confirmations/stream',
       accept: 'text/event-stream',
       maximumResponseBytes: _maximumJsonBytes,
       contentType: ContentType.json.mimeType,
@@ -716,7 +714,7 @@ final class WireAgentVoiceClient
       body: Uint8List.fromList(
         utf8.encode(
           jsonEncode(<String, Object?>{
-            'candidate_version': candidateVersion,
+            'draft_version': draftVersion,
             'client_message_id': clientMessageId,
             'confirmed_text': confirmedText,
           }),
@@ -725,8 +723,8 @@ final class WireAgentVoiceClient
     );
     yield* _decodeConfirmationEvents(
       response,
-      expectedCandidateId: candidateId,
-      expectedCandidateVersion: candidateVersion,
+      expectedDraftId: draftId,
+      expectedDraftVersion: draftVersion,
       expectedText: confirmedText,
     );
   }
@@ -1135,8 +1133,8 @@ final class WireAgentVoiceClient
 
   Stream<AgentVoiceConfirmationStreamEvent> _decodeConfirmationEvents(
     AgentVoiceWireStreamResponse response, {
-    required String expectedCandidateId,
-    required int expectedCandidateVersion,
+    required String expectedDraftId,
+    required int expectedDraftVersion,
     required String expectedText,
   }) async* {
     var responseBytes = 0;
@@ -1164,8 +1162,8 @@ final class WireAgentVoiceClient
           final event = _decodeConfirmationEvent(
             eventName,
             eventData,
-            expectedCandidateId: expectedCandidateId,
-            expectedCandidateVersion: expectedCandidateVersion,
+            expectedDraftId: expectedDraftId,
+            expectedDraftVersion: expectedDraftVersion,
             expectedText: expectedText,
             expectedRunId: runId,
           );
@@ -1213,8 +1211,8 @@ final class WireAgentVoiceClient
   AgentVoiceConfirmationStreamEvent _decodeConfirmationEvent(
     String event,
     String data, {
-    required String expectedCandidateId,
-    required int expectedCandidateVersion,
+    required String expectedDraftId,
+    required int expectedDraftVersion,
     required String expectedText,
     required String? expectedRunId,
   }) {
@@ -1231,8 +1229,8 @@ final class WireAgentVoiceClient
     switch (event) {
       case 'input.committed':
         final confirmation = _decodeConfirmationObject(object);
-        if (confirmation.candidate.id != expectedCandidateId ||
-            confirmation.candidate.version != expectedCandidateVersion ||
+        if (confirmation.draft.id != expectedDraftId ||
+            confirmation.draft.version != expectedDraftVersion ||
             confirmation.message.text != expectedText ||
             confirmation.run.inputMessageId != confirmation.message.id) {
           throw const _InvalidVoiceResponse();
@@ -1308,27 +1306,27 @@ final class WireAgentVoiceClient
           text: _strictContent(update['transcript']),
           finalResult: _strictBool(update['final']),
         );
-      case 'candidate.ready':
-      case 'candidate.failed':
+      case 'draft.ready':
+      case 'draft.failed':
         final envelope = _strictObject(
           decoded,
-          allowed: const <String>{'candidate', 'kind', 'retryable'},
-          required: event == 'candidate.ready'
-              ? const <String>{'candidate'}
+          allowed: const <String>{'draft', 'kind', 'retryable'},
+          required: event == 'draft.ready'
+              ? const <String>{'draft'}
               : const <String>{},
         );
-        if (envelope['candidate'] case final candidateValue?) {
+        if (envelope['draft'] case final draftValue?) {
           if (envelope.length != 1) {
             throw const _InvalidVoiceResponse();
           }
-          final candidate = _decodeCandidateObject(candidateValue);
-          if (candidate.threadId != expectedThreadId ||
-              (event == 'candidate.ready' && !candidate.isReady) ||
-              (event == 'candidate.failed' &&
-                  candidate.status != AgentVoiceCandidateStatus.failed)) {
+          final draft = _decodeDraftObject(draftValue);
+          if (draft.threadId != expectedThreadId ||
+              (event == 'draft.ready' && !draft.isReady) ||
+              (event == 'draft.failed' &&
+                  draft.status != AgentVoiceDraftStatus.failed)) {
             throw const _InvalidVoiceResponse();
           }
-          return AgentVoiceCandidateCompleted(candidate);
+          return AgentVoiceDraftCompleted(draft);
         }
         _requireOnly(
           envelope,
@@ -1680,15 +1678,15 @@ Future<Uint8List> _readStreamBody(
   return builder.takeBytes();
 }
 
-AgentVoiceCandidate _decodeCandidateObject(Object? value) {
+AgentVoiceDraft _decodeDraftObject(Object? value) {
   final object = _strictObject(
     value,
     allowed: const <String>{
-      'candidate_id',
+      'draft_id',
       'thread_id',
       'status',
       'asr_attempt',
-      'candidate_version',
+      'draft_version',
       'recording',
       'transcript',
       'failure',
@@ -1697,31 +1695,25 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
       'confirmed_run_id',
       'message_audio_id',
       'confirmed_at',
-      'deleted_at',
       'created_at',
       'updated_at',
     },
     required: const <String>{
-      'candidate_id',
+      'draft_id',
       'thread_id',
       'status',
       'asr_attempt',
-      'candidate_version',
+      'draft_version',
       'recording',
-      'expires_at',
       'created_at',
       'updated_at',
     },
   );
   final status = switch (_strictString(object['status'], min: 1, max: 24)) {
-    'staged' => AgentVoiceCandidateStatus.staged,
-    'transcribing' => AgentVoiceCandidateStatus.transcribing,
-    'candidate_ready' => AgentVoiceCandidateStatus.candidateReady,
-    'failed' => AgentVoiceCandidateStatus.failed,
-    'confirming' => AgentVoiceCandidateStatus.confirming,
-    'confirmed' => AgentVoiceCandidateStatus.confirmed,
-    'deleting' => AgentVoiceCandidateStatus.deleting,
-    'deleted' => AgentVoiceCandidateStatus.deleted,
+    'transcribing' => AgentVoiceDraftStatus.transcribing,
+    'ready' => AgentVoiceDraftStatus.ready,
+    'failed' => AgentVoiceDraftStatus.failed,
+    'confirmed' => AgentVoiceDraftStatus.confirmed,
     _ => throw const _InvalidVoiceResponse(),
   };
   final recordingObject = _strictObject(
@@ -1763,7 +1755,7 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
   final transcript = transcriptObject == null
       ? null
       : AgentVoiceTranscript(
-          text: _strictContent(transcriptObject['candidate_text']),
+          text: _strictContent(transcriptObject['text']),
           requestId: _strictString(
             transcriptObject['request_id'],
             min: 1,
@@ -1791,7 +1783,7 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
     _requireOnly(
       transcriptObject,
       allowed: const <String>{
-        'candidate_text',
+        'text',
         'request_id',
         'provider',
         'model',
@@ -1799,18 +1791,13 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
         'emotion',
         'finish_reason',
       },
-      required: const <String>{
-        'candidate_text',
-        'request_id',
-        'provider',
-        'model',
-      },
+      required: const <String>{'text', 'request_id', 'provider', 'model'},
     );
   }
   final failureObject = _optionalObject(object, 'failure');
   final failure = failureObject == null
       ? null
-      : AgentVoiceCandidateFailure(
+      : AgentVoiceDraftFailure(
           kind: _strictPattern(failureObject['kind'], _failurePattern, 64),
           retryable: _strictBool(failureObject['retryable']),
         );
@@ -1823,13 +1810,13 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
   }
   final createdAt = _strictDateTime(object['created_at']);
   final updatedAt = _strictDateTime(object['updated_at']);
-  final expiresAt = _strictDateTime(object['expires_at']);
-  final candidate = AgentVoiceCandidate(
-    id: _strictUuid(object['candidate_id']),
+  final expiresAt = _optionalDateTime(object, 'expires_at');
+  final draft = AgentVoiceDraft(
+    id: _strictUuid(object['draft_id']),
     threadId: _strictUuid(object['thread_id']),
     status: status,
-    asrAttempt: _strictInt(object['asr_attempt'], min: 0),
-    version: _strictInt(object['candidate_version'], min: 0),
+    asrAttempt: _strictInt(object['asr_attempt'], min: 1),
+    version: _strictInt(object['draft_version'], min: 1),
     recording: recording,
     transcript: transcript,
     failure: failure,
@@ -1838,49 +1825,53 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
     confirmedRunId: _optionalUuid(object, 'confirmed_run_id'),
     messageAudioId: _optionalUuid(object, 'message_audio_id'),
     confirmedAt: _optionalDateTime(object, 'confirmed_at'),
-    deletedAt: _optionalDateTime(object, 'deleted_at'),
     createdAt: createdAt,
     updatedAt: updatedAt,
   );
   final confirmationFields = <Object?>[
-    candidate.confirmedMessageId,
-    candidate.confirmedRunId,
-    candidate.messageAudioId,
-    candidate.confirmedAt,
+    draft.confirmedMessageId,
+    draft.confirmedRunId,
+    draft.messageAudioId,
+    draft.confirmedAt,
   ];
-  final statusHasConfirmation =
-      status == AgentVoiceCandidateStatus.confirmed ||
-      status == AgentVoiceCandidateStatus.deleting ||
-      status == AgentVoiceCandidateStatus.deleted;
+  final statusHasConfirmation = status == AgentVoiceDraftStatus.confirmed;
   final hasAnyConfirmation = confirmationFields.any((field) => field != null);
   final hasAllConfirmation = confirmationFields.every((field) => field != null);
   if (updatedAt.isBefore(createdAt) ||
-      expiresAt.isBefore(createdAt) ||
-      (status == AgentVoiceCandidateStatus.candidateReady &&
-          (transcript == null || failure != null || candidate.version < 1)) ||
-      (status == AgentVoiceCandidateStatus.failed &&
+      (expiresAt != null && !expiresAt.isAfter(createdAt)) ||
+      draft.version != draft.asrAttempt ||
+      (draft.confirmedAt?.isBefore(createdAt) ?? false) ||
+      (status == AgentVoiceDraftStatus.confirmed && expiresAt != null) ||
+      (status != AgentVoiceDraftStatus.confirmed && expiresAt == null) ||
+      (status == AgentVoiceDraftStatus.ready &&
+          (transcript == null || failure != null || draft.version < 1)) ||
+      (status == AgentVoiceDraftStatus.transcribing &&
+          (transcript != null || failure != null)) ||
+      (status == AgentVoiceDraftStatus.failed &&
           (transcript != null || failure == null)) ||
+      (status == AgentVoiceDraftStatus.confirmed &&
+          (transcript == null || failure != null || draft.version < 1)) ||
       (hasAnyConfirmation && !hasAllConfirmation) ||
-      (status == AgentVoiceCandidateStatus.confirmed && !hasAllConfirmation) ||
+      (status == AgentVoiceDraftStatus.confirmed && !hasAllConfirmation) ||
       (!statusHasConfirmation && hasAnyConfirmation)) {
     throw const _InvalidVoiceResponse();
   }
-  return candidate;
+  return draft;
 }
 
 AgentVoiceConfirmation _decodeConfirmationObject(Object? value) {
   final object = _strictObject(
     value,
-    allowed: const <String>{'candidate', 'message', 'run'},
-    required: const <String>{'candidate', 'message', 'run'},
+    allowed: const <String>{'draft', 'message', 'run'},
+    required: const <String>{'draft', 'message', 'run'},
   );
-  final candidate = _decodeCandidateObject(object['candidate']);
+  final draft = _decodeDraftObject(object['draft']);
   final message = _decodeMessageObject(
     object['message'],
-    expectedThreadId: candidate.threadId,
+    expectedThreadId: draft.threadId,
   );
   return AgentVoiceConfirmation(
-    candidate: candidate,
+    draft: draft,
     message: message,
     run: _decodeRunObject(object['run']),
   );
@@ -2092,7 +2083,7 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
-      'handoffs',
+      'client_actions',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -2133,19 +2124,22 @@ AgentMessage _decodeMessageObject(
     'speech_feedback_status_url',
     max: 160,
   );
-  final handoffs = object['handoffs'] == null
-      ? const <AgentHandoff>[]
-      : decodeAgentHandoffs(object['handoffs']);
+  final clientActions = object['client_actions'] == null
+      ? const <AgentClientAction>[]
+      : decodeAgentClientActions(object['client_actions']);
   if ((role == AgentMessageRole.user &&
-          (clientId == null || producedBy != null || handoffs.isNotEmpty)) ||
+          (clientId == null ||
+              producedBy != null ||
+              clientActions.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
       (modality == AgentMessageModality.voice &&
-          (role != AgentMessageRole.user || audio == null)) ||
-      (modality == AgentMessageModality.text && audio != null) ||
+          role != AgentMessageRole.user) ||
+      (modality != AgentMessageModality.voice && audio != null) ||
       (speechFeedbackStatusUrl != null &&
           (role != AgentMessageRole.user ||
               modality != AgentMessageModality.voice ||
+              audio == null ||
               !validAgentSpeechFeedbackStatusUrl(speechFeedbackStatusUrl)))) {
     throw const _InvalidVoiceResponse();
   }
@@ -2157,7 +2151,7 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
-    handoffs: handoffs,
+    clientActions: clientActions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -2172,7 +2166,6 @@ AgentMessageAudio _decodeMessageAudio(Map<String, Object?> object) {
       'size_bytes',
       'duration_ms',
       'playback_path',
-      'deleted_at',
     },
     required: const <String>{
       'audio_id',
@@ -2180,44 +2173,34 @@ AgentMessageAudio _decodeMessageAudio(Map<String, Object?> object) {
       'content_type',
       'size_bytes',
       'duration_ms',
+      'playback_path',
     },
   );
   if (_strictString(object['content_type'], min: 1, max: 32) != 'audio/wav') {
     throw const _InvalidVoiceResponse();
   }
   final id = _strictUuid(object['audio_id']);
-  final status = switch (_strictString(object['status'], min: 1, max: 16)) {
-    'readable' => AgentMessageAudioStatus.readable,
-    'deleting' => AgentMessageAudioStatus.deleting,
-    'deleted' => AgentMessageAudioStatus.deleted,
-    _ => throw const _InvalidVoiceResponse(),
-  };
+  if (_strictString(object['status'], min: 1, max: 16) != 'readable') {
+    throw const _InvalidVoiceResponse();
+  }
   final playback = _optionalPattern(
     object,
     'playback_path',
     _playbackPathPattern,
     256,
   );
-  final deletedAt = _optionalDateTime(object, 'deleted_at');
-  if ((status == AgentMessageAudioStatus.readable &&
-          (playback == null || deletedAt != null)) ||
-      (status == AgentMessageAudioStatus.deleting && playback != null) ||
-      (status == AgentMessageAudioStatus.deleted &&
-          (playback != null || deletedAt == null)) ||
-      (playback != null &&
-          playback != '/v1/agent-message-audios/$id/playback')) {
+  if (playback != '/v1/agent-message-audios/$id/playback') {
     throw const _InvalidVoiceResponse();
   }
   return AgentMessageAudio(
     id: id,
-    status: status,
+    status: AgentMessageAudioStatus.readable,
     contentType: 'audio/wav',
     sizeBytes: _strictInt(object['size_bytes'], min: 1, max: 7400000),
     duration: Duration(
       milliseconds: _strictInt(object['duration_ms'], min: 1, max: 60000),
     ),
     playbackPath: playback,
-    deletedAt: deletedAt,
   );
 }
 

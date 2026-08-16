@@ -496,9 +496,10 @@ func validCallContext() CallContext {
 			UserID:    "user-1",
 			SessionID: "session-1",
 		},
-		ThreadID:   "thread-1",
-		RunID:      "run-1",
-		ToolCallID: "tool-call-1",
-		RequestID:  "request-1",
+		ThreadID:       "thread-1",
+		RunID:          "run-1",
+		InputMessageID: "message-1",
+		ToolCallID:     "tool-call-1",
+		RequestID:      "request-1",
 	}
 }

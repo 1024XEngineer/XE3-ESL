@@ -64,8 +64,7 @@ func TestProfileServiceUsesTrustedActorAndNormalizedPayload(t *testing.T) {
 		context.Background(),
 		actor,
 		UpdateProfileCommand{
-			DisplayName:    " Cafe\u0301 ",
-			IdempotencyKey: "profile-request-0001",
+			DisplayName: " Cafe\u0301 ",
 		},
 	)
 	if err != nil {
@@ -73,8 +72,7 @@ func TestProfileServiceUsesTrustedActorAndNormalizedPayload(t *testing.T) {
 	}
 	if profile.UserID != actor.UserID ||
 		persisted.UserID != actor.UserID ||
-		persisted.DisplayName != "Café" ||
-		len(persisted.RequestDigest) != 32 {
+		persisted.DisplayName != "Café" {
 		t.Fatalf("persisted/profile = %#v / %#v", persisted, profile)
 	}
 }

@@ -12,13 +12,9 @@ abstract interface class AgentClient {
 
   Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor});
 
-  Future<AgentThreadSnapshot?> getFocusedThread();
+  Future<AgentThreadSnapshot> getThread({required String threadId});
 
   Future<AgentThreadSummary> createThread();
-
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId});
-
-  Future<void> clearFocusedThread();
 
   Future<void> deleteThread({required String threadId});
 
@@ -163,7 +159,6 @@ final class FakeAgentClient implements AgentClient {
   int _threadSequence = 0;
   int _accountGeneration = 0;
   bool _seededPreviewThread = false;
-  String? _focusedThreadId;
   final Map<String, AgentThreadSummary> _threads = {};
   final Map<String, List<AgentMessage>> _threadMessages = {};
   final Map<String, AgentExchange> _textExchanges = {};
@@ -176,7 +171,6 @@ final class FakeAgentClient implements AgentClient {
     _messageSequence = 0;
     _threadSequence = 0;
     _seededPreviewThread = false;
-    _focusedThreadId = null;
     _threads.clear();
     _threadMessages.clear();
     _textExchanges.clear();
@@ -210,20 +204,24 @@ final class FakeAgentClient implements AgentClient {
         threads: List<AgentThreadSummary>.unmodifiable(
           values.sublist(offset, end),
         ),
-        focusedThreadId: _focusedThreadId,
         nextCursor: end < values.length ? 'threads:$end' : null,
       );
     });
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() {
+  Future<AgentThreadSnapshot> getThread({required String threadId}) {
     return _runAccountOperation((generation) async {
       await _wait(generation);
       _requireCurrentGeneration(generation);
       _seedPreviewThread(generation);
-      final threadId = _focusedThreadId;
-      return threadId == null ? null : _snapshotFor(threadId);
+      if (!_threads.containsKey(threadId)) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.notFound,
+          errorCode: 'resource_not_found',
+        );
+      }
+      return _snapshotFor(threadId);
     });
   }
 
@@ -246,31 +244,6 @@ final class FakeAgentClient implements AgentClient {
   }
 
   @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
-    return _runAccountOperation((generation) async {
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      if (!_threads.containsKey(threadId)) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.notFound,
-          errorCode: 'resource_not_found',
-        );
-      }
-      _focusedThreadId = threadId;
-      return _snapshotFor(threadId);
-    });
-  }
-
-  @override
-  Future<void> clearFocusedThread() {
-    return _runAccountOperation((generation) async {
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      _focusedThreadId = null;
-    });
-  }
-
-  @override
   Future<void> deleteThread({required String threadId}) {
     return _runAccountOperation((generation) async {
       await _wait(generation);
@@ -283,9 +256,6 @@ final class FakeAgentClient implements AgentClient {
       }
       _threads.remove(threadId);
       _threadMessages.remove(threadId);
-      if (_focusedThreadId == threadId) {
-        _focusedThreadId = null;
-      }
     });
   }
 
@@ -358,12 +328,11 @@ final class FakeAgentClient implements AgentClient {
           for (final id in imageAssetIds)
             AgentImageAsset(
               id: id,
-              threadId: threadId,
               contentType: 'image/png',
               sizeBytes: 1,
               width: 1,
               height: 1,
-              status: AgentImageAssetStatus.attached,
+              status: AgentImageAssetStatus.ready,
               createdAt: now,
               attachedAt: now,
             ),
@@ -408,7 +377,6 @@ final class FakeAgentClient implements AgentClient {
     );
     _threads[thread.id] = thread;
     _threadMessages[thread.id] = <AgentMessage>[];
-    _focusedThreadId = thread.id;
   }
 
   AgentThreadSnapshot _snapshotFor(String threadId) {
@@ -416,7 +384,6 @@ final class FakeAgentClient implements AgentClient {
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      activeGoalId: thread.activeGoalId,
       messages: List<AgentMessage>.unmodifiable(
         _threadMessages[threadId] ?? const <AgentMessage>[],
       ),
@@ -441,7 +408,6 @@ final class FakeAgentClient implements AgentClient {
     _threads[threadId] = AgentThreadSummary(
       id: thread.id,
       title: thread.title,
-      activeGoalId: thread.activeGoalId,
       createdAt: thread.createdAt,
       updatedAt: now.isBefore(thread.updatedAt) ? thread.updatedAt : now,
     );

@@ -75,7 +75,6 @@ func (*Resolver) ResolveSessionPolicy(
 		RetryAllowed:               policy.RetryAllowed,
 		QuestionTranslationAllowed: policy.QuestionTranslationAllowed,
 		QuestionTipsAllowed:        policy.QuestionTipsAllowed,
-		AvatarAllowed:              policy.AvatarAllowed,
 		SpeechFeedbackAllowed:      policy.SpeechFeedbackAllowed,
 	}, nil
 }

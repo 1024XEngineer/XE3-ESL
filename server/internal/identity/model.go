@@ -11,9 +11,7 @@ type AccountStatus string
 
 const (
 	AccountActive   AccountStatus = "active"
-	AccountDisabled AccountStatus = "disabled"
 	AccountDeleting AccountStatus = "deleting"
-	AccountDeleted  AccountStatus = "deleted"
 )
 
 type User struct {
@@ -35,15 +33,12 @@ type UserProfile struct {
 type UpdateProfileCommand struct {
 	DisplayName            string
 	ExpectedProfileVersion *int64
-	IdempotencyKey         string
 }
 
 type PersistProfileCommand struct {
 	UserID                 string
 	DisplayName            string
 	ExpectedProfileVersion *int64
-	IdempotencyKey         string
-	RequestDigest          []byte
 }
 
 type Credential struct {
@@ -86,7 +81,7 @@ type Repository interface {
 		ctx context.Context,
 		canonicalEmail string,
 		passwordHash string,
-		displayName ...*string,
+		displayName *string,
 	) (User, error)
 	FindCredentialByEmail(ctx context.Context, canonicalEmail string) (Credential, error)
 	CreateSession(ctx context.Context, params CreateSessionParams) (Session, error)
@@ -137,7 +132,7 @@ type Application interface {
 		ctx context.Context,
 		email string,
 		password string,
-		displayName ...*string,
+		displayName *string,
 	) (User, error)
 	Login(ctx context.Context, email, password string) (LoginResult, error)
 	Logout(ctx context.Context, actor requestcontext.Actor) error

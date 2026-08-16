@@ -6,1255 +6,326 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 )
 
-func (r *Repository) ReplaySession(
-	ctx context.Context,
-	actor practice.Actor,
-	intent practice.IdempotencyIntent,
-) (practice.SessionBootstrap, bool, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validContextIntent(intent) {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrInvalidArgument
-	}
-	record, found, err := loadContextIdempotency(
-		ctx,
-		r.pool,
-		actor.UserID,
-		intent,
-		true,
-	)
-	if err != nil || !found {
-		return practice.SessionBootstrap{}, false, err
-	}
-	if record.ResourceKind != "session" {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrIdempotencyConflict
-	}
-	bootstrap, err := r.readStoredContextBootstrap(
-		ctx,
-		actor,
-		record.ResourceID,
-	)
-	if err != nil {
-		return practice.SessionBootstrap{}, false, err
-	}
-	return bootstrap, true, nil
-}
+const sessionColumns = `session_id, plan_id, plan_version, practice_experience,
+scene_category, practice_mode, evaluation_policy_ref, status, version,
+effective_turns, started_at, ended_at, COALESCE(end_reason,''), created_at`
 
-func (r *Repository) CreateSession(
-	ctx context.Context,
-	actor practice.Actor,
-	command practice.CreateSessionCommand,
-) (practice.SessionBootstrap, bool, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validCreateSessionCommand(actor, command) {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrInvalidArgument
+func (r *Repository) CreateSession(ctx context.Context, actor practice.Actor, command practice.CreateSessionCommand) (practice.SessionBootstrap, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validCreateSessionCommand(command) {
+		return practice.SessionBootstrap{}, false, practice.ErrInvalidArgument
 	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	planSnapshot := command.Snapshot
+	participants := planSnapshot.Participants
+	planSnapshot.Participants = nil
+	planJSON, err := json.Marshal(planSnapshot)
 	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			fmt.Errorf("begin create Practice Session: %w", err)
+		return practice.SessionBootstrap{}, false, practice.ErrInvalidArgument
+	}
+	participantsJSON, err := json.Marshal(participants)
+	if err != nil {
+		return practice.SessionBootstrap{}, false, practice.ErrInvalidArgument
+	}
+	evaluationPolicy := selectedEvaluationPolicyRef(command.Snapshot)
+	if evaluationPolicy == "" {
+		return practice.SessionBootstrap{}, false, practice.ErrInvalidArgument
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return practice.SessionBootstrap{}, false, fmt.Errorf("begin practice session creation: %w", err)
 	}
 	defer rollback(ctx, tx)
 	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
 		return practice.SessionBootstrap{}, false, err
 	}
-	if err := lockContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-	); err != nil {
-		return practice.SessionBootstrap{}, false, err
-	}
-	record, found, err := loadContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-		false,
-	)
+	tag, err := tx.Exec(ctx, `INSERT INTO practice_sessions (
+user_id,session_id,plan_id,plan_version,practice_experience,scene_category,
+practice_mode,evaluation_policy_ref,status,version,effective_turns,plan_snapshot,
+participants,initial_client_request_id,initial_request_fingerprint)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'starting',1,0,$9,$10,$11,$12)
+ON CONFLICT (user_id, initial_client_request_id) DO NOTHING`, actor.UserID,
+		command.SessionID, command.PlanID, command.PlanVersion,
+		string(command.Snapshot.Experience), string(command.Snapshot.Category),
+		string(command.Snapshot.PracticeMode), evaluationPolicy, planJSON,
+		participantsJSON, command.ClientRequestID, command.RequestFingerprint[:])
 	if err != nil {
-		return practice.SessionBootstrap{}, false, err
+		return practice.SessionBootstrap{}, false, classifyWriteError("create practice session", err)
 	}
-	if found {
-		if record.ResourceKind != "session" {
-			return practice.SessionBootstrap{}, false,
-				practice.ErrIdempotencyConflict
-		}
-		bootstrap, err := readContextBootstrapWithQuery(
-			ctx,
-			tx,
-			actor.UserID,
-			record.ResourceID,
-			false,
-		)
+	id := command.SessionID
+	replayed := tag.RowsAffected() == 0
+	if replayed {
+		var storedPlanID string
+		var storedPlanVersion int
+		var storedFingerprint []byte
+		err := tx.QueryRow(ctx, `SELECT session_id,plan_id,plan_version,initial_request_fingerprint FROM practice_sessions WHERE user_id=$1 AND initial_client_request_id=$2`, actor.UserID, command.ClientRequestID).Scan(&id, &storedPlanID, &storedPlanVersion, &storedFingerprint)
 		if err != nil {
 			return practice.SessionBootstrap{}, false, err
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return practice.SessionBootstrap{}, false,
-				fmt.Errorf("commit replayed Practice Session: %w", err)
+		if !bytes.Equal(storedFingerprint, command.RequestFingerprint[:]) ||
+			storedPlanID != command.PlanID ||
+			storedPlanVersion != command.PlanVersion {
+			return practice.SessionBootstrap{}, false, practice.ErrIdempotencyConflict
 		}
-		return bootstrap, true, nil
 	}
-
-	snapshot := command.Snapshot
-	option, err := snapshot.SceneSelection.PracticeOption()
+	value, err := readBootstrap(ctx, tx, actor.UserID, id)
 	if err != nil {
-		return practice.SessionBootstrap{}, false, practice.ErrConflict
-	}
-	var createdAt pgtype.Timestamptz
-	err = tx.QueryRow(ctx, `
-		INSERT INTO practice_sessions (
-			owner_user_id, session_id, plan_id, plan_revision,
-			status, version, effective_turns, snapshot_id,
-			practice_experience, scene_category, practice_mode,
-			evaluation_policy_ref
-		) VALUES (
-			$1, $2, $3, $4, 'starting', 1, 0, $5, $6, $7, $8, $9
-		)
-		RETURNING created_at
-	`,
-		actor.UserID,
-		command.SessionID,
-		command.PlanID,
-		command.PlanRevision,
-		command.SnapshotID,
-		snapshot.Experience,
-		snapshot.Category,
-		snapshot.PracticeMode,
-		option.EvaluationPolicyRef,
-	).Scan(&createdAt)
-	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			classifyContextWriteError("insert Practice Session", err)
-	}
-	if !createdAt.Valid {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrConflict
-	}
-	snapshot.CreatedAt = createdAt.Time.UTC()
-	document, err := json.Marshal(snapshot)
-	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrInvalidArgument
-	}
-	targetIDs, err := json.Marshal([]string{command.PlanID})
-	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrInvalidArgument
-	}
-	participants, err := json.Marshal(snapshot.Participants)
-	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrInvalidArgument
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO practice_session_snapshots (
-			owner_user_id, session_id, practice_mode, target_ids,
-			participants, turn_limit, snapshot_id, snapshot_document
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`,
-		actor.UserID,
-		command.SessionID,
-		snapshot.PracticeMode,
-		targetIDs,
-		participants,
-		snapshot.SessionPolicy.MaxEffectiveTurns,
-		command.SnapshotID,
-		document,
-	)
-	if err != nil {
-		return practice.SessionBootstrap{}, false,
-			classifyContextWriteError("insert Practice Session snapshot", err)
-	}
-	bootstrap := practice.SessionBootstrap{
-		Session: practice.Session{
-			ID:                  command.SessionID,
-			PlanID:              command.PlanID,
-			PlanRevision:        command.PlanRevision,
-			Experience:          snapshot.Experience,
-			Category:            snapshot.Category,
-			PracticeMode:        snapshot.PracticeMode,
-			EvaluationPolicyRef: option.EvaluationPolicyRef,
-			SnapshotID:          command.SnapshotID,
-			Status:              practice.SessionStarting,
-			Version:             1,
-			CreatedAt:           createdAt.Time.UTC(),
-		},
-		Snapshot: snapshot,
-	}
-	if !validStoredContextBootstrap(bootstrap) {
-		return practice.SessionBootstrap{}, false,
-			practice.ErrConflict
-	}
-	if err := saveContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-		"session",
-		command.SessionID,
-		201,
-		bootstrap,
-	); err != nil {
 		return practice.SessionBootstrap{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return practice.SessionBootstrap{}, false,
-			fmt.Errorf("commit created Practice Session: %w", err)
+		return practice.SessionBootstrap{}, false, err
 	}
-	return bootstrap, false, nil
+	return value, replayed, nil
 }
 
-func (r *Repository) GetSession(
-	ctx context.Context,
-	actor practice.Actor,
-	sessionID string,
-) (practice.Session, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validContextResourceID(sessionID) {
-		return practice.Session{}, practice.ErrInvalidArgument
+func (r *Repository) GetSession(ctx context.Context, actor practice.Actor, id string) (practice.Session, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validResourceID(id) {
+		return practice.Session{}, practice.ErrNotFound
 	}
-	return scanSession(r.pool.QueryRow(ctx, contextSessionSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-	`, actor.UserID, sessionID))
+	value, err := readBootstrap(ctx, r.pool, actor.UserID, id)
+	return value.Session, err
 }
 
-func (r *Repository) GetSessionSnapshot(
-	ctx context.Context,
-	actor practice.Actor,
-	sessionID string,
-) (practice.SessionSnapshot, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validContextResourceID(sessionID) {
-		return practice.SessionSnapshot{},
-			practice.ErrInvalidArgument
-	}
-	bootstrap, err := r.readStoredContextBootstrap(ctx, actor, sessionID)
-	if err != nil {
-		return practice.SessionSnapshot{}, err
-	}
-	return bootstrap.Snapshot, nil
-}
-
-func (r *Repository) GetCompletedSession(
-	ctx context.Context,
-	ownerUserID string,
-	sessionID string,
-) (practice.Session, error) {
-	if r == nil || r.pool == nil || ctx == nil ||
-		!validUserID(ownerUserID) || !validContextResourceID(sessionID) {
-		return practice.Session{}, practice.ErrInvalidArgument
-	}
-	return scanSession(r.pool.QueryRow(ctx, contextSessionSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		  AND session.status = 'completed'
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-	`, ownerUserID, sessionID))
-}
-
-func (r *Repository) GetCompletedSessionSnapshot(
-	ctx context.Context,
-	ownerUserID string,
-	sessionID string,
-) (practice.SessionSnapshot, error) {
-	if r == nil || r.pool == nil || ctx == nil ||
-		!validUserID(ownerUserID) || !validContextResourceID(sessionID) {
-		return practice.SessionSnapshot{}, practice.ErrInvalidArgument
-	}
-	bootstrap, err := readContextBootstrapWithQuery(
-		ctx,
-		r.pool,
-		ownerUserID,
-		sessionID,
-		false,
-	)
-	if err != nil {
-		return practice.SessionSnapshot{}, err
-	}
-	if bootstrap.Session.Status != practice.SessionCompleted {
+func (r *Repository) GetSessionSnapshot(ctx context.Context, actor practice.Actor, id string) (practice.SessionSnapshot, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validResourceID(id) {
 		return practice.SessionSnapshot{}, practice.ErrNotFound
 	}
-	return bootstrap.Snapshot, nil
+	value, err := readBootstrap(ctx, r.pool, actor.UserID, id)
+	return value.Snapshot, err
 }
 
-func (r *Repository) ResolveSessionByPlan(
-	ctx context.Context,
-	actor practice.Actor,
-	planID string,
-) (practice.SessionBootstrap, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validContextResourceID(planID) {
-		return practice.SessionBootstrap{},
-			practice.ErrInvalidArgument
+func (r *Repository) ActivateSession(ctx context.Context, actor practice.Actor, sessionID, clientRequestID string, fingerprint [32]byte) (practice.SessionBootstrap, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validResourceID(sessionID) || !validClientRequestID(clientRequestID) {
+		return practice.SessionBootstrap{}, practice.ErrInvalidArgument
 	}
-	rows, err := r.pool.Query(ctx, contextBootstrapSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.plan_id = $2
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-		ORDER BY
-			CASE session.status
-				WHEN 'starting' THEN 0
-				WHEN 'in_progress' THEN 0
-				WHEN 'paused' THEN 0
-				ELSE 1
-			END,
-			session.updated_at DESC,
-			session.session_id
-	`, actor.UserID, planID)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("resolve Practice Session by Plan: %w", err)
+		return practice.SessionBootstrap{}, err
 	}
-	defer rows.Close()
-	values := make([]practice.SessionBootstrap, 0, 2)
-	for rows.Next() {
-		value, err := scanContextBootstrap(rows)
+	defer rollback(ctx, tx)
+	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
+		return practice.SessionBootstrap{}, err
+	}
+	var status practice.SessionStatus
+	var lastID string
+	var stored []byte
+	err = tx.QueryRow(ctx, `SELECT status,COALESCE(last_client_request_id,''),COALESCE(last_request_fingerprint,'') FROM practice_sessions WHERE user_id=$1 AND session_id=$2 FOR UPDATE`, actor.UserID, sessionID).Scan(&status, &lastID, &stored)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return practice.SessionBootstrap{}, practice.ErrNotFound
+	}
+	if err != nil {
+		return practice.SessionBootstrap{}, err
+	}
+	if lastID == clientRequestID {
+		if !bytes.Equal(stored, fingerprint[:]) {
+			return practice.SessionBootstrap{}, practice.ErrIdempotencyConflict
+		}
+		value, err := readBootstrap(ctx, tx, actor.UserID, sessionID)
 		if err != nil {
 			return practice.SessionBootstrap{}, err
 		}
-		values = append(values, value)
+		if err := tx.Commit(ctx); err != nil {
+			return practice.SessionBootstrap{}, err
+		}
+		return value, nil
+	}
+	if status == practice.SessionStarting {
+		_, err = tx.Exec(ctx, `UPDATE practice_sessions SET status='in_progress',version=version+1,started_at=transaction_timestamp(),last_client_request_id=$3,last_request_fingerprint=$4,updated_at=transaction_timestamp() WHERE user_id=$1 AND session_id=$2`, actor.UserID, sessionID, clientRequestID, fingerprint[:])
+		if err != nil {
+			return practice.SessionBootstrap{}, classifyWriteError("activate practice session", err)
+		}
+	} else if status != practice.SessionInProgress {
+		return practice.SessionBootstrap{}, practice.ErrConflict
+	}
+	value, err := readBootstrap(ctx, tx, actor.UserID, sessionID)
+	if err != nil {
+		return practice.SessionBootstrap{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return practice.SessionBootstrap{}, err
+	}
+	return value, nil
+}
+
+func (r *Repository) TransitionSession(ctx context.Context, actor practice.Actor, command practice.TransitionSessionCommand) (practice.Session, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validTransitionCommand(command) {
+		return practice.Session{}, false, practice.ErrInvalidArgument
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return practice.Session{}, false, err
+	}
+	defer rollback(ctx, tx)
+	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
+		return practice.Session{}, false, err
+	}
+	var current practice.SessionStatus
+	var version, effectiveTurns int
+	var lastID string
+	var stored, snapshotJSON []byte
+	err = tx.QueryRow(ctx, `SELECT status,version,effective_turns,COALESCE(last_client_request_id,''),COALESCE(last_request_fingerprint,''),plan_snapshot FROM practice_sessions WHERE user_id=$1 AND session_id=$2 FOR UPDATE`, actor.UserID, command.SessionID).Scan(&current, &version, &effectiveTurns, &lastID, &stored, &snapshotJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return practice.Session{}, false, practice.ErrNotFound
+	}
+	if err != nil {
+		return practice.Session{}, false, err
+	}
+	if lastID == command.ClientRequestID {
+		if !bytes.Equal(stored, command.RequestFingerprint[:]) {
+			return practice.Session{}, false, practice.ErrIdempotencyConflict
+		}
+		value, err := readBootstrap(ctx, tx, actor.UserID, command.SessionID)
+		if err != nil {
+			return practice.Session{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return practice.Session{}, false, err
+		}
+		return value.Session, true, nil
+	}
+	if version != command.ExpectedSessionVersion {
+		return practice.Session{}, false, practice.ErrConflict
+	}
+	var snapshot practice.SessionSnapshot
+	if decodeStrictJSON(snapshotJSON, &snapshot) != nil {
+		return practice.Session{}, false, practice.ErrConflict
+	}
+	next, endReason, err := transitionStatus(current, command.Transition, effectiveTurns, snapshot.SessionPolicy.MinEffectiveTurns)
+	if err != nil {
+		return practice.Session{}, false, err
+	}
+	endExpression := "ended_at"
+	startExpression := "started_at"
+	if next == practice.SessionCompleted || next == practice.SessionEndedEarly {
+		endExpression = "transaction_timestamp()"
+		startExpression = "COALESCE(started_at, transaction_timestamp())"
+	}
+	_, err = tx.Exec(ctx, `UPDATE practice_sessions SET status=$3,version=version+1,started_at=`+startExpression+`,ended_at=`+endExpression+`,end_reason=NULLIF($4,''),last_client_request_id=$5,last_request_fingerprint=$6,updated_at=transaction_timestamp() WHERE user_id=$1 AND session_id=$2`, actor.UserID, command.SessionID, string(next), endReason, command.ClientRequestID, command.RequestFingerprint[:])
+	if err != nil {
+		return practice.Session{}, false, classifyWriteError("transition practice session", err)
+	}
+	if next == practice.SessionCompleted {
+		evidence, err := r.ReadSessionEvidence(ctx, tx, actor.UserID, command.SessionID)
+		if err != nil {
+			return practice.Session{}, false, err
+		}
+		if err := r.completion.ScheduleCompletedSession(ctx, tx, evidence); err != nil {
+			return practice.Session{}, false, err
+		}
+	}
+	value, err := readBootstrap(ctx, tx, actor.UserID, command.SessionID)
+	if err != nil {
+		return practice.Session{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return practice.Session{}, false, err
+	}
+	return value.Session, false, nil
+}
+
+func (r *Repository) ReadSessionEvidence(ctx context.Context, tx pgx.Tx, ownerID, sessionID string) (practice.SessionEvidence, error) {
+	if r == nil || tx == nil || ctx == nil || !validUserID(ownerID) || !validResourceID(sessionID) {
+		return practice.SessionEvidence{}, practice.ErrInvalidArgument
+	}
+	var value practice.SessionEvidence
+	var participants []byte
+	var completedAt *time.Time
+	err := tx.QueryRow(ctx, `SELECT user_id::text,session_id,version,ended_at,evaluation_policy_ref,practice_experience,scene_category,practice_mode,plan_snapshot,participants FROM practice_sessions WHERE user_id=$1 AND session_id=$2 AND status='completed'`, ownerID, sessionID).Scan(&value.UserID, &value.SessionID, &value.Version, &completedAt, &value.EvaluationPolicyRef, &value.PracticeExperience, &value.SceneCategory, &value.PracticeMode, &value.PlanSnapshot, &participants)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return practice.SessionEvidence{}, practice.ErrNotFound
+	}
+	if err != nil || completedAt == nil {
+		return practice.SessionEvidence{}, practice.ErrConflict
+	}
+	value.CompletedAt = completedAt.UTC()
+	value.Participants = append(json.RawMessage(nil), participants...)
+	rows, err := tx.Query(ctx, `SELECT q.question_id,q.sequence,COALESCE(q.parent_question_id::text,''),q.content,q.speaker_participant_id,q.addressee_participant_ids FROM practice_questions q JOIN practice_sessions s ON s.session_id=q.session_id WHERE s.user_id=$1 AND q.session_id=$2 ORDER BY q.sequence,q.question_id`, ownerID, sessionID)
+	if err != nil {
+		return practice.SessionEvidence{}, err
+	}
+	for rows.Next() {
+		var q practice.EvidenceQuestion
+		if err := rows.Scan(&q.ID, &q.Position, &q.ParentQuestionID, &q.Text, &q.SpeakerParticipantID, &q.AddresseeParticipantIDs); err != nil {
+			rows.Close()
+			return practice.SessionEvidence{}, err
+		}
+		value.Questions = append(value.Questions, q)
 	}
 	if err := rows.Err(); err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("resolve Practice Session rows: %w", err)
+		rows.Close()
+		return practice.SessionEvidence{}, err
 	}
-	if len(values) == 0 {
-		return practice.SessionBootstrap{}, practice.ErrNotFound
+	rows.Close()
+	turnRows, err := tx.Query(ctx, `SELECT t.turn_id,t.sequence,t.question_id,t.respondent_participant_id,t.transcript,(t.turn_kind='EFFECTIVE'),t.confirmed_at,COALESCE(t.audio_asset_id::text,'') FROM practice_turns t JOIN practice_sessions s ON s.session_id=t.session_id WHERE s.user_id=$1 AND t.session_id=$2 AND t.status='confirmed' ORDER BY t.sequence,t.turn_id`, ownerID, sessionID)
+	if err != nil {
+		return practice.SessionEvidence{}, err
 	}
-	if isEffectiveSessionStatus(values[0].Session.Status) {
-		return values[0], nil
+	defer turnRows.Close()
+	for turnRows.Next() {
+		var turn practice.EvidenceTurn
+		if err := turnRows.Scan(&turn.ID, &turn.Position, &turn.QuestionID, &turn.RespondentParticipantID, &turn.Transcript, &turn.Effective, &turn.ConfirmedAt, &turn.AudioAssetID); err != nil {
+			return practice.SessionEvidence{}, err
+		}
+		value.Turns = append(value.Turns, turn)
 	}
-	if len(values) != 1 {
-		return practice.SessionBootstrap{}, practice.ErrConflict
+	if err := turnRows.Err(); err != nil {
+		return practice.SessionEvidence{}, err
 	}
-	return values[0], nil
+	return value, nil
 }
 
-func (r *Repository) ReplayVoiceStart(
-	ctx context.Context,
-	actor practice.Actor,
-	intent practice.IdempotencyIntent,
-) (practice.SessionBootstrap, bool, error) {
-	return r.ReplaySession(ctx, actor, intent)
-}
-
-func (r *Repository) ActivateSession(
-	ctx context.Context,
-	actor practice.Actor,
-	sessionID string,
-	planID string,
-	intent practice.IdempotencyIntent,
-) (practice.SessionBootstrap, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validContextResourceID(sessionID) ||
-		!validContextResourceID(planID) || !validContextIntent(intent) {
-		return practice.SessionBootstrap{},
-			practice.ErrInvalidArgument
-	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("begin activate Practice Session: %w", err)
-	}
-	defer rollback(ctx, tx)
-	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
-		return practice.SessionBootstrap{}, err
-	}
-	if err := lockContextIdempotency(ctx, tx, actor.UserID, intent); err != nil {
-		return practice.SessionBootstrap{}, err
-	}
-	record, found, err := loadContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		intent,
-		false,
-	)
-	if err != nil {
-		return practice.SessionBootstrap{}, err
-	}
-	if found {
-		if record.ResourceKind != "session" {
-			return practice.SessionBootstrap{},
-				practice.ErrIdempotencyConflict
-		}
-		bootstrap, err := readContextBootstrapWithQuery(
-			ctx,
-			tx,
-			actor.UserID,
-			record.ResourceID,
-			false,
-		)
-		if err != nil {
-			return practice.SessionBootstrap{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return practice.SessionBootstrap{},
-				fmt.Errorf("commit replayed Practice activation: %w", err)
-		}
-		return bootstrap, nil
-	}
-	bootstrap, err := readContextBootstrapWithQuery(
-		ctx,
-		tx,
-		actor.UserID,
-		sessionID,
-		true,
-	)
-	if err != nil {
-		return practice.SessionBootstrap{}, err
-	}
-	if bootstrap.Session.PlanID != planID {
-		return practice.SessionBootstrap{}, practice.ErrNotFound
-	}
-	switch bootstrap.Session.Status {
-	case practice.SessionStarting:
-		tag, err := tx.Exec(ctx, `
-			UPDATE practice_sessions
-			SET status = 'in_progress',
-			    version = version + 1,
-			    started_at = transaction_timestamp(),
-			    updated_at = transaction_timestamp()
-			WHERE owner_user_id = $1
-			  AND session_id = $2
-			  AND plan_id = $3
-			  AND status = 'starting'
-			  AND version = $4
-		`, actor.UserID, sessionID, planID, bootstrap.Session.Version)
-		if err != nil {
-			return practice.SessionBootstrap{},
-				classifyContextWriteError("activate Practice Session", err)
-		}
-		if tag.RowsAffected() != 1 {
-			return practice.SessionBootstrap{}, practice.ErrConflict
-		}
-		bootstrap, err = readContextBootstrapWithQuery(
-			ctx,
-			tx,
-			actor.UserID,
-			sessionID,
-			false,
-		)
-		if err != nil {
-			return practice.SessionBootstrap{}, err
-		}
-	case practice.SessionInProgress:
-	case practice.SessionPaused:
-		return practice.SessionBootstrap{}, practice.ErrConflict
-	default:
-		return practice.SessionBootstrap{}, practice.ErrConflict
-	}
-	if err := saveContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		intent,
-		"session",
-		bootstrap.Session.ID,
-		201,
-		bootstrap,
-	); err != nil {
-		return practice.SessionBootstrap{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("commit activated Practice Session: %w", err)
-	}
-	return bootstrap, nil
-}
-
-func (r *Repository) TransitionSession(
-	ctx context.Context,
-	actor practice.Actor,
-	command practice.TransitionSessionCommand,
-) (practice.Session, bool, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		!validTransitionCommand(command) {
-		return practice.Session{}, false,
-			practice.ErrInvalidArgument
-	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return practice.Session{}, false,
-			fmt.Errorf("begin Practice Session transition: %w", err)
-	}
-	defer rollback(ctx, tx)
-	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
-		return practice.Session{}, false, err
-	}
-	if err := lockContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-	); err != nil {
-		return practice.Session{}, false, err
-	}
-	record, found, err := loadContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-		false,
-	)
-	if err != nil {
-		return practice.Session{}, false, err
-	}
-	resourceKind := string(command.Transition)
-	if found {
-		if record.ResourceKind != resourceKind {
-			return practice.Session{}, false,
-				practice.ErrIdempotencyConflict
-		}
-		var session practice.Session
-		if err := json.Unmarshal(record.ResponseBody, &session); err != nil ||
-			session.ID != record.ResourceID || !validStoredSession(session) {
-			return practice.Session{}, false,
-				practice.ErrConflict
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return practice.Session{}, false,
-				fmt.Errorf("commit replayed Practice transition: %w", err)
-		}
-		return session, true, nil
-	}
-	session, err := scanSession(tx.QueryRow(ctx, contextSessionSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-		FOR UPDATE OF session
-	`, actor.UserID, command.SessionID))
-	if err != nil {
-		return practice.Session{}, false, err
-	}
-	if session.Version != command.ExpectedSessionVersion {
-		return practice.Session{}, false, practice.ErrConflict
-	}
-	if command.Transition == practice.SessionComplete {
-		if session.EffectiveTurns < 1 {
-			return practice.Session{}, false, practice.ErrConflict
-		}
-		var snapshotDocument []byte
-		if err := tx.QueryRow(ctx, `
-			SELECT snapshot_document
-			FROM practice_session_snapshots
-			WHERE owner_user_id = $1 AND session_id = $2
-		`, actor.UserID, command.SessionID).Scan(&snapshotDocument); err != nil {
-			return practice.Session{}, false, classifyContextWriteError(
-				"read completion policy", err,
-			)
-		}
-		snapshot, err := decodeContextSnapshot(snapshotDocument)
-		if err != nil || snapshot.SessionPolicy.CompletionMode !=
-			practice.CompletionModeUserControlled {
-			return practice.Session{}, false, practice.ErrConflict
-		}
-	}
-	nextStatus, allowed := contextTransitionStatus(
-		session.Status,
-		command.Transition,
-	)
-	if !allowed {
-		return practice.Session{}, false, practice.ErrConflict
-	}
-	startedAtExpression := "started_at"
-	completedAtExpression := "NULL"
-	endReasonExpression := "NULL"
-	if command.Transition == practice.SessionEndEarly ||
-		command.Transition == practice.SessionComplete {
-		startedAtExpression = "COALESCE(started_at, transaction_timestamp())"
-		completedAtExpression = "transaction_timestamp()"
-		endReasonExpression = "'USER_ENDED'"
-		if command.Transition == practice.SessionComplete {
-			endReasonExpression = "'USER_COMPLETED'"
-		}
-	}
-	query := fmt.Sprintf(`
-		UPDATE practice_sessions
-		SET status = $3,
-		    version = $4,
-		    started_at = %s,
-		    completed_at = %s,
-		    end_reason = %s,
-		    updated_at = transaction_timestamp()
-		WHERE owner_user_id = $1
-		  AND session_id = $2
-		  AND version = $5
-	`, startedAtExpression, completedAtExpression, endReasonExpression)
-	tag, err := tx.Exec(
-		ctx,
-		query,
-		actor.UserID,
-		command.SessionID,
-		nextStatus,
-		session.Version+1,
-		session.Version,
-	)
-	if err != nil {
-		return practice.Session{}, false,
-			classifyContextWriteError("transition Practice Session", err)
-	}
-	if tag.RowsAffected() != 1 {
-		return practice.Session{}, false, practice.ErrConflict
-	}
-	session, err = scanSession(tx.QueryRow(ctx, contextSessionSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-	`, actor.UserID, command.SessionID))
-	if err != nil {
-		return practice.Session{}, false, err
-	}
-	if command.Transition == practice.SessionComplete {
-		var finalTurnID string
-		err := tx.QueryRow(ctx, `
-			SELECT turn_id
-			FROM practice_turn_results
-			WHERE owner_user_id = $1
-			  AND session_id = $2
-			  AND round_number = $3
-		`, actor.UserID, command.SessionID, session.EffectiveTurns).Scan(
-			&finalTurnID,
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return practice.Session{}, false, practice.ErrConflict
-		}
-		if err != nil {
-			return practice.Session{}, false,
-				fmt.Errorf("read final Practice Turn: %w", err)
-		}
-		completionToken := fmt.Sprintf(
-			"practice-session:%s:completed:v%d",
-			command.SessionID,
-			session.Version,
-		)
-		tag, err := tx.Exec(ctx, `
-			UPDATE practice_turn_results
-			SET completed = true,
-			    completion_token = $4
-			WHERE owner_user_id = $1
-			  AND session_id = $2
-			  AND turn_id = $3
-			  AND completed = false
-			  AND completion_token = ''
-		`, actor.UserID, command.SessionID, finalTurnID, completionToken)
-		if err != nil {
-			return practice.Session{}, false,
-				classifyContextWriteError(
-					"complete final Practice Turn result",
-					err,
-				)
-		}
-		if tag.RowsAffected() != 1 {
-			return practice.Session{}, false, practice.ErrConflict
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE practice_turns
-			SET session_completed = true
-			WHERE owner_user_id = $1
-			  AND practice_session_id = $2
-			  AND turn_id = $3
-			  AND effective_turns = $4
-			  AND session_completed = false
-		`, actor.UserID, command.SessionID, finalTurnID,
-			session.EffectiveTurns); err != nil {
-			return practice.Session{}, false,
-				classifyContextWriteError(
-					"complete final Practice Turn projection",
-					err,
-				)
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO practice_completed (
-				owner_user_id, session_id, final_turn_id,
-				session_version, completion_token
-			)
-			VALUES ($1, $2, $3, $4, $5)
-		`, actor.UserID, command.SessionID, finalTurnID,
-			session.Version, completionToken); err != nil {
-			return practice.Session{}, false,
-				classifyContextWriteError(
-					"record user-controlled Practice completion",
-					err,
-				)
-		}
-	}
-	if err := saveContextIdempotency(
-		ctx,
-		tx,
-		actor.UserID,
-		command.Intent,
-		resourceKind,
-		session.ID,
-		200,
-		session,
-	); err != nil {
-		return practice.Session{}, false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return practice.Session{}, false,
-			fmt.Errorf("commit Practice Session transition: %w", err)
-	}
-	return session, false, nil
-}
-
-func (r *Repository) readStoredContextBootstrap(
-	ctx context.Context,
-	actor practice.Actor,
-	sessionID string,
-) (practice.SessionBootstrap, error) {
-	return readContextBootstrapWithQuery(
-		ctx,
-		r.pool,
-		actor.UserID,
-		sessionID,
-		false,
-	)
-}
-
-func readContextBootstrapWithQuery(
-	ctx context.Context,
-	query contextQuery,
-	ownerUserID string,
-	sessionID string,
-	forUpdate bool,
-) (practice.SessionBootstrap, error) {
-	suffix := ""
-	if forUpdate {
-		suffix = " FOR UPDATE OF session"
-	}
-	return scanContextBootstrap(query.QueryRow(ctx, contextBootstrapSelect+`
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL
-	`+suffix, ownerUserID, sessionID))
-}
-
-const contextSessionSelect = `
-	SELECT
-		session.session_id,
-		session.plan_id,
-		session.plan_revision,
-			session.practice_experience,
-			session.scene_category,
-			session.practice_mode,
-		session.evaluation_policy_ref,
-		session.snapshot_id,
-		session.status,
-		session.version,
-		session.effective_turns,
-		session.started_at,
-		session.completed_at,
-		session.end_reason,
-		session.created_at
-	FROM practice_sessions AS session
-	JOIN identity_users AS owner
-	  ON owner.id = session.owner_user_id
-	LEFT JOIN practice_deletion_fences AS fence
-	  ON fence.owner_user_id = session.owner_user_id
-`
-
-const contextBootstrapSelect = `
-	SELECT
-		session.session_id,
-		session.plan_id,
-		session.plan_revision,
-			session.practice_experience,
-			session.scene_category,
-			session.practice_mode,
-		session.evaluation_policy_ref,
-		session.snapshot_id,
-		session.status,
-		session.version,
-		session.effective_turns,
-		session.started_at,
-		session.completed_at,
-		session.end_reason,
-		session.created_at,
-		snapshot.snapshot_document
-	FROM practice_sessions AS session
-	JOIN practice_session_snapshots AS snapshot
-	  ON snapshot.owner_user_id = session.owner_user_id
-	 AND snapshot.session_id = session.session_id
-	 AND snapshot.snapshot_id = session.snapshot_id
-	JOIN identity_users AS owner
-	  ON owner.id = session.owner_user_id
-	LEFT JOIN practice_deletion_fences AS fence
-	  ON fence.owner_user_id = session.owner_user_id
-`
-
-type contextRowScanner interface {
-	Scan(...any) error
-}
-
-type contextQuery interface {
+type sessionQuery interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type contextIdempotencyRecord struct {
-	ResourceKind string
-	ResourceID   string
-	ResponseBody []byte
-}
-
-func scanSession(row contextRowScanner) (practice.Session, error) {
-	var session practice.Session
-	var startedAt, completedAt pgtype.Timestamptz
-	var endReason pgtype.Text
-	err := row.Scan(
-		&session.ID,
-		&session.PlanID,
-		&session.PlanRevision,
-		&session.Experience,
-		&session.Category,
-		&session.PracticeMode,
-		&session.EvaluationPolicyRef,
-		&session.SnapshotID,
-		&session.Status,
-		&session.Version,
-		&session.EffectiveTurns,
-		&startedAt,
-		&completedAt,
-		&endReason,
-		&session.CreatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return practice.Session{}, practice.ErrNotFound
-	}
-	if err != nil {
-		return practice.Session{},
-			fmt.Errorf("read Practice Session: %w", err)
-	}
-	if startedAt.Valid {
-		value := startedAt.Time.UTC()
-		session.StartedAt = &value
-	}
-	if completedAt.Valid {
-		value := completedAt.Time.UTC()
-		session.EndedAt = &value
-	}
-	if endReason.Valid {
-		session.EndReason = endReason.String
-	}
-	if !validStoredSession(session) {
-		return practice.Session{}, practice.ErrConflict
-	}
-	return session, nil
-}
-
-func scanContextBootstrap(
-	row contextRowScanner,
-) (practice.SessionBootstrap, error) {
-	var session practice.Session
-	var startedAt, completedAt pgtype.Timestamptz
-	var endReason pgtype.Text
-	var document []byte
-	err := row.Scan(
-		&session.ID,
-		&session.PlanID,
-		&session.PlanRevision,
-		&session.Experience,
-		&session.Category,
-		&session.PracticeMode,
-		&session.EvaluationPolicyRef,
-		&session.SnapshotID,
-		&session.Status,
-		&session.Version,
-		&session.EffectiveTurns,
-		&startedAt,
-		&completedAt,
-		&endReason,
-		&session.CreatedAt,
-		&document,
-	)
+func readBootstrap(ctx context.Context, query sessionQuery, ownerID, sessionID string) (practice.SessionBootstrap, error) {
+	var value practice.SessionBootstrap
+	var snapshotJSON, participantsJSON []byte
+	err := query.QueryRow(ctx, `SELECT `+sessionColumns+`,plan_snapshot,participants FROM practice_sessions WHERE user_id=$1 AND session_id=$2`, ownerID, sessionID).Scan(&value.Session.ID, &value.Session.PlanID, &value.Session.PlanVersion, &value.Session.Experience, &value.Session.Category, &value.Session.PracticeMode, &value.Session.EvaluationPolicyRef, &value.Session.Status, &value.Session.Version, &value.Session.EffectiveTurns, &value.Session.StartedAt, &value.Session.EndedAt, &value.Session.EndReason, &value.Session.CreatedAt, &snapshotJSON, &participantsJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return practice.SessionBootstrap{}, practice.ErrNotFound
 	}
 	if err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("read Practice Session snapshot: %w", err)
+		return practice.SessionBootstrap{}, err
 	}
-	if startedAt.Valid {
-		value := startedAt.Time.UTC()
-		session.StartedAt = &value
-	}
-	if completedAt.Valid {
-		value := completedAt.Time.UTC()
-		session.EndedAt = &value
-	}
-	if endReason.Valid {
-		session.EndReason = endReason.String
-	}
-	var snapshot practice.SessionSnapshot
-	if err := json.Unmarshal(document, &snapshot); err != nil {
-		return practice.SessionBootstrap{},
-			fmt.Errorf("decode Practice Session snapshot: %w", err)
-	}
-	bootstrap := practice.SessionBootstrap{
-		Session:  session,
-		Snapshot: snapshot,
-	}
-	if !validStoredContextBootstrap(bootstrap) {
+	if decodeStrictJSON(snapshotJSON, &value.Snapshot) != nil || decodeStrictJSON(participantsJSON, &value.Snapshot.Participants) != nil {
 		return practice.SessionBootstrap{}, practice.ErrConflict
 	}
-	return bootstrap, nil
+	return value, nil
 }
 
-func decodeContextSnapshot(
-	document []byte,
-) (practice.SessionSnapshot, error) {
-	var snapshot practice.SessionSnapshot
-	if err := json.Unmarshal(document, &snapshot); err != nil {
-		return practice.SessionSnapshot{}, err
+func decodeStrictJSON(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
 	}
-	return snapshot, nil
-}
-
-func lockContextIdempotency(
-	ctx context.Context,
-	tx pgx.Tx,
-	ownerUserID string,
-	intent practice.IdempotencyIntent,
-) error {
-	scope, err := json.Marshal([]string{
-		ownerUserID,
-		intent.Method,
-		intent.CanonicalPath,
-		intent.Key,
-	})
-	if err != nil {
-		return practice.ErrInvalidArgument
-	}
-	if _, err := tx.Exec(ctx, `
-		SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
-	`, string(scope)); err != nil {
-		return fmt.Errorf("lock Practice idempotency scope: %w", err)
+	var trailing any
+	if !errors.Is(decoder.Decode(&trailing), io.EOF) {
+		return errors.New("trailing JSON")
 	}
 	return nil
 }
 
-func loadContextIdempotency(
-	ctx context.Context,
-	query contextQuery,
-	ownerUserID string,
-	intent practice.IdempotencyIntent,
-	requireActiveActor bool,
-) (contextIdempotencyRecord, bool, error) {
-	activePredicate := ""
-	if requireActiveActor {
-		activePredicate = `
-		  AND owner.account_status = 'active'
-		  AND fence.owner_user_id IS NULL`
-	}
-	var record contextIdempotencyRecord
-	var storedFingerprint []byte
-	err := query.QueryRow(ctx, `
-		SELECT record.payload_fingerprint,
-		       record.resource_kind,
-		       record.resource_id,
-		       record.response_body
-		FROM practice_idempotency_records AS record
-		JOIN identity_users AS owner
-		  ON owner.id = record.owner_user_id
-		LEFT JOIN practice_deletion_fences AS fence
-		  ON fence.owner_user_id = record.owner_user_id
-		WHERE record.owner_user_id = $1
-		  AND record.method = $2
-		  AND record.canonical_path = $3
-		  AND record.idempotency_key = $4`+activePredicate,
-		ownerUserID,
-		intent.Method,
-		intent.CanonicalPath,
-		intent.Key,
-	).Scan(
-		&storedFingerprint,
-		&record.ResourceKind,
-		&record.ResourceID,
-		&record.ResponseBody,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return contextIdempotencyRecord{}, false, nil
-	}
-	if err != nil {
-		return contextIdempotencyRecord{}, false,
-			fmt.Errorf("read Practice idempotency record: %w", err)
-	}
-	if !bytes.Equal(storedFingerprint, intent.PayloadFingerprint[:]) {
-		return contextIdempotencyRecord{}, false,
-			practice.ErrIdempotencyConflict
-	}
-	return record, true, nil
+func validCreateSessionCommand(command practice.CreateSessionCommand) bool {
+	return validResourceID(command.SessionID) && validResourceID(command.PlanID) && command.PlanVersion > 0 && validClientRequestID(command.ClientRequestID) && command.Snapshot.SessionID == command.SessionID && command.Snapshot.PlanVersion == command.PlanVersion && len(command.Snapshot.Participants) > 0
 }
-
-func saveContextIdempotency(
-	ctx context.Context,
-	tx pgx.Tx,
-	ownerUserID string,
-	intent practice.IdempotencyIntent,
-	resourceKind string,
-	resourceID string,
-	status int,
-	response any,
-) error {
-	body, err := json.Marshal(response)
-	if err != nil {
-		return practice.ErrInvalidArgument
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO practice_idempotency_records (
-			owner_user_id, method, canonical_path, idempotency_key,
-			payload_fingerprint, resource_kind, resource_id,
-			response_status, response_body
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`,
-		ownerUserID,
-		intent.Method,
-		intent.CanonicalPath,
-		intent.Key,
-		intent.PayloadFingerprint[:],
-		resourceKind,
-		resourceID,
-		status,
-		body,
-	)
-	if err != nil {
-		return classifyContextWriteError(
-			"insert Practice idempotency record",
-			err,
-		)
-	}
-	return nil
+func validTransitionCommand(command practice.TransitionSessionCommand) bool {
+	return validResourceID(command.SessionID) && command.ExpectedSessionVersion > 0 && validClientRequestID(command.ClientRequestID)
 }
-
-func validCreateSessionCommand(
-	actor practice.Actor,
-	command practice.CreateSessionCommand,
-) bool {
-	return validContextResourceID(command.SessionID) &&
-		validContextResourceID(command.SnapshotID) &&
-		validContextResourceID(command.PlanID) && command.PlanRevision > 0 &&
-		command.Snapshot.ID == command.SnapshotID &&
-		command.Snapshot.SessionID == command.SessionID &&
-		command.Snapshot.PlanRevision == command.PlanRevision &&
-		command.Snapshot.CreatedAt.IsZero() &&
-		validContextSnapshot(command.Snapshot, actor.UserID) &&
-		validContextIntent(command.Intent)
+func validResourceID(value string) bool {
+	return practice.ValidAggregateID(value)
 }
-
-func validContextSnapshot(
-	snapshot practice.SessionSnapshot,
-	actorUserID string,
-) bool {
-	if !validContextResourceID(snapshot.ID) ||
-		!validContextResourceID(snapshot.SessionID) ||
-		snapshot.PlanRevision < 1 ||
-		snapshot.SceneSelection.Scene.Experience != snapshot.Experience ||
-		snapshot.SceneSelection.Scene.Category != snapshot.Category ||
-		snapshot.SceneSelection.Scene.Status != practice.SceneStatusActive ||
-		!validContextResourceID(snapshot.Preparation.ID) ||
-		!validContextResourceID(snapshot.Preparation.SourceProfileID) ||
-		snapshot.Preparation.SourceVersion < 1 ||
-		snapshot.Preparation.CreatedAt.IsZero() ||
-		!validContextObjectives(snapshot.PracticeObjectives) {
-		return false
-	}
-	roles, err := snapshot.SceneSelection.SelectedRoles()
-	if err != nil || len(roles) == 0 {
-		return false
-	}
-	option, err := snapshot.SceneSelection.PracticeOption()
-	if err != nil || option.Mode != snapshot.PracticeMode ||
-		!validEvaluationPolicyRef(option.EvaluationPolicyRef) ||
-		!practice.ValidSessionPolicy(
-			option.SessionPolicyRef,
-			option.Mode,
-			len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
-			option.SuggestedDurationSeconds,
-			snapshot.SessionPolicy,
-		) {
-		return false
-	}
-	if _, err := practice.ResolveTurnPolicy(
-		option.TurnPolicyRef,
-	); err != nil {
-		return false
-	}
-	if len(snapshot.Participants) != len(roles)+1 {
-		return false
-	}
-	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
-	orders := make(map[int]struct{}, len(snapshot.Participants))
-	facilitators := make(map[string]struct{}, len(roles))
-	learnerCount := 0
-	for _, participant := range snapshot.Participants {
-		if !validContextResourceID(participant.ID) ||
-			participant.SessionID != snapshot.SessionID || participant.Order < 1 {
-			return false
-		}
-		if _, duplicate := participantIDs[participant.ID]; duplicate {
-			return false
-		}
-		participantIDs[participant.ID] = struct{}{}
-		if _, duplicate := orders[participant.Order]; duplicate {
-			return false
-		}
-		orders[participant.Order] = struct{}{}
-		switch participant.Role {
-		case "FACILITATOR":
-			if participant.SubjectRef.Namespace != "speakup.role" ||
-				participant.SubjectRef.SubjectID != participant.RoleDefinitionID ||
-				participant.RoleSnapshot == nil ||
-				participant.RoleSnapshot.ID != participant.RoleDefinitionID {
-				return false
-			}
-			facilitators[participant.RoleDefinitionID] = struct{}{}
-		case "LEARNER":
-			if learnerCount != 0 ||
-				participant.SubjectRef.Namespace != "speakup.user" ||
-				participant.SubjectRef.SubjectID != actorUserID ||
-				participant.RoleDefinitionID != "" ||
-				participant.RoleSnapshot != nil {
-				return false
-			}
-			learnerCount++
-		default:
-			return false
-		}
-	}
-	if learnerCount != 1 || len(facilitators) != len(roles) {
-		return false
-	}
-	for _, role := range roles {
-		if _, selected := facilitators[role.ID]; !selected {
-			return false
-		}
-	}
-	return validCreatedIELTSAssignment(snapshot)
+func validClientRequestID(value string) bool {
+	return len(value) >= 8 && len(value) <= 128 && strings.TrimSpace(value) == value && !strings.ContainsRune(value, '\x00')
 }
-
-func validCreatedIELTSAssignment(
-	snapshot practice.SessionSnapshot,
-) bool {
-	option, err := snapshot.SceneSelection.PracticeOption()
-	if err != nil {
-		return false
-	}
-	turnPolicy, err := practice.ResolveTurnPolicy(
-		option.TurnPolicyRef,
-	)
-	if err != nil {
-		return false
-	}
-	if turnPolicy.Kind != practice.TurnPolicyFrozenIELTS {
-		return snapshot.IELTSAssignment == nil
-	}
-	return practice.ValidIELTSAssignment(
-		snapshot.IELTSAssignment,
-		turnPolicy.Mode,
-		snapshot.SceneSelection.Scene.Prompt.TurnBlueprints,
-	)
-}
-
-func validContextObjectives(values []practice.PracticeObjective) bool {
-	if len(values) == 0 {
-		return false
-	}
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if !validContextResourceID(value.ID) ||
-			strings.TrimSpace(value.Description) == "" {
-			return false
-		}
-		if _, duplicate := seen[value.ID]; duplicate {
-			return false
-		}
-		seen[value.ID] = struct{}{}
-	}
-	return true
-}
-
-func validContextIntent(intent practice.IdempotencyIntent) bool {
-	return intent.Method == "POST" &&
-		strings.HasPrefix(intent.CanonicalPath, "/") &&
-		len(intent.CanonicalPath) <= 1024 &&
-		strings.TrimSpace(intent.CanonicalPath) == intent.CanonicalPath &&
-		len(intent.Key) >= 8 && len(intent.Key) <= 128 &&
-		strings.TrimSpace(intent.Key) == intent.Key
-}
-
-func validContextResourceID(value string) bool {
-	return value != "" && len(value) <= 128 &&
-		strings.TrimSpace(value) == value && !strings.ContainsRune(value, '\x00')
-}
-
-func validEvaluationPolicyRef(value string) bool {
-	return validContextResourceID(value) &&
-		strings.HasSuffix(value, ".evaluation.v1")
-}
-
-func validStoredSession(session practice.Session) bool {
-	if !validContextResourceID(session.ID) ||
-		!validContextResourceID(session.PlanID) || session.PlanRevision < 1 ||
-		!validContextResourceID(session.SnapshotID) || session.Version < 1 ||
-		!validEvaluationPolicyRef(session.EvaluationPolicyRef) ||
-		session.EffectiveTurns < 0 || session.CreatedAt.IsZero() {
-		return false
-	}
-	switch session.Status {
-	case practice.SessionStarting:
-		return session.StartedAt == nil && session.EndedAt == nil &&
-			session.EndReason == "" && session.EffectiveTurns == 0
-	case practice.SessionInProgress,
-		practice.SessionPaused:
-		return session.StartedAt != nil && session.EndedAt == nil &&
-			session.EndReason == ""
-	case practice.SessionCompleted,
-		practice.SessionEndedEarly:
-		return session.StartedAt != nil && session.EndedAt != nil &&
-			strings.TrimSpace(session.EndReason) != ""
-	default:
-		return false
-	}
-}
-
-func validStoredContextBootstrap(
-	bootstrap practice.SessionBootstrap,
-) bool {
-	return validStoredSession(bootstrap.Session) &&
-		bootstrap.Snapshot.ID == bootstrap.Session.SnapshotID &&
-		bootstrap.Snapshot.SessionID == bootstrap.Session.ID &&
-		bootstrap.Snapshot.PlanRevision == bootstrap.Session.PlanRevision &&
-		bootstrap.Snapshot.Experience == bootstrap.Session.Experience &&
-		bootstrap.Snapshot.Category == bootstrap.Session.Category &&
-		bootstrap.Snapshot.PracticeMode == bootstrap.Session.PracticeMode &&
-		selectedEvaluationPolicyRef(bootstrap.Snapshot) ==
-			bootstrap.Session.EvaluationPolicyRef &&
-		!bootstrap.Snapshot.CreatedAt.IsZero() &&
-		validContextSnapshot(bootstrap.Snapshot, learnerUserID(bootstrap.Snapshot))
-}
-
 func selectedEvaluationPolicyRef(snapshot practice.SessionSnapshot) string {
 	option, err := snapshot.SceneSelection.PracticeOption()
 	if err != nil {
@@ -1263,92 +334,26 @@ func selectedEvaluationPolicyRef(snapshot practice.SessionSnapshot) string {
 	return option.EvaluationPolicyRef
 }
 
-func learnerUserID(snapshot practice.SessionSnapshot) string {
-	for _, participant := range snapshot.Participants {
-		if participant.Role == "LEARNER" &&
-			participant.SubjectRef.Namespace == "speakup.user" {
-			return participant.SubjectRef.SubjectID
-		}
-	}
-	return ""
-}
-
-func validTransitionCommand(
-	command practice.TransitionSessionCommand,
-) bool {
-	return validContextResourceID(command.SessionID) &&
-		command.ExpectedSessionVersion > 0 && validContextIntent(command.Intent) &&
-		(command.Transition == practice.SessionPause ||
-			command.Transition == practice.SessionResume ||
-			command.Transition == practice.SessionComplete ||
-			command.Transition == practice.SessionEndEarly)
-}
-
-func contextTransitionStatus(
-	current practice.SessionStatus,
-	transition practice.SessionTransition,
-) (practice.SessionStatus, bool) {
+func transitionStatus(current practice.SessionStatus, transition practice.SessionTransition, effectiveTurns, minimum int) (practice.SessionStatus, string, error) {
 	switch transition {
 	case practice.SessionPause:
-		return practice.SessionPaused,
-			current == practice.SessionInProgress
+		if current == practice.SessionInProgress {
+			return practice.SessionPaused, "", nil
+		}
 	case practice.SessionResume:
-		return practice.SessionInProgress,
-			current == practice.SessionPaused
+		if current == practice.SessionPaused {
+			return practice.SessionInProgress, "", nil
+		}
 	case practice.SessionComplete:
-		return practice.SessionCompleted,
-			current == practice.SessionInProgress ||
-				current == practice.SessionPaused
+		if (current == practice.SessionInProgress || current == practice.SessionPaused) && effectiveTurns >= minimum {
+			return practice.SessionCompleted, "completed", nil
+		}
 	case practice.SessionEndEarly:
-		return practice.SessionEndedEarly,
-			current == practice.SessionStarting ||
-				current == practice.SessionInProgress ||
-				current == practice.SessionPaused
-	default:
-		return "", false
-	}
-}
-
-func isEffectiveSessionStatus(status practice.SessionStatus) bool {
-	return status == practice.SessionStarting ||
-		status == practice.SessionInProgress ||
-		status == practice.SessionPaused
-}
-
-func equalContextStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
+		if current == practice.SessionStarting || current == practice.SessionInProgress || current == practice.SessionPaused {
+			return practice.SessionEndedEarly, "user_ended", nil
 		}
 	}
-	return true
-}
-
-func classifyContextWriteError(operation string, err error) error {
-	var postgresError *pgconn.PgError
-	if errors.As(err, &postgresError) {
-		switch postgresError.Code {
-		case "23503":
-			return practice.ErrNotFound
-		case "23514":
-			return practice.ErrConflict
-		case "23505":
-			switch postgresError.ConstraintName {
-			case "practice_one_active_session_per_plan",
-				"practice_one_effective_session_per_plan":
-				return practice.ErrActiveSessionConflict
-			case "practice_idempotency_records_pkey":
-				return practice.ErrIdempotencyConflict
-			default:
-				return practice.ErrConflict
-			}
-		}
-	}
-	return fmt.Errorf("%s: %w", operation, err)
+	return "", "", practice.ErrConflict
 }
 
 var _ practice.SessionRepository = (*Repository)(nil)
-var _ practice.VoiceSessionRepository = (*Repository)(nil)

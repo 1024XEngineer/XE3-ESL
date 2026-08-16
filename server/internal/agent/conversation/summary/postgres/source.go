@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
@@ -12,50 +11,39 @@ func (r *Repository) ListMessagesForSummary(
 	ctx context.Context,
 	ownerID string,
 	threadID string,
-	sourceFromSequence int64,
-	coveredThroughSequence int64,
+	fromSequence int64,
+	throughSequence int64,
 ) ([]conversation.Message, error) {
-	if ctx == nil ||
-		!conversation.ValidUUID(ownerID) ||
-		!conversation.ValidUUID(threadID) {
-		return nil, conversation.ErrInvalidRequest
-	}
-	sourceMessageCount, validRange := summarySourceMessageCount(
-		sourceFromSequence,
-		coveredThroughSequence,
-	)
-	if !validRange {
+	if ctx == nil || !conversation.ValidUUID(ownerID) ||
+		!conversation.ValidUUID(threadID) || fromSequence < 1 ||
+		throughSequence < fromSequence {
 		return nil, conversation.ErrInvalidRequest
 	}
 	rows, err := r.database.Query(ctx, `
-SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    modality,
-    content,
-    created_at
-FROM agent_messages
-WHERE owner_user_id = $1
-  AND thread_id = $2
-  AND sequence_no BETWEEN $3 AND $4
-ORDER BY sequence_no ASC`,
+SELECT message.id::text, thread.user_id::text, message.thread_id::text,
+       message.sequence_no, message.role,
+       COALESCE(message.client_message_id, ''),
+       COALESCE(message.produced_by_run_id::text, ''),
+       message.modality, message.content, message.created_at
+FROM agent_messages AS message
+INNER JOIN agent_threads AS thread ON thread.id = message.thread_id
+WHERE thread.user_id = $1 AND message.thread_id = $2
+  AND thread.deleted_at IS NULL
+  AND message.sequence_no BETWEEN $3 AND $4
+ORDER BY message.sequence_no ASC
+LIMIT $5`,
 		ownerID,
 		threadID,
-		sourceFromSequence,
-		coveredThroughSequence,
+		fromSequence,
+		throughSequence,
+		agentsummary.MaxSourceMessages+1,
 	)
 	if err != nil {
 		return nil, conversation.ErrRepository
 	}
 	defer rows.Close()
 
-	usedRunes := 0
-	result := make([]conversation.Message, 0, sourceMessageCount)
+	result := make([]conversation.Message, 0, agentsummary.MaxSourceMessages+1)
 	for rows.Next() {
 		var item conversation.Message
 		var role string
@@ -76,12 +64,8 @@ ORDER BY sequence_no ASC`,
 		}
 		item.Role = conversation.MessageRole(role)
 		item.Modality = conversation.MessageModality(modality)
-		if len(result) >= sourceMessageCount {
-			return nil, conversation.ErrRepository
-		}
-		expectedSequence := sourceFromSequence + int64(len(result))
-		if item.Sequence != expectedSequence ||
-			item.OwnerID != ownerID ||
+		expectedSequence := fromSequence + int64(len(result))
+		if item.Sequence != expectedSequence || item.OwnerID != ownerID ||
 			item.ThreadID != threadID ||
 			(item.Role != conversation.MessageRoleUser &&
 				item.Role != conversation.MessageRoleAssistant) ||
@@ -91,34 +75,13 @@ ORDER BY sequence_no ASC`,
 			!conversation.ValidMessageContent(item.Content) {
 			return nil, conversation.ErrRepository
 		}
-		usedRunes += utf8.RuneCountInString(item.Content)
-		if usedRunes > agentsummary.MaxSourceRunes {
-			return nil, conversation.ErrInvalidRequest
-		}
 		result = append(result, item)
 	}
-	if err := rows.Err(); err != nil {
+	if rows.Err() != nil {
 		return nil, conversation.ErrRepository
 	}
-	if len(result) != sourceMessageCount {
+	if len(result) == 0 {
 		return nil, conversation.ErrNotFound
 	}
 	return result, nil
 }
-
-func summarySourceMessageCount(
-	sourceFromSequence int64,
-	coveredThroughSequence int64,
-) (int, bool) {
-	if sourceFromSequence < 1 ||
-		coveredThroughSequence < sourceFromSequence {
-		return 0, false
-	}
-	sequenceSpan := coveredThroughSequence - sourceFromSequence
-	if sequenceSpan >= int64(agentsummary.MaxSourceMessages) {
-		return 0, false
-	}
-	return int(sequenceSpan) + 1, true
-}
-
-var _ agentsummary.Repository = (*Repository)(nil)

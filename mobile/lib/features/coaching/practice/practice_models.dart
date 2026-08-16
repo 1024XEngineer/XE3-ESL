@@ -46,14 +46,12 @@ final class PracticeCapabilities {
     required this.retryAllowed,
     required this.questionTranslationAllowed,
     required this.questionTipsAllowed,
-    required this.avatarAllowed,
     required this.speechFeedbackAllowed,
   });
 
   final bool retryAllowed;
   final bool questionTranslationAllowed;
   final bool questionTipsAllowed;
-  final bool avatarAllowed;
   final bool speechFeedbackAllowed;
 
   @override
@@ -62,7 +60,6 @@ final class PracticeCapabilities {
       other.retryAllowed == retryAllowed &&
       other.questionTranslationAllowed == questionTranslationAllowed &&
       other.questionTipsAllowed == questionTipsAllowed &&
-      other.avatarAllowed == avatarAllowed &&
       other.speechFeedbackAllowed == speechFeedbackAllowed;
 
   @override
@@ -70,7 +67,6 @@ final class PracticeCapabilities {
     retryAllowed,
     questionTranslationAllowed,
     questionTipsAllowed,
-    avatarAllowed,
     speechFeedbackAllowed,
   );
 }
@@ -284,51 +280,37 @@ final class PracticeTurnConfirmation {
   final String? speechFeedbackStatusUrl;
 }
 
-enum PracticeRetryRequestStatus { pending, turnCreated, failed }
-
-enum PracticeRetryFailureReason {
-  sourceNoLongerAvailable,
-  retryTurnCreationFailed,
+enum PracticeRetryTurnStatus {
+  answering,
+  transcribing,
+  transcribed,
+  confirmed,
+  failed,
 }
 
-final class PracticeRetryFailure {
-  const PracticeRetryFailure({required this.reason, required this.retryable});
-
-  final PracticeRetryFailureReason reason;
-  final bool retryable;
-}
-
-/// Review-owned creation state for one same-question retry Turn.
-final class PracticeRetryRequest {
-  const PracticeRetryRequest({
-    required this.retryRequestId,
-    required this.feedbackItemId,
+/// Actor-owned same-question Turn created atomically from one feedback item.
+final class PracticeRetryTurn {
+  const PracticeRetryTurn({
+    required this.turnId,
     required this.sessionId,
-    required this.originalTurnId,
     required this.questionId,
-    required this.retryStatus,
-    required this.statusUrl,
+    required this.originalTurnId,
+    required this.sequence,
+    required this.status,
     required this.createdAt,
-    required this.updatedAt,
-    this.newTurnId,
-    this.answerPath,
-    this.stableFailure,
-    this.completedAt,
+    required this.replayed,
   });
 
-  final String retryRequestId;
-  final String feedbackItemId;
+  final String turnId;
   final String sessionId;
-  final String originalTurnId;
   final String questionId;
-  final PracticeRetryRequestStatus retryStatus;
-  final String statusUrl;
+  final String originalTurnId;
+  final int sequence;
+  final PracticeRetryTurnStatus status;
   final DateTime createdAt;
-  final DateTime updatedAt;
-  final String? newTurnId;
-  final String? answerPath;
-  final PracticeRetryFailure? stableFailure;
-  final DateTime? completedAt;
+  final bool replayed;
+
+  String get answerPath => '/v1/retry-turns/$turnId/transcription-candidates';
 }
 
 /// Ready ASR text bound to a server-created retry Turn draft.
@@ -336,7 +318,6 @@ final class RetryTranscriptionCandidate {
   const RetryTranscriptionCandidate({
     required this.id,
     required this.retryTurnId,
-    required this.retryRequestId,
     required this.sessionId,
     required this.questionId,
     required this.respondentParticipantId,
@@ -348,7 +329,6 @@ final class RetryTranscriptionCandidate {
 
   final String id;
   final String retryTurnId;
-  final String retryRequestId;
   final String sessionId;
   final String questionId;
   final String respondentParticipantId;
@@ -362,7 +342,6 @@ final class RetryTranscriptionCandidate {
 final class ConfirmedRetryTurn {
   const ConfirmedRetryTurn({
     required this.turnId,
-    required this.retryRequestId,
     required this.originalTurnId,
     required this.sessionId,
     required this.questionId,
@@ -377,7 +356,6 @@ final class ConfirmedRetryTurn {
   });
 
   final String turnId;
-  final String retryRequestId;
   final String originalTurnId;
   final String sessionId;
   final String questionId;

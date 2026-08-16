@@ -109,7 +109,6 @@ func (worker *threadSummaryWorker) sweep(parent context.Context) bool {
 		slog.Int("completed", result.Completed),
 		slog.Int("retried", result.Retried),
 		slog.Int("skipped", result.Skipped),
-		slog.Int("superseded", result.Superseded),
 		slog.Int("failed", result.Failed),
 		slog.Int64("duration_ms", time.Since(startedAt).Milliseconds()),
 	}

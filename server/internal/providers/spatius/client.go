@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/avatar"
 )
 
 const maxResponseBody = 64 * 1024

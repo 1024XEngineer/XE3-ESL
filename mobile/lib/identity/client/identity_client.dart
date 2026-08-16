@@ -14,7 +14,6 @@ enum IdentityFailureKind {
   registrationUnavailable,
   profileNotFound,
   profileVersionConflict,
-  idempotencyKeyConflict,
   rateLimited,
   server,
   network,
@@ -82,7 +81,6 @@ abstract interface class UserProfileClient {
     required String sessionToken,
     required String displayName,
     required int? expectedProfileVersion,
-    required String idempotencyKey,
   });
 }
 
@@ -180,7 +178,6 @@ final class WireIdentityClient
     required String sessionToken,
     required String displayName,
     required int? expectedProfileVersion,
-    required String idempotencyKey,
   }) async {
     final body = <String, Object?>{'display_name': displayName};
     if (expectedProfileVersion != null) {
@@ -190,7 +187,6 @@ final class WireIdentityClient
       method: 'PATCH',
       path: '/v1/me/profile',
       sessionToken: sessionToken,
-      headers: <String, String>{'Idempotency-Key': idempotencyKey},
       body: body,
     );
     _requireStatus(response, 200, _IdentityOperation.updateProfile);
@@ -309,7 +305,6 @@ final class WireIdentityClient
         IdentityFailureKind.registrationUnavailable,
       'profile_not_found' => IdentityFailureKind.profileNotFound,
       'profile_version_conflict' => IdentityFailureKind.profileVersionConflict,
-      'idempotency_key_conflict' => IdentityFailureKind.idempotencyKeyConflict,
       'rate_limited' => IdentityFailureKind.rateLimited,
       'internal_error' => IdentityFailureKind.server,
       _ => IdentityFailureKind.unexpected,
@@ -355,8 +350,6 @@ final class WireIdentityClient
         'profile_not_found',
       (_IdentityOperation.updateProfile, 409, 'profile_version_conflict') =>
         'profile_version_conflict',
-      (_IdentityOperation.updateProfile, 409, 'idempotency_key_conflict') =>
-        'idempotency_key_conflict',
       (_IdentityOperation.updateProfile, 400, 'invalid_request') =>
         'invalid_request',
       (

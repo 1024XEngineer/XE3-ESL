@@ -13,7 +13,7 @@ func TestReviewSearchToolReturnsReportsAndEvaluationSources(t *testing.T) {
 	t.Parallel()
 	port := &reviewPortStub{summaries: []ReviewSummary{{
 		ID:                 "10000000-0000-4000-8000-000000000001",
-		PracticeSessionID:  "practice-session-1",
+		PracticeSessionID:  "20000000-0000-4000-8000-000000000001",
 		SceneType:          "OVERSEAS_DAILY_LIFE",
 		PracticeExperience: "LIFE_AND_TRAVEL",
 		SceneCategory:      "LIFE_DAILY",

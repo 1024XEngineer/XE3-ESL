@@ -604,11 +604,10 @@ void main() {
         expect(error, isNull);
         expect(controller.profile?.displayName, '小林');
         expect(profileClient.expectedVersion, isNull);
-        expect(profileClient.idempotencyKey, startsWith('profile_'));
       },
     );
 
-    test('retry reuses the pending profile idempotency key', () async {
+    test('retry uses the same optimistic profile version', () async {
       final profileClient = FakeProfileClient(
         currentError: const IdentityClientException(
           kind: IdentityFailureKind.profileNotFound,
@@ -639,11 +638,11 @@ void main() {
       );
 
       expect(await controller.updateDisplayName('小林'), isNotNull);
-      final firstKey = profileClient.idempotencyKeys.single;
+      expect(profileClient.expectedVersions, [null]);
 
       profileClient.updateError = null;
       expect(await controller.updateDisplayName('小林'), isNull);
-      expect(profileClient.idempotencyKeys, [firstKey, firstKey]);
+      expect(profileClient.expectedVersions, [null, null]);
     });
   });
 }
@@ -781,8 +780,7 @@ final class FakeProfileClient implements UserProfileClient {
   IdentityClientException? updateError;
   final UserProfile updateResult;
   int? expectedVersion;
-  String? idempotencyKey;
-  final List<String> idempotencyKeys = [];
+  final List<int?> expectedVersions = [];
 
   @override
   Future<UserProfile> currentProfile({required String sessionToken}) async {
@@ -798,11 +796,9 @@ final class FakeProfileClient implements UserProfileClient {
     required String sessionToken,
     required String displayName,
     required int? expectedProfileVersion,
-    required String idempotencyKey,
   }) async {
     expectedVersion = expectedProfileVersion;
-    this.idempotencyKey = idempotencyKey;
-    idempotencyKeys.add(idempotencyKey);
+    expectedVersions.add(expectedProfileVersion);
     final error = updateError;
     if (error != null) {
       throw error;

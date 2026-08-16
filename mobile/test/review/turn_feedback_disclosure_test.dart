@@ -113,9 +113,7 @@ void main() {
     expect(find.textContaining('未评估'), findsNothing);
   });
 
-  testWidgets('shows topic pronunciation, speed, and relevance', (
-    tester,
-  ) async {
+  testWidgets('shows topic pronunciation and speed', (tester) async {
     await tester.pumpWidget(
       _app(
         _projection(
@@ -132,7 +130,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('发音准确度 89 · 语速 156 词/分钟 · 题意相关 82'), findsOneWidget);
+    expect(find.text('发音准确度 89 · 语速 156 词/分钟'), findsOneWidget);
   });
 
   testWidgets('separates insufficient evidence and technical failure', (
@@ -171,10 +169,10 @@ void main() {
       _app(
         SpeechFeedbackProjection(
           sourceKey: 'turn_002',
-          statusUrl: '/v1/speech-feedback/feedback_000000000002',
+          statusUrl: _statusUrl2,
           feedback: _feedback(
-            id: 'feedback_000000000002',
-            statusUrl: '/v1/speech-feedback/feedback_000000000002',
+            evaluationId: _evaluationId2,
+            statusUrl: _statusUrl2,
             status: SpeechFeedbackStatus.failed,
           ),
           isPolling: false,
@@ -231,8 +229,8 @@ SpeechFeedbackProjection _projection(
 }
 
 SpeechFeedback _feedback({
-  String id = 'feedback_000000000001',
-  String statusUrl = '/v1/speech-feedback/feedback_000000000001',
+  String evaluationId = _evaluationId1,
+  String statusUrl = _statusUrl1,
   required SpeechFeedbackStatus status,
   bool insufficient = false,
   bool assessed = false,
@@ -243,13 +241,13 @@ SpeechFeedback _feedback({
 }) {
   final ready = status == SpeechFeedbackStatus.ready;
   final provisional = ready && !insufficient;
+  final sourceId = speechFeedbackStatusSource(statusUrl)!.sourceId;
   return SpeechFeedback(
-    speechFeedbackId: id,
-    source: const ConversationTurnFeedbackSource(
-      practiceSessionId: 'session_001',
-      turnId: 'turn_001',
-      inputRevision: 1,
-      evidenceSnapshotId: 'evidence_001',
+    evaluationId: evaluationId,
+    source: SpeechFeedbackSource(
+      kind: SpeechFeedbackSourceKind.practiceTurn,
+      sourceId: sourceId,
+      contextId: _sessionId,
     ),
     feedbackStatus: status,
     scoreabilityStatus: ready
@@ -257,27 +255,19 @@ SpeechFeedback _feedback({
               ? SpeechFeedbackScoreabilityStatus.insufficient
               : SpeechFeedbackScoreabilityStatus.provisional
         : null,
-    gateStatus: ready
-        ? insufficient
-              ? SpeechFeedbackGateStatus.blocked
-              : SpeechFeedbackGateStatus.feedbackOnly
-        : null,
+    summary: ready ? 'Feedback summary.' : null,
     reasonCodes:
         reasonCodes ??
         (insufficient ? const ['INSUFFICIENT_EVIDENCE'] : const []),
-    schemaVersion: 'speech-feedback/v1',
-    strategyRef: 'qianwen-speech-feedback/v1',
-    pipelineVersion: 'speech-feedback-pipeline/v1',
-    isFinal: false,
     items: provisional
         ? [
             SpeechFeedbackItem(
               feedbackItemId: 'item_001',
-              speechFeedbackId: id,
+              evaluationId: evaluationId,
+              position: 1,
               kind: SpeechFeedbackItemKind.correction,
-              anchor: const ConversationTranscriptFeedbackAnchor(
-                evidenceRefId: 'evidence_001',
-                turnId: 'turn_001',
+              anchor: SpeechFeedbackAnchor(
+                evidenceRefId: sourceId,
                 startUtf8Byte: 0,
                 endUtf8Byte: 4,
                 originalExcerpt: 'I am',
@@ -291,49 +281,37 @@ SpeechFeedback _feedback({
         : const [],
     acousticAssessment: assessed
         ? topic
-              ? const SpeechFeedbackAcousticAssessment(
-                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
-                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+              ? const SpeechFeedbackAcousticAssessment.assessed(
                   pronunciationScore: 88.5,
                   speakingSpeedWpm: 156,
-                  semanticScore: 82,
-                  provider: 'xfyun-ise',
-                  providerSessionId: 'ise-topic-session-1',
-                  category: 'topic',
-                  notice: '根据本次录音自动评估，仅供练习参考。',
-                  reasonCode: '',
                 )
-              : const SpeechFeedbackAcousticAssessment(
-                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
-                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
-                  integrity: SpeechFeedbackAssessmentStatus.assessed,
-                  accuracyScore: 81.5,
+              : const SpeechFeedbackAcousticAssessment.assessed(
+                  pronunciationScore: 81.5,
                   fluencyScore: 92.25,
                   integrityScore: 100,
-                  provider: 'xfyun-ise',
-                  providerSessionId: 'ise-session-1',
-                  category: 'read_sentence',
-                  notice: '根据本次录音自动评估，仅供练习参考。',
-                  reasonCode: '',
                 )
-        : const SpeechFeedbackAcousticAssessment(
-            pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-            acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-            reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
-          ),
+        : ready
+        ? const SpeechFeedbackAcousticAssessment.notAssessed(
+            reason: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+          )
+        : null,
     stableFailure: status == SpeechFeedbackStatus.failed
         ? const SpeechFeedbackStableFailure(
-            reasonCode: 'INTERNAL_RETRYABLE',
+            code: 'INTERNAL_RETRYABLE',
             retryable: true,
+            message: 'Feedback generation failed.',
           )
         : null,
     statusUrl: statusUrl,
     createdAt: DateTime.utc(2026, 7, 30, 10),
     updatedAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
-    completedAt:
-        status == SpeechFeedbackStatus.ready ||
-            status == SpeechFeedbackStatus.failed
-        ? DateTime.utc(2026, 7, 30, 10, 0, 1)
-        : null,
   );
 }
+
+const _evaluationId1 = '10000000-0000-4000-8000-000000000001';
+const _evaluationId2 = '10000000-0000-4000-8000-000000000002';
+const _turnId1 = '20000000-0000-4000-8000-000000000001';
+const _turnId2 = '20000000-0000-4000-8000-000000000002';
+const _sessionId = '30000000-0000-4000-8000-000000000001';
+const _statusUrl1 = '/v1/practice-turns/$_turnId1/evaluation';
+const _statusUrl2 = '/v1/practice-turns/$_turnId2/evaluation';

@@ -11,7 +11,7 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -96,7 +96,7 @@ void main() {
     server.listen((request) async {
       expect(
         request.uri.path,
-        '/v1/agent-threads/$_threadId/voice-message-candidates/realtime',
+        '/v1/agent-threads/$_threadId/voice-drafts/realtime',
       );
       expect(
         request.headers.value(HttpHeaders.authorizationHeader),
@@ -112,11 +112,8 @@ void main() {
             (jsonDecode(message) as Map<String, dynamic>)['type'] == 'finish') {
           socket.add(
             jsonEncode(<String, Object>{
-              'type': 'candidate.failed',
-              'data': <String, Object>{
-                'kind': 'test_complete',
-                'retryable': true,
-              },
+              'type': 'draft.ready',
+              'data': <String, Object>{'draft': _draftJson(status: 'ready')},
             }),
           );
           await socket.close();
@@ -139,18 +136,21 @@ void main() {
     );
     addTearDown(client.dispose);
 
-    await expectLater(
-      client.createCandidateRealtime(
-        threadId: _threadId,
-        audioChunks: Stream<Uint8List>.fromIterable(<Uint8List>[
-          Uint8List.fromList(<int>[1, 2]),
-          Uint8List.fromList(<int>[3, 4]),
-        ]),
-        idempotencyKey: 'voice_realtime_001',
-      ),
-      emitsError(isA<AgentClientException>()),
-    );
+    final events = await client
+        .createDraftRealtime(
+          threadId: _threadId,
+          audioChunks: Stream<Uint8List>.fromIterable(<Uint8List>[
+            Uint8List.fromList(<int>[1, 2]),
+            Uint8List.fromList(<int>[3, 4]),
+          ]),
+          idempotencyKey: 'voice_realtime_001',
+        )
+        .toList();
     await handled.future;
+
+    expect(events, hasLength(1));
+    final completed = events.single as AgentVoiceDraftCompleted;
+    expect(completed.draft.isReady, isTrue);
 
     expect(jsonDecode(received.first as String), <String, Object?>{
       'type': 'start',
@@ -414,16 +414,16 @@ void main() {
     final transport = _ScriptedVoiceTransport([
       _Step(
         method: 'POST',
-        path: '/v1/agent-voice-message-candidates/$_candidateId/confirmations',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations',
         verify: (request) {
           expect(jsonDecode(utf8.decode(request.body!)), <String, Object?>{
-            'candidate_version': 1,
+            'draft_version': 1,
             'client_message_id': 'voice_message_001',
             'confirmed_text': 'Edited confirmed transcript',
           });
         },
         response: _jsonResponse(HttpStatus.accepted, <String, Object?>{
-          'candidate': _candidateJson(status: 'confirmed', confirmed: true),
+          'draft': _draftJson(status: 'confirmed', confirmed: true),
           'message': _voiceMessageJson(content: 'Edited confirmed transcript'),
           'run': _runJson(status: 'pending'),
         }),
@@ -432,9 +432,9 @@ void main() {
     final client = _client(transport);
     addTearDown(client.dispose);
 
-    final confirmation = await client.confirmCandidate(
-      candidateId: _candidateId,
-      candidateVersion: 1,
+    final confirmation = await client.confirmDraft(
+      draftId: _draftId,
+      draftVersion: 1,
       clientMessageId: 'voice_message_001',
       confirmedText: 'Edited confirmed transcript',
     );
@@ -442,101 +442,147 @@ void main() {
     expect(confirmation.message.modality, AgentMessageModality.voice);
     expect(confirmation.message.audio?.id, _audioId);
     expect(confirmation.run.status, AgentVoiceRunStatus.pending);
-    expect(confirmation.candidate.confirmedMessageId, _messageId);
+    expect(confirmation.draft.confirmedMessageId, _messageId);
     transport.expectDone();
   });
 
-  test('keeps a confirmation SSE stream open across assistant deltas', () async {
-    final completedRun = _runJson(status: 'completed')
-      ..['assistant_message_id'] = _assistantMessageId
-      ..['provider_completion_id'] = 'completion-voice-001'
-      ..['provider_model'] = 'qwen-plus'
-      ..['finish_reason'] = 'stop'
-      ..['usage'] = <String, Object?>{
-        'input_tokens': 10,
-        'output_tokens': 4,
-        'total_tokens': 14,
-      }
-      ..['started_at'] = _timestamp
-      ..['completed_at'] = _timestamp;
+  test('rejects obsolete durable Message audio states', () async {
+    final message = _voiceMessageJson(content: 'Edited confirmed transcript');
+    (message['audio']! as Map<String, Object?>)['status'] = 'deleted';
     final transport = _ScriptedVoiceTransport([
       _Step(
         method: 'POST',
-        path:
-            '/v1/agent-voice-message-candidates/$_candidateId/confirmations/stream',
-        response: _sseResponse(<(String, Object?)>[
-          (
-            'input.committed',
-            <String, Object?>{
-              'candidate': _candidateJson(status: 'confirmed', confirmed: true),
-              'message': _voiceMessageJson(
-                content: 'Edited confirmed transcript',
-              ),
-              'run': _runJson(status: 'pending'),
-            },
-          ),
-          ('assistant.started', <String, Object?>{'run_id': _runId}),
-          (
-            'assistant.delta',
-            <String, Object?>{'run_id': _runId, 'delta': 'Hello'},
-          ),
-          (
-            'assistant.delta',
-            <String, Object?>{'run_id': _runId, 'delta': ', how can I help?'},
-          ),
-          ('run.completed', <String, Object?>{'run': completedRun}),
-        ]),
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations',
+        response: _jsonResponse(HttpStatus.accepted, <String, Object?>{
+          'draft': _draftJson(status: 'confirmed', confirmed: true),
+          'message': message,
+          'run': _runJson(status: 'pending'),
+        }),
       ),
     ]);
     final client = _client(transport);
     addTearDown(client.dispose);
 
-    final events = await client
-        .confirmCandidateStream(
-          candidateId: _candidateId,
-          candidateVersion: 1,
-          clientMessageId: 'voice_message_001',
-          confirmedText: 'Edited confirmed transcript',
-        )
-        .toList();
-
-    expect(events, hasLength(5));
-    expect(
-      events.whereType<AgentVoiceAssistantDelta>().map((event) => event.delta),
-      <String>['Hello', ', how can I help?'],
+    await expectLater(
+      client.confirmDraft(
+        draftId: _draftId,
+        draftVersion: 1,
+        clientMessageId: 'voice_message_001',
+        confirmedText: 'Edited confirmed transcript',
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
     );
-    expect(events.last, isA<AgentVoiceRunCompleted>());
     transport.expectDone();
   });
 
   test(
-    'decodes confirmation fields for confirmed deleting and deleted candidates',
+    'keeps a confirmation SSE stream open across assistant deltas',
     () async {
-      for (final status in <String>['confirmed', 'deleting', 'deleted']) {
-        final candidateJson = _candidateJson(status: status, confirmed: true);
-        if (status == 'deleted') {
-          candidateJson['deleted_at'] = _timestamp;
+      final completedRun = _runJson(status: 'completed')
+        ..['assistant_message_id'] = _assistantMessageId
+        ..['provider_completion_id'] = 'completion-voice-001'
+        ..['provider_model'] = 'qwen-plus'
+        ..['finish_reason'] = 'stop'
+        ..['usage'] = <String, Object?>{
+          'input_tokens': 10,
+          'output_tokens': 4,
+          'total_tokens': 14,
         }
-        final transport = _ScriptedVoiceTransport([
-          _Step(
-            method: 'GET',
-            path: '/v1/agent-voice-message-candidates/$_candidateId',
-            response: _jsonResponse(HttpStatus.ok, candidateJson),
-          ),
-        ]);
-        final client = _client(transport);
-        addTearDown(client.dispose);
+        ..['started_at'] = _timestamp
+        ..['completed_at'] = _timestamp;
+      final transport = _ScriptedVoiceTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+          response: _sseResponse(<(String, Object?)>[
+            (
+              'input.committed',
+              <String, Object?>{
+                'draft': _draftJson(status: 'confirmed', confirmed: true),
+                'message': _voiceMessageJson(
+                  content: 'Edited confirmed transcript',
+                ),
+                'run': _runJson(status: 'pending'),
+              },
+            ),
+            ('assistant.started', <String, Object?>{'run_id': _runId}),
+            (
+              'assistant.delta',
+              <String, Object?>{'run_id': _runId, 'delta': 'Hello'},
+            ),
+            (
+              'assistant.delta',
+              <String, Object?>{'run_id': _runId, 'delta': ', how can I help?'},
+            ),
+            ('run.completed', <String, Object?>{'run': completedRun}),
+          ]),
+        ),
+      ]);
+      final client = _client(transport);
+      addTearDown(client.dispose);
 
-        final candidate = await client.getCandidate(candidateId: _candidateId);
+      final events = await client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList();
 
-        expect(candidate.confirmedMessageId, _messageId, reason: status);
-        expect(candidate.confirmedRunId, _runId, reason: status);
-        expect(candidate.messageAudioId, _audioId, reason: status);
-        expect(candidate.confirmedAt, isNotNull, reason: status);
-        transport.expectDone();
-      }
+      expect(events, hasLength(5));
+      expect(
+        events.whereType<AgentVoiceAssistantDelta>().map(
+          (event) => event.delta,
+        ),
+        <String>['Hello', ', how can I help?'],
+      );
+      expect(events.last, isA<AgentVoiceRunCompleted>());
+      transport.expectDone();
     },
   );
+
+  test('decodes exactly four durable draft states', () async {
+    final transport = _ScriptedVoiceTransport([
+      for (final status in const <String>[
+        'transcribing',
+        'ready',
+        'failed',
+        'confirmed',
+      ])
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-voice-drafts/$_draftId',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _draftJson(status: status, confirmed: status == 'confirmed'),
+          ),
+        ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final drafts = <AgentVoiceDraft>[];
+    for (var index = 0; index < 4; index++) {
+      drafts.add(await client.getDraft(draftId: _draftId));
+    }
+
+    expect(drafts.map((draft) => draft.status), AgentVoiceDraftStatus.values);
+    expect(drafts.take(3).every((draft) => draft.expiresAt != null), isTrue);
+    final confirmed = drafts.last;
+    expect(confirmed.expiresAt, isNull);
+    expect(confirmed.confirmedMessageId, _messageId);
+    expect(confirmed.confirmedRunId, _runId);
+    expect(confirmed.messageAudioId, _audioId);
+    expect(confirmed.confirmedAt, isNotNull);
+    transport.expectDone();
+  });
 
   test(
     'decodes absent modality as text and rejects text carrying audio',
@@ -592,27 +638,28 @@ void main() {
   );
 
   test(
-    'restores an assistant Message carrying a practice plan handoff',
+    'restores an assistant Message carrying a practice plan client action',
     () async {
       final assistant = _assistantMessageJson()
-        ..['handoffs'] = <Object?>[
+        ..['client_actions'] = <Object?>[
           <String, Object?>{
-            'type': 'confirm_practice_plan',
-            'label': '确认并开始练习',
-            'practice_plan_id': _practicePlanId,
-            'plan_revision': 2,
-            'target': '阿里高级 Java 开发面试',
-            'scene_name': '项目经历深挖',
-            'practice_experience': 'INTERVIEW',
-            'scene_category': 'INTERVIEW_PROFESSIONAL',
-            'practice_mode': 'FULL_SIMULATION',
-            'roles': <Object?>['面试官', '候选人'],
-            'practice_scope': '围绕项目难点完成三轮追问',
-            'suggested_duration_seconds': 720,
-            'min_effective_turns': 3,
-            'max_effective_turns': 5,
-            'executable_status': 'ready',
-            'confirmation_prompt': '请确认是否按此方案开始练习。',
+            'type': practicePlanConfirmClientActionType,
+            'payload': <String, Object?>{
+              'label': '确认并开始练习',
+              'practice_plan_id': _practicePlanId,
+              'plan_version': 2,
+              'target': '阿里高级 Java 开发面试',
+              'scene_name': '项目经历深挖',
+              'practice_experience': 'INTERVIEW',
+              'scene_category': 'INTERVIEW_PROFESSIONAL',
+              'practice_mode': 'FULL_SIMULATION',
+              'roles': <Object?>['面试官', '候选人'],
+              'practice_scope': '围绕项目难点完成三轮追问',
+              'suggested_duration_seconds': 720,
+              'min_effective_turns': 3,
+              'max_effective_turns': 5,
+              'confirmation_prompt': '请确认是否按此方案开始练习。',
+            },
           },
         ];
       final transport = _ScriptedVoiceTransport([
@@ -632,11 +679,11 @@ void main() {
         messageId: _assistantMessageId,
       );
 
-      expect(message?.handoffs, hasLength(1));
-      expect(
-        (message?.handoffs.single as ConfirmPracticePlanHandoff).practicePlanId,
-        _practicePlanId,
+      expect(message?.clientActions, hasLength(1));
+      final action = decodeConfirmPracticePlanClientAction(
+        message!.clientActions.single,
       );
+      expect(action.practicePlanId, _practicePlanId);
       transport.expectDone();
     },
   );
@@ -816,31 +863,38 @@ AgentVoiceWireResponse _sseResponse(Iterable<(String, Object?)> events) {
   );
 }
 
-Map<String, Object?> _candidateJson({
+Map<String, Object?> _draftJson({
   required String status,
   bool confirmed = false,
 }) {
+  final hasTranscript = status == 'ready' || status == 'confirmed';
   return <String, Object?>{
-    'candidate_id': _candidateId,
+    'draft_id': _draftId,
     'thread_id': _threadId,
     'status': status,
     'asr_attempt': 1,
-    'candidate_version': 1,
+    'draft_version': 1,
     'recording': <String, Object?>{
       'content_type': 'audio/wav',
       'size_bytes': _waveBytes.length,
       'duration_ms': 3000,
       'sample_rate': 16000,
     },
-    'transcript': <String, Object?>{
-      'candidate_text': 'Candidate transcript',
-      'request_id': 'request-voice-001',
-      'provider': 'qwen',
-      'model': 'qwen-asr',
-      'language': 'en',
-      'finish_reason': 'stop',
-    },
-    'expires_at': '2026-07-26T13:00:00Z',
+    if (hasTranscript)
+      'transcript': <String, Object?>{
+        'text': 'Draft transcript',
+        'request_id': 'request-voice-001',
+        'provider': 'qwen',
+        'model': 'qwen-asr',
+        'language': 'en',
+        'finish_reason': 'stop',
+      },
+    if (status == 'failed')
+      'failure': <String, Object?>{
+        'kind': 'provider_unavailable',
+        'retryable': true,
+      },
+    if (!confirmed) 'expires_at': '2026-07-26T13:00:00Z',
     if (confirmed) ...<String, Object?>{
       'confirmed_message_id': _messageId,
       'confirmed_run_id': _runId,
@@ -905,7 +959,7 @@ Map<String, Object?> _runJson({required String status}) {
 }
 
 const _threadId = '11111111-1111-4111-8111-111111111111';
-const _candidateId = '22222222-2222-4222-8222-222222222222';
+const _draftId = '22222222-2222-4222-8222-222222222222';
 const _messageId = '33333333-3333-4333-8333-333333333333';
 const _runId = '44444444-4444-4444-8444-444444444444';
 const _audioId = '55555555-5555-4555-8555-555555555555';

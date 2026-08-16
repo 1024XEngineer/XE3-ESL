@@ -1,56 +1,43 @@
 import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
+import 'package:speakup/features/coaching/interview/interview_resume_file.dart';
 import 'package:speakup/features/coaching/preparation/preparation_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 abstract interface class JobPreparationClient implements PreparationClient {
-  Future<JobTarget> createJobTarget({
-    required JobTargetInput input,
+  Future<InterviewPreparation> createInterviewPreparation({
+    required InterviewPreparationInput input,
+    InterviewResumeFile? resume,
     required String idempotencyKey,
   });
 
-  Future<JobTarget> getJobTarget(String jobTargetId);
+  Future<InterviewPreparation> getInterviewPreparation(
+    String interviewPreparationId,
+  );
 
-  Future<JobTarget> updateJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required JobTargetInput input,
+  Future<InterviewPreparation> regenerateInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
+    required InterviewPreparationInput input,
     required String idempotencyKey,
   });
 
-  Future<JobTarget> analyzeJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
+  Future<InterviewPreparation> confirmInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
+    required InterviewPreparationCandidate candidate,
     required String idempotencyKey,
   });
 
-  Future<JobTarget> confirmJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required int expectedAnalysisVersion,
-    required JobTargetCandidate candidate,
+  Future<InterviewPreparation> discardInterviewPreparation({
+    required String interviewPreparationId,
+    required int expectedVersion,
     required String idempotencyKey,
   });
-
-  Future<JobTarget> discardJobTarget({
-    required String jobTargetId,
-    required int expectedInputVersion,
-    required String idempotencyKey,
-  });
-
-  Future<PracticePlan> getPlan(String planId);
 
   Future<List<PracticePlanSummary>> listPlans({
     required PracticeExperience experience,
-  });
-
-  Future<void> deletePlan(String planId);
-
-  Future<PracticePlan> revisePlan({
-    required String planId,
-    required RevisePreparationPlanInput input,
-    required String idempotencyKey,
   });
 
   Future<PreparationPracticeBootstrap> createSession({

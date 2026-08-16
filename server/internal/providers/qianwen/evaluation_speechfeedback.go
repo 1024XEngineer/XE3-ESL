@@ -38,7 +38,12 @@ func (generator *EvaluationSpeechFeedbackGenerator) Generate(
 			{Role: protocol.TextRoleSystem, Content: request.SystemPrompt},
 			{Role: protocol.TextRoleUser, Content: request.UserPrompt},
 		},
-		ResponseFormat: protocol.TextResponseFormatJSON,
+		ResponseFormat: protocol.TextResponseFormatJSONSchema,
+		ResponseSchema: &protocol.JSONSchemaDefinition{
+			Name:   "speech_feedback",
+			Strict: true,
+			Schema: speechFeedbackSchema(),
+		},
 	})
 	if err != nil {
 		return speechfeedback.TextGenerationResult{}, err
@@ -49,6 +54,32 @@ func (generator *EvaluationSpeechFeedbackGenerator) Generate(
 		Provider:  result.Provider,
 		Model:     result.Model,
 	}, nil
+}
+
+func speechFeedbackSchema() map[string]any {
+	item := strictObjectSchema(
+		[]any{"kind", "explanation", "suggested_text"},
+		map[string]any{
+			"kind": map[string]any{
+				"type": "string",
+				"enum": []any{
+					"STRENGTH", "CORRECTION", "RECOMMENDED_EXPRESSION",
+				},
+			},
+			"explanation": stringSchema(),
+			"suggested_text": map[string]any{
+				"anyOf": []any{stringSchema(), map[string]any{"type": "null"}},
+			},
+		},
+	)
+	return strictObjectSchema(
+		[]any{"items"},
+		map[string]any{
+			"items": map[string]any{
+				"type": "array", "minItems": 1, "maxItems": 3, "items": item,
+			},
+		},
+	)
 }
 
 var _ speechfeedback.TextGenerator = (*EvaluationSpeechFeedbackGenerator)(nil)

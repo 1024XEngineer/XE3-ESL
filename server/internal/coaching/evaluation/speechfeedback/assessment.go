@@ -2,274 +2,84 @@ package speechfeedback
 
 import (
 	"context"
-	"encoding/binary"
-	"errors"
-	"fmt"
 	"strings"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
-var ErrSpeechFeedbackAcousticUnavailable = errors.New(
-	"review: SpeechFeedback acoustic assessment unavailable",
-)
-
-type SpeechFeedbackAcousticInput struct {
-	OwnerUserID       string
-	AudioAssetID      string
-	AudioAssetVersion int64
-	AudioChecksum     string
-	AudioObjectKey    string
-	ConfirmedText     string
-	PromptText        string
-}
-
-type SpeechFeedbackAcousticEvidence struct {
-	Assessment      SpeechFeedbackAcousticAssessment
-	RawResult       string
-	AvailableFields []AcousticAssessmentField
-}
-
-func (evidence SpeechFeedbackAcousticEvidence) valid() bool {
-	return evidence.Assessment.valid() &&
-		evidence.Assessment.Pronunciation == SpeechFeedbackAssessed &&
-		strings.TrimSpace(evidence.RawResult) != "" &&
-		len(evidence.RawResult) <= 1024*1024
-}
-
-type SpeechFeedbackAudioReader interface {
-	ReadSpeechFeedbackAudio(
-		context.Context,
-		string,
-		string,
-		string,
-		string,
-	) ([]byte, error)
-}
-
-type SpeechFeedbackAcousticProvider interface {
-	EvaluateSpeechFeedbackAcoustics(
-		context.Context,
-		SpeechFeedbackAcousticInput,
-	) (SpeechFeedbackAcousticEvidence, error)
-}
-
-type speechFeedbackAcousticProvider struct {
-	audio     SpeechFeedbackAudioReader
+type CompactAcousticEvaluator struct {
+	audio     AudioReader
 	evaluator AcousticEvaluator
 }
 
-func NewSpeechFeedbackAcousticProvider(
-	audio SpeechFeedbackAudioReader,
+func NewCompactAcousticEvaluator(
+	audio AudioReader,
 	evaluator AcousticEvaluator,
-) (SpeechFeedbackAcousticProvider, error) {
+) (*CompactAcousticEvaluator, error) {
 	if audio == nil || evaluator == nil {
 		return nil, ErrInvalidSpeechFeedback
 	}
-	return &speechFeedbackAcousticProvider{
-		audio:     audio,
-		evaluator: evaluator,
-	}, nil
+	return &CompactAcousticEvaluator{audio: audio, evaluator: evaluator}, nil
 }
 
-func (provider *speechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcoustics(
+func (evaluator *CompactAcousticEvaluator) EvaluateAcoustic(
 	ctx context.Context,
-	input SpeechFeedbackAcousticInput,
-) (SpeechFeedbackAcousticEvidence, error) {
-	if provider == nil || provider.audio == nil ||
-		provider.evaluator == nil || ctx == nil ||
-		!validUUID(input.OwnerUserID) ||
-		!validSpeechFeedbackIdentifier(input.AudioAssetID) ||
-		input.AudioAssetVersion < 1 ||
-		len(input.AudioChecksum) != 64 ||
-		!speechFeedbackHasAssessableEnglish(input.ConfirmedText) {
-		return SpeechFeedbackAcousticEvidence{},
-			ErrSpeechFeedbackAcousticUnavailable
+	record evaluation.Record,
+	snapshot evaluation.SpeechInputSnapshot,
+) (evaluation.AcousticCheckpoint, error) {
+	if evaluator == nil || evaluator.audio == nil || evaluator.evaluator == nil ||
+		ctx == nil || record.Kind != evaluation.KindPracticeTurnFeedback ||
+		snapshot.AudioAssetID == "" || snapshot.Acoustic != nil ||
+		!speechFeedbackHasAssessableEnglish(snapshot.Transcript) {
+		return evaluation.AcousticCheckpoint{}, ErrAcousticUnavailable
 	}
-	language := classifySpeechFeedbackLanguage(input.ConfirmedText)
-	referenceText := strings.TrimSpace(input.ConfirmedText)
-	if language == speechFeedbackLanguageMixed {
-		referenceText = speechFeedbackEnglishReferenceText(input.ConfirmedText)
-	}
-	if referenceText == "" {
-		return SpeechFeedbackAcousticEvidence{},
-			ErrSpeechFeedbackAcousticUnavailable
-	}
-	audio, err := provider.audio.ReadSpeechFeedbackAudio(
-		ctx,
-		input.OwnerUserID,
-		input.AudioAssetID,
-		input.AudioObjectKey,
-		input.AudioChecksum,
+	audio, err := evaluator.audio.ReadOwnedAudio(
+		ctx, record.UserID, snapshot.AudioAssetID,
 	)
 	if err != nil {
-		return SpeechFeedbackAcousticEvidence{}, err
+		return evaluation.AcousticCheckpoint{}, err
 	}
-	pcm, err := speechFeedbackPCM16Mono(audio)
+	pcm, err := pcm16Mono(audio)
 	if err != nil {
-		return SpeechFeedbackAcousticEvidence{}, err
+		return evaluation.AcousticCheckpoint{}, err
 	}
-	category := speechFeedbackAcousticCategory(referenceText)
-	result, err := provider.evaluator.Evaluate(
-		ctx,
-		AcousticAssessmentRequest{
-			Audio:         pcm,
-			ReferenceText: referenceText,
-			// The scene prompt is used by the text evaluator for relevance and
-			// task completion. Acoustic assessment compares the audio with the
-			// confirmed answer, not with the question.
-			Category: category,
-		},
-	)
+	reference := speechFeedbackEnglishReferenceText(snapshot.Transcript)
+	category := speechFeedbackAcousticCategory(reference)
+	result, err := evaluator.evaluator.Evaluate(ctx, AcousticAssessmentRequest{
+		Audio:         pcm,
+		ReferenceText: reference,
+		Category:      category,
+	})
 	if err != nil {
-		return SpeechFeedbackAcousticEvidence{}, err
+		return evaluation.AcousticCheckpoint{}, err
 	}
-	if err := validateSpeechFeedbackAcousticSummary(
-		result.Summary,
-		category,
-	); err != nil {
-		return SpeechFeedbackAcousticEvidence{}, err
+	if result.Summary.Rejected == nil || *result.Summary.Rejected ||
+		!validScore(result.Summary.AccuracyScore) ||
+		!validSpeechFeedbackIdentifier(strings.TrimSpace(result.Provider)) {
+		return evaluation.AcousticCheckpoint{}, ErrAcousticUnavailable
 	}
-	assessment := SpeechFeedbackAcousticAssessment{
-		Pronunciation:   SpeechFeedbackAssessed,
-		AcousticFluency: SpeechFeedbackAssessed,
-		Provider:        strings.TrimSpace(result.Provider),
-		ProviderSession: strings.TrimSpace(result.SessionID),
-		Category:        string(category),
-		Notice:          SpeechFeedbackAcousticNotice,
+	if category == AcousticCategoryReadSentence &&
+		(!validScore(result.Summary.FluencyScore) ||
+			!validScore(result.Summary.IntegrityScore)) {
+		return evaluation.AcousticCheckpoint{}, ErrAcousticUnavailable
 	}
-	if category == AcousticCategoryTopic {
-		assessment.PronunciationScore = result.Summary.PhoneScore
-		assessment.SpeakingSpeedWPM = result.Summary.SpeakingSpeed
-		assessment.SemanticScore = result.Summary.AccuracyScore
-	} else {
-		assessment.Integrity = SpeechFeedbackAssessed
-		assessment.AccuracyScore = result.Summary.AccuracyScore
-		assessment.FluencyScore = result.Summary.FluencyScore
-		assessment.IntegrityScore = result.Summary.IntegrityScore
+	checkpoint := evaluation.AcousticCheckpoint{
+		Status:           evaluation.AcousticAssessed,
+		Pronunciation:    result.Summary.AccuracyScore,
+		Fluency:          result.Summary.FluencyScore,
+		Integrity:        result.Summary.IntegrityScore,
+		SpeakingSpeedWPM: result.Summary.SpeakingSpeed,
+		Provider:         strings.TrimSpace(result.Provider),
+		ProviderSession:  strings.TrimSpace(result.SessionID),
 	}
-	evidence := SpeechFeedbackAcousticEvidence{
-		Assessment:      assessment,
-		RawResult:       result.RawResult,
-		AvailableFields: result.AvailableFields,
+	if !checkpoint.Valid() {
+		return evaluation.AcousticCheckpoint{}, ErrAcousticUnavailable
 	}
-	if !evidence.valid() {
-		return SpeechFeedbackAcousticEvidence{},
-			ErrSpeechFeedbackAcousticUnavailable
-	}
-	return evidence, nil
+	return checkpoint, nil
 }
 
-func validateSpeechFeedbackAcousticSummary(
-	summary AcousticAssessmentSummary,
-	category AcousticAssessmentCategory,
-) error {
-	if summary.Rejected == nil && category != AcousticCategoryTopic {
-		return fmt.Errorf(
-			"%w: result is missing is_rejected",
-			ErrSpeechFeedbackAcousticUnavailable,
-		)
-	}
-	if summary.Rejected != nil && *summary.Rejected {
-		return fmt.Errorf(
-			"%w: speech was rejected (except_info=%s)",
-			ErrSpeechFeedbackAcousticUnavailable,
-			strings.TrimSpace(summary.ExceptionInfo),
-		)
-	}
-	if category == AcousticCategoryTopic {
-		missing := make([]string, 0, 3)
-		if !validSpeechFeedbackScore(summary.PhoneScore) {
-			missing = append(missing, "phone_score")
-		}
-		if !validSpeechFeedbackSpeakingSpeed(summary.SpeakingSpeed) {
-			missing = append(missing, "speeking_speed")
-		}
-		if !validSpeechFeedbackScore(summary.AccuracyScore) {
-			missing = append(missing, "accuracy_score")
-		}
-		if len(missing) != 0 {
-			return fmt.Errorf(
-				"%w: topic result is missing fields %s",
-				ErrSpeechFeedbackAcousticUnavailable,
-				strings.Join(missing, ","),
-			)
-		}
-		return nil
-	}
-	missing := make([]string, 0, 3)
-	if !validSpeechFeedbackScore(summary.AccuracyScore) {
-		missing = append(missing, "accuracy_score")
-	}
-	if !validSpeechFeedbackScore(summary.FluencyScore) {
-		missing = append(missing, "fluency_score")
-	}
-	if !validSpeechFeedbackScore(summary.IntegrityScore) {
-		missing = append(missing, "integrity_score")
-	}
-	if len(missing) != 0 {
-		return fmt.Errorf(
-			"%w: result is missing full-dimension fields %s",
-			ErrSpeechFeedbackAcousticUnavailable,
-			strings.Join(missing, ","),
-		)
-	}
-	return nil
+func validScore(value *float64) bool {
+	return value != nil && *value >= 0 && *value <= 100
 }
 
-func speechFeedbackPCM16Mono(wav []byte) ([]byte, error) {
-	if len(wav) < 12 ||
-		string(wav[:4]) != "RIFF" ||
-		string(wav[8:12]) != "WAVE" {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
-	}
-	var (
-		foundFormat bool
-		pcm         []byte
-	)
-	for offset := 12; offset+8 <= len(wav); {
-		chunkSize := int(binary.LittleEndian.Uint32(
-			wav[offset+4 : offset+8],
-		))
-		chunkStart := offset + 8
-		chunkEnd := chunkStart + chunkSize
-		if chunkEnd > len(wav) {
-			return nil, ErrSpeechFeedbackAcousticUnavailable
-		}
-		switch string(wav[offset : offset+4]) {
-		case "fmt ":
-			if foundFormat || chunkSize < 16 ||
-				binary.LittleEndian.Uint16(
-					wav[chunkStart:chunkStart+2],
-				) != 1 ||
-				binary.LittleEndian.Uint16(
-					wav[chunkStart+2:chunkStart+4],
-				) != 1 ||
-				binary.LittleEndian.Uint32(
-					wav[chunkStart+4:chunkStart+8],
-				) != 16_000 ||
-				binary.LittleEndian.Uint16(
-					wav[chunkStart+14:chunkStart+16],
-				) != 16 {
-				return nil, ErrSpeechFeedbackAcousticUnavailable
-			}
-			foundFormat = true
-		case "data":
-			if pcm != nil || chunkSize == 0 {
-				return nil, ErrSpeechFeedbackAcousticUnavailable
-			}
-			pcm = wav[chunkStart:chunkEnd]
-		}
-		offset = chunkEnd + chunkSize%2
-	}
-	if !foundFormat || len(pcm) == 0 || len(pcm)%2 != 0 {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
-	}
-	return pcm, nil
-}
-
-type SpeechFeedbackAcousticRepository interface {
-	SaveSpeechFeedbackAcousticEvidence(
-		context.Context,
-		SpeechFeedbackClaim,
-		SpeechFeedbackAcousticEvidence,
-	) error
-}
+var _ evaluation.AcousticEvaluator = (*CompactAcousticEvaluator)(nil)
