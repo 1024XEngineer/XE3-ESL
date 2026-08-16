@@ -373,6 +373,10 @@ func run() int {
 		)
 		return 1
 	}
+	agentMessageFeedback := evaluationComposition.AgentMessageScheduler()
+	if !storageConfig.Enabled {
+		agentMessageFeedback = nil
+	}
 
 	applicationComposition, err :=
 		app.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
@@ -401,7 +405,7 @@ func run() int {
 					Recognizer:             recognizer,
 					Synthesizer:            synthesizer,
 					AssistantSpeech:        synthesizer,
-					MessageFeedback:        evaluationComposition.AgentMessageScheduler(),
+					MessageFeedback:        agentMessageFeedback,
 					InputEnabled:           storageConfig.Enabled,
 					ScratchDirectory:       ttsConfig.TempDirectory,
 					ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
