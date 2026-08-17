@@ -246,7 +246,7 @@ VALUES ($1, $2, 0)`, submission.UserMessage.ID, imageID); err != nil {
 }
 
 func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
-	for _, terminal := range []string{"complete", "fail", "recover"} {
+	for _, terminal := range []string{"complete", "domain-complete", "fail", "recover"} {
 		t.Run(terminal, func(t *testing.T) {
 			database := newAgentTestDatabase(t)
 			service, _, repositories := newAgentRunServices(
@@ -296,7 +296,7 @@ func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
 
 			expectedActions := 0
 			switch terminal {
-			case "complete":
+			case "complete", "domain-complete":
 				if _, err := repositories.run.StartToolCall(
 					ctx, actor.UserID, claimed.ID, claimed.WorkerLeaseToken,
 					toolCallID, "provider-request-secret",
@@ -326,6 +326,15 @@ func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
 				if err != nil {
 					t.Fatalf("allocate Assistant Message ID: %v", err)
 				}
+				completion := successfulTextResult()
+				if terminal == "domain-complete" {
+					completion = agentrun.TextResult{
+						CompletionSource: agentrun.CompletionSourceDomain,
+						Content:          "Terminal projection completed.",
+						DomainToolCallID: toolCallID,
+						DomainToolName:   "review.search.v2",
+					}
+				}
 				completed, err := repositories.run.Complete(
 					ctx,
 					actor.UserID,
@@ -335,7 +344,7 @@ func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
 						ID: assistantMessageID, RunID: claimed.ID,
 						Content: "Terminal projection completed.",
 					},
-					successfulTextResult(),
+					completion,
 				)
 				if err != nil {
 					t.Fatalf("complete Run: %v", err)
@@ -346,6 +355,12 @@ func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
 						completed.AssistantMessageID,
 						assistantMessageID,
 					)
+				}
+				if terminal == "domain-complete" &&
+					(completed.CompletionSource != agentrun.CompletionSourceDomain ||
+						completed.DomainToolCallID != toolCallID ||
+						completed.DomainToolName != "review.search.v2") {
+					t.Fatalf("domain completion = %#v", completed)
 				}
 				expectedActions = 1
 			case "fail":

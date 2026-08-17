@@ -734,7 +734,7 @@ void main() {
             path: '/v1/agent-threads/$_threadId/runs',
             response: _jsonResponse(
               HttpStatus.created,
-              _runJson(status: 'completed'),
+              _runJson(status: 'completed', completionSource: 'domain'),
             ),
           ),
           _messagesStep(userContent: text, clientMessageId: 'message_unicode'),
@@ -1820,6 +1820,7 @@ Map<String, Object?> _runJson({
   bool failureRetryable = false,
   String? retryOfRunId,
   String? clientRetryId,
+  String completionSource = 'model',
 }) {
   return {
     'run_id': id,
@@ -1838,10 +1839,16 @@ Map<String, Object?> _runJson({
       'completed_at': _completedAt,
     if (status == 'completed') ...{
       'assistant_message_id': _assistantMessageId,
-      'provider_completion_id': 'completion_1',
-      'provider_model': 'qwen-flash',
-      'finish_reason': 'stop',
-      'usage': {'input_tokens': 8, 'output_tokens': 5, 'total_tokens': 13},
+      'completion_source': completionSource,
+      if (completionSource == 'model') ...{
+        'provider_completion_id': 'completion_1',
+        'provider_model': 'qwen-flash',
+        'finish_reason': 'stop',
+        'usage': {'input_tokens': 8, 'output_tokens': 5, 'total_tokens': 13},
+      } else ...{
+        'domain_tool_call_id': 'call-practice-preview-1',
+        'domain_tool_name': 'practice.preview.v1',
+      },
     },
     if (status == 'failed')
       'failure': {

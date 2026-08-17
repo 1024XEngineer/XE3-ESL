@@ -10,6 +10,7 @@ String? scenarioAssetPath(SceneDefinition scene) {
     'scn_travel_hotel_checkin': 'assets/images/scenes/travel-scene.jpg',
     'scn_daily_rental_maintenance':
         'assets/images/scenes/daily-rental-maintenance.jpg',
+    'scn_daily_rental_viewing': 'assets/images/scenes/daily-rental-viewing.jpg',
     'scn_daily_medical_appointment':
         'assets/images/scenes/daily-medical-appointment.jpg',
     'scn_daily_phone_call': 'assets/images/scenes/daily-phone-call.jpg',

@@ -1331,29 +1331,107 @@
       ]
     },
     {
-      "scene_id": "scn_daily_rental_maintenance",
+      "scene_id": "scn_daily_rental_viewing",
       "practice_experience": "LIFE_AND_TRAVEL",
       "scene_category": "LIFE_DAILY",
-      "name": "租房与维修",
+      "name": "看房与租赁咨询",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "向房东、物业或维修人员描述故障、约定时间并确认责任。",
-        "practice_goal": "准确描述问题，协商可行时间和后续安排。",
+        "public_scene_brief": "向房产中介了解房屋条件、租金费用、租期和入住要求，判断房屋是否合适。",
+        "practice_goal": "了解房屋条件、租金费用、租期和入住要求，判断房屋是否合适。",
+        "user_role": "准租客",
+        "ai_role": "房产中介",
+        "persona_summary": "A knowledgeable real estate agent who explains the property's condition, costs, lease terms, and move-in requirements without pressuring the prospective tenant.",
+        "focus_areas": [
+          "property_condition",
+          "rent_and_fees",
+          "lease_terms",
+          "move_in_requirements"
+        ],
+        "turn_blueprints": [
+          "欢迎用户看房，并询问最关注的房屋信息",
+          "澄清用户对房型、设施和入住时间的要求",
+          "说明租金费用、租期和关键入住条件",
+          "复述用户关注点，并确认看房、申请或继续比较的下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_rental_viewing_counterpart",
+          "scene_id": "scn_daily_rental_viewing",
+          "role_type": "REAL_ESTATE_AGENT",
+          "display_name": "房产中介",
+          "responsibilities": "介绍房屋条件、相关费用、租期和入住要求，并回应准租客的问题。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "property_condition",
+              "description": "Ask about and assess the property's layout, condition, and facilities."
+            },
+            {
+              "objective_id": "rent_and_fees",
+              "description": "Clarify the rent, deposit, utilities, and any additional fees."
+            },
+            {
+              "objective_id": "lease_terms",
+              "description": "Confirm the lease length, renewal terms, and important restrictions."
+            },
+            {
+              "objective_id": "move_in_requirements",
+              "description": "Understand the application, documentation, and move-in requirements."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_rental_viewing_full",
+          "scene_id": "scn_daily_rental_viewing",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_rental_viewing_focus",
+          "scene_id": "scn_daily_rental_viewing",
+          "role_definition_id": "role_daily_rental_viewing_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_rental_maintenance",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "租房报修",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向物业工作人员准确描述租住房屋的故障及影响，协商维修安排并确认责任。",
+        "practice_goal": "准确描述故障及影响，协商维修时间、进入方式、责任和后续安排。",
         "user_role": "租客",
         "ai_role": "物业工作人员",
         "persona_summary": "A practical property staff member who asks for fault details, has realistic scheduling limits, and confirms responsibility and follow-up.",
         "focus_areas": [
           "fault_description",
-          "availability",
+          "access_arrangement",
           "responsibility",
           "follow_up"
         ],
         "turn_blueprints": [
-          "请租客描述具体故障",
-          "澄清影响和可进入时间",
-          "提出一个现实的维修时段",
-          "确认责任和后续安排"
+          "确认报修请求，并请租客描述具体故障",
+          "澄清故障影响、维修紧迫性和可进入方式",
+          "协商一个现实的维修时间并说明责任",
+          "复述维修安排，并确认进入方式和后续跟进"
         ]
       },
       "roles": [
@@ -1362,7 +1440,7 @@
           "scene_id": "scn_daily_rental_maintenance",
           "role_type": "PROPERTY_STAFF",
           "display_name": "物业工作人员",
-          "responsibilities": "准确描述问题，协商可行时间和后续安排。",
+          "responsibilities": "核实故障及影响，协商维修时间、进入方式、责任和后续安排。",
           "style": "Natural, concise, and appropriate to the current role.",
           "practice_objectives": [
             {
@@ -1370,8 +1448,8 @@
               "description": "Describe the fault and its symptoms precisely."
             },
             {
-              "objective_id": "availability",
-              "description": "Ask about and confirm a workable time or service slot."
+              "objective_id": "access_arrangement",
+              "description": "Agree on a workable repair time and how maintenance staff may enter."
             },
             {
               "objective_id": "responsibility",

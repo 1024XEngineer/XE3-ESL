@@ -54,6 +54,9 @@ type Run struct {
 	ProviderCompletionID string
 	ProviderModel        string
 	FinishReason         string
+	CompletionSource     CompletionSource
+	DomainToolCallID     string
+	DomainToolName       string
 	Usage                TokenUsage
 	FailureKind          string
 	FailureRetryable     bool
