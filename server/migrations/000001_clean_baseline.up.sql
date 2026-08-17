@@ -640,7 +640,7 @@ CREATE TABLE practice_plans (
         FOREIGN KEY (source_thread_id, user_id)
         REFERENCES agent_threads (id, user_id)
         ON DELETE SET NULL (source_thread_id),
-    CONSTRAINT practice_plans_status_check CHECK (status IN ('draft', 'ready')),
+    CONSTRAINT practice_plans_status_check CHECK (status IN ('draft', 'ready', 'archived')),
     CONSTRAINT practice_plans_version_check CHECK (version > 0),
     CONSTRAINT practice_plans_json_check CHECK (
         jsonb_typeof(preparation_snapshot) = 'object'

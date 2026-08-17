@@ -106,6 +106,7 @@ func TestCleanBaselineKeepsCriticalOwnershipAndConcurrencyConstraints(
 		"agent_runs_one_nonterminal_per_thread_idx",
 		"agent_voice_drafts_thread_idx",
 		"created_at DESC, plan_id DESC",
+		"status IN ('draft', 'ready', 'archived')",
 		"practice_questions_tip_check",
 		"practice_sessions_state_check",
 	} {
