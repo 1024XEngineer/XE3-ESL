@@ -828,7 +828,6 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 			loopConditionalToolName,
 			`{"write_value":"persisted-value"}`,
 		),
-		finalLoopResult("The conditional write completed."),
 	)
 	service := newLoopTestServiceWithStore(t, generator, store)
 	setLoopTools(t, service, store, conditional)
@@ -853,11 +852,11 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 		conditional.inputs[1].WriteValue == "" {
 		t.Fatalf("conditional inputs = %#v", conditional.inputs)
 	}
-	if got, want := generator.CallCount(), 3; got != want {
+	if got, want := generator.CallCount(), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
-	if requests := generator.Requests(); requests[2].ToolChoice.Mode != ToolChoiceNone {
-		t.Fatalf("final request tool choice = %q, want %q", requests[2].ToolChoice.Mode, ToolChoiceNone)
+	if result.CompletionSource != CompletionSourceDomain {
+		t.Fatalf("CompletionSource = %q, want domain", result.CompletionSource)
 	}
 }
 
@@ -878,7 +877,6 @@ func TestRunLoopFinalizesAfterRepeatedCompletedWriteCommand(t *testing.T) {
 			},
 			Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		},
-		finalLoopResult("The resource is ready."),
 	)
 	service := newLoopTestService(t, generator)
 	setLoopTools(t, service, capabilityfixture.NewStore(), writeTool)
@@ -896,23 +894,49 @@ func TestRunLoopFinalizesAfterRepeatedCompletedWriteCommand(t *testing.T) {
 	if got, want := result.Content, "The resource is ready."; got != want {
 		t.Fatalf("Content = %q, want %q", got, want)
 	}
-	if got, want := len(writeTool.requestIDs), 2; got != want {
+	if got, want := len(writeTool.requestIDs), 1; got != want {
 		t.Fatalf("write calls = %d, want %d", got, want)
 	}
-	if writeTool.requestIDs[0] != writeTool.requestIDs[1] {
-		t.Fatalf("repeated command request ids = %#v, want stable identity", writeTool.requestIDs)
-	}
-	if got, want := generator.CallCount(), 2; got != want {
+	if got, want := generator.CallCount(), 1; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
-	requests := generator.Requests()
-	if requests[1].ToolChoice.Mode != ToolChoiceNone {
-		t.Fatalf("final request tool choice = %q, want %q", requests[1].ToolChoice.Mode, ToolChoiceNone)
+	if result.CompletionSource != CompletionSourceDomain {
+		t.Fatalf("CompletionSource = %q, want domain", result.CompletionSource)
 	}
-	toolResults := requests[1].Messages
-	if !strings.Contains(toolResults[len(toolResults)-2].Content, `"replayed":false`) ||
-		!strings.Contains(toolResults[len(toolResults)-1].Content, `"replayed":true`) {
-		t.Fatalf("repeated command results = %#v, want recognizable replay", toolResults)
+}
+
+func TestRunLoopKeepsCompletedDomainResultWhenToolNotificationDisconnects(
+	t *testing.T,
+) {
+	writeTool := &loopRequestIDTool{
+		name:        "resource.create.v1",
+		turnOutcome: capability.TurnOutcomeCompleted,
+	}
+	generator := newScriptedGenerator(
+		toolLoopResult("call-create", writeTool.name, `{}`),
+	)
+	service := newLoopTestService(t, generator)
+	setLoopTools(t, service, capabilityfixture.NewStore(), writeTool)
+
+	result, _, err := service.generateObserved(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("create the resource"),
+		toolCompletionDisconnectObserver{},
+		AssistantOutput{
+			ID:    "5d1dd070-0805-4be4-9b4a-aa689b78bf6e",
+			RunID: "run-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("generateObserved() error = %v", err)
+	}
+	if result.CompletionSource != CompletionSourceDomain ||
+		result.Content != "The resource is ready." ||
+		len(writeTool.requestIDs) != 1 {
+		t.Fatalf("domain result = %#v, requests = %#v", result, writeTool.requestIDs)
 	}
 }
 
@@ -1167,6 +1191,12 @@ func (tool *loopRequestIDTool) Execute(
 			"replayed": replayed,
 		},
 		TurnOutcome: tool.turnOutcome,
+		AssistantText: func() string {
+			if tool.turnOutcome == capability.TurnOutcomeCompleted {
+				return "The resource is ready."
+			}
+			return ""
+		}(),
 	}, nil
 }
 
@@ -1260,6 +1290,12 @@ func (conditional *loopConditionalTool) Execute(
 	return capability.Result{
 		Content:     map[string]any{"ok": true},
 		TurnOutcome: outcome,
+		AssistantText: func() string {
+			if outcome == capability.TurnOutcomeCompleted {
+				return "The conditional write completed."
+			}
+			return ""
+		}(),
 	}, nil
 }
 
@@ -1428,6 +1464,57 @@ func (generator *scriptedGenerator) GenerateStream(
 
 type recordingLoopStreamObserver struct {
 	steps []string
+}
+
+type toolCompletionDisconnectObserver struct{}
+
+func (toolCompletionDisconnectObserver) OnInputCommitted(
+	context.Context,
+	Submission,
+) error {
+	return nil
+}
+
+func (toolCompletionDisconnectObserver) OnToolStarted(
+	context.Context,
+	ToolStep,
+) error {
+	return nil
+}
+
+func (toolCompletionDisconnectObserver) OnToolCompleted(
+	context.Context,
+	ToolStep,
+) error {
+	return errors.New("stream disconnected")
+}
+
+func (toolCompletionDisconnectObserver) OnToolFailed(
+	context.Context,
+	ToolStep,
+) error {
+	return nil
+}
+
+func (toolCompletionDisconnectObserver) OnAssistantOutputStarted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
+}
+
+func (toolCompletionDisconnectObserver) OnAssistantOutputDelta(
+	context.Context,
+	AssistantOutputDelta,
+) error {
+	return nil
+}
+
+func (toolCompletionDisconnectObserver) OnAssistantOutputCompleted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
 }
 
 type realtimeLoopStreamObserver struct {

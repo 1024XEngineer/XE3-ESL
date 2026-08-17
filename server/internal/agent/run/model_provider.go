@@ -120,15 +120,26 @@ type TokenUsage struct {
 	TotalTokens  int
 }
 
-// TextResult contains only completion metadata needed for Run auditing.
+type CompletionSource string
+
+const (
+	CompletionSourceModel  CompletionSource = "model"
+	CompletionSourceDomain CompletionSource = "domain"
+)
+
+// TextResult represents either a provider-generated completion or a
+// domain-owned completion with canonical assistant text.
 type TextResult struct {
-	ID           string
-	Provider     string
-	Model        string
-	Content      string
-	ToolCalls    []ModelToolCall
-	FinishReason string
-	Usage        TokenUsage
+	CompletionSource CompletionSource
+	ID               string
+	Provider         string
+	Model            string
+	Content          string
+	ToolCalls        []ModelToolCall
+	FinishReason     string
+	Usage            TokenUsage
+	DomainToolCallID string
+	DomainToolName   string
 }
 
 func ValidateTextRequest(request TextRequest) error {
