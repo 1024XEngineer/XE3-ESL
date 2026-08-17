@@ -154,6 +154,21 @@ void main() {
     );
     expect(transport.calls, isEmpty);
   });
+
+  test('archives a practice plan with DELETE', () async {
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(HttpStatus.noContent, const <String, Object?>{}),
+    ]);
+    final client = _client(transport);
+
+    await client.deletePlan(contractPlanId);
+
+    expect(transport.calls.single.method, 'DELETE');
+    expect(
+      transport.calls.single.uri.path,
+      '/v1/practice-plans/$contractPlanId',
+    );
+  });
 }
 
 WireJobPreparationClient _client(IdentityHttpTransport transport) {

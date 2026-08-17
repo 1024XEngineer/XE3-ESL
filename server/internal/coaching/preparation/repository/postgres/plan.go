@@ -118,7 +118,7 @@ func (r *PostgresPlanRepository) ListCurrentPlans(ctx context.Context, actor req
 	if r == nil || r.pool == nil || ctx == nil || !actor.Valid() {
 		return nil, preparation.ErrPlanInvalid
 	}
-	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM practice_plans WHERE user_id=$1 AND practice_experience=$2 ORDER BY created_at DESC, plan_id DESC`, actor.UserID, string(experience))
+	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM practice_plans WHERE user_id=$1 AND practice_experience=$2 AND status<>'archived' ORDER BY created_at DESC, plan_id DESC`, actor.UserID, string(experience))
 	if err != nil {
 		return nil, planDB(err)
 	}
@@ -135,6 +135,20 @@ func (r *PostgresPlanRepository) ListCurrentPlans(ctx context.Context, actor req
 		return nil, planDB(err)
 	}
 	return plans, nil
+}
+
+func (r *PostgresPlanRepository) ArchivePlan(ctx context.Context, actor requestcontext.Actor, planID string) error {
+	if r == nil || r.pool == nil || ctx == nil || !actor.Valid() || !validAggregateID(planID) {
+		return preparation.ErrPlanNotFound
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE practice_plans SET status='archived', updated_at=transaction_timestamp() WHERE user_id=$1 AND plan_id=$2 AND status='ready'`, actor.UserID, planID)
+	if err != nil {
+		return classifyPlanError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return preparation.ErrPlanNotFound
+	}
+	return nil
 }
 
 func (r *PostgresPlanRepository) ConfirmPlan(ctx context.Context, actor requestcontext.Actor, command preparation.ConfirmPlanCommand) (preparation.PracticePlan, bool, error) {

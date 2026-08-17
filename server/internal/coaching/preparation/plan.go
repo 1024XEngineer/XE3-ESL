@@ -26,8 +26,9 @@ var (
 type PlanStatus string
 
 const (
-	PlanStatusDraft PlanStatus = "draft"
-	PlanStatusReady PlanStatus = "ready"
+	PlanStatusDraft    PlanStatus = "draft"
+	PlanStatusReady    PlanStatus = "ready"
+	PlanStatusArchived PlanStatus = "archived"
 )
 
 type EarlyCompletionRule string
@@ -178,6 +179,7 @@ type PlanRepository interface {
 	CreatePlan(context.Context, requestcontext.Actor, CreatePlanCommand) (PracticePlan, bool, error)
 	ReadCurrentPlan(context.Context, requestcontext.Actor, string) (PracticePlan, error)
 	ListCurrentPlans(context.Context, requestcontext.Actor, scene.PracticeExperience) ([]PracticePlan, error)
+	ArchivePlan(context.Context, requestcontext.Actor, string) error
 	ConfirmPlan(context.Context, requestcontext.Actor, ConfirmPlanCommand) (PracticePlan, bool, error)
 	ReadExecutablePlan(context.Context, requestcontext.Actor, string, int) (PracticePlan, error)
 }

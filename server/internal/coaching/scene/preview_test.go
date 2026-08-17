@@ -53,7 +53,7 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	}
 }
 
-func TestCatalogPreviewResolverSeparatesClientScenarios(t *testing.T) {
+func TestCatalogPreviewResolverSeparatesClientAndShoppingScenarios(t *testing.T) {
 	catalog, err := NewBuiltinCatalog(testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewBuiltinCatalog() error = %v", err)
@@ -63,8 +63,10 @@ func TestCatalogPreviewResolverSeparatesClientScenarios(t *testing.T) {
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
 	for query, wantID := range map[string]string{
-		"客户延期沟通": "scn_workplace_client_delay",
-		"客户需求澄清": "scn_workplace_requirement_clarification",
+		"客户延期沟通":  "scn_workplace_client_delay",
+		"客户需求澄清":  "scn_workplace_requirement_clarification",
+		"商品咨询与购买": "scn_daily_product_shopping",
+		"换货与退款":   "scn_daily_return_refund",
 	} {
 		items, err := resolver.ResolvePreviewCatalog(context.Background(), query)
 		if err != nil {
