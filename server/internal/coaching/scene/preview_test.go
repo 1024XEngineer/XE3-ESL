@@ -71,6 +71,33 @@ func TestCatalogPreviewResolverMatchesHotelCheckin(t *testing.T) {
 	}
 }
 
+func TestCatalogPreviewResolverSeparatesSplitScenarios(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	resolver, err := NewCatalogPreviewResolver(catalog)
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	for query, wantID := range map[string]string{
+		"向同事提供反馈": "scn_workplace_feedback_conflict",
+		"处理职场冲突":  "scn_workplace_conflict_resolution",
+		"客户延期沟通":  "scn_workplace_client_delay",
+		"客户需求澄清":  "scn_workplace_requirement_clarification",
+		"商品咨询与购买": "scn_daily_product_shopping",
+		"换货与退款":   "scn_daily_return_refund",
+	} {
+		items, err := resolver.ResolvePreviewCatalog(context.Background(), query)
+		if err != nil {
+			t.Fatalf("ResolvePreviewCatalog(%q) error = %v", query, err)
+		}
+		if len(items) != 1 || items[0].Scene.ID != wantID {
+			t.Fatalf("ResolvePreviewCatalog(%q) = %#v", query, items)
+		}
+	}
+}
+
 func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T) {
 	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
 	if err != nil {
@@ -94,5 +121,19 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 				t.Fatalf("candidates = %#v, want only %q", items, wantSceneID)
 			}
 		})
+	}
+}
+
+func TestCatalogPreviewResolverKeepsGenericInterviewAmbiguous(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(context.Background(), "面试")
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("generic interview candidates = %#v, want multiple", items)
 	}
 }

@@ -132,6 +132,9 @@ final class _WizardClient implements JobPreparationClient {
   }) async => const <PracticePlanSummary>[];
 
   @override
+  Future<void> deletePlan(String planId) async {}
+
+  @override
   Future<InterviewPreparation> getInterviewPreparation(String id) async =>
       contractInterviewPreparation();
 
