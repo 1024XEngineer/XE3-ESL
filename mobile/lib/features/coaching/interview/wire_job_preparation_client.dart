@@ -315,6 +315,17 @@ final class WireJobPreparationClient implements JobPreparationClient {
   }
 
   @override
+  Future<void> deletePlan(String planId) async {
+    _requireAggregateId(planId);
+    await _request(
+      method: 'DELETE',
+      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}',
+      stage: JobPreparationOperationStage.plan,
+      expectedStatus: HttpStatus.noContent,
+    );
+  }
+
+  @override
   Future<PracticePlan> confirmPlan({
     required String planId,
     required int expectedVersion,

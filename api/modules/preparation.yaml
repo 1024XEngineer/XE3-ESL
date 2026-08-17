@@ -168,6 +168,25 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags: [Preparation]
+      summary: Archive a practice card
+      description: |
+        Removes an actor-owned ready practice card from current listings and
+        prevents new sessions from starting from it. Existing sessions and
+        their review history remain available.
+      operationId: archivePracticePlan
+      parameters:
+        - $ref: '#/components/parameters/PracticePlanId'
+      responses:
+        '204':
+          description: The practice card was archived.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-plans/{practice_plan_id}/confirm:
     post:
       tags: [Preparation]
@@ -699,7 +718,7 @@ components:
           minimum: 1
         practice_plan_status:
           type: string
-          enum: [draft, ready]
+          enum: [draft, ready, archived]
         created_at:
           type: string
           format: date-time

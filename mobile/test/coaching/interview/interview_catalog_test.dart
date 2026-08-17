@@ -6,7 +6,7 @@ import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 void main() {
-  testWidgets('separates plan content and opens the selected plan', (
+  testWidgets('separates plan content and opens the selected plan on tap', (
     tester,
   ) async {
     PracticePlanSummary? opened;
@@ -32,8 +32,50 @@ void main() {
     await tester.tap(find.byKey(const Key('interview-plan-plan-1')));
     await tester.pump();
     expect(opened, same(plan));
+  });
 
-    expect(find.byKey(const Key('delete-interview-plan-plan-1')), findsNothing);
+  testWidgets('long press confirms deletion without opening the plan', (
+    tester,
+  ) async {
+    PracticePlanSummary? opened;
+    PracticePlanSummary? deleted;
+    final plan = _plan('plan-1');
+
+    await _pumpCatalog(
+      tester,
+      plans: [plan],
+      onPlanPressed: (value) => opened = value,
+      onPlanDeleted: (value) => deleted = value,
+    );
+
+    final card = find.byKey(const Key('interview-plan-plan-1'));
+    expect(
+      tester.getSemantics(card),
+      matchesSemantics(
+        label: '模拟面试：Java Developer',
+        hint: '长按删除模拟面试',
+        isButton: true,
+        hasTapAction: true,
+        hasLongPressAction: true,
+      ),
+    );
+
+    await tester.longPress(card);
+    await tester.pumpAndSettle();
+    expect(find.text('删除模拟面试？'), findsOneWidget);
+    expect(opened, isNull);
+    expect(deleted, isNull);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(deleted, isNull);
+
+    await tester.longPress(card);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-delete-interview-plan')));
+    await tester.pumpAndSettle();
+    expect(deleted, same(plan));
+    expect(opened, isNull);
   });
 
   testWidgets('renders loading, error, empty, and multiple plan states', (
@@ -88,7 +130,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(content, findsOneWidget);
     }
-    expect(find.byKey(const Key('delete-interview-plan-plan-1')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
@@ -99,6 +140,7 @@ Future<void> _pumpCatalog(
   bool loading = false,
   String? errorMessage,
   ValueChanged<PracticePlanSummary>? onPlanPressed,
+  ValueChanged<PracticePlanSummary>? onPlanDeleted,
   VoidCallback? onRetry,
 }) {
   return tester.pumpWidget(
@@ -113,6 +155,7 @@ Future<void> _pumpCatalog(
             errorMessage: errorMessage,
             onCreatePressed: () {},
             onPlanPressed: onPlanPressed ?? (_) {},
+            onPlanDeleted: onPlanDeleted ?? (_) {},
             onRetry: onRetry ?? () {},
           ),
         ),

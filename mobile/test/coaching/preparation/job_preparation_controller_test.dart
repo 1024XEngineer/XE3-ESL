@@ -99,7 +99,64 @@ void main() {
       expect(harness.practice.practicePlanId, contractPlanId);
     },
   );
+
+  test(
+    'deleting a saved interview removes it from the local catalog',
+    () async {
+      final harness = await _Harness.create();
+      addTearDown(harness.dispose);
+      harness.client.plans = <PracticePlanSummary>[_planSummary()];
+
+      await harness.controller.loadInterviewPlans();
+      expect(harness.controller.interviewPlans, hasLength(1));
+
+      expect(
+        await harness.controller.deleteInterviewPlan(contractPlanId),
+        isTrue,
+      );
+      expect(harness.client.deletedPlanIds, <String>[contractPlanId]);
+      expect(harness.controller.interviewPlans, isEmpty);
+      expect(harness.controller.plansErrorMessage, isNull);
+    },
+  );
+
+  test(
+    'failed interview deletion keeps the plan and exposes an error',
+    () async {
+      final harness = await _Harness.create();
+      addTearDown(harness.dispose);
+      harness.client
+        ..plans = <PracticePlanSummary>[_planSummary()]
+        ..deleteFailure = StateError('network unavailable');
+
+      await harness.controller.loadInterviewPlans();
+
+      expect(
+        await harness.controller.deleteInterviewPlan(contractPlanId),
+        isFalse,
+      );
+      expect(harness.controller.interviewPlans, hasLength(1));
+      expect(harness.controller.plansErrorMessage, '暂时无法删除这场模拟面试，请稍后重试。');
+    },
+  );
 }
+
+PracticePlanSummary _planSummary() => PracticePlanSummary(
+  id: contractPlanId,
+  version: 1,
+  status: PracticePlanStatus.ready,
+  experience: PracticeExperience.interview,
+  sceneName: 'Project deep dive',
+  practiceScope: '技术深挖',
+  jobTitle: 'Backend Engineer',
+  practiceObjectives: const <String>['清楚说明技术取舍'],
+  resumeUsed: true,
+  suggestedDurationSeconds: 900,
+  minEffectiveTurns: 1,
+  maxEffectiveTurns: 3,
+  createdAt: DateTime.utc(2026, 8, 15),
+  updatedAt: DateTime.utc(2026, 8, 15),
+);
 
 final class _Harness {
   _Harness._({
@@ -187,6 +244,9 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   final List<CreatePracticePlanInput> planInputs = <CreatePracticePlanInput>[];
   final List<CreatePreparationSessionInput> sessionInputs =
       <CreatePreparationSessionInput>[];
+  List<PracticePlanSummary> plans = <PracticePlanSummary>[];
+  final List<String> deletedPlanIds = <String>[];
+  Object? deleteFailure;
 
   @override
   Future<InterviewPreparation> createInterviewPreparation({
@@ -239,7 +299,13 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   @override
   Future<List<PracticePlanSummary>> listPlans({
     required PracticeExperience experience,
-  }) async => <PracticePlanSummary>[];
+  }) async => plans;
+
+  @override
+  Future<void> deletePlan(String planId) async {
+    deletedPlanIds.add(planId);
+    if (deleteFailure case final failure?) throw failure;
+  }
 
   @override
   Future<InterviewPreparation> getInterviewPreparation(String id) async =>

@@ -77,7 +77,7 @@ func (value PreviewTool) Definition() capability.Definition {
 	}
 	return capability.Definition{
 		Name:        PracticePreviewToolName,
-		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use whenever the user explicitly asks to create, arrange, prepare, or start a practice, exercise, simulation, or practice card, including practice for an upcoming interview, meeting, client conversation, or presentation. Use after any optional IELTS warm-up is complete, when the user skips warm-up, or when arranging a full mock. For non-IELTS practice, pass background_summary using only facts the user already provided; Preparation creates the Profile and immutable Snapshot internally. For IELTS, pass ielts_practice_mode and, for PART_1/PART_2/PART_3, exactly one ielts_topic_choice; the server derives the preparation background from those choices. The server selects and freezes questions from the current published bank; never invent or request question ids. Omit max_effective_turns for IELTS because the frozen questions determine it. FULL_MOCK must omit ielts_topic_choice and never reveals questions before practice. Missing user-facing details return needs_input without creating a Plan; never say a practice was created or is ready unless this tool actually returns preview_ready. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession or claims that the user confirmed.",
+		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use whenever the user explicitly asks to create, arrange, prepare, or start a practice, exercise, simulation, or practice card, including practice for an upcoming interview, meeting, client conversation, or presentation. For a direct non-IELTS request, pass the user's natural scene description as scene_query in the first call; the server resolves the official Scene and owns its default role, practice mode, duration, and turn policy. Pass background_summary only when the user supplied additional preparation facts. Use after any optional IELTS warm-up is complete, when the user skips warm-up, or when arranging a full mock. For IELTS, pass ielts_practice_mode and, for PART_1/PART_2/PART_3, exactly one ielts_topic_choice; the server derives the preparation background from those choices. The server selects and freezes questions from the current published bank; never invent or request question ids. Omit max_effective_turns for IELTS because the frozen questions determine it. FULL_MOCK must omit ielts_topic_choice and never reveals questions before practice. Missing user-facing details return needs_input without creating a Plan; an unresolved scene query completes this turn with one clarification response and must not be called again until the user provides new input. Never say a practice was created or is ready unless this tool actually returns preview_ready. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession or claims that the user confirmed.",
 		InputSchema: capability.ObjectSchema(map[string]any{
 			"scene_query": capability.TextSchema(
 				"Natural-language catalog query used only to return or resolve official Scene candidates.",
@@ -123,7 +123,8 @@ func (value PreviewTool) ClassifyInvocationEffect(
 	if err != nil {
 		return 0, err
 	}
-	if parsed.BackgroundSummary != "" || parsed.IELTSPracticeMode != "" {
+	if parsed.SceneQuery != "" || parsed.BackgroundSummary != "" ||
+		parsed.IELTSPracticeMode != "" {
 		return capability.InvocationEffectMayWrite, nil
 	}
 	return capability.InvocationEffectReadOnly, nil
@@ -169,6 +170,8 @@ func previewToolResult(preview PreviewResult) capability.Result {
 	turnOutcome := capability.TurnOutcomeContinue
 	if preview.Status == "preview_ready" {
 		clientActions = []agentclientaction.Action{preview.ClientAction}
+		turnOutcome = capability.TurnOutcomeCompleted
+	} else if preview.AssistantText != "" {
 		turnOutcome = capability.TurnOutcomeCompleted
 	}
 	return capability.Result{
