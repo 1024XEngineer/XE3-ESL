@@ -111,6 +111,32 @@ final class JobPreparationController extends ChangeNotifier {
     }
   }
 
+  Future<bool> deleteInterviewPlan(String planId) async {
+    if (_disposed || _plansLoading || !_validUUID(planId)) return false;
+    _plansLoading = true;
+    _plansErrorMessage = null;
+    final requestEpoch = ++_planListEpoch;
+    notifyListeners();
+    try {
+      await client.deletePlan(planId);
+      if (_disposed || requestEpoch != _planListEpoch) return false;
+      _interviewPlans = _interviewPlans
+          .where((plan) => plan.id != planId)
+          .toList(growable: false);
+      return true;
+    } on Object {
+      if (!_disposed && requestEpoch == _planListEpoch) {
+        _plansErrorMessage = '暂时无法删除这场模拟面试，请稍后重试。';
+      }
+      return false;
+    } finally {
+      if (!_disposed && requestEpoch == _planListEpoch) {
+        _plansLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
   void beginNewPreparation() {
     if (_disposed || isBusy) return;
     _epoch++;
