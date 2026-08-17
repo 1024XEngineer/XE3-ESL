@@ -8,8 +8,9 @@ void main() {
   const expectedAssets = <String, String>{
     'scn_daily_small_talk': 'assets/images/scenes/small-talk.jpg',
     'scn_daily_restaurant_ordering': 'assets/images/scenes/daily-tutor.jpg',
-    'scn_daily_shopping_return':
-        'assets/images/scenes/daily-shopping-return.jpg',
+    'scn_daily_product_shopping':
+        'assets/images/scenes/daily-product-shopping.jpg',
+    'scn_daily_return_refund': 'assets/images/scenes/daily-shopping-return.jpg',
     'scn_daily_airport_transport': 'assets/images/scenes/airport-transport.jpg',
     'scn_daily_hotel_checkin_issue': 'assets/images/scenes/travel-scene.jpg',
     'scn_daily_rental_maintenance':
