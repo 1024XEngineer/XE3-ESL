@@ -1248,26 +1248,26 @@
       "scene_id": "scn_workplace_client_delay",
       "practice_experience": "WORKPLACE",
       "scene_category": "WORKPLACE_GENERAL",
-      "name": "客户延期说明与需求澄清",
+      "name": "客户延期沟通",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "向客户解释交付限制、澄清需求并协商可行方案。",
-        "practice_goal": "说明影响和时间安排，避免含糊承诺。",
+        "public_scene_brief": "向客户代表说明延期原因、当前状态和业务影响，提出替代方案并确认新的交付时间。",
+        "practice_goal": "说明延期原因、当前状态和业务影响，提出替代方案并确认新的交付时间。",
         "user_role": "项目负责人",
-        "ai_role": "客户",
-        "persona_summary": "A concerned client who asks about impact, timing, and alternatives and does not accept vague commitments.",
+        "ai_role": "客户代表",
+        "persona_summary": "A concerned client representative who asks for the cause, current status, business impact, alternatives, and a concrete revised delivery date.",
         "focus_areas": [
-          "constraint",
+          "delay_cause",
+          "current_status",
           "impact",
-          "timeline",
-          "alternative"
+          "alternative_and_timeline"
         ],
         "turn_blueprints": [
-          "询问延期或需求变化的具体情况",
-          "追问对业务和时间的影响",
-          "要求一个可行替代方案",
-          "确认新的承诺与边界"
+          "询问当前交付状态，以及为什么不能按原计划完成",
+          "追问延期对业务、范围和依赖方的具体影响",
+          "要求可行的替代方案和现实的新交付时间",
+          "复述双方决定，并确认新的承诺、负责人和检查点"
         ]
       },
       "roles": [
@@ -1275,25 +1275,25 @@
           "role_definition_id": "role_workplace_client_delay_counterpart",
           "scene_id": "scn_workplace_client_delay",
           "role_type": "CLIENT",
-          "display_name": "客户",
-          "responsibilities": "说明影响和时间安排，避免含糊承诺。",
+          "display_name": "客户代表",
+          "responsibilities": "核实延期原因、当前状态和业务影响，评估替代方案，并确认新的交付承诺。",
           "style": "Natural, concise, and appropriate to the current role.",
           "practice_objectives": [
             {
-              "objective_id": "constraint",
-              "description": "Explain the relevant constraint and how it shapes the available options."
+              "objective_id": "delay_cause",
+              "description": "Explain the cause of the delay accurately without hiding relevant constraints."
+            },
+            {
+              "objective_id": "current_status",
+              "description": "State what has been completed, what remains, and which dependencies are blocking delivery."
             },
             {
               "objective_id": "impact",
               "description": "Explain the concrete impact on people, work, or outcomes."
             },
             {
-              "objective_id": "timeline",
-              "description": "Provide a realistic timeline with key milestones or dates."
-            },
-            {
-              "objective_id": "alternative",
-              "description": "Offer a practical alternative that addresses the other party’s concern."
+              "objective_id": "alternative_and_timeline",
+              "description": "Offer a practical alternative and commit to a realistic revised timeline with checkpoints."
             }
           ]
         }
@@ -1313,6 +1313,84 @@
           "practice_option_id": "option_workplace_client_delay_focus",
           "scene_id": "scn_workplace_client_delay",
           "role_definition_id": "role_workplace_client_delay_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_requirement_clarification",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "客户需求澄清",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向客户业务负责人澄清业务目标、范围、优先级、时间和验收标准。",
+        "practice_goal": "澄清业务目标、范围、优先级、时间和验收标准。",
+        "user_role": "解决方案负责人",
+        "ai_role": "客户业务负责人",
+        "persona_summary": "A client business owner who starts with an incomplete request, answers focused questions with realistic details, and expects the solution lead to confirm scope and acceptance criteria.",
+        "focus_areas": [
+          "business_goal",
+          "scope_and_priority",
+          "timeline_and_constraints",
+          "acceptance_criteria"
+        ],
+        "turn_blueprints": [
+          "给出一个较模糊的业务需求，并邀请用户进一步提问",
+          "根据用户问题澄清业务目标、用户和当前痛点",
+          "补充范围、优先级、时间或限制，并要求用户确认理解",
+          "复述已澄清的需求，并确认验收标准和下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_requirement_clarification_counterpart",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "role_type": "CLIENT_BUSINESS_OWNER",
+          "display_name": "客户业务负责人",
+          "responsibilities": "提供业务背景和约束，回答澄清问题，并确认范围、优先级和验收标准。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "business_goal",
+              "description": "Clarify the business outcome, affected users, and problem that the request should solve."
+            },
+            {
+              "objective_id": "scope_and_priority",
+              "description": "Define what is in and out of scope and which requirements have the highest priority."
+            },
+            {
+              "objective_id": "timeline_and_constraints",
+              "description": "Confirm timing, dependencies, policies, budget, and other practical constraints."
+            },
+            {
+              "objective_id": "acceptance_criteria",
+              "description": "Restate the requirement and agree on observable acceptance criteria and next steps."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_requirement_clarification_full",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_requirement_clarification_focus",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "role_definition_id": "role_workplace_requirement_clarification_counterpart",
           "practice_mode": "FOCUS",
           "display_name": "重点练习",
           "suggested_duration_seconds": 720,
