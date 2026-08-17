@@ -56,8 +56,8 @@ func reasonSummary(reasonCode string, decision string) string {
 		return "本轮已达到 Agent Loop 工具迭代预算。"
 	case FailureToolCallBudgetExhausted:
 		return "本轮已达到 Agent Loop 工具调用预算。"
-	case FailureWriteToolCallBudgetExhausted:
-		return "本轮已达到 Agent Loop 写工具调用预算。"
+	case reasonDomainTurnCompleted:
+		return "领域工具已完成本轮目标，进入最终回复。"
 	case FailureDuplicateToolCall:
 		return "模型重复提交了同一 ToolCall ID，本轮已停止执行。"
 	default:

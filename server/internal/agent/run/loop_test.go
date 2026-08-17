@@ -575,11 +575,18 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 }
 
 func TestRunLoopFailsWhenToolBudgetExhausted(t *testing.T) {
+	store := capabilityfixture.NewStore()
+	conditional := &loopConditionalTool{}
 	generator := newScriptedGenerator(
 		toolLoopResult("call-1", reviewcapability.ReviewSearchToolName, `{"query":"one"}`),
-		toolLoopResult("call-2", reviewcapability.ReviewSearchToolName, `{"query":"two"}`),
+		toolLoopResult(
+			"call-2",
+			loopConditionalToolName,
+			`{"write_value":"must-not-run"}`,
+		),
 	)
-	service := newLoopTestService(t, generator)
+	service := newLoopTestServiceWithStore(t, generator, store)
+	setLoopTools(t, service, store, conditional)
 	service.loopLimits.MaxToolCalls = 1
 
 	result, err := service.generate(
@@ -592,6 +599,9 @@ func TestRunLoopFailsWhenToolBudgetExhausted(t *testing.T) {
 	assertLoopFailure(t, result, err, FailureToolCallBudgetExhausted)
 	if got, want := generator.CallCount(), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	if len(conditional.inputs) != 0 {
+		t.Fatalf("write executed after total budget was exhausted: %#v", conditional.inputs)
 	}
 }
 
@@ -755,28 +765,31 @@ func TestToolCallRequestIDUsesTrustedWriteAndReadIdentities(t *testing.T) {
 	}
 }
 
-func TestRunLoopFailsBeforeExecutingBatchOverWriteBudget(t *testing.T) {
+func TestRunLoopExecutesMultipleLegalWritesWithinTotalBudget(t *testing.T) {
 	store := capabilityfixture.NewStore()
 	conditional := &loopConditionalTool{}
-	generator := newScriptedGenerator(TextResult{
-		ID:           "fake-completion-tools",
-		Provider:     "fake",
-		Model:        "configured-model",
-		FinishReason: "tool_calls",
-		ToolCalls: []ModelToolCall{
-			{
-				ID:        "call-create-1",
-				Name:      loopConditionalToolName,
-				Arguments: json.RawMessage(`{"write_value":"first"}`),
+	generator := newScriptedGenerator(
+		TextResult{
+			ID:           "fake-completion-tools",
+			Provider:     "fake",
+			Model:        "configured-model",
+			FinishReason: "tool_calls",
+			ToolCalls: []ModelToolCall{
+				{
+					ID:        "call-create-1",
+					Name:      loopConditionalToolName,
+					Arguments: json.RawMessage(`{"write_value":"first"}`),
+				},
+				{
+					ID:        "call-create-2",
+					Name:      loopConditionalToolName,
+					Arguments: json.RawMessage(`{"write_value":"second"}`),
+				},
 			},
-			{
-				ID:        "call-create-2",
-				Name:      loopConditionalToolName,
-				Arguments: json.RawMessage(`{"write_value":"second"}`),
-			},
+			Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		},
-		Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
-	})
+		finalLoopResult("Both writes completed."),
+	)
 	service := newLoopTestServiceWithStore(t, generator, store)
 	setLoopTools(t, service, store, conditional)
 
@@ -785,17 +798,25 @@ func TestRunLoopFailsBeforeExecutingBatchOverWriteBudget(t *testing.T) {
 		loopActor(),
 		loopRun(),
 		agentcontext.Manifest{},
-		loopRequest("帮我创建一个英文 PM 面试练习场景"),
+		loopRequest("执行两个合法的领域写入"),
 	)
-	assertLoopFailure(t, result, err, FailureWriteToolCallBudgetExhausted)
-	if len(conditional.inputs) != 0 {
-		t.Fatalf("over-budget batch reached tool: %#v", conditional.inputs)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if got, want := result.Content, "Both writes completed."; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got, want := conditional.inputs, []loopConditionalInput{
+		{WriteValue: "first"},
+		{WriteValue: "second"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("conditional inputs = %#v, want %#v", got, want)
 	}
 }
 
 func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 	store := capabilityfixture.NewStore()
-	conditional := &loopConditionalTool{}
+	conditional := &loopConditionalTool{completeAfterWrite: true}
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-conditional-query",
@@ -832,12 +853,70 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 		conditional.inputs[1].WriteValue == "" {
 		t.Fatalf("conditional inputs = %#v", conditional.inputs)
 	}
-	if got, want := generator.CallCount(), 4; got != want {
+	if got, want := generator.CallCount(), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	if requests := generator.Requests(); requests[2].ToolChoice.Mode != ToolChoiceNone {
+		t.Fatalf("final request tool choice = %q, want %q", requests[2].ToolChoice.Mode, ToolChoiceNone)
 	}
 }
 
-func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
+func TestRunLoopFinalizesAfterRepeatedCompletedWriteCommand(t *testing.T) {
+	writeTool := &loopRequestIDTool{
+		name:        "resource.create.v1",
+		turnOutcome: capability.TurnOutcomeCompleted,
+	}
+	generator := newScriptedGenerator(
+		TextResult{
+			ID:           "fake-completion-tools",
+			Provider:     "fake",
+			Model:        "configured-model",
+			FinishReason: "tool_calls",
+			ToolCalls: []ModelToolCall{
+				{ID: "call-create-1", Name: writeTool.name, Arguments: json.RawMessage(`{}`)},
+				{ID: "call-create-2", Name: writeTool.name, Arguments: json.RawMessage(`{}`)},
+			},
+			Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		},
+		finalLoopResult("The resource is ready."),
+	)
+	service := newLoopTestService(t, generator)
+	setLoopTools(t, service, capabilityfixture.NewStore(), writeTool)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("create the resource"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if got, want := result.Content, "The resource is ready."; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got, want := len(writeTool.requestIDs), 2; got != want {
+		t.Fatalf("write calls = %d, want %d", got, want)
+	}
+	if writeTool.requestIDs[0] != writeTool.requestIDs[1] {
+		t.Fatalf("repeated command request ids = %#v, want stable identity", writeTool.requestIDs)
+	}
+	if got, want := generator.CallCount(), 2; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	requests := generator.Requests()
+	if requests[1].ToolChoice.Mode != ToolChoiceNone {
+		t.Fatalf("final request tool choice = %q, want %q", requests[1].ToolChoice.Mode, ToolChoiceNone)
+	}
+	toolResults := requests[1].Messages
+	if !strings.Contains(toolResults[len(toolResults)-2].Content, `"replayed":false`) ||
+		!strings.Contains(toolResults[len(toolResults)-1].Content, `"replayed":true`) {
+		t.Fatalf("repeated command results = %#v, want recognizable replay", toolResults)
+	}
+}
+
+func TestRunLoopRejectedInvocationDoesNotPreventLaterWrite(t *testing.T) {
 	tests := []struct {
 		name string
 		call TextResult
@@ -870,6 +949,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 					loopConditionalToolName,
 					`{"write_value":"after-rejected"}`,
 				),
+				finalLoopResult("The later write completed."),
 			)
 			service := newLoopTestServiceWithStore(t, generator, store)
 			setLoopTools(t, service, store, conditional)
@@ -881,12 +961,19 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 				agentcontext.Manifest{},
 				loopRequest("attempt a guarded write"),
 			)
-			assertLoopFailure(t, result, err, FailureWriteToolCallBudgetExhausted)
-			if got, want := generator.CallCount(), 2; got != want {
+			if err != nil {
+				t.Fatalf("generate() error = %v", err)
+			}
+			if got, want := result.Content, "The later write completed."; got != want {
+				t.Fatalf("Content = %q, want %q", got, want)
+			}
+			if got, want := generator.CallCount(), 4; got != want {
 				t.Fatalf("Generate calls = %d, want %d", got, want)
 			}
-			if len(conditional.inputs) != 0 {
-				t.Fatalf("rejected invocation reached tool: %#v", conditional.inputs)
+			if got, want := conditional.inputs, []loopConditionalInput{
+				{WriteValue: "after-rejected"},
+			}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("conditional inputs = %#v, want %#v", got, want)
 			}
 		})
 	}
@@ -1047,8 +1134,10 @@ const loopConditionalToolName = "conditional.write.v1"
 const loopSensitiveSourceToolName = "sensitive.source.read.v1"
 
 type loopRequestIDTool struct {
-	name       string
-	requestIDs []string
+	name         string
+	requestIDs   []string
+	seenRequests map[string]struct{}
+	turnOutcome  capability.TurnOutcome
 }
 
 func (tool *loopRequestIDTool) Definition() capability.Definition {
@@ -1067,7 +1156,18 @@ func (tool *loopRequestIDTool) Execute(
 	_ json.RawMessage,
 ) (capability.Result, error) {
 	tool.requestIDs = append(tool.requestIDs, call.RequestID)
-	return capability.Result{Content: map[string]any{"ok": true}}, nil
+	if tool.seenRequests == nil {
+		tool.seenRequests = make(map[string]struct{})
+	}
+	_, replayed := tool.seenRequests[call.RequestID]
+	tool.seenRequests[call.RequestID] = struct{}{}
+	return capability.Result{
+		Content: map[string]any{
+			"ok":       true,
+			"replayed": replayed,
+		},
+		TurnOutcome: tool.turnOutcome,
+	}, nil
 }
 
 type loopSensitiveSourceTool struct{}
@@ -1114,7 +1214,8 @@ type loopConditionalInput struct {
 }
 
 type loopConditionalTool struct {
-	inputs []loopConditionalInput
+	inputs             []loopConditionalInput
+	completeAfterWrite bool
 }
 
 func (conditional *loopConditionalTool) Definition() capability.Definition {
@@ -1152,7 +1253,14 @@ func (conditional *loopConditionalTool) Execute(
 		return capability.Result{}, err
 	}
 	conditional.inputs = append(conditional.inputs, parsed)
-	return capability.Result{Content: map[string]any{"ok": true}}, nil
+	outcome := capability.TurnOutcomeContinue
+	if conditional.completeAfterWrite && parsed.WriteValue != "" {
+		outcome = capability.TurnOutcomeCompleted
+	}
+	return capability.Result{
+		Content:     map[string]any{"ok": true},
+		TurnOutcome: outcome,
+	}, nil
 }
 
 func parseLoopConditionalInput(

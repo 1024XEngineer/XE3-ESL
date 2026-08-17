@@ -75,6 +75,10 @@ func (executor *Executor) Execute(
 	if result.Content == nil {
 		result.Content = map[string]any{}
 	}
+	if !result.TurnOutcome.Valid() {
+		executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+		return Result{}, ErrExecutionRejected
+	}
 	if err := agentclientaction.ValidateItems(result.ClientActions); err != nil {
 		executor.logFailure(call, definition, time.Since(startedAt), err)
 		return Result{}, ErrExecutionRejected

@@ -22,7 +22,6 @@ const (
 	maxPersistedTokenCount   = 1<<31 - 1
 	defaultMaxIterations     = 3
 	MaxToolCallsPerRun       = 4
-	maxWriteCallsPerRun      = 1
 	defaultToolTimeout       = 5 * time.Second
 	defaultLoopTimeout       = 25 * time.Second
 	defaultMaxToolResult     = 16 * 1024
@@ -739,7 +738,6 @@ func (service *Service) generateObserved(
 	exposed := exposedToolNames(request.Tools)
 	seenToolCallIDs := make(map[string]struct{})
 	toolCalls := 0
-	writeCalls := 0
 	toolIterations := 0
 	modelIterations := 0
 	finalDecision := "direct_response"
@@ -842,16 +840,6 @@ func (service *Service) generateObserved(
 			)
 		}
 
-		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
-		if writeCalls+pendingWriteCalls > maxWriteCallsPerRun {
-			return TextResult{}, nil, service.stopLoop(
-				run,
-				FailureWriteToolCallBudgetExhausted,
-				selected,
-				modelIterations,
-			)
-		}
-		writeCalls += pendingWriteCalls
 		request.Messages = append(request.Messages, TextMessage{
 			Content:   result.Content,
 			Role:      TextRoleAssistant,
@@ -860,6 +848,7 @@ func (service *Service) generateObserved(
 		toolIterations++
 		toolCalls += len(result.ToolCalls)
 
+		turnCompleted := false
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
 			if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
@@ -891,7 +880,7 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			toolMessage, status, err := service.executeToolCall(
+			toolMessage, status, outcome, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
@@ -915,8 +904,40 @@ func (service *Service) generateObserved(
 				}
 			}
 			request.Messages = append(request.Messages, toolMessage)
+			if status == ToolCallSucceeded && outcome == capability.TurnOutcomeCompleted {
+				turnCompleted = true
+			}
 		}
 		finalDecision = "tool_call_then_response"
+		if turnCompleted {
+			service.logRoutingDecision(
+				run,
+				finalDecision,
+				selected,
+				reasonDomainTurnCompleted,
+				reasonSummary(reasonDomainTurnCompleted, finalDecision),
+				modelIterations,
+			)
+			finalResult, finalDeltas, finalErr := service.generateFinalOutput(
+				loopCtx,
+				request,
+				observer,
+				output,
+			)
+			if finalErr != nil {
+				return TextResult{}, nil, finalErr
+			}
+			modelIterations++
+			service.logRunCompleted(
+				run,
+				finalDecision,
+				modelIterations,
+				toolCalls,
+				startedAt,
+				finalResult.Content,
+			)
+			return finalResult, finalDeltas, nil
+		}
 	}
 }
 
@@ -1091,7 +1112,7 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, ToolCallStatus, error) {
+) (TextMessage, ToolCallStatus, capability.TurnOutcome, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
 	effect := service.registry.InvocationEffect(capability.Invocation{
@@ -1106,7 +1127,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, ToolCallFailed, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -1132,10 +1153,10 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, ToolCallFailed, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), ToolCallFailed, nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -1150,9 +1171,9 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, ToolCallFailed, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, persistErr
 		}
-		return toolFailureMessage(call.ID, err), ToolCallFailed, nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, nil
 	}
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
@@ -1166,13 +1187,13 @@ func (service *Service) executeToolCall(
 		toolSourceRefs(result.SourceRefs),
 		result.ClientActions,
 	); err != nil {
-		return TextMessage{}, ToolCallFailed, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, ToolCallSucceeded, nil
+	}, ToolCallSucceeded, result.TurnOutcome, nil
 }
 
 func (service *Service) saveToolCallProposed(
@@ -1582,22 +1603,6 @@ func toolCallRequestID(run Run, call ModelToolCall, mayWrite bool) string {
 	}
 	sum := sha256.Sum256([]byte(seed))
 	return fmt.Sprintf("%s%x", prefix, sum[:])
-}
-
-func (service *Service) writeToolCallCount(
-	calls []ModelToolCall,
-) int {
-	count := 0
-	for _, call := range calls {
-		effect := service.registry.InvocationEffect(capability.Invocation{
-			Name:  call.Name,
-			Input: call.Arguments,
-		})
-		if effect.MayWrite() {
-			count++
-		}
-	}
-	return count
 }
 
 func (service *Service) stopLoop(

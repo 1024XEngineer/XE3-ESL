@@ -165,12 +165,15 @@ func previewToolResult(preview PreviewResult) capability.Result {
 		content["catalog_candidates"] = preview.Candidates
 	}
 	clientActions := []agentclientaction.Action(nil)
+	turnOutcome := capability.TurnOutcomeContinue
 	if preview.Status == "preview_ready" {
 		clientActions = []agentclientaction.Action{preview.ClientAction}
+		turnOutcome = capability.TurnOutcomeCompleted
 	}
 	return capability.Result{
 		Content:       content,
 		SourceRefs:    preview.SourceRefs,
 		ClientActions: clientActions,
+		TurnOutcome:   turnOutcome,
 	}
 }

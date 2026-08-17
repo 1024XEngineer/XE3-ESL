@@ -30,7 +30,6 @@ const (
 	FailureInvalidContext               = "invalid_context"
 	FailureToolIterationBudgetExhausted = "tool_iteration_budget_exhausted"
 	FailureToolCallBudgetExhausted      = "tool_call_budget_exhausted"
-	FailureWriteToolCallBudgetExhausted = "write_tool_call_budget_exhausted"
 	FailureDuplicateToolCall            = "duplicate_tool_call"
 	FailureInternal                     = "internal_error"
 )
