@@ -28,7 +28,7 @@ var applicationTables = []string{
 	"users",
 }
 
-func TestCleanBaselineIsTheOnlyEmbeddedMigrationPair(t *testing.T) {
+func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 	files, err := fs.Glob(Files, "*.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +36,8 @@ func TestCleanBaselineIsTheOnlyEmbeddedMigrationPair(t *testing.T) {
 	want := []string{
 		"000001_clean_baseline.down.sql",
 		"000001_clean_baseline.up.sql",
+		"000002_agent_run_domain_completion.down.sql",
+		"000002_agent_run_domain_completion.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -43,10 +45,12 @@ func TestCleanBaselineIsTheOnlyEmbeddedMigrationPair(t *testing.T) {
 	}
 }
 
-func TestCleanBaselineIsTransactional(t *testing.T) {
+func TestMigrationsAreTransactional(t *testing.T) {
 	for _, name := range []string{
 		"000001_clean_baseline.up.sql",
 		"000001_clean_baseline.down.sql",
+		"000002_agent_run_domain_completion.up.sql",
+		"000002_agent_run_domain_completion.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
