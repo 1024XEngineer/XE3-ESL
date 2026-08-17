@@ -283,10 +283,20 @@ final class FakeAgentVoiceClient
     );
     yield AgentVoiceInputCommitted(confirmation);
     if (confirmation.assistantMessage case final assistant?) {
-      yield AgentVoiceAssistantStarted(runId: confirmation.run.id);
-      yield AgentVoiceAssistantDelta(
+      yield AgentVoiceAssistantOutputStarted(
         runId: confirmation.run.id,
+        outputId: assistant.id,
+      );
+      yield AgentVoiceAssistantOutputDelta(
+        runId: confirmation.run.id,
+        outputId: assistant.id,
+        sequence: 1,
         delta: assistant.text,
+      );
+      yield AgentVoiceAssistantOutputCompleted(
+        runId: confirmation.run.id,
+        outputId: assistant.id,
+        text: assistant.text,
       );
     }
     yield AgentVoiceRunCompleted(confirmation.run);

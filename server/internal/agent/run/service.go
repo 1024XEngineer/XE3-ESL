@@ -226,13 +226,7 @@ func (service *Service) SubmitTextStream(
 	if err := observer.OnInputCommitted(ctx, submission); err != nil {
 		return Submission{}, err
 	}
-	if submission.Run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, submission.Run); err != nil {
-			return Submission{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	submission.Run, err = service.process(ctx, actor, submission.Run, deltas)
+	submission.Run, err = service.process(ctx, actor, submission.Run, observer)
 	if err == nil {
 		submission.Run, err = service.waitForTerminalRun(
 			ctx,
@@ -364,13 +358,7 @@ func (service *Service) RetryTextStream(
 	}); err != nil {
 		return Retry{}, err
 	}
-	if retry.Run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, retry.Run); err != nil {
-			return Retry{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	retry.Run, err = service.process(ctx, actor, retry.Run, deltas)
+	retry.Run, err = service.process(ctx, actor, retry.Run, observer)
 	if err == nil {
 		retry.Run, err = service.waitForTerminalRun(
 			ctx,
@@ -466,7 +454,8 @@ func (service *Service) ProcessPending(
 }
 
 // ProcessPendingStream resumes a Run created by another Agent input workflow
-// while forwarding model output to that workflow's live response.
+// while forwarding typed tool steps and the committed Assistant Output to that
+// workflow's live response.
 func (service *Service) ProcessPendingStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -480,13 +469,7 @@ func (service *Service) ProcessPendingStream(
 		!ValidUUID(run.InputMessageID) {
 		return Run{}, ErrInvalidRequest
 	}
-	if run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, run); err != nil {
-			return Run{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	processed, err := service.process(ctx, actor, run, deltas)
+	processed, err := service.process(ctx, actor, run, observer)
 	if err == nil {
 		processed, err = service.waitForTerminalRun(
 			ctx,
@@ -501,7 +484,7 @@ func (service *Service) process(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	run Run,
-	observer *countingDeltaObserver,
+	observer StreamObserver,
 ) (Run, error) {
 	if run.Status != StatusPending {
 		return run, nil
@@ -597,6 +580,7 @@ func (service *Service) process(
 		return failed, failErr
 	}
 	var result TextResult
+	var finalDeltas []string
 	if observer == nil {
 		result, err = service.generate(
 			ctx,
@@ -606,7 +590,7 @@ func (service *Service) process(
 			request,
 		)
 	} else {
-		result, err = service.generateObserved(
+		result, finalDeltas, err = service.generateObserved(
 			ctx,
 			actor,
 			claimed,
@@ -648,8 +632,39 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
-	if observer != nil && observer.count == 0 {
-		if err := observer.OnTextDelta(ctx, result.Content); err != nil {
+	outputID, err := service.repository.NewAssistantMessageID()
+	if err != nil || !ValidUUID(outputID) {
+		failed, failErr := service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			claimed.WorkerLeaseToken,
+			FailureInternal,
+			true,
+		)
+		return failed, failErr
+	}
+	output := AssistantOutput{
+		ID: outputID, RunID: claimed.ID, Content: result.Content,
+	}
+	if observer != nil {
+		if len(finalDeltas) == 0 {
+			finalDeltas = []string{result.Content}
+		}
+		if joinedTextDeltas(finalDeltas) != result.Content {
+			failed, failErr := service.persistFailure(
+				ctx,
+				actor.UserID,
+				claimed.ID,
+				claimed.WorkerLeaseToken,
+				string(ErrorInvalidResponse),
+				ErrorInvalidResponse.Retryable(),
+			)
+			return failed, failErr
+		}
+		if err := observer.OnAssistantOutputStarted(ctx, AssistantOutput{
+			ID: output.ID, RunID: output.RunID,
+		}); err != nil {
 			failed, failErr := service.persistFailure(
 				ctx,
 				actor.UserID,
@@ -660,6 +675,30 @@ func (service *Service) process(
 			)
 			return failed, failErr
 		}
+		for index, delta := range finalDeltas {
+			if delta == "" {
+				continue
+			}
+			if err := observer.OnAssistantOutputDelta(
+				ctx,
+				AssistantOutputDelta{
+					OutputID: output.ID,
+					RunID:    output.RunID,
+					Sequence: index + 1,
+					Delta:    delta,
+				},
+			); err != nil {
+				failed, failErr := service.persistFailure(
+					ctx,
+					actor.UserID,
+					claimed.ID,
+					claimed.WorkerLeaseToken,
+					string(ErrorCancelled),
+					true,
+				)
+				return failed, failErr
+			}
+		}
 	}
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
@@ -668,10 +707,16 @@ func (service *Service) process(
 		actor.UserID,
 		claimed.ID,
 		claimed.WorkerLeaseToken,
-		result.Content,
+		output,
 		result,
 	)
-	return completed, err
+	if err != nil || observer == nil {
+		return completed, err
+	}
+	if err := observer.OnAssistantOutputCompleted(ctx, output); err != nil {
+		return completed, err
+	}
+	return completed, nil
 }
 
 func (service *Service) generate(
@@ -681,7 +726,10 @@ func (service *Service) generate(
 	manifest agentcontext.Manifest,
 	request TextRequest,
 ) (TextResult, error) {
-	return service.generateObserved(ctx, actor, run, manifest, request, nil)
+	result, _, err := service.generateObserved(
+		ctx, actor, run, manifest, request, nil,
+	)
+	return result, err
 }
 
 func (service *Service) generateObserved(
@@ -690,19 +738,17 @@ func (service *Service) generateObserved(
 	run Run,
 	manifest agentcontext.Manifest,
 	request TextRequest,
-	observer *countingDeltaObserver,
-) (TextResult, error) {
-	var deltaObserver TextDeltaObserver
-	if observer != nil {
-		deltaObserver = observer
-	}
+	observer StreamObserver,
+) (TextResult, []string, error) {
 	if service.registry == nil || service.executor == nil {
 		if err := service.repository.SaveContextSnapshot(
 			ctx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
 		); err != nil {
-			return TextResult{}, err
+			return TextResult{}, nil, err
 		}
-		return service.generateModel(ctx, request, deltaObserver)
+		buffer := &textDeltaBuffer{}
+		result, err := service.generateModel(ctx, request, buffer.observer(observer))
+		return result, buffer.deltas, err
 	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
@@ -722,7 +768,7 @@ func (service *Service) generateObserved(
 	if err := service.repository.SaveContextSnapshot(
 		loopCtx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
 	); err != nil {
-		return TextResult{}, err
+		return TextResult{}, nil, err
 	}
 
 	exposed := exposedToolNames(request.Tools)
@@ -735,13 +781,12 @@ func (service *Service) generateObserved(
 
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		modelObserver := deltaObserver
-		if toolCalls > 0 {
-			modelObserver = nil
-		}
-		result, err := service.generateModel(loopCtx, request, modelObserver)
+		buffer := &textDeltaBuffer{}
+		result, err := service.generateModel(
+			loopCtx, request, buffer.observer(observer),
+		)
 		if err != nil {
-			return TextResult{}, err
+			return TextResult{}, nil, err
 		}
 		modelIterations++
 		if !validLoopTextResult(result) ||
@@ -749,7 +794,7 @@ func (service *Service) generateObserved(
 			result.Model != service.configuration.Model ||
 			result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
 			service.logInvalidModelResult(run, result)
-			return result, nil
+			return result, nil, nil
 		}
 		if len(result.ToolCalls) == 0 {
 			service.logRoutingDecision(
@@ -768,7 +813,7 @@ func (service *Service) generateObserved(
 				startedAt,
 				result.Content,
 			)
-			return result, nil
+			return result, buffer.deltas, nil
 		}
 
 		selected := toolCallNames(result.ToolCalls)
@@ -781,7 +826,7 @@ func (service *Service) generateObserved(
 			modelIterations,
 		)
 		if toolIterations >= service.loopLimits.MaxIterations {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureToolIterationBudgetExhausted,
 				selected,
@@ -789,7 +834,7 @@ func (service *Service) generateObserved(
 			)
 		}
 		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureToolCallBudgetExhausted,
 				selected,
@@ -797,7 +842,7 @@ func (service *Service) generateObserved(
 			)
 		}
 		if hasRepeatedToolCallID(result.ToolCalls, seenToolCallIDs) {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureDuplicateToolCall,
 				selected,
@@ -807,7 +852,7 @@ func (service *Service) generateObserved(
 
 		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
 		if writeCalls+pendingWriteCalls > maxWriteCallsPerRun {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureWriteToolCallBudgetExhausted,
 				selected,
@@ -826,7 +871,13 @@ func (service *Service) generateObserved(
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
 			if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
-				return TextResult{}, err
+				return TextResult{}, nil, err
+			}
+			step := ToolStep{ID: call.ID, RunID: run.ID, Name: call.Name}
+			if observer != nil {
+				if err := observer.OnToolStarted(loopCtx, step); err != nil {
+					return TextResult{}, nil, err
+				}
 			}
 			if !toolExposed(exposed, call.Name) {
 				if err := service.markToolCallRejected(
@@ -835,7 +886,12 @@ func (service *Service) generateObserved(
 					call.ID,
 					"unknown_tool",
 				); err != nil {
-					return TextResult{}, err
+					return TextResult{}, nil, err
+				}
+				if observer != nil {
+					if err := observer.OnToolFailed(loopCtx, step); err != nil {
+						return TextResult{}, nil, err
+					}
 				}
 				request.Messages = append(
 					request.Messages,
@@ -843,14 +899,28 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			toolMessage, err := service.executeToolCall(
+			toolMessage, status, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
 				call,
 			)
 			if err != nil {
-				return TextResult{}, err
+				if observer != nil {
+					_ = observer.OnToolFailed(loopCtx, step)
+				}
+				return TextResult{}, nil, err
+			}
+			if observer != nil {
+				var eventErr error
+				if status == ToolCallSucceeded {
+					eventErr = observer.OnToolCompleted(loopCtx, step)
+				} else {
+					eventErr = observer.OnToolFailed(loopCtx, step)
+				}
+				if eventErr != nil {
+					return TextResult{}, nil, eventErr
+				}
 			}
 			request.Messages = append(request.Messages, toolMessage)
 		}
@@ -887,23 +957,31 @@ func (service *Service) generateModel(
 	return streaming.GenerateStream(ctx, request, observer)
 }
 
-type countingDeltaObserver struct {
-	delegate StreamObserver
-	count    int
+type textDeltaBuffer struct {
+	deltas []string
 }
 
-func (observer *countingDeltaObserver) OnTextDelta(
-	ctx context.Context,
-	delta string,
-) error {
+func (buffer *textDeltaBuffer) observer(observer StreamObserver) TextDeltaObserver {
+	if observer == nil {
+		return nil
+	}
+	return buffer
+}
+
+func (buffer *textDeltaBuffer) OnTextDelta(_ context.Context, delta string) error {
 	if delta == "" {
 		return nil
 	}
-	if err := observer.delegate.OnAssistantDelta(ctx, delta); err != nil {
-		return err
-	}
-	observer.count += len(delta)
+	buffer.deltas = append(buffer.deltas, delta)
 	return nil
+}
+
+func joinedTextDeltas(deltas []string) string {
+	var joined []byte
+	for _, delta := range deltas {
+		joined = append(joined, delta...)
+	}
+	return string(joined)
 }
 
 func (service *Service) executeToolCall(
@@ -911,7 +989,7 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, error) {
+) (TextMessage, ToolCallStatus, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
 	effect := service.registry.InvocationEffect(capability.Invocation{
@@ -926,7 +1004,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, ToolCallFailed, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -952,10 +1030,10 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, ToolCallFailed, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -970,9 +1048,9 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, ToolCallFailed, persistErr
 		}
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, nil
 	}
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
@@ -986,13 +1064,13 @@ func (service *Service) executeToolCall(
 		toolSourceRefs(result.SourceRefs),
 		result.ClientActions,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, ToolCallFailed, err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, nil
+	}, ToolCallSucceeded, nil
 }
 
 func (service *Service) saveToolCallProposed(

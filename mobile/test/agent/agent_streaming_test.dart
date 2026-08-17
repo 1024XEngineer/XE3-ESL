@@ -51,20 +51,47 @@ void main() {
             ),
           ),
         )
-        ..add(const AgentAssistantStarted(runId: 'run-1'))
-        ..add(const AgentAssistantDelta(runId: 'run-1', delta: '你'))
-        ..add(const AgentAssistantDelta(runId: 'run-1', delta: '好，**小花**。'));
+        ..add(
+          const AgentAssistantOutputStarted(
+            runId: 'run-1',
+            outputId: 'assistant-1',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputDelta(
+            runId: 'run-1',
+            outputId: 'assistant-1',
+            sequence: 1,
+            delta: '你',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputDelta(
+            runId: 'run-1',
+            outputId: 'assistant-1',
+            sequence: 2,
+            delta: '好，**小花**。',
+          ),
+        );
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       expect(controller.messages.last.text, '你好，**小花**。');
       expect(controller.messages.last.isStreaming, isTrue);
 
-      client.events.add(
-        const AgentRunCompleted(
-          runId: 'run-1',
-          assistantMessageId: 'assistant-1',
-        ),
-      );
+      client.events
+        ..add(
+          const AgentAssistantOutputCompleted(
+            runId: 'run-1',
+            outputId: 'assistant-1',
+            text: '你好，**小花**。',
+          ),
+        )
+        ..add(
+          const AgentRunCompleted(
+            runId: 'run-1',
+            assistantMessageId: 'assistant-1',
+          ),
+        );
       await client.events.close();
       await Future<void>.delayed(Duration.zero);
 
@@ -75,10 +102,10 @@ void main() {
       ]);
       expect(controller.messages.last.isStreaming, isFalse);
       expect(speechEvents, <String>[
-        'start:stream-run-1',
-        'delta:stream-run-1:你',
-        'delta:stream-run-1:好，**小花**。',
-        'complete:stream-run-1:assistant-1:你好，**小花**。',
+        'start:assistant-1',
+        'delta:assistant-1:你',
+        'delta:assistant-1:好，**小花**。',
+        'complete:assistant-1:assistant-1:你好，**小花**。',
       ]);
     },
   );
@@ -104,8 +131,20 @@ void main() {
 
     expect(await controller.sendText('Please help me.'), isTrue);
     client.events
-      ..add(const AgentAssistantStarted(runId: 'run-failed'))
-      ..add(const AgentAssistantDelta(runId: 'run-failed', delta: 'I can help'))
+      ..add(
+        const AgentAssistantOutputStarted(
+          runId: 'run-failed',
+          outputId: 'assistant-failed',
+        ),
+      )
+      ..add(
+        const AgentAssistantOutputDelta(
+          runId: 'run-failed',
+          outputId: 'assistant-failed',
+          sequence: 1,
+          delta: 'I can help',
+        ),
+      )
       ..add(
         const AgentRunFailed(
           runId: 'run-failed',
@@ -117,9 +156,9 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(speechEvents, <String>[
-      'start:stream-run-failed',
-      'delta:stream-run-failed:I can help',
-      'fail:stream-run-failed',
+      'start:assistant-failed',
+      'delta:assistant-failed:I can help',
+      'fail:assistant-failed',
     ]);
     expect(controller.messages.last.hasFailed, isTrue);
   });
@@ -188,9 +227,26 @@ void main() {
           ),
         ),
       )
-      ..add(const AgentAssistantStarted(runId: 'run-retry-2'))
       ..add(
-        const AgentAssistantDelta(runId: 'run-retry-2', delta: 'Recovered.'),
+        const AgentAssistantOutputStarted(
+          runId: 'run-retry-2',
+          outputId: 'assistant-retry-2',
+        ),
+      )
+      ..add(
+        const AgentAssistantOutputDelta(
+          runId: 'run-retry-2',
+          outputId: 'assistant-retry-2',
+          sequence: 1,
+          delta: 'Recovered.',
+        ),
+      )
+      ..add(
+        const AgentAssistantOutputCompleted(
+          runId: 'run-retry-2',
+          outputId: 'assistant-retry-2',
+          text: 'Recovered.',
+        ),
       )
       ..add(
         const AgentRunCompleted(
@@ -237,11 +293,25 @@ void main() {
 
       expect(await controller.sendText('Please continue.'), isTrue);
       client.events
-        ..add(const AgentAssistantStarted(runId: 'run-completed-failure'))
         ..add(
-          const AgentAssistantDelta(
+          const AgentAssistantOutputStarted(
             runId: 'run-completed-failure',
+            outputId: 'assistant-completed-failure',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputDelta(
+            runId: 'run-completed-failure',
+            outputId: 'assistant-completed-failure',
+            sequence: 1,
             delta: 'The response is complete.',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputCompleted(
+            runId: 'run-completed-failure',
+            outputId: 'assistant-completed-failure',
+            text: 'The response is complete.',
           ),
         )
         ..add(
@@ -255,9 +325,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(speechEvents, <String>[
-        'start:stream-run-completed-failure',
-        'delta:stream-run-completed-failure:The response is complete.',
-        'complete:stream-run-completed-failure:assistant-completed-failure',
+        'start:assistant-completed-failure',
+        'delta:assistant-completed-failure:The response is complete.',
+        'complete:assistant-completed-failure:assistant-completed-failure',
         'fail:assistant-completed-failure',
       ]);
       expect(controller.messages.last.id, 'assistant-completed-failure');
@@ -279,11 +349,25 @@ void main() {
 
     expect(await controller.sendText('Please continue.'), isTrue);
     client.events
-      ..add(const AgentAssistantStarted(runId: 'run-text-success'))
       ..add(
-        const AgentAssistantDelta(
+        const AgentAssistantOutputStarted(
           runId: 'run-text-success',
+          outputId: 'assistant-text-success',
+        ),
+      )
+      ..add(
+        const AgentAssistantOutputDelta(
+          runId: 'run-text-success',
+          outputId: 'assistant-text-success',
+          sequence: 1,
           delta: 'The text still succeeds.',
+        ),
+      )
+      ..add(
+        const AgentAssistantOutputCompleted(
+          runId: 'run-text-success',
+          outputId: 'assistant-text-success',
+          text: 'The text still succeeds.',
         ),
       )
       ..add(
@@ -340,11 +424,25 @@ void main() {
             ),
           ),
         )
-        ..add(const AgentAssistantStarted(runId: 'run-client-action-1'))
         ..add(
-          const AgentAssistantDelta(
+          const AgentAssistantOutputStarted(
             runId: 'run-client-action-1',
+            outputId: 'assistant-client-action-1',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputDelta(
+            runId: 'run-client-action-1',
+            outputId: 'assistant-client-action-1',
+            sequence: 1,
             delta: '练习方案已准备好。',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputCompleted(
+            runId: 'run-client-action-1',
+            outputId: 'assistant-client-action-1',
+            text: '练习方案已准备好。',
           ),
         )
         ..add(
@@ -404,11 +502,25 @@ void main() {
             ),
           ),
         )
-        ..add(const AgentAssistantStarted(runId: 'run-client-action-retry-1'))
         ..add(
-          const AgentAssistantDelta(
+          const AgentAssistantOutputStarted(
             runId: 'run-client-action-retry-1',
+            outputId: 'assistant-client-action-retry-1',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputDelta(
+            runId: 'run-client-action-retry-1',
+            outputId: 'assistant-client-action-retry-1',
+            sequence: 1,
             delta: '练习方案已准备好。',
+          ),
+        )
+        ..add(
+          const AgentAssistantOutputCompleted(
+            runId: 'run-client-action-retry-1',
+            outputId: 'assistant-client-action-retry-1',
+            text: '练习方案已准备好。',
           ),
         )
         ..add(
@@ -477,8 +589,31 @@ void main() {
             'retryable': true,
           })
         else ...[
-          _sse('assistant.started', {'run_id': retryRunId}),
-          _sse('assistant.delta', {'run_id': retryRunId, 'delta': '你好，小花。'}),
+          _sse('tool.started', {
+            'run_id': retryRunId,
+            'step_id': 'tool-step-1',
+            'name': 'practice.preview.v1',
+          }),
+          _sse('tool.completed', {
+            'run_id': retryRunId,
+            'step_id': 'tool-step-1',
+            'name': 'practice.preview.v1',
+          }),
+          _sse('assistant.output.started', {
+            'run_id': retryRunId,
+            'output_id': assistantMessageId,
+          }),
+          _sse('assistant.output.delta', {
+            'run_id': retryRunId,
+            'output_id': assistantMessageId,
+            'sequence': 1,
+            'delta': '你好，小花。',
+          }),
+          _sse('assistant.output.completed', {
+            'run_id': retryRunId,
+            'output_id': assistantMessageId,
+            'text': '你好，小花。',
+          }),
           _sse('run.completed', {
             'run': <String, Object?>{
               'run_id': retryRunId,

@@ -16,7 +16,7 @@ func (repository *runCompletionNotifyingRepository) Complete(
 	ownerID string,
 	runID string,
 	workerLeaseToken string,
-	content string,
+	output agentrun.AssistantOutput,
 	result agentrun.TextResult,
 ) (agentrun.Run, error) {
 	run, err := repository.Repository.Complete(
@@ -24,7 +24,7 @@ func (repository *runCompletionNotifyingRepository) Complete(
 		ownerID,
 		runID,
 		workerLeaseToken,
-		content,
+		output,
 		result,
 	)
 	if err == nil && run.Status == agentrun.StatusCompleted {

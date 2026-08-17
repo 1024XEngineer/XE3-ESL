@@ -800,46 +800,59 @@ final class ConversationController extends ChangeNotifier {
             if (pendingUser != null) {
               replaceMessage(localUserID, userMessage);
             }
-          case AgentAssistantStarted(:final runId):
+          case AgentToolStepEvent():
+            break;
+          case AgentAssistantOutputStarted(:final outputId):
             final current = _messages
                 .where((message) => message.id == assistantID)
                 .firstOrNull;
-            if (current != null && assistantID != 'stream-$runId') {
-              final canonicalTransientID = 'stream-$runId';
+            if (current != null && assistantID != outputId) {
               replaceMessage(
                 assistantID,
                 current.copyWith(
-                  id: canonicalTransientID,
+                  id: outputId,
                   text: '',
                   isStreaming: true,
                   hasFailed: false,
                 ),
               );
-              assistantID = canonicalTransientID;
+              assistantID = outputId;
               assistantText = '';
             }
             await _startAssistantStream(assistantID);
-          case AgentAssistantDelta(:final delta):
+          case AgentAssistantOutputDelta(:final delta):
             pending.write(delta);
             _appendAssistantStream(assistantID, delta);
             frameTimer ??= Timer(const Duration(milliseconds: 16), flushDelta);
-          case AgentRunCompleted(:final assistantMessageId):
-            completedAssistantMessageID = assistantMessageId;
+          case AgentAssistantOutputCompleted(:final outputId, :final text):
             frameTimer?.cancel();
             flushDelta();
+            if (assistantID != outputId || assistantText != text) {
+              throw const AgentClientException(
+                kind: AgentClientFailureKind.invalidResponse,
+                retryable: true,
+              );
+            }
             final current = _messages
                 .where((message) => message.id == assistantID)
                 .firstOrNull;
             if (current != null) {
               final completed = current.copyWith(
-                id: assistantMessageId,
-                text: assistantText,
+                id: outputId,
+                text: text,
                 isStreaming: false,
                 hasFailed: false,
               );
               replaceMessage(assistantID, completed);
               _completeAssistantStream(assistantID, completed);
-              assistantID = assistantMessageId;
+            }
+            completedAssistantMessageID = outputId;
+          case AgentRunCompleted(:final assistantMessageId):
+            if (assistantMessageId != completedAssistantMessageID) {
+              throw const AgentClientException(
+                kind: AgentClientFailureKind.invalidResponse,
+                retryable: true,
+              );
             }
           case AgentRunFailed(:final kind, :final retryable):
             throw AgentClientException(

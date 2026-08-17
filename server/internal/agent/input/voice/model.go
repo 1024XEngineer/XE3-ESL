@@ -157,8 +157,12 @@ type PendingRunProcessor interface {
 
 type ConfirmationStreamObserver interface {
 	OnConfirmationCommitted(context.Context, Confirmation) error
-	OnAssistantStarted(context.Context, run.Run) error
-	OnAssistantDelta(context.Context, string) error
+	OnToolStarted(context.Context, run.ToolStep) error
+	OnToolCompleted(context.Context, run.ToolStep) error
+	OnToolFailed(context.Context, run.ToolStep) error
+	OnAssistantOutputStarted(context.Context, run.AssistantOutput) error
+	OnAssistantOutputDelta(context.Context, run.AssistantOutputDelta) error
+	OnAssistantOutputCompleted(context.Context, run.AssistantOutput) error
 }
 
 type FeedbackReference struct {

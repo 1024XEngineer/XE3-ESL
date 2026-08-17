@@ -534,9 +534,16 @@ paths:
       description: |
         Commits the same Draft, Message, attachment, and Run as the non-streaming
         confirmation endpoint, then returns Server-Sent Events ordered as
-        `input.committed`, `assistant.started`, zero or more `assistant.delta`,
-        and exactly one terminal `run.completed` or `run.failed`. The
-        `input.committed` payload contains the confirmed Draft under `draft`.
+        `input.committed`, zero or more typed `tool.started` plus
+        `tool.completed` or `tool.failed` steps, one final output sequence
+        (`assistant.output.started`, one or more `assistant.output.delta`, and
+        `assistant.output.completed`), and exactly one terminal `run.completed`
+        or `run.failed`. The `input.committed` payload contains the confirmed
+        Draft under `draft`. Tool events expose only stable step identity and
+        name; tool inputs and results remain private. Final output events share
+        an `output_id` equal to the persisted assistant Message ID. Ordered
+        deltas carry a one-based `sequence`, and their concatenation equals the
+        completed output `text` and canonical Message content.
       operationId: streamAgentVoiceDraftConfirmation
       requestBody:
         required: true
@@ -791,12 +798,16 @@ paths:
       description: |
         Commits the same durable user Message and AgentRun as the non-streaming
         endpoint, then returns a bounded UTF-8 Server-Sent Events stream.
-        Events are ordered as `input.committed`, `assistant.started`, zero or
-        more `assistant.delta`, and exactly one terminal `run.completed` or
-        `run.failed`. Deltas contain visible assistant text only; reasoning and
-        fragmented tool-call arguments are never exposed. Only the validated
-        canonical assistant Message is persisted. Replaying
-        `client_message_id` never creates a duplicate user Message.
+        Events are ordered as `input.committed`, zero or more typed
+        `tool.started` plus `tool.completed` or `tool.failed` steps, one final
+        output sequence (`assistant.output.started`, one or more
+        `assistant.output.delta`, and `assistant.output.completed`), and exactly
+        one terminal `run.completed` or `run.failed`. Tool inputs, results,
+        reasoning, and non-final model text are never exposed. Final output
+        events share an `output_id` equal to the persisted assistant Message
+        ID. Ordered deltas carry a one-based `sequence`, and their concatenation
+        equals the completed output `text` and canonical Message content.
+        Replaying `client_message_id` never creates a duplicate user Message.
       operationId: streamAgentTextRun
       requestBody:
         required: true

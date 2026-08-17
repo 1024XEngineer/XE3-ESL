@@ -1142,6 +1142,10 @@ final class WireAgentVoiceClient
     var eventData = '';
     var phase = 0;
     String? runId;
+    String? outputId;
+    final activeToolSteps = <String, String>{};
+    final outputText = StringBuffer();
+    var nextOutputSequence = 1;
     try {
       final lines = response.body
           .map((chunk) {
@@ -1171,14 +1175,53 @@ final class WireAgentVoiceClient
             case AgentVoiceInputCommitted(:final confirmation) when phase == 0:
               phase = 1;
               runId = confirmation.run.id;
-            case AgentVoiceAssistantStarted() when phase == 1:
+            case AgentVoiceToolStepEvent(
+                  :final stepId,
+                  :final name,
+                  :final status,
+                )
+                when phase == 1:
+              switch (status) {
+                case AgentVoiceToolStepStatus.started:
+                  if (activeToolSteps.containsKey(stepId)) {
+                    throw const _InvalidVoiceResponse();
+                  }
+                  activeToolSteps[stepId] = name;
+                case AgentVoiceToolStepStatus.completed:
+                case AgentVoiceToolStepStatus.failed:
+                  if (activeToolSteps.remove(stepId) != name) {
+                    throw const _InvalidVoiceResponse();
+                  }
+              }
+            case AgentVoiceAssistantOutputStarted(
+                  outputId: final startedOutputId,
+                )
+                when phase == 1 && activeToolSteps.isEmpty:
+              outputId = startedOutputId;
               phase = 2;
-            case AgentVoiceAssistantDelta() when phase == 2:
-              phase = 2;
-            case AgentVoiceRunCompleted() when phase == 1 || phase == 2:
+            case AgentVoiceAssistantOutputDelta(
+                  outputId: final deltaOutputId,
+                  :final sequence,
+                  :final delta,
+                )
+                when phase == 2 &&
+                    deltaOutputId == outputId &&
+                    sequence == nextOutputSequence:
+              outputText.write(delta);
+              nextOutputSequence++;
+            case AgentVoiceAssistantOutputCompleted(
+                  outputId: final completedOutputId,
+                  :final text,
+                )
+                when phase == 2 &&
+                    completedOutputId == outputId &&
+                    text == outputText.toString():
               phase = 3;
-            case AgentVoiceRunFailed() when phase == 1 || phase == 2:
-              phase = 3;
+            case AgentVoiceRunCompleted(:final run)
+                when phase == 3 && run.assistantMessageId == outputId:
+              phase = 4;
+            case AgentVoiceRunFailed() when phase >= 1 && phase <= 3:
+              phase = 4;
             default:
               throw const _InvalidVoiceResponse();
           }
@@ -1203,7 +1246,7 @@ final class WireAgentVoiceClient
     } on _InvalidVoiceResponse {
       throw _invalidResponse();
     }
-    if (phase != 3 || eventName.isNotEmpty || eventData.isNotEmpty) {
+    if (phase != 4 || eventName.isNotEmpty || eventData.isNotEmpty) {
       throw _invalidResponse();
     }
   }
@@ -1236,19 +1279,61 @@ final class WireAgentVoiceClient
           throw const _InvalidVoiceResponse();
         }
         return AgentVoiceInputCommitted(confirmation);
-      case 'assistant.started':
+      case 'tool.started':
+      case 'tool.completed':
+      case 'tool.failed':
         final runId = _strictString(object['run_id'], min: 1, max: 128);
-        if (object.length != 1 || runId != expectedRunId) {
+        final stepId = _strictString(object['step_id'], min: 1, max: 128);
+        final name = _strictString(object['name'], min: 1, max: 128);
+        if (object.length != 3 || runId != expectedRunId) {
           throw const _InvalidVoiceResponse();
         }
-        return AgentVoiceAssistantStarted(runId: runId);
-      case 'assistant.delta':
+        return AgentVoiceToolStepEvent(
+          runId: runId,
+          stepId: stepId,
+          name: name,
+          status: switch (event) {
+            'tool.started' => AgentVoiceToolStepStatus.started,
+            'tool.completed' => AgentVoiceToolStepStatus.completed,
+            _ => AgentVoiceToolStepStatus.failed,
+          },
+        );
+      case 'assistant.output.started':
         final runId = _strictString(object['run_id'], min: 1, max: 128);
-        final delta = _strictContent(object['delta']);
+        final outputId = _strictUuid(object['output_id']);
         if (object.length != 2 || runId != expectedRunId) {
           throw const _InvalidVoiceResponse();
         }
-        return AgentVoiceAssistantDelta(runId: runId, delta: delta);
+        return AgentVoiceAssistantOutputStarted(
+          runId: runId,
+          outputId: outputId,
+        );
+      case 'assistant.output.delta':
+        final runId = _strictString(object['run_id'], min: 1, max: 128);
+        final outputId = _strictUuid(object['output_id']);
+        final sequence = _strictInt(object['sequence'], min: 1, max: 10000);
+        final delta = _strictContent(object['delta']);
+        if (object.length != 4 || runId != expectedRunId) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceAssistantOutputDelta(
+          runId: runId,
+          outputId: outputId,
+          sequence: sequence,
+          delta: delta,
+        );
+      case 'assistant.output.completed':
+        final runId = _strictString(object['run_id'], min: 1, max: 128);
+        final outputId = _strictUuid(object['output_id']);
+        final text = _strictContent(object['text']);
+        if (object.length != 3 || runId != expectedRunId) {
+          throw const _InvalidVoiceResponse();
+        }
+        return AgentVoiceAssistantOutputCompleted(
+          runId: runId,
+          outputId: outputId,
+          text: text,
+        );
       case 'run.completed':
         final run = _decodeRunObject(object['run']);
         if (object.length != 1 ||

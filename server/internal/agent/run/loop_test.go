@@ -98,6 +98,49 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	}
 }
 
+func TestRunLoopPublishesOnlyTheFinalAssistantOutput(t *testing.T) {
+	toolResult := toolLoopResult(
+		"call-review-stream-1",
+		reviewcapability.ReviewSearchToolName,
+		`{"query":"metrics","limit":1}`,
+	)
+	toolResult.Content = "I will search your reviews first."
+	generator := newScriptedGenerator(
+		toolResult,
+		finalLoopResult("I found the review and summarized it."),
+	)
+	service := newLoopTestService(t, generator)
+	observer := &recordingLoopStreamObserver{}
+
+	result, deltas, err := service.generateObserved(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("请结合我的信息处理一下"),
+		observer,
+	)
+	if err != nil {
+		t.Fatalf("generateObserved() error = %v", err)
+	}
+	if result.Content != "I found the review and summarized it." {
+		t.Fatalf("Content = %q", result.Content)
+	}
+	if got := joinedTextDeltas(deltas); got != result.Content {
+		t.Fatalf("final deltas = %q, want %q", got, result.Content)
+	}
+	if strings.Contains(joinedTextDeltas(deltas), "search your reviews") {
+		t.Fatalf("tool-stage text leaked into final deltas: %#v", deltas)
+	}
+	wantSteps := []string{
+		"started:call-review-stream-1",
+		"completed:call-review-stream-1",
+	}
+	if !reflect.DeepEqual(observer.steps, wantSteps) {
+		t.Fatalf("tool steps = %#v, want %#v", observer.steps, wantSteps)
+	}
+}
+
 func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -1114,11 +1157,73 @@ func (generator *scriptedGenerator) Generate(
 }
 
 func (generator *scriptedGenerator) GenerateStream(
-	context.Context,
-	TextRequest,
-	TextDeltaObserver,
+	ctx context.Context,
+	request TextRequest,
+	observer TextDeltaObserver,
 ) (TextResult, error) {
-	panic("non-streaming run unexpectedly selected GenerateStream")
+	result, err := generator.Generate(ctx, request)
+	if err != nil {
+		return TextResult{}, err
+	}
+	if result.Content != "" {
+		if err := observer.OnTextDelta(ctx, result.Content); err != nil {
+			return TextResult{}, err
+		}
+	}
+	return result, nil
+}
+
+type recordingLoopStreamObserver struct {
+	steps []string
+}
+
+func (*recordingLoopStreamObserver) OnInputCommitted(context.Context, Submission) error {
+	return nil
+}
+
+func (observer *recordingLoopStreamObserver) OnToolStarted(
+	_ context.Context,
+	step ToolStep,
+) error {
+	observer.steps = append(observer.steps, "started:"+step.ID)
+	return nil
+}
+
+func (observer *recordingLoopStreamObserver) OnToolCompleted(
+	_ context.Context,
+	step ToolStep,
+) error {
+	observer.steps = append(observer.steps, "completed:"+step.ID)
+	return nil
+}
+
+func (observer *recordingLoopStreamObserver) OnToolFailed(
+	_ context.Context,
+	step ToolStep,
+) error {
+	observer.steps = append(observer.steps, "failed:"+step.ID)
+	return nil
+}
+
+func (*recordingLoopStreamObserver) OnAssistantOutputStarted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
+}
+
+func (*recordingLoopStreamObserver) OnAssistantOutputDelta(
+	context.Context,
+	AssistantOutputDelta,
+) error {
+	return nil
+}
+
+func (*recordingLoopStreamObserver) OnAssistantOutputCompleted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
 }
 
 func (generator *scriptedGenerator) Requests() []TextRequest {
@@ -1285,12 +1390,16 @@ func (loopRepository) ListClientActions(
 	panic("unexpected ListClientActions")
 }
 
+func (loopRepository) NewAssistantMessageID() (string, error) {
+	return "70000000-0000-4000-8000-000000000001", nil
+}
+
 func (loopRepository) Complete(
 	context.Context,
 	string,
 	string,
 	string,
-	string,
+	AssistantOutput,
 	TextResult,
 ) (Run, error) {
 	panic("unexpected Complete")
