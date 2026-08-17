@@ -32,6 +32,8 @@ void main() {
         'assets/images/scenes/workplace-feedback-conflict.jpg',
     'scn_workplace_client_delay':
         'assets/images/scenes/workplace-client-delay.jpg',
+    'scn_workplace_requirement_clarification':
+        'assets/images/scenes/workplace-requirement-clarification.jpg',
     'scn_workplace_solution_presentation':
         'assets/images/scenes/workplace-solution-presentation.jpg',
     'scn_workplace_negotiation':
