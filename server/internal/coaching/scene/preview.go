@@ -178,7 +178,7 @@ var previewSceneIntents = map[string]previewSceneIntent{
 		aliases: []string{"酒店入住", "办理入住", "酒店预订", "房型"},
 	},
 	"scn_workplace_feedback_conflict": {
-		aliases:  []string{"提供反馈", "同事反馈", "反馈同事", "改进建议"},
+		aliases:  []string{"提供反馈", "主动反馈", "同事反馈", "反馈同事", "改进建议"},
 		excludes: []string{"职场冲突", "冲突", "分歧", "矛盾", "争执"},
 	},
 	"scn_workplace_conflict_resolution": {
