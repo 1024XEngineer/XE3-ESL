@@ -283,7 +283,7 @@ void main() {
     await tester.tap(find.byKey(const Key('roleplay-filter-travel')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const Key('catalog-scene-scn_daily_hotel_checkin_issue')),
+      find.byKey(const Key('catalog-scene-scn_travel_hotel_checkin')),
       findsOneWidget,
     );
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));

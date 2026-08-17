@@ -12,15 +12,13 @@ void main() {
         'assets/images/scenes/daily-product-shopping.jpg',
     'scn_daily_return_refund': 'assets/images/scenes/daily-shopping-return.jpg',
     'scn_travel_airport_checkin': 'assets/images/scenes/airport-transport.jpg',
-    'scn_daily_hotel_checkin_issue': 'assets/images/scenes/travel-scene.jpg',
+    'scn_travel_hotel_checkin': 'assets/images/scenes/travel-scene.jpg',
     'scn_daily_rental_maintenance':
         'assets/images/scenes/daily-rental-maintenance.jpg',
     'scn_daily_rental_viewing': 'assets/images/scenes/daily-rental-viewing.jpg',
     'scn_daily_medical_appointment':
         'assets/images/scenes/daily-medical-appointment.jpg',
     'scn_daily_phone_call': 'assets/images/scenes/daily-phone-call.jpg',
-    'scn_daily_social_invitation':
-        'assets/images/scenes/daily-social-invitation.jpg',
     'scn_daily_complaint_help': 'assets/images/scenes/daily-complaint-help.jpg',
     'scn_workplace_progress_risk_update':
         'assets/images/scenes/workplace-scene.jpg',
@@ -30,8 +28,12 @@ void main() {
         'assets/images/scenes/workplace-cross-team-alignment.jpg',
     'scn_workplace_feedback_conflict':
         'assets/images/scenes/workplace-feedback-conflict.jpg',
+    'scn_workplace_conflict_resolution':
+        'assets/images/scenes/workplace-conflict-resolution.jpg',
     'scn_workplace_client_delay':
         'assets/images/scenes/workplace-client-delay.jpg',
+    'scn_workplace_requirement_clarification':
+        'assets/images/scenes/workplace-requirement-clarification.jpg',
     'scn_workplace_solution_presentation':
         'assets/images/scenes/workplace-solution-presentation.jpg',
     'scn_workplace_negotiation':
@@ -45,7 +47,7 @@ void main() {
       final category = entry.key.startsWith('scn_workplace_')
           ? SceneCategory.workplaceGeneral
           : entry.key == 'scn_travel_airport_checkin' ||
-                entry.key == 'scn_daily_hotel_checkin_issue'
+                entry.key == 'scn_travel_hotel_checkin'
           ? SceneCategory.lifeTravel
           : SceneCategory.lifeDaily;
 
