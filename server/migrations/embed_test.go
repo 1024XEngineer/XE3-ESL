@@ -38,6 +38,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000001_clean_baseline.up.sql",
 		"000002_agent_run_domain_completion.down.sql",
 		"000002_agent_run_domain_completion.up.sql",
+		"000003_archive_practice_plans.down.sql",
+		"000003_archive_practice_plans.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -51,6 +53,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000001_clean_baseline.down.sql",
 		"000002_agent_run_domain_completion.up.sql",
 		"000002_agent_run_domain_completion.down.sql",
+		"000003_archive_practice_plans.up.sql",
+		"000003_archive_practice_plans.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -106,13 +110,24 @@ func TestCleanBaselineKeepsCriticalOwnershipAndConcurrencyConstraints(
 		"agent_runs_one_nonterminal_per_thread_idx",
 		"agent_voice_drafts_thread_idx",
 		"created_at DESC, plan_id DESC",
-		"status IN ('draft', 'ready', 'archived')",
 		"practice_questions_tip_check",
 		"practice_sessions_state_check",
 	} {
 		if !strings.Contains(sql, required) {
 			t.Errorf("baseline is missing %q", required)
 		}
+	}
+}
+
+func TestPracticePlanArchiveMigrationExtendsStatusConstraint(t *testing.T) {
+	up := readMigration(t, "000003_archive_practice_plans.up.sql")
+	if !strings.Contains(up, "status IN ('draft', 'ready', 'archived')") {
+		t.Fatal("practice plan archive migration must allow archived status")
+	}
+	down := readMigration(t, "000003_archive_practice_plans.down.sql")
+	if !strings.Contains(down, "SET status = 'ready'") ||
+		!strings.Contains(down, "status IN ('draft', 'ready')") {
+		t.Fatal("practice plan archive rollback must preserve archived plans as ready")
 	}
 }
 

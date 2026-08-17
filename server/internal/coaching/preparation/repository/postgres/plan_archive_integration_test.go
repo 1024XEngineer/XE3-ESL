@@ -115,5 +115,19 @@ func planArchiveTestDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(baseline)); err != nil {
 		t.Fatalf("apply clean baseline: %v", err)
 	}
+	domainCompletionMigration, err := migrations.Files.ReadFile("000002_agent_run_domain_completion.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(domainCompletionMigration)); err != nil {
+		t.Fatalf("apply Agent domain completion migration: %v", err)
+	}
+	archiveMigration, err := migrations.Files.ReadFile("000003_archive_practice_plans.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(archiveMigration)); err != nil {
+		t.Fatalf("apply practice plan archive migration: %v", err)
+	}
 	return pool
 }
