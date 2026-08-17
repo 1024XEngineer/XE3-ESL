@@ -2036,15 +2036,15 @@
       "scene_id": "scn_daily_phone_call",
       "practice_experience": "LIFE_AND_TRAVEL",
       "scene_category": "LIFE_DAILY",
-      "name": "电话沟通",
+      "name": "电话信息确认",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "通过电话向客服、机构或联系人说明身份、目的并确认信息。",
-        "practice_goal": "在看不到对方时清楚表达，并自然请求重复或复述确认。",
+        "public_scene_brief": "通过电话向机构接待人员说明身份和来电目的，询问信息并复述确认。",
+        "practice_goal": "通过电话说明身份和来电目的，询问信息并复述确认。",
         "user_role": "来电者",
-        "ai_role": "电话接听者",
-        "persona_summary": "A clear phone contact who confirms identity and purpose, and naturally requests repetition when information is unclear.",
+        "ai_role": "机构接待人员",
+        "persona_summary": "A clear institutional receptionist who identifies the organization, confirms the caller's identity and purpose, answers relevant questions, and checks the final details.",
         "focus_areas": [
           "identity",
           "purpose",
@@ -2052,19 +2052,19 @@
           "confirmation"
         ],
         "turn_blueprints": [
-          "接听电话并询问来电目的",
-          "澄清一项关键信息",
-          "必要时请求重复或复述",
-          "确认处理结果"
+          "接听电话，说明机构身份并询问来电目的",
+          "核实来电者身份，并澄清一项关键信息",
+          "回答用户的问题，并在必要时请求重复",
+          "复述关键信息，并确认处理结果或下一步"
         ]
       },
       "roles": [
         {
           "role_definition_id": "role_daily_phone_call_counterpart",
           "scene_id": "scn_daily_phone_call",
-          "role_type": "PHONE_CONTACT",
-          "display_name": "电话接听者",
-          "responsibilities": "在看不到对方时清楚表达，并自然请求重复或复述确认。",
+          "role_type": "INSTITUTION_RECEPTIONIST",
+          "display_name": "机构接待人员",
+          "responsibilities": "说明机构身份，核实来电者和来电目的，回答问题并确认关键信息。",
           "style": "Natural, concise, and appropriate to the current role.",
           "practice_objectives": [
             {
