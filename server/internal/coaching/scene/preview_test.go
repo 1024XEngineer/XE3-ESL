@@ -145,6 +145,33 @@ func TestCatalogPreviewResolverRejectsUnsupportedPresetIntents(t *testing.T) {
 	}
 }
 
+func TestCatalogPreviewResolverKeepsSupportedIntentAheadOfExclusion(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustTestCatalog(
+		t,
+		previewIntentTestScene("scn_travel_airport_checkin", "机场值机与航班信息"),
+		previewIntentTestScene("scn_daily_social_invitation", "社交邀请与礼貌拒绝"),
+	))
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	tests := map[string]string{
+		"社交邀请与礼貌拒绝":       "scn_daily_social_invitation",
+		"我不想坐出租车，想练习机场值机": "scn_travel_airport_checkin",
+	}
+	for query, wantSceneID := range tests {
+		items, resolveErr := resolver.ResolvePreviewCatalog(
+			context.Background(),
+			query,
+		)
+		if resolveErr != nil {
+			t.Fatalf("ResolvePreviewCatalog(%q) error = %v", query, resolveErr)
+		}
+		if len(items) != 1 || items[0].Scene.ID != wantSceneID {
+			t.Fatalf("ResolvePreviewCatalog(%q) = %#v", query, items)
+		}
+	}
+}
+
 func previewIntentTestScene(id, name string) SceneDefinition {
 	definition := testSceneDefinition()
 	definition.ID = id

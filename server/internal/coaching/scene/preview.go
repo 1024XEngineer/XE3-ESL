@@ -45,9 +45,7 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 		!utf8.ValidString(query) || utf8.RuneCountInString(query) > 500 {
 		return nil, ErrCatalogSelectionInvalid
 	}
-	if previewUnsupportedIntent(query) {
-		return []PreviewCatalogCandidate{}, nil
-	}
+	unsupportedIntent := previewUnsupportedIntent(query)
 
 	type scoredCandidate struct {
 		candidate PreviewCatalogCandidate
@@ -61,6 +59,9 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 	for _, definition := range definitions {
 		score := previewCatalogScore(query, definition)
 		if score == 0 {
+			continue
+		}
+		if unsupportedIntent && score < previewIntentScoreBase {
 			continue
 		}
 		defaultOption, found := defaultPracticeOption(definition.PracticeOptions)
