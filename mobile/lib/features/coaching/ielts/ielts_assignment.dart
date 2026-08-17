@@ -27,6 +27,7 @@ final class IeltsPracticePartAssignment {
     required this.turnBlueprints,
     this.topicTitle,
     this.cueCard,
+    this.preparedAnswers = const <IeltsPreparedAnswer>[],
   });
 
   final IeltsSpeakingPart part;
@@ -34,6 +35,7 @@ final class IeltsPracticePartAssignment {
   final String? topicTitle;
   final String? cueCard;
   final List<String> turnBlueprints;
+  final List<IeltsPreparedAnswer> preparedAnswers;
 
   Map<String, Object> toJson() => <String, Object>{
     'part': part.wireValue,
@@ -41,6 +43,16 @@ final class IeltsPracticePartAssignment {
     'topic_title': ?topicTitle,
     'cue_card': ?cueCard,
     'turn_blueprints': turnBlueprints,
+    if (preparedAnswers.isNotEmpty)
+      'prepared_answers': preparedAnswers
+          .map(
+            (answer) => <String, Object>{
+              'question_position': answer.questionPosition,
+              'answer': answer.answer,
+              'personalized': answer.personalized,
+            },
+          )
+          .toList(growable: false),
   };
 
   @override
@@ -50,7 +62,8 @@ final class IeltsPracticePartAssignment {
       other.sourceId == sourceId &&
       other.topicTitle == topicTitle &&
       other.cueCard == cueCard &&
-      _sameStrings(other.turnBlueprints, turnBlueprints);
+      _sameStrings(other.turnBlueprints, turnBlueprints) &&
+      _samePreparedAnswers(other.preparedAnswers, preparedAnswers);
 
   @override
   int get hashCode => Object.hash(
@@ -59,6 +72,7 @@ final class IeltsPracticePartAssignment {
     topicTitle,
     cueCard,
     Object.hashAll(turnBlueprints),
+    Object.hashAll(preparedAnswers.map(_preparedAnswerHash)),
   );
 }
 
@@ -128,3 +142,28 @@ bool _sameStrings(List<String> left, List<String> right) =>
       left.length,
       (index) => left[index] == right[index],
     ).every((same) => same);
+
+bool _samePreparedAnswers(
+  List<IeltsPreparedAnswer> left,
+  List<IeltsPreparedAnswer> right,
+) =>
+    left.length == right.length &&
+    List<bool>.generate(left.length, (index) {
+      final leftAnswer = left[index];
+      final rightAnswer = right[index];
+      return leftAnswer.bankId == rightAnswer.bankId &&
+          leftAnswer.part == rightAnswer.part &&
+          leftAnswer.sourceId == rightAnswer.sourceId &&
+          leftAnswer.questionPosition == rightAnswer.questionPosition &&
+          leftAnswer.answer == rightAnswer.answer &&
+          leftAnswer.personalized == rightAnswer.personalized;
+    }).every((same) => same);
+
+int _preparedAnswerHash(IeltsPreparedAnswer answer) => Object.hash(
+  answer.bankId,
+  answer.part,
+  answer.sourceId,
+  answer.questionPosition,
+  answer.answer,
+  answer.personalized,
+);
