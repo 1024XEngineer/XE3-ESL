@@ -53,7 +53,7 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	}
 }
 
-func TestCatalogPreviewResolverSeparatesClientAndShoppingScenarios(t *testing.T) {
+func TestCatalogPreviewResolverSeparatesSplitScenarios(t *testing.T) {
 	catalog, err := NewBuiltinCatalog(testPolicyValidator())
 	if err != nil {
 		t.Fatalf("NewBuiltinCatalog() error = %v", err)
@@ -63,6 +63,8 @@ func TestCatalogPreviewResolverSeparatesClientAndShoppingScenarios(t *testing.T)
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
 	for query, wantID := range map[string]string{
+		"向同事提供反馈": "scn_workplace_feedback_conflict",
+		"处理职场冲突":  "scn_workplace_conflict_resolution",
 		"客户延期沟通":  "scn_workplace_client_delay",
 		"客户需求澄清":  "scn_workplace_requirement_clarification",
 		"商品咨询与购买": "scn_daily_product_shopping",
@@ -87,7 +89,6 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 		"我想练习口语":       "scn_ielts_speaking",
 		"我想练习看房":       "scn_daily_rental_viewing",
 		"我家水管坏了，想练习报修": "scn_daily_rental_maintenance",
-		"职场会议意见分歧":     "scn_workplace_meeting_disagreement",
 	}
 	for query, wantSceneID := range tests {
 		t.Run(query, func(t *testing.T) {

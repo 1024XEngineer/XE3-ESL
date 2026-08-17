@@ -17,8 +17,8 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveScenes() error = %v", err)
 	}
-	if len(definitions) != 26 {
-		t.Fatalf("built-in Scene count = %d, want 26", len(definitions))
+	if len(definitions) != 27 {
+		t.Fatalf("built-in Scene count = %d, want 27", len(definitions))
 	}
 	ieltsScene, err := catalog.GetScene(
 		context.Background(),
@@ -61,6 +61,8 @@ func TestBuiltinCatalogDefinesSplitClientAndShoppingScenes(t *testing.T) {
 	tests := []struct {
 		id, name, userRole, aiRole, goal, firstTurn string
 	}{
+		{"scn_workplace_feedback_conflict", "向同事提供反馈", "反馈提供者", "接受反馈的同事", "说明具体事实、影响和期望，并确认改进措施。", "说明知道用户想讨论工作情况，并邀请用户开始"},
+		{"scn_workplace_conflict_resolution", "处理职场冲突", "冲突参与者", "合作同事", "澄清双方观点、利益和边界，形成可执行的下一步。", "提出一个具体分歧及其影响，并邀请用户讨论"},
 		{"scn_workplace_client_delay", "客户延期沟通", "项目负责人", "客户代表", "说明延期原因、当前状态和业务影响，提出替代方案并确认新的交付时间。", "询问当前交付状态，以及为什么不能按原计划完成"},
 		{"scn_workplace_requirement_clarification", "客户需求澄清", "解决方案负责人", "客户业务负责人", "澄清业务目标、范围、优先级、时间和验收标准。", "给出一个较模糊的业务需求，并邀请用户进一步提问"},
 		{"scn_daily_product_shopping", "商品咨询与购买", "顾客", "销售店员", "询问商品功能、价格和差异，表达偏好并完成购买。", "欢迎顾客，并询问想找什么商品及主要需求"},
