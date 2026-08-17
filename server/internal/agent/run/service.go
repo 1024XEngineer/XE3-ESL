@@ -628,9 +628,10 @@ func (service *Service) process(
 		return failed, failErr
 	}
 	if !validFinalTextResult(result) ||
-		result.Provider != service.configuration.Provider ||
-		result.Model != service.configuration.Model ||
-		result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
+		(result.CompletionSource != CompletionSourceDomain &&
+			(result.Provider != service.configuration.Provider ||
+				result.Model != service.configuration.Model ||
+				result.Usage.OutputTokens > service.configuration.MaxOutputTokens)) {
 		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
@@ -648,7 +649,7 @@ func (service *Service) process(
 		return failed, failErr
 	}
 	output.Content = result.Content
-	if observer != nil {
+	if observer != nil && result.CompletionSource != CompletionSourceDomain {
 		if len(finalDeltas) == 0 || joinedTextDeltas(finalDeltas) != result.Content {
 			failed, failErr := service.persistFailure(
 				ctx,
@@ -673,6 +674,15 @@ func (service *Service) process(
 	)
 	if err != nil || observer == nil {
 		return completed, err
+	}
+	if result.CompletionSource == CompletionSourceDomain {
+		stream := &assistantOutputDeltaStream{observer: observer, output: output}
+		if err := stream.start(ctx); err != nil {
+			return completed, err
+		}
+		if err := stream.OnTextDelta(ctx, output.Content); err != nil {
+			return completed, err
+		}
 	}
 	if err := observer.OnAssistantOutputCompleted(ctx, output); err != nil {
 		return completed, err
@@ -849,6 +859,7 @@ func (service *Service) generateObserved(
 		toolCalls += len(result.ToolCalls)
 
 		turnCompleted := false
+		var domainCompletion TextResult
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
 			if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
@@ -880,7 +891,7 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			toolMessage, status, outcome, err := service.executeToolCall(
+			toolMessage, status, outcome, assistantText, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
@@ -900,16 +911,32 @@ func (service *Service) generateObserved(
 					eventErr = observer.OnToolFailed(loopCtx, step)
 				}
 				if eventErr != nil {
-					return TextResult{}, nil, eventErr
+					if status != ToolCallSucceeded ||
+						outcome != capability.TurnOutcomeCompleted {
+						return TextResult{}, nil, eventErr
+					}
+					service.logAdvisoryStreamFailure(
+						run,
+						step,
+						"tool_completed",
+					)
 				}
 			}
 			request.Messages = append(request.Messages, toolMessage)
 			if status == ToolCallSucceeded && outcome == capability.TurnOutcomeCompleted {
 				turnCompleted = true
+				domainCompletion = TextResult{
+					CompletionSource: CompletionSourceDomain,
+					Content:          assistantText,
+					DomainToolCallID: call.ID,
+					DomainToolName:   call.Name,
+				}
+				break
 			}
 		}
 		finalDecision = "tool_call_then_response"
 		if turnCompleted {
+			finalDecision = "domain_completion"
 			service.logRoutingDecision(
 				run,
 				finalDecision,
@@ -918,25 +945,15 @@ func (service *Service) generateObserved(
 				reasonSummary(reasonDomainTurnCompleted, finalDecision),
 				modelIterations,
 			)
-			finalResult, finalDeltas, finalErr := service.generateFinalOutput(
-				loopCtx,
-				request,
-				observer,
-				output,
-			)
-			if finalErr != nil {
-				return TextResult{}, nil, finalErr
-			}
-			modelIterations++
 			service.logRunCompleted(
 				run,
 				finalDecision,
 				modelIterations,
 				toolCalls,
 				startedAt,
-				finalResult.Content,
+				domainCompletion.Content,
 			)
-			return finalResult, finalDeltas, nil
+			return domainCompletion, nil, nil
 		}
 	}
 }
@@ -1112,7 +1129,7 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, ToolCallStatus, capability.TurnOutcome, error) {
+) (TextMessage, ToolCallStatus, capability.TurnOutcome, string, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
 	effect := service.registry.InvocationEffect(capability.Invocation{
@@ -1127,7 +1144,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -1153,10 +1170,10 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, "", nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -1171,9 +1188,9 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", persistErr
 		}
-		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, "", nil
 	}
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
@@ -1187,13 +1204,13 @@ func (service *Service) executeToolCall(
 		toolSourceRefs(result.SourceRefs),
 		result.ClientActions,
 	); err != nil {
-		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, ToolCallSucceeded, result.TurnOutcome, nil
+	}, ToolCallSucceeded, result.TurnOutcome, result.AssistantText, nil
 }
 
 func (service *Service) saveToolCallProposed(
@@ -1507,6 +1524,18 @@ func classifyRunFailure(err error) (string, bool) {
 }
 
 func validFinalTextResult(result TextResult) bool {
+	if result.CompletionSource == CompletionSourceDomain {
+		return conversation.ValidMessageContent(result.Content) &&
+			ValidOpaqueID(result.DomainToolCallID) &&
+			ValidOpaqueID(result.DomainToolName) &&
+			result.ID == "" && result.Provider == "" && result.Model == "" &&
+			result.FinishReason == "" && result.Usage == (TokenUsage{}) &&
+			len(result.ToolCalls) == 0
+	}
+	if result.CompletionSource != "" &&
+		result.CompletionSource != CompletionSourceModel {
+		return false
+	}
 	return ValidOpaqueID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&

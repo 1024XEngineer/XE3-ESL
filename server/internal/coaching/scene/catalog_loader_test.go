@@ -17,8 +17,8 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveScenes() error = %v", err)
 	}
-	if len(definitions) != 24 {
-		t.Fatalf("built-in Scene count = %d, want 24", len(definitions))
+	if len(definitions) != 25 {
+		t.Fatalf("built-in Scene count = %d, want 25", len(definitions))
 	}
 	ieltsScene, err := catalog.GetScene(
 		context.Background(),
@@ -61,6 +61,82 @@ func TestBuiltinCatalogNarrowsAirportSceneToCheckin(t *testing.T) {
 	}
 	if _, err := catalog.GetScene(context.Background(), "scn_daily_airport_transport"); !errors.Is(err, ErrSceneNotFound) {
 		t.Fatalf("GetScene(old airport) error = %v", err)
+	}
+}
+
+func TestBuiltinCatalogDefinesDistinctRentalScenes(t *testing.T) {
+	catalog := mustBuiltinCatalog(t)
+	tests := []struct {
+		sceneID        string
+		name           string
+		userRole       string
+		aiRole         string
+		practiceGoal   string
+		firstBlueprint string
+		roleID         string
+		fullOptionID   string
+		focusOptionID  string
+	}{
+		{
+			sceneID:        "scn_daily_rental_viewing",
+			name:           "看房与租赁咨询",
+			userRole:       "准租客",
+			aiRole:         "房产中介",
+			practiceGoal:   "了解房屋条件、租金费用、租期和入住要求，判断房屋是否合适。",
+			firstBlueprint: "欢迎用户看房，并询问最关注的房屋信息",
+			roleID:         "role_daily_rental_viewing_counterpart",
+			fullOptionID:   "option_daily_rental_viewing_full",
+			focusOptionID:  "option_daily_rental_viewing_focus",
+		},
+		{
+			sceneID:        "scn_daily_rental_maintenance",
+			name:           "租房报修",
+			userRole:       "租客",
+			aiRole:         "物业工作人员",
+			practiceGoal:   "准确描述故障及影响，协商维修时间、进入方式、责任和后续安排。",
+			firstBlueprint: "确认报修请求，并请租客描述具体故障",
+			roleID:         "role_daily_rental_maintenance_counterpart",
+			fullOptionID:   "option_daily_rental_maintenance_full",
+			focusOptionID:  "option_daily_rental_maintenance_focus",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.sceneID, func(t *testing.T) {
+			definition, err := catalog.GetScene(context.Background(), test.sceneID)
+			if err != nil {
+				t.Fatalf("GetScene() error = %v", err)
+			}
+			if definition.Name != test.name ||
+				definition.Prompt.UserRole != test.userRole ||
+				definition.Prompt.AIRole != test.aiRole ||
+				definition.Prompt.PracticeGoal != test.practiceGoal ||
+				len(definition.Prompt.TurnBlueprints) != 4 ||
+				definition.Prompt.TurnBlueprints[0] != test.firstBlueprint {
+				t.Fatalf("rental Scene = %#v", definition)
+			}
+			for _, selection := range []struct {
+				optionID string
+				mode     PracticeMode
+			}{
+				{optionID: test.fullOptionID, mode: PracticeModeFullSimulation},
+				{optionID: test.focusOptionID, mode: PracticeModeFocus},
+			} {
+				snapshot, resolveErr := catalog.ResolveSelection(
+					context.Background(),
+					test.sceneID,
+					1,
+					[]string{test.roleID},
+					selection.optionID,
+				)
+				if resolveErr != nil {
+					t.Fatalf("ResolveSelection(%s) error = %v", selection.mode, resolveErr)
+				}
+				if snapshot.Scene.ID != test.sceneID ||
+					snapshot.PracticeOptionID != selection.optionID {
+					t.Fatalf("selection = %#v", snapshot)
+				}
+			}
+		})
 	}
 }
 

@@ -1919,10 +1919,13 @@ _WireRun _decodeRun(String body) {
         'requested_model',
         'max_output_tokens',
         'assistant_message_id',
+        'completion_source',
         'provider_completion_id',
         'provider_model',
         'finish_reason',
         'usage',
+        'domain_tool_call_id',
+        'domain_tool_name',
         'failure',
         'created_at',
         'started_at',
@@ -2023,32 +2026,55 @@ _WireRun _decodeRun(String body) {
             completedAt == null) {
           throw const _InvalidAgentResponse();
         }
-        _strictClientIdentity(object['provider_completion_id']);
-        _strictClientIdentity(object['provider_model']);
-        final finishReason = _strictString(
-          object['finish_reason'],
+        final completionSource = _strictString(
+          object['completion_source'],
           minLength: 1,
           maxLength: 16,
         );
-        if (finishReason != 'stop' && finishReason != 'length') {
-          throw const _InvalidAgentResponse();
+        switch (completionSource) {
+          case 'model':
+            if (object['domain_tool_call_id'] != null ||
+                object['domain_tool_name'] != null) {
+              throw const _InvalidAgentResponse();
+            }
+            _strictClientIdentity(object['provider_completion_id']);
+            _strictClientIdentity(object['provider_model']);
+            final finishReason = _strictString(
+              object['finish_reason'],
+              minLength: 1,
+              maxLength: 16,
+            );
+            if (finishReason != 'stop' && finishReason != 'length') {
+              throw const _InvalidAgentResponse();
+            }
+            final usage = _strictObject(
+              object['usage'],
+              allowed: const <String>{
+                'input_tokens',
+                'output_tokens',
+                'total_tokens',
+              },
+              required: const <String>{
+                'input_tokens',
+                'output_tokens',
+                'total_tokens',
+              },
+            );
+            _strictInt(usage['input_tokens'], minimum: 0);
+            _strictInt(usage['output_tokens'], minimum: 0);
+            _strictInt(usage['total_tokens'], minimum: 0);
+          case 'domain':
+            if (object['provider_completion_id'] != null ||
+                object['provider_model'] != null ||
+                object['finish_reason'] != null ||
+                object['usage'] != null) {
+              throw const _InvalidAgentResponse();
+            }
+            _strictClientIdentity(object['domain_tool_call_id']);
+            _strictClientIdentity(object['domain_tool_name']);
+          default:
+            throw const _InvalidAgentResponse();
         }
-        final usage = _strictObject(
-          object['usage'],
-          allowed: const <String>{
-            'input_tokens',
-            'output_tokens',
-            'total_tokens',
-          },
-          required: const <String>{
-            'input_tokens',
-            'output_tokens',
-            'total_tokens',
-          },
-        );
-        _strictInt(usage['input_tokens'], minimum: 0);
-        _strictInt(usage['output_tokens'], minimum: 0);
-        _strictInt(usage['total_tokens'], minimum: 0);
       case _WireRunStatus.failed:
         if (failureObject == null ||
             assistantMessageId != null ||

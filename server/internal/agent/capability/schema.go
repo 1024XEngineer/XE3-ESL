@@ -100,6 +100,7 @@ type Result struct {
 	SourceRefs    []SourceRef                `json:"source_refs,omitempty"`
 	ClientActions []agentclientaction.Action `json:"client_actions,omitempty"`
 	TurnOutcome   TurnOutcome                `json:"-"`
+	AssistantText string                     `json:"-"`
 }
 
 type Tool interface {

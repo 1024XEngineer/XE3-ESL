@@ -151,8 +151,9 @@ func (benchmarkPreviewPort) PreviewPractice(
 		return preparationcapability.PreviewResult{}, err
 	}
 	return preparationcapability.PreviewResult{
-		Status:       "preview_ready",
-		ClientAction: action,
+		Status:        "preview_ready",
+		ClientAction:  action,
+		AssistantText: "练习已准备好，请确认开始。",
 	}, nil
 }
 
