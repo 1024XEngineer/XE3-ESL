@@ -43,6 +43,27 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	}
 }
 
+func TestBuiltinCatalogNarrowsPhoneCallToInformationConfirmation(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	definition, err := catalog.GetScene(context.Background(), "scn_daily_phone_call")
+	if err != nil {
+		t.Fatalf("GetScene(phone call) error = %v", err)
+	}
+	if definition.Name != "电话信息确认" ||
+		definition.Prompt.UserRole != "来电者" ||
+		definition.Prompt.AIRole != "机构接待人员" ||
+		definition.Prompt.PracticeGoal != "通过电话说明身份和来电目的，询问信息并复述确认。" ||
+		definition.Prompt.TurnBlueprints[0] != "接听电话，说明机构身份并询问来电目的" {
+		t.Fatalf("phone Scene = %#v", definition)
+	}
+	if len(definition.PracticeOptions) != 2 {
+		t.Fatalf("phone PracticeOptions = %#v", definition.PracticeOptions)
+	}
+}
+
 func TestLoadCatalogRejectsUnknownSchemaAndFields(t *testing.T) {
 	valid, err := json.Marshal(catalogDocument{
 		SchemaVersion: 1,
