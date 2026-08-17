@@ -62,6 +62,7 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 		"我想练习口语":       "scn_ielts_speaking",
 		"我想练习看房":       "scn_daily_rental_viewing",
 		"我家水管坏了，想练习报修": "scn_daily_rental_maintenance",
+		"职场会议意见分歧":     "scn_workplace_meeting_disagreement",
 	}
 	for query, wantSceneID := range tests {
 		t.Run(query, func(t *testing.T) {
@@ -76,5 +77,19 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 				t.Fatalf("candidates = %#v, want only %q", items, wantSceneID)
 			}
 		})
+	}
+}
+
+func TestCatalogPreviewResolverKeepsGenericInterviewAmbiguous(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(context.Background(), "面试")
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("generic interview candidates = %#v, want multiple", items)
 	}
 }
