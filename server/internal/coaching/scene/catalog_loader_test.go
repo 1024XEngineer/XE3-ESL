@@ -17,8 +17,8 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveScenes() error = %v", err)
 	}
-	if len(definitions) != 24 {
-		t.Fatalf("built-in Scene count = %d, want 24", len(definitions))
+	if len(definitions) != 25 {
+		t.Fatalf("built-in Scene count = %d, want 25", len(definitions))
 	}
 	ieltsScene, err := catalog.GetScene(
 		context.Background(),
@@ -40,6 +40,30 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	}
 	if got := interview.PracticeOptions[0].SessionPolicyRef; got != "interview.user_controlled.session.v1" {
 		t.Fatalf("interview Session Policy = %q", got)
+	}
+}
+
+func TestBuiltinCatalogSplitsFeedbackAndConflictResolution(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	tests := []struct {
+		id, name, userRole, aiRole, goal, firstTurn string
+	}{
+		{"scn_workplace_feedback_conflict", "向同事提供反馈", "反馈提供者", "接受反馈的同事", "说明具体事实、影响和期望，并确认改进措施。", "说明知道用户想讨论工作情况，并邀请用户开始"},
+		{"scn_workplace_conflict_resolution", "处理职场冲突", "冲突参与者", "合作同事", "澄清双方观点、利益和边界，形成可执行的下一步。", "提出一个具体分歧及其影响，并邀请用户讨论"},
+	}
+	for _, test := range tests {
+		definition, err := catalog.GetScene(context.Background(), test.id)
+		if err != nil {
+			t.Fatalf("GetScene(%s) error = %v", test.id, err)
+		}
+		if definition.Name != test.name || definition.Prompt.UserRole != test.userRole ||
+			definition.Prompt.AIRole != test.aiRole || definition.Prompt.PracticeGoal != test.goal ||
+			definition.Prompt.TurnBlueprints[0] != test.firstTurn || len(definition.PracticeOptions) != 2 {
+			t.Fatalf("Scene(%s) = %#v", test.id, definition)
+		}
 	}
 }
 

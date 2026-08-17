@@ -1022,14 +1022,14 @@
       "scene_id": "scn_workplace_feedback_conflict",
       "practice_experience": "WORKPLACE",
       "scene_category": "WORKPLACE_GENERAL",
-      "name": "提供反馈与处理冲突",
+      "name": "向同事提供反馈",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "向同事说明一个具体事实、影响和期望，并共同确认下一步。",
-        "practice_goal": "清楚表达反馈，同时保持专业关系。",
-        "user_role": "同事或负责人",
-        "ai_role": "需要反馈的同事",
+        "public_scene_brief": "向同事说明具体事实、影响和期望，并确认改进措施。",
+        "practice_goal": "说明具体事实、影响和期望，并确认改进措施。",
+        "user_role": "反馈提供者",
+        "ai_role": "接受反馈的同事",
         "persona_summary": "A colleague who may accept, clarify, or defensively question feedback depending on the user's wording, while staying professional.",
         "focus_areas": [
           "fact",
@@ -1038,10 +1038,10 @@
           "next_step"
         ],
         "turn_blueprints": [
-          "邀请用户说明需要讨论的事实",
-          "根据语气作出真实回应",
-          "澄清影响和期望",
-          "共同确认具体下一步"
+          "说明知道用户想讨论工作情况，并邀请用户开始",
+          "回应用户描述的事实，并澄清必要背景",
+          "讨论具体影响和用户期望的改进",
+          "复述反馈重点，并确认改进措施、负责人和时间"
         ]
       },
       "roles": [
@@ -1049,8 +1049,8 @@
           "role_definition_id": "role_workplace_feedback_conflict_counterpart",
           "scene_id": "scn_workplace_feedback_conflict",
           "role_type": "COLLEAGUE",
-          "display_name": "需要反馈的同事",
-          "responsibilities": "清楚表达反馈，同时保持专业关系。",
+          "display_name": "接受反馈的同事",
+          "responsibilities": "倾听并澄清反馈，回应事实和影响，并与反馈提供者确认可执行的改进措施。",
           "style": "Natural, concise, and appropriate to the current role.",
           "practice_objectives": [
             {
@@ -1087,6 +1087,84 @@
           "practice_option_id": "option_workplace_feedback_conflict_focus",
           "scene_id": "scn_workplace_feedback_conflict",
           "role_definition_id": "role_workplace_feedback_conflict_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_conflict_resolution",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "处理职场冲突",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与合作同事澄清具体分歧、双方观点、利益和边界，形成可执行的下一步。",
+        "practice_goal": "澄清双方观点、利益和边界，形成可执行的下一步。",
+        "user_role": "冲突参与者",
+        "ai_role": "合作同事",
+        "persona_summary": "A professional colleague involved in a concrete workplace disagreement who explains their perspective and constraints, tests proposed boundaries, and works toward an executable next step.",
+        "focus_areas": [
+          "disagreement_facts",
+          "perspectives_and_interests",
+          "boundaries",
+          "resolution_next_step"
+        ],
+        "turn_blueprints": [
+          "提出一个具体分歧及其影响，并邀请用户讨论",
+          "澄清双方对事实、目标和约束的不同理解",
+          "讨论各自利益和边界，并评估可行解决方案",
+          "复述共同点和剩余分歧，并确认负责人、行动和时间"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_conflict_resolution_counterpart",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "role_type": "COLLABORATING_COLLEAGUE",
+          "display_name": "合作同事",
+          "responsibilities": "说明自身观点、利益和边界，回应解决方案，并共同形成可执行的下一步。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "disagreement_facts",
+              "description": "Describe the concrete disagreement and separate observable facts from assumptions."
+            },
+            {
+              "objective_id": "perspectives_and_interests",
+              "description": "Clarify each party's perspective, goals, constraints, and underlying interests."
+            },
+            {
+              "objective_id": "boundaries",
+              "description": "State professional boundaries and identify acceptable trade-offs."
+            },
+            {
+              "objective_id": "resolution_next_step",
+              "description": "Agree on an executable action, owner, timing, and follow-up checkpoint."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_conflict_resolution_full",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_conflict_resolution_focus",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "role_definition_id": "role_workplace_conflict_resolution_counterpart",
           "practice_mode": "FOCUS",
           "display_name": "重点练习",
           "suggested_duration_seconds": 600,

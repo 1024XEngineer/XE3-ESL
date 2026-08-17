@@ -28,6 +28,8 @@ void main() {
         'assets/images/scenes/workplace-cross-team-alignment.jpg',
     'scn_workplace_feedback_conflict':
         'assets/images/scenes/workplace-feedback-conflict.jpg',
+    'scn_workplace_conflict_resolution':
+        'assets/images/scenes/workplace-conflict-resolution.jpg',
     'scn_workplace_client_delay':
         'assets/images/scenes/workplace-client-delay.jpg',
     'scn_workplace_solution_presentation':

@@ -34,3 +34,26 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 		t.Fatalf("candidate count = %d", len(items))
 	}
 }
+
+func TestCatalogPreviewResolverSeparatesFeedbackAndConflict(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	resolver, err := NewCatalogPreviewResolver(catalog)
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	for query, wantID := range map[string]string{
+		"向同事提供反馈": "scn_workplace_feedback_conflict",
+		"处理职场冲突":  "scn_workplace_conflict_resolution",
+	} {
+		items, err := resolver.ResolvePreviewCatalog(context.Background(), query)
+		if err != nil {
+			t.Fatalf("ResolvePreviewCatalog(%q) error = %v", query, err)
+		}
+		if len(items) != 1 || items[0].Scene.ID != wantID {
+			t.Fatalf("ResolvePreviewCatalog(%q) = %#v", query, items)
+		}
+	}
+}
