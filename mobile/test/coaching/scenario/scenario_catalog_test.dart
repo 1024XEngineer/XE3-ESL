@@ -17,8 +17,6 @@ void main() {
     'scn_daily_medical_appointment':
         'assets/images/scenes/daily-medical-appointment.jpg',
     'scn_daily_phone_call': 'assets/images/scenes/daily-phone-call.jpg',
-    'scn_daily_social_invitation':
-        'assets/images/scenes/daily-social-invitation.jpg',
     'scn_daily_complaint_help': 'assets/images/scenes/daily-complaint-help.jpg',
     'scn_workplace_progress_risk_update':
         'assets/images/scenes/workplace-scene.jpg',

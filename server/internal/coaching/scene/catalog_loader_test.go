@@ -17,8 +17,8 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveScenes() error = %v", err)
 	}
-	if len(definitions) != 24 {
-		t.Fatalf("built-in Scene count = %d, want 24", len(definitions))
+	if len(definitions) != 23 {
+		t.Fatalf("built-in Scene count = %d, want 23", len(definitions))
 	}
 	ieltsScene, err := catalog.GetScene(
 		context.Background(),
@@ -40,6 +40,16 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	}
 	if got := interview.PracticeOptions[0].SessionPolicyRef; got != "interview.user_controlled.session.v1" {
 		t.Fatalf("interview Session Policy = %q", got)
+	}
+}
+
+func TestBuiltinCatalogOmitsSocialInvitation(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	if _, err := catalog.GetScene(context.Background(), "scn_daily_social_invitation"); !errors.Is(err, ErrSceneNotFound) {
+		t.Fatalf("GetScene(social invitation) error = %v", err)
 	}
 }
 

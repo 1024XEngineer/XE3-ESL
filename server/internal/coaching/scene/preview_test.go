@@ -34,3 +34,21 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 		t.Fatalf("candidate count = %d", len(items))
 	}
 }
+
+func TestCatalogPreviewResolverDoesNotMatchRemovedSocialInvitation(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	resolver, err := NewCatalogPreviewResolver(catalog)
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(context.Background(), "拒绝朋友邀请")
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("social invitation candidates = %#v", items)
+	}
+}
