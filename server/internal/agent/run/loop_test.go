@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -44,12 +45,46 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 		capabilityfixture.MistakeSearchToolName,
 		reviewcapability.ReviewGetToolName,
 		reviewcapability.ReviewSearchToolName,
+		finalResponseToolName,
 	}
 	if !reflect.DeepEqual(gotTools, wantTools) {
 		t.Fatalf("Tools = %#v, want %#v", gotTools, wantTools)
 	}
-	if requests[0].ToolChoice.Mode != ToolChoiceAuto {
-		t.Fatalf("ToolChoice = %#v, want auto", requests[0].ToolChoice)
+	if requests[0].ToolChoice.Mode != ToolChoiceRequired {
+		t.Fatalf("ToolChoice = %#v, want required", requests[0].ToolChoice)
+	}
+	if got, want := len(requests), 2; got != want ||
+		requests[1].ToolChoice.Mode != ToolChoiceNone ||
+		len(requests[1].Tools) != 0 {
+		t.Fatalf("final output request = %#v", requests[1])
+	}
+}
+
+func TestFinalResponseControlRequiresExplicitDecision(t *testing.T) {
+	definition := finalResponseToolDefinition()
+	validArguments := json.RawMessage(`{"decision":"respond"}`)
+	if err := capability.ValidateInput(definition.InputSchema, validArguments); err != nil {
+		t.Fatalf("ValidateInput(valid) error = %v", err)
+	}
+	if !validFinalResponseRequest([]ModelToolCall{{
+		ID: "call-final-response", Name: definition.Name, Arguments: validArguments,
+	}}) {
+		t.Fatal("valid final response decision was rejected")
+	}
+	for name, arguments := range map[string]json.RawMessage{
+		"empty object":   json.RawMessage(`{}`),
+		"wrong decision": json.RawMessage(`{"decision":"continue"}`),
+		"extra field": json.RawMessage(
+			`{"decision":"respond","content":"do not buffer this"}`,
+		),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validFinalResponseRequest([]ModelToolCall{{
+				ID: "call-final-response", Name: definition.Name, Arguments: arguments,
+			}}) {
+				t.Fatalf("arguments %s were accepted", arguments)
+			}
+		})
 	}
 }
 
@@ -74,18 +109,18 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 2; got != want {
+	if got, want := len(requests), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	if got := len(requests[0].Tools); got == 0 {
 		t.Fatal("first request exposed no tools")
 	}
-	if requests[0].ToolChoice.Mode != ToolChoiceAuto {
-		t.Fatalf("first ToolChoice = %#v, want auto", requests[0].ToolChoice)
+	if requests[0].ToolChoice.Mode != ToolChoiceRequired {
+		t.Fatalf("first ToolChoice = %#v, want required", requests[0].ToolChoice)
 	}
 	second := requests[1]
-	if second.ToolChoice.Mode != ToolChoiceAuto {
-		t.Fatalf("second ToolChoice = %#v, want auto", second.ToolChoice)
+	if second.ToolChoice.Mode != ToolChoiceRequired {
+		t.Fatalf("second ToolChoice = %#v, want required", second.ToolChoice)
 	}
 	if got, want := len(second.Messages), 4; got != want {
 		t.Fatalf("second request messages = %d, want %d", got, want)
@@ -119,6 +154,9 @@ func TestRunLoopPublishesOnlyTheFinalAssistantOutput(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("请结合我的信息处理一下"),
 		observer,
+		AssistantOutput{
+			ID: "b86cf498-a89d-4a40-bab6-ad33e8e0efdb", RunID: "run-1",
+		},
 	)
 	if err != nil {
 		t.Fatalf("generateObserved() error = %v", err)
@@ -138,6 +176,61 @@ func TestRunLoopPublishesOnlyTheFinalAssistantOutput(t *testing.T) {
 	}
 	if !reflect.DeepEqual(observer.steps, wantSteps) {
 		t.Fatalf("tool steps = %#v, want %#v", observer.steps, wantSteps)
+	}
+}
+
+func TestRunLoopForwardsFinalDeltaBeforeProviderCompletes(t *testing.T) {
+	release := make(chan struct{})
+	generator := &blockingFinalGenerator{release: release}
+	service := newLoopTestService(t, generator)
+	observer := &realtimeLoopStreamObserver{events: make(chan string, 4)}
+	type generationResult struct {
+		result TextResult
+		deltas []string
+		err    error
+	}
+	completed := make(chan generationResult, 1)
+	go func() {
+		result, deltas, err := service.generateObserved(
+			context.Background(),
+			loopActor(),
+			loopRun(),
+			agentcontext.Manifest{},
+			loopRequest("请直接回答"),
+			observer,
+			AssistantOutput{
+				ID: "5d1dd070-0805-4be4-9b4a-aa689b78bf6e", RunID: "run-1",
+			},
+		)
+		completed <- generationResult{result: result, deltas: deltas, err: err}
+	}()
+
+	wantEvents := []string{
+		"started:5d1dd070-0805-4be4-9b4a-aa689b78bf6e",
+		"delta:1:first",
+	}
+	for _, want := range wantEvents {
+		select {
+		case got := <-observer.events:
+			if got != want {
+				close(release)
+				t.Fatalf("stream event = %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatalf("timed out waiting for %q before provider completion", want)
+		}
+	}
+	close(release)
+	outcome := <-completed
+	if outcome.err != nil {
+		t.Fatalf("generateObserved() error = %v", outcome.err)
+	}
+	if got, want := outcome.result.Content, "first second"; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got := joinedTextDeltas(outcome.deltas); got != outcome.result.Content {
+		t.Fatalf("deltas = %q, want %q", got, outcome.result.Content)
 	}
 }
 
@@ -171,7 +264,7 @@ func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	}
 
 	requests := generator.Requests()
-	if got, want := len(requests), 2; got != want {
+	if got, want := len(requests), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	toolMessage := requests[1].Messages[len(requests[1].Messages)-1]
@@ -255,7 +348,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 	}
 
 	requests := generator.Requests()
-	if got, want := len(requests), 2; got != want {
+	if got, want := len(requests), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	messages := requests[1].Messages
@@ -307,7 +400,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 3; got != want {
+	if got, want := len(requests), 4; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	lastMessages := requests[2].Messages
@@ -365,11 +458,11 @@ func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 2; got != want {
+	if got, want := len(requests), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	initial := requests[0]
-	if initial.ToolChoice.Mode != ToolChoiceAuto || len(initial.Tools) != 4 {
+	if initial.ToolChoice.Mode != ToolChoiceRequired || len(initial.Tools) != 5 {
 		t.Fatalf(
 			"initial routing = choice %#v, tools %d",
 			initial.ToolChoice,
@@ -410,7 +503,7 @@ func TestRunLoopFeedsExplicitCapabilityFailureBackToModel(t *testing.T) {
 	if result.Content != "I could not read the material, so I will continue without it." {
 		t.Fatalf("Content = %q", result.Content)
 	}
-	if got, want := generator.CallCount(), 2; got != want {
+	if got, want := generator.CallCount(), 3; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	toolResult := generator.Requests()[1].Messages[3]
@@ -739,7 +832,7 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 		conditional.inputs[1].WriteValue == "" {
 		t.Fatalf("conditional inputs = %#v", conditional.inputs)
 	}
-	if got, want := generator.CallCount(), 3; got != want {
+	if got, want := generator.CallCount(), 4; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 }
@@ -1120,6 +1213,51 @@ type scriptedGenerator struct {
 	requests []TextRequest
 }
 
+type blockingFinalGenerator struct {
+	release <-chan struct{}
+}
+
+func (*blockingFinalGenerator) Generate(
+	ctx context.Context,
+	request TextRequest,
+) (TextResult, error) {
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return TextResult{}, err
+	}
+	if request.ToolChoice.Mode != ToolChoiceRequired {
+		return TextResult{}, errors.New("planning request did not require a control decision")
+	}
+	return finalResponseLoopResult(), nil
+}
+
+func (generator *blockingFinalGenerator) GenerateStream(
+	ctx context.Context,
+	request TextRequest,
+	observer TextDeltaObserver,
+) (TextResult, error) {
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, err
+	}
+	if request.ToolChoice.Mode != ToolChoiceNone || len(request.Tools) != 0 {
+		return TextResult{}, errors.New("final output request still exposes tools")
+	}
+	if err := observer.OnTextDelta(ctx, "first"); err != nil {
+		return TextResult{}, err
+	}
+	select {
+	case <-ctx.Done():
+		return TextResult{}, ctx.Err()
+	case <-generator.release:
+	}
+	if err := observer.OnTextDelta(ctx, " second"); err != nil {
+		return TextResult{}, err
+	}
+	return finalLoopResult("first second"), nil
+}
+
 type failingTextGenerator struct {
 	err error
 }
@@ -1149,7 +1287,14 @@ func (generator *scriptedGenerator) Generate(
 	defer generator.mu.Unlock()
 	generator.requests = append(generator.requests, request)
 	if len(generator.results) == 0 {
+		if request.ToolChoice.Mode == ToolChoiceRequired {
+			return finalResponseLoopResult(), nil
+		}
 		return finalLoopResult("default"), nil
+	}
+	if request.ToolChoice.Mode == ToolChoiceRequired &&
+		len(generator.results[0].ToolCalls) == 0 {
+		return finalResponseLoopResult(), nil
 	}
 	result := generator.results[0]
 	generator.results = generator.results[1:]
@@ -1175,6 +1320,49 @@ func (generator *scriptedGenerator) GenerateStream(
 
 type recordingLoopStreamObserver struct {
 	steps []string
+}
+
+type realtimeLoopStreamObserver struct {
+	events chan string
+}
+
+func (*realtimeLoopStreamObserver) OnInputCommitted(context.Context, Submission) error {
+	return nil
+}
+
+func (*realtimeLoopStreamObserver) OnToolStarted(context.Context, ToolStep) error {
+	return errors.New("unexpected tool start")
+}
+
+func (*realtimeLoopStreamObserver) OnToolCompleted(context.Context, ToolStep) error {
+	return errors.New("unexpected tool completion")
+}
+
+func (*realtimeLoopStreamObserver) OnToolFailed(context.Context, ToolStep) error {
+	return errors.New("unexpected tool failure")
+}
+
+func (observer *realtimeLoopStreamObserver) OnAssistantOutputStarted(
+	_ context.Context,
+	output AssistantOutput,
+) error {
+	observer.events <- "started:" + output.ID
+	return nil
+}
+
+func (observer *realtimeLoopStreamObserver) OnAssistantOutputDelta(
+	_ context.Context,
+	delta AssistantOutputDelta,
+) error {
+	observer.events <- fmt.Sprintf("delta:%d:%s", delta.Sequence, delta.Delta)
+	return nil
+}
+
+func (*realtimeLoopStreamObserver) OnAssistantOutputCompleted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
 }
 
 func (*recordingLoopStreamObserver) OnInputCommitted(context.Context, Submission) error {
@@ -1444,6 +1632,14 @@ func finalLoopResult(content string) TextResult {
 		FinishReason: "stop",
 		Usage:        TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	}
+}
+
+func finalResponseLoopResult() TextResult {
+	return toolLoopResult(
+		"call-final-response",
+		finalResponseToolName,
+		`{"decision":"respond"}`,
+	)
 }
 
 func toolLoopResult(id string, name string, arguments string) TextResult {

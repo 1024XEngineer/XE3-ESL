@@ -29,6 +29,7 @@ const (
 	streamReplayPollInterval = 100 * time.Millisecond
 	toolSchemaVersionV1      = "tool-schema-v1"
 	maxImagesPerMessage      = 4
+	finalResponseToolName    = "agent.final_response.v1"
 )
 
 type Service struct {
@@ -579,6 +580,19 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
+	outputID, err := service.repository.NewAssistantMessageID()
+	if err != nil || !ValidUUID(outputID) {
+		failed, failErr := service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			claimed.WorkerLeaseToken,
+			FailureInternal,
+			true,
+		)
+		return failed, failErr
+	}
+	output := AssistantOutput{ID: outputID, RunID: claimed.ID}
 	var result TextResult
 	var finalDeltas []string
 	if observer == nil {
@@ -597,6 +611,7 @@ func (service *Service) process(
 			manifest,
 			request,
 			observer,
+			output,
 		)
 	}
 	if err != nil {
@@ -610,6 +625,7 @@ func (service *Service) process(
 			retryable,
 		)
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
+		service.logGenerationFailureDetail(claimed, err)
 		return failed, failErr
 	}
 	if !validFinalTextResult(result) ||
@@ -632,26 +648,9 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
-	outputID, err := service.repository.NewAssistantMessageID()
-	if err != nil || !ValidUUID(outputID) {
-		failed, failErr := service.persistFailure(
-			ctx,
-			actor.UserID,
-			claimed.ID,
-			claimed.WorkerLeaseToken,
-			FailureInternal,
-			true,
-		)
-		return failed, failErr
-	}
-	output := AssistantOutput{
-		ID: outputID, RunID: claimed.ID, Content: result.Content,
-	}
+	output.Content = result.Content
 	if observer != nil {
-		if len(finalDeltas) == 0 {
-			finalDeltas = []string{result.Content}
-		}
-		if joinedTextDeltas(finalDeltas) != result.Content {
+		if len(finalDeltas) == 0 || joinedTextDeltas(finalDeltas) != result.Content {
 			failed, failErr := service.persistFailure(
 				ctx,
 				actor.UserID,
@@ -661,43 +660,6 @@ func (service *Service) process(
 				ErrorInvalidResponse.Retryable(),
 			)
 			return failed, failErr
-		}
-		if err := observer.OnAssistantOutputStarted(ctx, AssistantOutput{
-			ID: output.ID, RunID: output.RunID,
-		}); err != nil {
-			failed, failErr := service.persistFailure(
-				ctx,
-				actor.UserID,
-				claimed.ID,
-				claimed.WorkerLeaseToken,
-				string(ErrorCancelled),
-				true,
-			)
-			return failed, failErr
-		}
-		for index, delta := range finalDeltas {
-			if delta == "" {
-				continue
-			}
-			if err := observer.OnAssistantOutputDelta(
-				ctx,
-				AssistantOutputDelta{
-					OutputID: output.ID,
-					RunID:    output.RunID,
-					Sequence: index + 1,
-					Delta:    delta,
-				},
-			); err != nil {
-				failed, failErr := service.persistFailure(
-					ctx,
-					actor.UserID,
-					claimed.ID,
-					claimed.WorkerLeaseToken,
-					string(ErrorCancelled),
-					true,
-				)
-				return failed, failErr
-			}
 		}
 	}
 	persistContext, cancel := runPersistenceContext(ctx)
@@ -727,7 +689,7 @@ func (service *Service) generate(
 	request TextRequest,
 ) (TextResult, error) {
 	result, _, err := service.generateObserved(
-		ctx, actor, run, manifest, request, nil,
+		ctx, actor, run, manifest, request, nil, AssistantOutput{},
 	)
 	return result, err
 }
@@ -739,6 +701,7 @@ func (service *Service) generateObserved(
 	manifest agentcontext.Manifest,
 	request TextRequest,
 	observer StreamObserver,
+	output AssistantOutput,
 ) (TextResult, []string, error) {
 	if service.registry == nil || service.executor == nil {
 		if err := service.repository.SaveContextSnapshot(
@@ -746,9 +709,7 @@ func (service *Service) generateObserved(
 		); err != nil {
 			return TextResult{}, nil, err
 		}
-		buffer := &textDeltaBuffer{}
-		result, err := service.generateModel(ctx, request, buffer.observer(observer))
-		return result, buffer.deltas, err
+		return service.generateFinalOutput(ctx, request, observer, output)
 	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
@@ -760,7 +721,11 @@ func (service *Service) generateObserved(
 		service.registry,
 		service.logger,
 		run.ID,
-		ToolChoice{Mode: ToolChoiceAuto},
+		ToolChoice{Mode: ToolChoiceRequired},
+	)
+	routing.Definitions = append(
+		routing.Definitions,
+		finalResponseToolDefinition(),
 	)
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
@@ -781,10 +746,7 @@ func (service *Service) generateObserved(
 
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		buffer := &textDeltaBuffer{}
-		result, err := service.generateModel(
-			loopCtx, request, buffer.observer(observer),
-		)
+		result, err := service.generateModel(loopCtx, request, nil)
 		if err != nil {
 			return TextResult{}, nil, err
 		}
@@ -797,6 +759,26 @@ func (service *Service) generateObserved(
 			return result, nil, nil
 		}
 		if len(result.ToolCalls) == 0 {
+			service.logInvalidModelResult(run, result)
+			return TextResult{}, nil, NewGenerationError(
+				ErrorInvalidResponse,
+				0,
+				"",
+				"",
+				errors.New("agent: planning response did not choose a tool or final output"),
+			)
+		}
+		if finalResponseRequested(result.ToolCalls) {
+			if !validFinalResponseRequest(result.ToolCalls) {
+				service.logInvalidModelResult(run, result)
+				return TextResult{}, nil, NewGenerationError(
+					ErrorInvalidResponse,
+					0,
+					"",
+					"",
+					errors.New("agent: final response control call is invalid"),
+				)
+			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
@@ -805,15 +787,25 @@ func (service *Service) generateObserved(
 				reasonSummary(reasonModelToolSelection, finalDecision),
 				modelIterations,
 			)
+			finalResult, finalDeltas, finalErr := service.generateFinalOutput(
+				loopCtx,
+				request,
+				observer,
+				output,
+			)
+			if finalErr != nil {
+				return TextResult{}, nil, finalErr
+			}
+			modelIterations++
 			service.logRunCompleted(
 				run,
 				finalDecision,
 				modelIterations,
 				toolCalls,
 				startedAt,
-				result.Content,
+				finalResult.Content,
 			)
-			return result, buffer.deltas, nil
+			return finalResult, finalDeltas, nil
 		}
 
 		selected := toolCallNames(result.ToolCalls)
@@ -927,6 +919,95 @@ func (service *Service) generateObserved(
 		finalDecision = "tool_call_then_response"
 	}
 }
+
+func finalResponseToolDefinition() ToolDefinition {
+	return ToolDefinition{
+		Name: finalResponseToolName,
+		Description: "Choose this control tool only when no further domain tool is " +
+			"needed and the assistant is ready to produce its final user-visible response. " +
+			"Set decision to respond and do not include the response text in this call; " +
+			"the server starts a separate tool-disabled final output phase.",
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"decision": capability.StringEnumSchema(
+				"Enter the final user-visible response phase.",
+				"respond",
+			),
+		}, []string{"decision"}),
+	}
+}
+
+func finalResponseRequested(calls []ModelToolCall) bool {
+	for _, call := range calls {
+		if call.Name == finalResponseToolName {
+			return true
+		}
+	}
+	return false
+}
+
+func validFinalResponseRequest(calls []ModelToolCall) bool {
+	if len(calls) != 1 || calls[0].Name != finalResponseToolName {
+		return false
+	}
+	var input map[string]any
+	if json.Unmarshal(calls[0].Arguments, &input) != nil || len(input) != 1 {
+		return false
+	}
+	decision, ok := input["decision"].(string)
+	return ok && decision == "respond"
+}
+
+func (service *Service) generateFinalOutput(
+	ctx context.Context,
+	request TextRequest,
+	observer StreamObserver,
+	output AssistantOutput,
+) (TextResult, []string, error) {
+	request.Tools = nil
+	request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
+	if observer == nil {
+		result, err := service.generateModel(ctx, request, nil)
+		return result, nil, err
+	}
+	if !ValidUUID(output.ID) || output.RunID == "" {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			errors.New("agent: final output identity is invalid"),
+		)
+	}
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	streaming, ok := service.generator.(StreamingTextGenerator)
+	if !ok {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorConfiguration,
+			0,
+			"",
+			"",
+			errors.New("agent: configured text generator does not support streaming"),
+		)
+	}
+	stream := &assistantOutputDeltaStream{observer: observer, output: output}
+	if err := stream.start(ctx); err != nil {
+		return TextResult{}, nil, streamObserverGenerationError(err)
+	}
+	result, err := streaming.GenerateStream(ctx, request, stream)
+	if err != nil {
+		return TextResult{}, nil, err
+	}
+	return result, stream.deltas, nil
+}
+
 func (service *Service) generateModel(
 	ctx context.Context,
 	request TextRequest,
@@ -957,23 +1038,44 @@ func (service *Service) generateModel(
 	return streaming.GenerateStream(ctx, request, observer)
 }
 
-type textDeltaBuffer struct {
-	deltas []string
+type assistantOutputDeltaStream struct {
+	observer StreamObserver
+	output   AssistantOutput
+	sequence int
+	deltas   []string
 }
 
-func (buffer *textDeltaBuffer) observer(observer StreamObserver) TextDeltaObserver {
-	if observer == nil {
-		return nil
-	}
-	return buffer
+func (stream *assistantOutputDeltaStream) start(ctx context.Context) error {
+	return stream.observer.OnAssistantOutputStarted(ctx, AssistantOutput{
+		ID: stream.output.ID, RunID: stream.output.RunID,
+	})
 }
 
-func (buffer *textDeltaBuffer) OnTextDelta(_ context.Context, delta string) error {
+func (stream *assistantOutputDeltaStream) OnTextDelta(
+	ctx context.Context,
+	delta string,
+) error {
 	if delta == "" {
 		return nil
 	}
-	buffer.deltas = append(buffer.deltas, delta)
+	stream.sequence++
+	if err := stream.observer.OnAssistantOutputDelta(
+		ctx,
+		AssistantOutputDelta{
+			OutputID: stream.output.ID,
+			RunID:    stream.output.RunID,
+			Sequence: stream.sequence,
+			Delta:    delta,
+		},
+	); err != nil {
+		return streamObserverGenerationError(err)
+	}
+	stream.deltas = append(stream.deltas, delta)
 	return nil
+}
+
+func streamObserverGenerationError(err error) *GenerationError {
+	return NewGenerationError(ErrorCancelled, 0, "", "", err)
 }
 
 func joinedTextDeltas(deltas []string) string {
