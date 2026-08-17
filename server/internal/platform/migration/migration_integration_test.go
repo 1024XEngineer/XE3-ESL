@@ -54,6 +54,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to Agent domain completion = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to baseline = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))

@@ -14,6 +14,7 @@ type PlanHTTPApplication interface {
 	ListPlans(context.Context, requestcontext.Actor, scene.PracticeExperience) ([]PracticePlanSummary, error)
 	CreatePlan(context.Context, requestcontext.Actor, string, CreatePlanRequest) (PracticePlan, bool, error)
 	ReadPlan(context.Context, requestcontext.Actor, string) (PracticePlan, error)
+	ArchivePlan(context.Context, requestcontext.Actor, string) error
 	ConfirmPlan(context.Context, requestcontext.Actor, string, string, ConfirmPlanRequest) (PracticePlan, bool, error)
 }
 
@@ -30,6 +31,7 @@ func (h *PlanHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/practice-plans", h.list)
 	routes.POST("/v1/practice-plans", h.create)
 	routes.GET("/v1/practice-plans/:practice_plan_id", h.read)
+	routes.DELETE("/v1/practice-plans/:practice_plan_id", h.archive)
 	routes.POST("/v1/practice-plans/:practice_plan_id/confirm", h.confirm)
 }
 
@@ -93,6 +95,24 @@ func (h *PlanHTTPHandler) read(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, plan)
+}
+
+func (h *PlanHTTPHandler) archive(c *gin.Context) {
+	setPrivateHeaders(c)
+	actor, ok := actorFromContext(c)
+	if !ok {
+		return
+	}
+	id := c.Param("practice_plan_id")
+	if !validPlanResourceID(id) {
+		writePlanError(c, http.StatusNotFound, "practice_plan_not_found")
+		return
+	}
+	if err := h.application.ArchivePlan(c.Request.Context(), actor, id); err != nil {
+		writePlanServiceError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *PlanHTTPHandler) confirm(c *gin.Context) {

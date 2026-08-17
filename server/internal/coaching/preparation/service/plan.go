@@ -148,6 +148,13 @@ func (s *PlanService) ListPlans(ctx context.Context, actor requestcontext.Actor,
 	return result, nil
 }
 
+func (s *PlanService) ArchivePlan(ctx context.Context, actor requestcontext.Actor, id string) error {
+	if ctx == nil || !actor.Valid() || !validPlanAggregateID(id) {
+		return preparation.ErrPlanNotFound
+	}
+	return s.repository.ArchivePlan(ctx, actor, id)
+}
+
 func (s *PlanService) ConfirmPlan(ctx context.Context, actor requestcontext.Actor, id, clientRequestID string, request preparation.ConfirmPlanRequest) (preparation.PracticePlan, bool, error) {
 	if ctx == nil || !actor.Valid() || !validPlanAggregateID(id) || !validIdempotencyKey(clientRequestID) || request.ExpectedVersion < 1 {
 		return preparation.PracticePlan{}, false, preparation.ErrPlanInvalid
@@ -784,7 +791,7 @@ func validReturnedPlan(
 		return false
 	}
 	if plan.Version < 1 ||
-		(plan.Status != preparation.PlanStatusReady && plan.Status != preparation.PlanStatusDraft) ||
+		(plan.Status != preparation.PlanStatusReady && plan.Status != preparation.PlanStatusDraft && plan.Status != preparation.PlanStatusArchived) ||
 		(plan.SourceThreadID != "" &&
 			!validPlanAggregateID(plan.SourceThreadID)) ||
 		plan.CreatedAt.IsZero() || plan.UpdatedAt.Before(plan.CreatedAt) ||
