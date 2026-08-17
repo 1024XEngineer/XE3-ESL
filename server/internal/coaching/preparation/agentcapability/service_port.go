@@ -112,6 +112,8 @@ func (port *ServicePort) PreviewPractice(
 		Status:       "preview_ready",
 		Replayed:     replayed,
 		ClientAction: clientAction,
+		AssistantText: "已为您准备好“" + plan.SceneSelection.Scene.Name +
+			"”练习，请确认开始。",
 		SourceRefs: []capability.SourceRef{
 			{Type: "practice_plan", ID: plan.ID},
 		},

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
 type Executor struct {
@@ -76,6 +77,15 @@ func (executor *Executor) Execute(
 		result.Content = map[string]any{}
 	}
 	if !result.TurnOutcome.Valid() {
+		executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+		return Result{}, ErrExecutionRejected
+	}
+	if result.TurnOutcome == TurnOutcomeCompleted {
+		if !conversation.ValidMessageContent(result.AssistantText) {
+			executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+			return Result{}, ErrExecutionRejected
+		}
+	} else if result.AssistantText != "" {
 		executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
 		return Result{}, ErrExecutionRejected
 	}

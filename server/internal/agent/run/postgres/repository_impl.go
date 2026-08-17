@@ -36,6 +36,11 @@ type storedModelResult struct {
 	FinishReason string `json:"finish_reason"`
 }
 
+type storedDomainResult struct {
+	ToolCallID string `json:"tool_call_id"`
+	ToolName   string `json:"tool_name"`
+}
+
 type storedUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
@@ -48,6 +53,13 @@ type storedFailure struct {
 }
 
 const maxToolTraceBytes = 512 << 10
+
+func nullableJSON(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
 
 type storedToolCall struct {
 	ID            string                     `json:"id"`
@@ -625,31 +637,42 @@ INSERT INTO agent_messages (
 	); err != nil {
 		return agentrun.Run{}, mapRunPostgresError(err)
 	}
-	modelResult, err := json.Marshal(storedModelResult{
-		CompletionID: result.ID, Provider: result.Provider,
-		Model: result.Model, FinishReason: result.FinishReason,
-	})
-	if err != nil {
-		return agentrun.Run{}, agentrun.ErrInvalidRequest
+	var modelResult []byte
+	var usage []byte
+	var domainResult []byte
+	if result.CompletionSource == agentrun.CompletionSourceDomain {
+		domainResult, err = json.Marshal(storedDomainResult{
+			ToolCallID: result.DomainToolCallID,
+			ToolName:   result.DomainToolName,
+		})
+	} else {
+		modelResult, err = json.Marshal(storedModelResult{
+			CompletionID: result.ID, Provider: result.Provider,
+			Model: result.Model, FinishReason: result.FinishReason,
+		})
+		if err == nil {
+			usage, err = json.Marshal(storedUsage{
+				InputTokens:  result.Usage.InputTokens,
+				OutputTokens: result.Usage.OutputTokens,
+				TotalTokens:  result.Usage.TotalTokens,
+			})
+		}
 	}
-	usage, err := json.Marshal(storedUsage{
-		InputTokens:  result.Usage.InputTokens,
-		OutputTokens: result.Usage.OutputTokens,
-		TotalTokens:  result.Usage.TotalTokens,
-	})
 	if err != nil {
 		return agentrun.Run{}, agentrun.ErrInvalidRequest
 	}
 	tag, err := tx.Exec(ctx, `
 UPDATE agent_runs AS runs
 SET status = 'completed', phase = 'completed',
-    model_result = $3::jsonb, usage = $4::jsonb, error = NULL,
+    model_result = $3::jsonb, usage = $4::jsonb,
+    domain_result = $5::jsonb, error = NULL,
     tool_trace = `+terminalToolTraceProjectionSQL+`,
     lease_token = NULL, lease_expires_at = NULL,
     completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND status = 'running' AND lease_token = $2
   AND lease_expires_at > CURRENT_TIMESTAMP`,
-		runID, leaseToken, modelResult, usage,
+		runID, leaseToken, nullableJSON(modelResult), nullableJSON(usage),
+		nullableJSON(domainResult),
 	)
 	if err != nil {
 		return agentrun.Run{}, mapRunPostgresError(err)
@@ -989,6 +1012,7 @@ const runSelectColumns = `
     ), ''),
     runs.model_result,
     runs.usage,
+    runs.domain_result,
     runs.error,
     runs.context_snapshot,
     runs.tool_trace,
@@ -1003,6 +1027,7 @@ func scanRun(row rowScanner) (agentrun.Run, error) {
 	var modelConfigurationJSON []byte
 	var modelResultJSON []byte
 	var usageJSON []byte
+	var domainResultJSON []byte
 	var failureJSON []byte
 	var contextSnapshotJSON []byte
 	var toolTraceJSON []byte
@@ -1014,7 +1039,7 @@ func scanRun(row rowScanner) (agentrun.Run, error) {
 		&result.Attempt, &result.RetryOfRunID, &result.RetryClientID,
 		&status, &result.Phase, &modelConfigurationJSON,
 		&result.WorkerLeaseToken, &leaseExpiresAt, &result.AssistantMessageID,
-		&modelResultJSON, &usageJSON, &failureJSON, &contextSnapshotJSON,
+		&modelResultJSON, &usageJSON, &domainResultJSON, &failureJSON, &contextSnapshotJSON,
 		&toolTraceJSON, &result.CreatedAt, &startedAt, &completedAt,
 		&result.UpdatedAt,
 	); err != nil {
@@ -1062,6 +1087,18 @@ func scanRun(row rowScanner) (agentrun.Run, error) {
 		result.ProviderCompletionID = stored.CompletionID
 		result.ProviderModel = stored.Model
 		result.FinishReason = stored.FinishReason
+		result.CompletionSource = agentrun.CompletionSourceModel
+	}
+	if len(domainResultJSON) > 0 {
+		var stored storedDomainResult
+		if strictJSON(domainResultJSON, &stored) != nil ||
+			!agentrun.ValidOpaqueID(stored.ToolCallID) ||
+			!agentrun.ValidOpaqueID(stored.ToolName) {
+			return agentrun.Run{}, agentrun.ErrRepository
+		}
+		result.CompletionSource = agentrun.CompletionSourceDomain
+		result.DomainToolCallID = stored.ToolCallID
+		result.DomainToolName = stored.ToolName
 	}
 	if len(usageJSON) > 0 {
 		var stored storedUsage
@@ -1091,7 +1128,13 @@ func scanRun(row rowScanner) (agentrun.Run, error) {
 	if completedAt.Valid {
 		result.CompletedAt = completedAt.Time.UTC()
 	}
-	if !validStoredRun(result, modelResultJSON, usageJSON, failureJSON) {
+	if !validStoredRun(
+		result,
+		modelResultJSON,
+		usageJSON,
+		domainResultJSON,
+		failureJSON,
+	) {
 		return agentrun.Run{}, agentrun.ErrRepository
 	}
 	return result, nil
@@ -1101,6 +1144,7 @@ func validStoredRun(
 	run agentrun.Run,
 	modelResult []byte,
 	usage []byte,
+	domainResult []byte,
 	failure []byte,
 ) bool {
 	if !run.Status.Valid() || run.Attempt < 1 {
@@ -1110,22 +1154,25 @@ func validStoredRun(
 	case agentrun.StatusPending:
 		return run.Phase == "queued" && run.StartedAt.IsZero() &&
 			run.CompletedAt.IsZero() && run.WorkerLeaseToken == "" &&
-			len(modelResult) == 0 && len(usage) == 0 && len(failure) == 0
+			len(modelResult) == 0 && len(usage) == 0 &&
+			len(domainResult) == 0 && len(failure) == 0
 	case agentrun.StatusRunning:
 		return (run.Phase == "context" || run.Phase == "model" || run.Phase == "tool") &&
 			!run.StartedAt.IsZero() && run.CompletedAt.IsZero() &&
 			run.WorkerLeaseToken != "" && !run.WorkerLeaseExpiresAt.IsZero() &&
-			len(modelResult) == 0 && len(usage) == 0 && len(failure) == 0
+			len(modelResult) == 0 && len(usage) == 0 &&
+			len(domainResult) == 0 && len(failure) == 0
 	case agentrun.StatusCompleted:
 		return run.Phase == "completed" && !run.StartedAt.IsZero() &&
 			!run.CompletedAt.IsZero() && run.AssistantMessageID != "" &&
-			run.WorkerLeaseToken == "" && len(modelResult) > 0 &&
-			len(usage) > 0 && len(failure) == 0
+			run.WorkerLeaseToken == "" && len(failure) == 0 &&
+			((len(modelResult) > 0 && len(usage) > 0 && len(domainResult) == 0) ||
+				(len(modelResult) == 0 && len(usage) == 0 && len(domainResult) > 0))
 	case agentrun.StatusFailed:
 		return run.Phase == "failed" && !run.StartedAt.IsZero() &&
 			!run.CompletedAt.IsZero() && run.AssistantMessageID == "" &&
 			run.WorkerLeaseToken == "" && len(modelResult) == 0 &&
-			len(usage) == 0 && len(failure) > 0
+			len(usage) == 0 && len(domainResult) == 0 && len(failure) > 0
 	default:
 		return false
 	}

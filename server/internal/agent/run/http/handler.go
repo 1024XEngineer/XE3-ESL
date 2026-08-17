@@ -342,14 +342,24 @@ func RunResponse(run agentrun.Run) gin.H {
 		result["completed_at"] = run.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if run.Status == agentrun.StatusCompleted {
+		completionSource := run.CompletionSource
+		if completionSource == "" {
+			completionSource = agentrun.CompletionSourceModel
+		}
 		result["assistant_message_id"] = run.AssistantMessageID
-		result["provider_completion_id"] = run.ProviderCompletionID
-		result["provider_model"] = run.ProviderModel
-		result["finish_reason"] = run.FinishReason
-		result["usage"] = gin.H{
-			"input_tokens":  run.Usage.InputTokens,
-			"output_tokens": run.Usage.OutputTokens,
-			"total_tokens":  run.Usage.TotalTokens,
+		result["completion_source"] = completionSource
+		if completionSource == agentrun.CompletionSourceDomain {
+			result["domain_tool_call_id"] = run.DomainToolCallID
+			result["domain_tool_name"] = run.DomainToolName
+		} else {
+			result["provider_completion_id"] = run.ProviderCompletionID
+			result["provider_model"] = run.ProviderModel
+			result["finish_reason"] = run.FinishReason
+			result["usage"] = gin.H{
+				"input_tokens":  run.Usage.InputTokens,
+				"output_tokens": run.Usage.OutputTokens,
+				"total_tokens":  run.Usage.TotalTokens,
+			}
 		}
 	}
 	if run.Status == agentrun.StatusFailed {
