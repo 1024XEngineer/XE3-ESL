@@ -511,14 +511,38 @@ void main() {
                 'run': _runJson(status: 'pending'),
               },
             ),
-            ('assistant.started', <String, Object?>{'run_id': _runId}),
             (
-              'assistant.delta',
-              <String, Object?>{'run_id': _runId, 'delta': 'Hello'},
+              'assistant.output.started',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+              },
             ),
             (
-              'assistant.delta',
-              <String, Object?>{'run_id': _runId, 'delta': ', how can I help?'},
+              'assistant.output.delta',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'sequence': 1,
+                'delta': 'Hello',
+              },
+            ),
+            (
+              'assistant.output.delta',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'sequence': 2,
+                'delta': ', how can I help?',
+              },
+            ),
+            (
+              'assistant.output.completed',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'text': 'Hello, how can I help?',
+              },
             ),
             ('run.completed', <String, Object?>{'run': completedRun}),
           ]),
@@ -536,9 +560,9 @@ void main() {
           )
           .toList();
 
-      expect(events, hasLength(5));
+      expect(events, hasLength(6));
       expect(
-        events.whereType<AgentVoiceAssistantDelta>().map(
+        events.whereType<AgentVoiceAssistantOutputDelta>().map(
           (event) => event.delta,
         ),
         <String>['Hello', ', how can I help?'],
@@ -547,6 +571,64 @@ void main() {
       transport.expectDone();
     },
   );
+
+  test('rejects a non-contiguous assistant output sequence', () async {
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+        response: _sseResponse(<(String, Object?)>[
+          (
+            'input.committed',
+            <String, Object?>{
+              'draft': _draftJson(status: 'confirmed', confirmed: true),
+              'message': _voiceMessageJson(
+                content: 'Edited confirmed transcript',
+              ),
+              'run': _runJson(status: 'pending'),
+            },
+          ),
+          (
+            'assistant.output.started',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+            },
+          ),
+          (
+            'assistant.output.delta',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'sequence': 2,
+              'delta': 'Skipped sequence one.',
+            },
+          ),
+        ]),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList(),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
 
   test('decodes exactly four durable draft states', () async {
     final transport = _ScriptedVoiceTransport([

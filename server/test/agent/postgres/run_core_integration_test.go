@@ -164,12 +164,19 @@ func TestDeletingUserCascadesAgentCoreGraph(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("claim Run: acquired=%t err=%v", acquired, err)
 	}
+	assistantMessageID, err := repositories.run.NewAssistantMessageID()
+	if err != nil {
+		t.Fatalf("allocate Assistant Message ID: %v", err)
+	}
 	if _, err := repositories.run.Complete(
 		ctx,
 		actor.UserID,
 		claimed.ID,
 		claimed.WorkerLeaseToken,
-		"The complete graph may be removed with its owner.",
+		agentrun.AssistantOutput{
+			ID: assistantMessageID, RunID: claimed.ID,
+			Content: "The complete graph may be removed with its owner.",
+		},
 		successfulTextResult(),
 	); err != nil {
 		t.Fatalf("complete Run: %v", err)
@@ -315,19 +322,30 @@ func TestTerminalRunTransitionsCompactExecutionScratchData(t *testing.T) {
 				); err != nil {
 					t.Fatalf("complete Tool Call: %v", err)
 				}
+				assistantMessageID, err := repositories.run.NewAssistantMessageID()
+				if err != nil {
+					t.Fatalf("allocate Assistant Message ID: %v", err)
+				}
 				completed, err := repositories.run.Complete(
 					ctx,
 					actor.UserID,
 					claimed.ID,
 					claimed.WorkerLeaseToken,
-					"Terminal projection completed.",
+					agentrun.AssistantOutput{
+						ID: assistantMessageID, RunID: claimed.ID,
+						Content: "Terminal projection completed.",
+					},
 					successfulTextResult(),
 				)
 				if err != nil {
 					t.Fatalf("complete Run: %v", err)
 				}
-				if completed.AssistantMessageID == "" {
-					t.Fatal("completed Run did not project its Assistant Message")
+				if completed.AssistantMessageID != assistantMessageID {
+					t.Fatalf(
+						"Assistant Message ID = %q, want %q",
+						completed.AssistantMessageID,
+						assistantMessageID,
+					)
 				}
 				expectedActions = 1
 			case "fail":

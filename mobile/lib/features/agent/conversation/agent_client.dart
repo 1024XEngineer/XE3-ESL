@@ -68,14 +68,52 @@ final class AgentInputCommitted extends AgentTextStreamEvent {
   final AgentMessage userMessage;
 }
 
-final class AgentAssistantStarted extends AgentTextStreamEvent {
-  const AgentAssistantStarted({required super.runId});
+enum AgentToolStepStatus { started, completed, failed }
+
+final class AgentToolStepEvent extends AgentTextStreamEvent {
+  const AgentToolStepEvent({
+    required super.runId,
+    required this.stepId,
+    required this.name,
+    required this.status,
+  });
+
+  final String stepId;
+  final String name;
+  final AgentToolStepStatus status;
 }
 
-final class AgentAssistantDelta extends AgentTextStreamEvent {
-  const AgentAssistantDelta({required super.runId, required this.delta});
+final class AgentAssistantOutputStarted extends AgentTextStreamEvent {
+  const AgentAssistantOutputStarted({
+    required super.runId,
+    required this.outputId,
+  });
 
+  final String outputId;
+}
+
+final class AgentAssistantOutputDelta extends AgentTextStreamEvent {
+  const AgentAssistantOutputDelta({
+    required super.runId,
+    required this.outputId,
+    required this.sequence,
+    required this.delta,
+  });
+
+  final String outputId;
+  final int sequence;
   final String delta;
+}
+
+final class AgentAssistantOutputCompleted extends AgentTextStreamEvent {
+  const AgentAssistantOutputCompleted({
+    required super.runId,
+    required this.outputId,
+    required this.text,
+  });
+
+  final String outputId;
+  final String text;
 }
 
 final class AgentRunCompleted extends AgentTextStreamEvent {

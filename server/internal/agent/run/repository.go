@@ -54,12 +54,13 @@ type Repository interface {
 		string,
 		string,
 	) ([]agentclientaction.Action, error)
+	NewAssistantMessageID() (string, error)
 	Complete(
 		stdcontext.Context,
 		string,
 		string,
 		string,
-		string,
+		AssistantOutput,
 		TextResult,
 	) (Run, error)
 	Fail(stdcontext.Context, string, string, string, string, bool) (Run, error)

@@ -205,10 +205,35 @@ func (observer *recordingStreamObserver) OnInputCommitted(
 	return nil
 }
 
-func (*recordingStreamObserver) OnAssistantStarted(context.Context, Run) error {
+func (*recordingStreamObserver) OnToolStarted(context.Context, ToolStep) error {
 	return nil
 }
 
-func (*recordingStreamObserver) OnAssistantDelta(context.Context, string) error {
+func (*recordingStreamObserver) OnToolCompleted(context.Context, ToolStep) error {
+	return nil
+}
+
+func (*recordingStreamObserver) OnToolFailed(context.Context, ToolStep) error {
+	return nil
+}
+
+func (*recordingStreamObserver) OnAssistantOutputStarted(
+	context.Context,
+	AssistantOutput,
+) error {
+	return nil
+}
+
+func (*recordingStreamObserver) OnAssistantOutputDelta(
+	context.Context,
+	AssistantOutputDelta,
+) error {
+	return nil
+}
+
+func (*recordingStreamObserver) OnAssistantOutputCompleted(
+	context.Context,
+	AssistantOutput,
+) error {
 	return nil
 }

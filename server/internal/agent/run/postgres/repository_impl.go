@@ -588,9 +588,13 @@ func (r *Repository) Complete(
 	ownerID string,
 	runID string,
 	leaseToken string,
-	content string,
+	output agentrun.AssistantOutput,
 	result agentrun.TextResult,
 ) (agentrun.Run, error) {
+	if !agentrun.ValidUUID(output.ID) || output.RunID != runID ||
+		!conversation.ValidMessageContent(output.Content) {
+		return agentrun.Run{}, agentrun.ErrInvalidRequest
+	}
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return agentrun.Run{}, agentrun.ErrRepository
@@ -613,15 +617,11 @@ func (r *Repository) Complete(
 	if err != nil {
 		return agentrun.Run{}, err
 	}
-	messageID, err := r.ids.NewID()
-	if err != nil {
-		return agentrun.Run{}, agentrun.ErrRepository
-	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO agent_messages (
     id, thread_id, sequence_no, role, produced_by_run_id, modality, content
 ) VALUES ($1, $2, $3, 'assistant', $4, 'text', $5)`,
-		messageID, run.ThreadID, nextSequence, run.ID, content,
+		output.ID, run.ThreadID, nextSequence, run.ID, output.Content,
 	); err != nil {
 		return agentrun.Run{}, mapRunPostgresError(err)
 	}
@@ -684,6 +684,10 @@ WHERE id = $1 AND user_id = $2`, run.ThreadID, ownerID, nextSequence); err != ni
 		return agentrun.Run{}, agentrun.ErrRepository
 	}
 	return completed, nil
+}
+
+func (r *Repository) NewAssistantMessageID() (string, error) {
+	return r.ids.NewID()
 }
 
 func (r *Repository) Fail(

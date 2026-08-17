@@ -246,20 +246,49 @@ func (writer *sseWriter) OnInputCommitted(
 	})
 }
 
-func (writer *sseWriter) OnAssistantStarted(
-	_ context.Context,
-	run agentrun.Run,
-) error {
-	writer.runID = run.ID
-	return writer.write("assistant.started", gin.H{"run_id": run.ID})
+func (writer *sseWriter) OnToolStarted(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.started", step)
 }
 
-func (writer *sseWriter) OnAssistantDelta(
+func (writer *sseWriter) OnToolCompleted(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.completed", step)
+}
+
+func (writer *sseWriter) OnToolFailed(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.failed", step)
+}
+
+func (writer *sseWriter) writeTool(event string, step agentrun.ToolStep) error {
+	return writer.write(event, gin.H{
+		"run_id": step.RunID, "step_id": step.ID, "name": step.Name,
+	})
+}
+
+func (writer *sseWriter) OnAssistantOutputStarted(
 	_ context.Context,
-	delta string,
+	output agentrun.AssistantOutput,
 ) error {
-	return writer.write("assistant.delta", gin.H{
-		"run_id": writer.runID, "delta": delta,
+	return writer.write("assistant.output.started", gin.H{
+		"run_id": output.RunID, "output_id": output.ID,
+	})
+}
+
+func (writer *sseWriter) OnAssistantOutputDelta(
+	_ context.Context,
+	delta agentrun.AssistantOutputDelta,
+) error {
+	return writer.write("assistant.output.delta", gin.H{
+		"run_id": delta.RunID, "output_id": delta.OutputID,
+		"sequence": delta.Sequence, "delta": delta.Delta,
+	})
+}
+
+func (writer *sseWriter) OnAssistantOutputCompleted(
+	_ context.Context,
+	output agentrun.AssistantOutput,
+) error {
+	return writer.write("assistant.output.completed", gin.H{
+		"run_id": output.RunID, "output_id": output.ID, "text": output.Content,
 	})
 }
 

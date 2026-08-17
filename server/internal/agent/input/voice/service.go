@@ -323,18 +323,46 @@ func (confirmationRunObserver) OnInputCommitted(context.Context, run.Submission)
 	return nil
 }
 
-func (observer confirmationRunObserver) OnAssistantStarted(
+func (observer confirmationRunObserver) OnToolStarted(
 	ctx context.Context,
-	pending run.Run,
+	step run.ToolStep,
 ) error {
-	return observer.delegate.OnAssistantStarted(ctx, pending)
+	return observer.delegate.OnToolStarted(ctx, step)
 }
 
-func (observer confirmationRunObserver) OnAssistantDelta(
+func (observer confirmationRunObserver) OnToolCompleted(
 	ctx context.Context,
-	delta string,
+	step run.ToolStep,
 ) error {
-	return observer.delegate.OnAssistantDelta(ctx, delta)
+	return observer.delegate.OnToolCompleted(ctx, step)
+}
+
+func (observer confirmationRunObserver) OnToolFailed(
+	ctx context.Context,
+	step run.ToolStep,
+) error {
+	return observer.delegate.OnToolFailed(ctx, step)
+}
+
+func (observer confirmationRunObserver) OnAssistantOutputStarted(
+	ctx context.Context,
+	output run.AssistantOutput,
+) error {
+	return observer.delegate.OnAssistantOutputStarted(ctx, output)
+}
+
+func (observer confirmationRunObserver) OnAssistantOutputDelta(
+	ctx context.Context,
+	delta run.AssistantOutputDelta,
+) error {
+	return observer.delegate.OnAssistantOutputDelta(ctx, delta)
+}
+
+func (observer confirmationRunObserver) OnAssistantOutputCompleted(
+	ctx context.Context,
+	output run.AssistantOutput,
+) error {
+	return observer.delegate.OnAssistantOutputCompleted(ctx, output)
 }
 
 func (service *Service) Playback(

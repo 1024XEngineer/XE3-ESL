@@ -802,8 +802,10 @@ final class AgentVoiceController extends ChangeNotifier
             _confirmationCommand = null;
             _state = AgentVoiceComposerState.awaitingAssistant;
             notifyListeners();
-          case AgentVoiceAssistantStarted(:final runId):
-            transientAssistantId = 'stream-$runId';
+          case AgentVoiceToolStepEvent():
+            break;
+          case AgentVoiceAssistantOutputStarted(:final outputId):
+            transientAssistantId = outputId;
             _changeStreamMessage(
               null,
               AgentMessage(
@@ -817,7 +819,7 @@ final class AgentVoiceController extends ChangeNotifier
             if (streamStarted != null) {
               await streamStarted(transientAssistantId);
             }
-          case AgentVoiceAssistantDelta(:final delta):
+          case AgentVoiceAssistantOutputDelta(:final delta):
             final messageId = transientAssistantId;
             if (messageId == null) {
               throw StateError('Voice assistant delta started out of order.');
@@ -833,6 +835,19 @@ final class AgentVoiceController extends ChangeNotifier
               ),
             );
             onAssistantStreamDelta?.call(messageId, delta);
+          case AgentVoiceAssistantOutputCompleted(:final outputId, :final text):
+            if (transientAssistantId != outputId || assistantText != text) {
+              throw StateError(
+                'Voice assistant output completed inconsistently.',
+              );
+            }
+            final completed = AgentMessage(
+              id: outputId,
+              role: AgentMessageRole.assistant,
+              text: text,
+            );
+            onAssistantStreamCompleted?.call(outputId, completed);
+            _changeStreamMessage(outputId, completed);
           case AgentVoiceRunCompleted(:final run):
             _pendingRun = run;
             final messageId = run.assistantMessageId;
@@ -847,14 +862,15 @@ final class AgentVoiceController extends ChangeNotifier
               return;
             }
             if (assistant == null ||
-                assistant.role != AgentMessageRole.assistant) {
+                assistant.role != AgentMessageRole.assistant ||
+                assistant.id != transientAssistantId ||
+                assistant.text != assistantText) {
               throw StateError('Voice assistant Message is unavailable.');
             }
             final transientId = transientAssistantId;
             if (transientId == null) {
               onMessagesCommitted(<AgentMessage>[assistant]);
             } else {
-              onAssistantStreamCompleted?.call(transientId, assistant);
               _changeStreamMessage(transientId, assistant);
             }
             _resetWorkflowPresentation();

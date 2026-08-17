@@ -295,21 +295,49 @@ func (writer *confirmationSSEWriter) OnConfirmationCommitted(
 	return writer.write("input.committed", confirmationResponse(confirmation))
 }
 
-func (writer *confirmationSSEWriter) OnAssistantStarted(
-	_ context.Context,
-	pending agentrun.Run,
-) error {
-	writer.runID = pending.ID
-	return writer.write("assistant.started", gin.H{"run_id": pending.ID})
+func (writer *confirmationSSEWriter) OnToolStarted(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.started", step)
 }
 
-func (writer *confirmationSSEWriter) OnAssistantDelta(
+func (writer *confirmationSSEWriter) OnToolCompleted(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.completed", step)
+}
+
+func (writer *confirmationSSEWriter) OnToolFailed(_ context.Context, step agentrun.ToolStep) error {
+	return writer.writeTool("tool.failed", step)
+}
+
+func (writer *confirmationSSEWriter) writeTool(event string, step agentrun.ToolStep) error {
+	return writer.write(event, gin.H{
+		"run_id": step.RunID, "step_id": step.ID, "name": step.Name,
+	})
+}
+
+func (writer *confirmationSSEWriter) OnAssistantOutputStarted(
 	_ context.Context,
-	delta string,
+	output agentrun.AssistantOutput,
 ) error {
-	return writer.write("assistant.delta", gin.H{
-		"run_id": writer.runID,
-		"delta":  delta,
+	return writer.write("assistant.output.started", gin.H{
+		"run_id": output.RunID, "output_id": output.ID,
+	})
+}
+
+func (writer *confirmationSSEWriter) OnAssistantOutputDelta(
+	_ context.Context,
+	delta agentrun.AssistantOutputDelta,
+) error {
+	return writer.write("assistant.output.delta", gin.H{
+		"run_id": delta.RunID, "output_id": delta.OutputID,
+		"sequence": delta.Sequence, "delta": delta.Delta,
+	})
+}
+
+func (writer *confirmationSSEWriter) OnAssistantOutputCompleted(
+	_ context.Context,
+	output agentrun.AssistantOutput,
+) error {
+	return writer.write("assistant.output.completed", gin.H{
+		"run_id": output.RunID, "output_id": output.ID, "text": output.Content,
 	})
 }
 

@@ -170,18 +170,59 @@ final class AgentVoiceInputCommitted extends AgentVoiceConfirmationStreamEvent {
   final AgentVoiceConfirmation confirmation;
 }
 
-final class AgentVoiceAssistantStarted
-    extends AgentVoiceConfirmationStreamEvent {
-  const AgentVoiceAssistantStarted({required this.runId});
+enum AgentVoiceToolStepStatus { started, completed, failed }
+
+final class AgentVoiceToolStepEvent extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceToolStepEvent({
+    required this.runId,
+    required this.stepId,
+    required this.name,
+    required this.status,
+  });
 
   final String runId;
+  final String stepId;
+  final String name;
+  final AgentVoiceToolStepStatus status;
 }
 
-final class AgentVoiceAssistantDelta extends AgentVoiceConfirmationStreamEvent {
-  const AgentVoiceAssistantDelta({required this.runId, required this.delta});
+final class AgentVoiceAssistantOutputStarted
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputStarted({
+    required this.runId,
+    required this.outputId,
+  });
 
   final String runId;
+  final String outputId;
+}
+
+final class AgentVoiceAssistantOutputDelta
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputDelta({
+    required this.runId,
+    required this.outputId,
+    required this.sequence,
+    required this.delta,
+  });
+
+  final String runId;
+  final String outputId;
+  final int sequence;
   final String delta;
+}
+
+final class AgentVoiceAssistantOutputCompleted
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputCompleted({
+    required this.runId,
+    required this.outputId,
+    required this.text,
+  });
+
+  final String runId;
+  final String outputId;
+  final String text;
 }
 
 final class AgentVoiceRunCompleted extends AgentVoiceConfirmationStreamEvent {

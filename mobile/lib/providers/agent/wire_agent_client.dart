@@ -640,6 +640,10 @@ final class WireAgentClient
         );
       }
       String? eventName;
+      String? outputId;
+      final activeToolSteps = <String, String>{};
+      final outputText = StringBuffer();
+      var nextOutputSequence = 1;
       var eventCount = 0;
       var streamPhase = 0;
       await for (final line
@@ -684,17 +688,62 @@ final class WireAgentClient
           decoded,
           expectedThreadId: threadId,
         );
-        streamPhase = switch (event) {
-          AgentInputCommitted() when streamPhase == 0 => 1,
-          AgentAssistantStarted() when streamPhase == 1 => 2,
-          AgentAssistantDelta() when streamPhase == 2 => 2,
-          AgentRunCompleted() when streamPhase == 1 || streamPhase == 2 => 3,
-          AgentRunFailed() when streamPhase == 1 || streamPhase == 2 => 3,
-          _ => throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          ),
-        };
+        switch (event) {
+          case AgentInputCommitted() when streamPhase == 0:
+            streamPhase = 1;
+          case AgentToolStepEvent(:final stepId, :final name, :final status)
+              when streamPhase == 1:
+            switch (status) {
+              case AgentToolStepStatus.started:
+                if (activeToolSteps.containsKey(stepId)) {
+                  throw const AgentClientException(
+                    kind: AgentClientFailureKind.invalidResponse,
+                    retryable: true,
+                  );
+                }
+                activeToolSteps[stepId] = name;
+              case AgentToolStepStatus.completed:
+              case AgentToolStepStatus.failed:
+                if (activeToolSteps.remove(stepId) != name) {
+                  throw const AgentClientException(
+                    kind: AgentClientFailureKind.invalidResponse,
+                    retryable: true,
+                  );
+                }
+            }
+          case AgentAssistantOutputStarted(outputId: final startedOutputId)
+              when streamPhase == 1 && activeToolSteps.isEmpty:
+            outputId = startedOutputId;
+            streamPhase = 2;
+          case AgentAssistantOutputDelta(
+                outputId: final deltaOutputId,
+                :final sequence,
+                :final delta,
+              )
+              when streamPhase == 2 &&
+                  deltaOutputId == outputId &&
+                  sequence == nextOutputSequence:
+            outputText.write(delta);
+            nextOutputSequence++;
+          case AgentAssistantOutputCompleted(
+                outputId: final completedOutputId,
+                :final text,
+              )
+              when streamPhase == 2 &&
+                  completedOutputId == outputId &&
+                  text == outputText.toString():
+            streamPhase = 3;
+          case AgentRunCompleted(:final assistantMessageId)
+              when streamPhase == 3 && assistantMessageId == outputId:
+            streamPhase = 4;
+          case AgentRunFailed() when streamPhase >= 1 && streamPhase <= 3:
+            streamPhase = 4;
+          default:
+            throw const AgentClientException(
+              kind: AgentClientFailureKind.invalidResponse,
+              retryable: true,
+            );
+        }
         if (event case AgentRunFailed(:final runId, :final retryable)) {
           if (retryable) {
             _failedRuns[operationKey] = _FailedRun(
@@ -718,7 +767,7 @@ final class WireAgentClient
           retryable: true,
         );
       }
-      if (streamPhase != 3) {
+      if (streamPhase != 4) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.network,
           retryable: true,
@@ -780,17 +829,77 @@ final class WireAgentClient
             expectedThreadId: expectedThreadId,
           ).presentation,
         );
-      case 'assistant.started':
-        return AgentAssistantStarted(runId: runId);
-      case 'assistant.delta':
-        final delta = data['delta'];
-        if (delta is! String || delta.isEmpty) {
+      case 'tool.started':
+      case 'tool.completed':
+      case 'tool.failed':
+        final stepId = data['step_id'];
+        final name = data['name'];
+        if (stepId is! String ||
+            stepId.isEmpty ||
+            name is! String ||
+            name.isEmpty) {
           throw const AgentClientException(
             kind: AgentClientFailureKind.invalidResponse,
             retryable: true,
           );
         }
-        return AgentAssistantDelta(runId: runId, delta: delta);
+        return AgentToolStepEvent(
+          runId: runId,
+          stepId: stepId,
+          name: name,
+          status: switch (eventName) {
+            'tool.started' => AgentToolStepStatus.started,
+            'tool.completed' => AgentToolStepStatus.completed,
+            _ => AgentToolStepStatus.failed,
+          },
+        );
+      case 'assistant.output.started':
+        final outputId = data['output_id'];
+        if (outputId is! String || outputId.isEmpty) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentAssistantOutputStarted(runId: runId, outputId: outputId);
+      case 'assistant.output.delta':
+        final outputId = data['output_id'];
+        final sequence = data['sequence'];
+        final delta = data['delta'];
+        if (outputId is! String ||
+            outputId.isEmpty ||
+            sequence is! int ||
+            sequence < 1 ||
+            delta is! String ||
+            delta.isEmpty) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentAssistantOutputDelta(
+          runId: runId,
+          outputId: outputId,
+          sequence: sequence,
+          delta: delta,
+        );
+      case 'assistant.output.completed':
+        final outputId = data['output_id'];
+        final text = data['text'];
+        if (outputId is! String ||
+            outputId.isEmpty ||
+            text is! String ||
+            text.trim().isEmpty) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentAssistantOutputCompleted(
+          runId: runId,
+          outputId: outputId,
+          text: text,
+        );
       case 'run.completed':
         if (run is! Map<String, dynamic>) {
           throw const AgentClientException(
