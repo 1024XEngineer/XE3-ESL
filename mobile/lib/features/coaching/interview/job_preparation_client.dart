@@ -40,6 +40,8 @@ abstract interface class JobPreparationClient implements PreparationClient {
     required PracticeExperience experience,
   });
 
+  Future<void> deletePlan(String planId);
+
   Future<PreparationPracticeBootstrap> createSession({
     required PracticePlan plan,
     required CreatePreparationSessionInput input,
