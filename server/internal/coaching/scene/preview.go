@@ -5,10 +5,21 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 const MaxPreviewCatalogCandidates = 5
+
+var previewCatalogGenericQueryTerms = map[string]struct{}{
+	"一下": {},
+	"场景": {},
+	"对话": {},
+	"想练": {},
+	"模拟": {},
+	"练习": {},
+	"英语": {},
+}
 
 type PreviewCatalogCandidate struct {
 	Scene          SceneDefinition
@@ -51,12 +62,13 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 		score     int
 	}
 	scored := make([]scoredCandidate, 0)
+	queryTerms := previewCatalogQueryTerms(query)
 	definitions, err := resolver.catalog.ListActiveScenes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, definition := range definitions {
-		score := previewCatalogScore(query, definition)
+		score := previewCatalogScore(query, queryTerms, definition)
 		if score == 0 {
 			continue
 		}
@@ -69,7 +81,7 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 			DefaultRoleIDs: []string{definition.Roles[0].ID},
 			DefaultOption:  defaultOption,
 		}
-		if score == 100 {
+		if score >= 90 {
 			return []PreviewCatalogCandidate{candidate}, nil
 		}
 		scored = append(scored, scoredCandidate{
@@ -96,6 +108,7 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 
 func previewCatalogScore(
 	query string,
+	queryTerms []string,
 	definition SceneDefinition,
 ) int {
 	if query == strings.ToLower(definition.ID) {
@@ -123,9 +136,54 @@ func previewCatalogScore(
 			(strings.Contains(normalized, query) ||
 				strings.Contains(query, normalized)) {
 			score++
+			continue
+		}
+		for _, term := range queryTerms {
+			if strings.Contains(normalized, term) {
+				score++
+				break
+			}
 		}
 	}
 	return score
+}
+
+// previewCatalogQueryTerms extracts meaningful Chinese fragments from a
+// sentence-shaped query. The catalog remains the source of searchable text;
+// this only lets a request such as “我想练习看房” match the concise catalog
+// phrase “看房与租赁咨询”. Terms shorter than two runes are intentionally
+// ignored to avoid broad matches on individual Chinese characters.
+func previewCatalogQueryTerms(query string) []string {
+	const maxTermRunes = 6
+	seen := make(map[string]struct{})
+	terms := make([]string, 0)
+	appendSequence := func(sequence []rune) {
+		for width := min(maxTermRunes, len(sequence)); width >= 2; width-- {
+			for start := 0; start+width <= len(sequence); start++ {
+				term := string(sequence[start : start+width])
+				if _, generic := previewCatalogGenericQueryTerms[term]; generic {
+					continue
+				}
+				if _, duplicate := seen[term]; duplicate {
+					continue
+				}
+				seen[term] = struct{}{}
+				terms = append(terms, term)
+			}
+		}
+	}
+
+	sequence := make([]rune, 0)
+	for _, character := range []rune(query) {
+		if unicode.Is(unicode.Han, character) {
+			sequence = append(sequence, character)
+			continue
+		}
+		appendSequence(sequence)
+		sequence = sequence[:0]
+	}
+	appendSequence(sequence)
+	return terms
 }
 
 func defaultPracticeOption(
