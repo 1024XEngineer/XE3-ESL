@@ -6,7 +6,7 @@ String? scenarioAssetPath(SceneDefinition scene) {
     'scn_daily_restaurant_ordering': 'assets/images/scenes/daily-tutor.jpg',
     'scn_daily_shopping_return':
         'assets/images/scenes/daily-shopping-return.jpg',
-    'scn_daily_airport_transport': 'assets/images/scenes/airport-transport.jpg',
+    'scn_travel_airport_checkin': 'assets/images/scenes/airport-transport.jpg',
     'scn_daily_hotel_checkin_issue': 'assets/images/scenes/travel-scene.jpg',
     'scn_daily_rental_maintenance':
         'assets/images/scenes/daily-rental-maintenance.jpg',

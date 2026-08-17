@@ -863,63 +863,63 @@
       ]
     },
     {
-      "scene_id": "scn_daily_airport_transport",
+      "scene_id": "scn_travel_airport_checkin",
       "practice_experience": "LIFE_AND_TRAVEL",
       "scene_category": "LIFE_TRAVEL",
-      "name": "机场与交通",
+      "name": "机场值机与航班信息",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "向工作人员或司机问路、确认时间，并处理一个行程变化。",
-        "practice_goal": "清楚说明目的地和时间需求，确认交通或票务信息。",
+        "public_scene_brief": "在机场向航空公司地勤办理值机和行李托运，确认航班时间、登机口及航班变化。",
+        "practice_goal": "完成值机和行李沟通，确认航班时间、登机口及航班变化。",
         "user_role": "旅客",
-        "ai_role": "交通工作人员",
-        "persona_summary": "A concise transport staff member who provides necessary information and clarifies destination, timing, or ticket details.",
+        "ai_role": "航空公司地勤",
+        "persona_summary": "A professional airline ground agent who verifies the booking, handles check-in and baggage questions, and provides accurate flight and gate information.",
         "focus_areas": [
-          "destination",
-          "time",
-          "route",
-          "travel_change"
+          "booking_verification",
+          "checkin_and_baggage",
+          "flight_information",
+          "flight_change"
         ],
         "turn_blueprints": [
-          "询问旅客的目的地或问题",
-          "澄清时间或票务信息",
-          "提供一个必要路线或选择",
-          "确认旅客理解下一步"
+          "欢迎旅客，并询问目的地和预订信息",
+          "核实证件、航班和行李托运需求",
+          "说明航班时间、登机口或航班变化",
+          "复述值机结果，并确认安检和登机的下一步"
         ]
       },
       "roles": [
         {
-          "role_definition_id": "role_daily_airport_transport_counterpart",
-          "scene_id": "scn_daily_airport_transport",
-          "role_type": "TRANSPORT_STAFF",
-          "display_name": "交通工作人员",
-          "responsibilities": "清楚说明目的地和时间需求，确认交通或票务信息。",
+          "role_definition_id": "role_travel_airport_checkin_counterpart",
+          "scene_id": "scn_travel_airport_checkin",
+          "role_type": "AIRLINE_GROUND_AGENT",
+          "display_name": "航空公司地勤",
+          "responsibilities": "核实预订和证件，协助完成值机与行李沟通，并提供准确的航班和登机信息。",
           "style": "Natural, concise, and appropriate to the current role.",
           "practice_objectives": [
             {
-              "objective_id": "destination",
-              "description": "State and confirm the intended destination accurately."
+              "objective_id": "booking_verification",
+              "description": "Provide and confirm the booking, identity, destination, and flight details."
             },
             {
-              "objective_id": "time",
-              "description": "State and confirm the relevant departure, arrival, or appointment time."
+              "objective_id": "checkin_and_baggage",
+              "description": "Complete check-in and clarify baggage allowance, labels, or special handling."
             },
             {
-              "objective_id": "route",
-              "description": "Ask about and confirm the correct route or transport option."
+              "objective_id": "flight_information",
+              "description": "Confirm the departure time, boarding gate, boarding time, and relevant airport instructions."
             },
             {
-              "objective_id": "travel_change",
-              "description": "Explain a travel change and confirm its consequences."
+              "objective_id": "flight_change",
+              "description": "Understand a delay, cancellation, or gate change and confirm the available next step."
             }
           ]
         }
       ],
       "practice_options": [
         {
-          "practice_option_id": "option_daily_airport_transport_full",
-          "scene_id": "scn_daily_airport_transport",
+          "practice_option_id": "option_travel_airport_checkin_full",
+          "scene_id": "scn_travel_airport_checkin",
           "practice_mode": "FULL_SIMULATION",
           "display_name": "完整模拟",
           "suggested_duration_seconds": 480,
@@ -928,9 +928,9 @@
           "evaluation_policy_ref": "daily.general.evaluation.v1"
         },
         {
-          "practice_option_id": "option_daily_airport_transport_focus",
-          "scene_id": "scn_daily_airport_transport",
-          "role_definition_id": "role_daily_airport_transport_counterpart",
+          "practice_option_id": "option_travel_airport_checkin_focus",
+          "scene_id": "scn_travel_airport_checkin",
+          "role_definition_id": "role_travel_airport_checkin_counterpart",
           "practice_mode": "FOCUS",
           "display_name": "重点练习",
           "suggested_duration_seconds": 480,
