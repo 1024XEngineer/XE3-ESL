@@ -173,7 +173,7 @@ void main() {
         name: 'Progress and risk update',
       ),
       _sceneJsonFor(
-        id: 'scn_daily_hotel_checkin_issue',
+        id: 'scn_travel_hotel_checkin',
         experience: 'LIFE_AND_TRAVEL',
         category: 'LIFE_TRAVEL',
         name: 'Hotel check-in and issue handling',

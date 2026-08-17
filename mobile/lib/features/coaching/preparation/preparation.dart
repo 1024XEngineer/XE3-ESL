@@ -712,6 +712,9 @@ class _PreparationPageState extends State<PreparationPage> {
             errorMessage: widget.jobPreparationController?.plansErrorMessage,
             onCreatePressed: widget.onOpenJobPreparation,
             onPlanPressed: (plan) => widget.onOpenInterviewPlan?.call(plan.id),
+            onPlanDeleted: (plan) => unawaited(
+              widget.jobPreparationController?.deleteInterviewPlan(plan.id),
+            ),
             onRetry: () => unawaited(
               widget.jobPreparationController?.loadInterviewPlans(force: true),
             ),

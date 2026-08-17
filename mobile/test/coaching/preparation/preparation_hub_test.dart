@@ -461,7 +461,7 @@ void main() {
 
     await _openModule(tester, const Key('practice-hub-life'));
     final scenarioScene = find.byKey(
-      const Key('catalog-scene-scn_daily_hotel_checkin_issue'),
+      const Key('catalog-scene-scn_travel_hotel_checkin'),
     );
     await tester.scrollUntilVisible(
       scenarioScene,
@@ -754,7 +754,7 @@ final _hubScenes = <SceneDefinition>[
     version: 1,
   ),
   testScene(
-    id: 'scn_daily_hotel_checkin_issue',
+    id: 'scn_travel_hotel_checkin',
     experience: PracticeExperience.lifeAndTravel,
     category: SceneCategory.lifeTravel,
     name: '酒店入住与问题处理',

@@ -67,6 +67,12 @@ func (port *ServicePort) PreviewPractice(
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
+	if input.BackgroundSummary == "" && input.IELTSPracticeMode == "" &&
+		input.SceneID == "" && len(candidates) == 1 &&
+		input.SceneQuery != candidates[0].SceneID {
+		input.BackgroundSummary = "User requested practice for: " +
+			strings.TrimSpace(input.SceneQuery)
+	}
 	input = enrichPreviewInput(input, candidates)
 	validationCandidates := candidates
 	if input.SceneID != "" &&
@@ -79,10 +85,15 @@ func (port *ServicePort) PreviewPractice(
 	}
 	missing := previewMissingFields(input, validationCandidates)
 	if len(missing) > 0 {
+		assistantText := ""
+		if len(candidates) == 0 && containsMissingField(missing, "scene_selection") {
+			assistantText = "我还不能确定你想练习的具体场景。请补充一个更具体的场景，例如会议表达异议、酒店入住或餐厅点餐。"
+		}
 		return PreviewResult{
 			Status:                "needs_input",
 			RequiredMissingFields: missing,
 			Candidates:            candidates,
+			AssistantText:         assistantText,
 		}, nil
 	}
 
@@ -118,6 +129,15 @@ func (port *ServicePort) PreviewPractice(
 			{Type: "practice_plan", ID: plan.ID},
 		},
 	}, nil
+}
+
+func containsMissingField(fields []string, expected string) bool {
+	for _, field := range fields {
+		if field == expected {
+			return true
+		}
+	}
+	return false
 }
 
 type confirmPracticePlanActionPayload struct {
