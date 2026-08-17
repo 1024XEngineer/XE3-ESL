@@ -182,6 +182,7 @@ type QuestionTip struct {
 	LeaseAcquired      bool
 	LeaseExpiresAt     time.Time
 	Content            string
+	Translation        string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	CompletedAt        *time.Time
@@ -199,6 +200,7 @@ type CompleteQuestionTipCommand struct {
 	FencingToken       int64
 	DeletionGeneration int64
 	Content            string
+	Translation        string
 	Provider           string
 	Model              string
 	ProviderRequestID  string

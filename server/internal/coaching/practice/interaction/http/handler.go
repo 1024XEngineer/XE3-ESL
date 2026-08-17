@@ -506,6 +506,7 @@ func QuestionTipResponse(tip practiceinteraction.QuestionTipResult) gin.H {
 		"practice_session_id": tip.SessionID,
 		"question_id":         tip.QuestionID,
 		"content":             tip.Content,
+		"translation":         tip.Translation,
 		"created_at":          tip.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }

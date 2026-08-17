@@ -40,6 +40,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000002_agent_run_domain_completion.up.sql",
 		"000003_archive_practice_plans.down.sql",
 		"000003_archive_practice_plans.up.sql",
+		"000004_question_tip_translation.down.sql",
+		"000004_question_tip_translation.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -55,6 +57,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000002_agent_run_domain_completion.down.sql",
 		"000003_archive_practice_plans.up.sql",
 		"000003_archive_practice_plans.down.sql",
+		"000004_question_tip_translation.up.sql",
+		"000004_question_tip_translation.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -128,6 +132,20 @@ func TestPracticePlanArchiveMigrationExtendsStatusConstraint(t *testing.T) {
 	if !strings.Contains(down, "SET status = 'ready'") ||
 		!strings.Contains(down, "status IN ('draft', 'ready')") {
 		t.Fatal("practice plan archive rollback must preserve archived plans as ready")
+	}
+}
+
+func TestQuestionTipTranslationMigrationRequiresCompleteBilingualContent(t *testing.T) {
+	up := readMigration(t, "000004_question_tip_translation.up.sql")
+	for _, required := range []string{
+		"ADD COLUMN tip_translation text",
+		"tip_content = btrim(tip_content)",
+		"tip_translation = btrim(tip_translation)",
+		"WHERE tip_status = 'completed'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Question Tip translation migration is missing %q", required)
+		}
 	}
 }
 

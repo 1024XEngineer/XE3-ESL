@@ -139,6 +139,7 @@ class _ExamConversation extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: QuestionTipCard(
                   content: tip.content,
+                  translation: tip.translation,
                   onClose: onHideTip,
                   onSpeak: onSpeakTip,
                 ),

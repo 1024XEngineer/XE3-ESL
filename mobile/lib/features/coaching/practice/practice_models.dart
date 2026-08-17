@@ -116,6 +116,7 @@ final class PracticeQuestionTip {
     required this.sessionId,
     required this.questionId,
     required this.content,
+    required this.translation,
     required this.createdAt,
   });
 
@@ -123,6 +124,7 @@ final class PracticeQuestionTip {
   final String sessionId;
   final String questionId;
   final String content;
+  final String translation;
   final DateTime createdAt;
 }
 

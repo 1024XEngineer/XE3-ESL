@@ -194,6 +194,7 @@ void main() {
       find.text('I would describe the situation and my specific role.'),
       findsOneWidget,
     );
+    expect(find.text('我会描述当时的情况以及我的具体职责。'), findsOneWidget);
     expect(
       find.byKey(const Key('scenario-record')).hitTestable(),
       findsOneWidget,
@@ -777,6 +778,7 @@ final class _TranslationPracticeClient
     sessionId: sessionId,
     questionId: questionId,
     content: 'I would describe the situation and my specific role.',
+    translation: '我会描述当时的情况以及我的具体职责。',
     createdAt: DateTime.utc(2026, 8, 12),
   );
 }
