@@ -492,6 +492,9 @@ const me = requireOperation('GET /v1/me');
 const getProfile = requireOperation('GET /v1/me/profile');
 const updateProfile = requireOperation('PATCH /v1/me/profile');
 const createPracticePlan = requireOperation('POST /v1/practice-plans');
+const archivePracticePlan = requireOperation(
+  'DELETE /v1/practice-plans/{practice_plan_id}',
+);
 
 assert.equal(register.operationId, 'registerUser');
 assert.equal(login.operationId, 'loginUser');
@@ -500,6 +503,7 @@ assert.equal(me.operationId, 'getCurrentUser');
 assert.equal(getProfile.operationId, 'getCurrentUserProfile');
 assert.equal(updateProfile.operationId, 'updateCurrentUserProfile');
 assert.equal(createPracticePlan.operationId, 'createPracticePlan');
+assert.equal(archivePracticePlan.operationId, 'archivePracticePlan');
 assert.ok(register.requestBody?.required);
 assert.ok(login.requestBody?.required);
 assert.ok(createPracticePlan.requestBody?.required);
@@ -520,6 +524,13 @@ assert.deepEqual(
   bearerSecurity,
   'Preparation Plan creation must resolve its Actor from BearerSession.',
 );
+assert.deepEqual(
+  archivePracticePlan.security ?? openApi.security,
+  bearerSecurity,
+  'Preparation Plan archival must resolve its Actor from BearerSession.',
+);
+assert.ok(archivePracticePlan.responses?.['204']);
+assert.ok(archivePracticePlan.responses?.['404']);
 assert.ok(register.responses?.['201']);
 assert.ok(register.responses?.['409']);
 assert.ok(register.responses?.['429']);
@@ -667,7 +678,7 @@ assert.equal(
 );
 assert.deepEqual(
   practicePlanSchema?.properties?.practice_plan_status?.enum,
-  ['draft', 'ready'],
+  ['draft', 'ready', 'archived'],
 );
 assert.equal(
   practicePlanSchema?.properties?.ielts_assignment?.$ref,
