@@ -1643,6 +1643,16 @@ components:
           type: string
           format: uuid
           readOnly: true
+        completion_source:
+          type: string
+          enum:
+            - model
+            - domain
+          description: >-
+            Present only for completed Runs. Model completions include provider
+            metadata and usage; domain completions include the completing tool
+            identity instead.
+          readOnly: true
         provider_completion_id:
           type: string
           minLength: 1
@@ -1663,6 +1673,18 @@ components:
           readOnly: true
         usage:
           $ref: '#/components/schemas/TokenUsage'
+        domain_tool_call_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        domain_tool_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
         failure:
           $ref: '#/components/schemas/AgentRunFailure'
         created_at:
