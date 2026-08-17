@@ -1097,38 +1097,38 @@
       ]
     },
     {
-      "scene_id": "scn_daily_hotel_checkin_issue",
+      "scene_id": "scn_travel_hotel_checkin",
       "practice_experience": "LIFE_AND_TRAVEL",
       "scene_category": "LIFE_TRAVEL",
-      "name": "酒店入住与问题处理",
+      "name": "酒店入住",
       "scene_version": 1,
       "status": "active",
       "prompt": {
-        "public_scene_brief": "在酒店前台核验预订、办理入住并处理一个房间问题。",
-        "practice_goal": "清楚说明预订和问题，理解可行方案并确认最终安排。",
+        "public_scene_brief": "在酒店前台核验预订、入住日期、房型、付款和酒店服务，完成入住。",
+        "practice_goal": "核验预订、入住日期、房型、付款和酒店服务，完成入住。",
         "user_role": "住客",
         "ai_role": "酒店前台",
-        "persona_summary": "A professional hotel receptionist who verifies details, clarifies one issue, offers realistic options, and confirms the outcome.",
+        "persona_summary": "A professional hotel receptionist who verifies the reservation, confirms room and payment details, explains relevant services, and completes check-in.",
         "focus_areas": [
           "reservation_verification",
-          "issue_description",
-          "solution_clarification",
-          "outcome_confirmation"
+          "stay_details",
+          "payment_and_services",
+          "checkin_confirmation"
         ],
         "turn_blueprints": [
-          "核验住客姓名和预订信息",
-          "请住客说明入住或房间问题",
-          "澄清限制并提供可行方案",
-          "确认住客选择和最终安排"
+          "欢迎住客，并询问预订姓名",
+          "核验入住日期、房型和住客信息",
+          "确认付款方式，并说明早餐、网络等相关服务",
+          "复述房间和服务信息，并确认入住完成及下一步"
         ]
       },
       "roles": [
         {
           "role_definition_id": "role_hotel_front_desk",
-          "scene_id": "scn_daily_hotel_checkin_issue",
+          "scene_id": "scn_travel_hotel_checkin",
           "role_type": "HOTEL_FRONT_DESK",
           "display_name": "酒店前台",
-          "responsibilities": "Verify the booking, clarify the issue, offer realistic options, and confirm the final arrangement.",
+          "responsibilities": "Verify the reservation and stay details, confirm payment and relevant services, and complete check-in.",
           "style": "Professional, calm, and service oriented.",
           "practice_objectives": [
             {
@@ -1136,8 +1136,16 @@
               "description": "Verify the reservation identity, dates, room, and booking details."
             },
             {
-              "objective_id": "solution_clarification",
-              "description": "Clarify the proposed solution, its timing, and any remaining conditions."
+              "objective_id": "stay_details",
+              "description": "Confirm the check-in and check-out dates, room type, guests, and special requests."
+            },
+            {
+              "objective_id": "payment_and_services",
+              "description": "Clarify payment, deposit, breakfast, internet, and relevant hotel services."
+            },
+            {
+              "objective_id": "checkin_confirmation",
+              "description": "Restate the room and service details and confirm the next step after check-in."
             }
           ]
         }
@@ -1145,7 +1153,7 @@
       "practice_options": [
         {
           "practice_option_id": "option_hotel_full_simulation",
-          "scene_id": "scn_daily_hotel_checkin_issue",
+          "scene_id": "scn_travel_hotel_checkin",
           "practice_mode": "FULL_SIMULATION",
           "display_name": "完整模拟",
           "suggested_duration_seconds": 480,
@@ -1155,7 +1163,7 @@
         },
         {
           "practice_option_id": "option_hotel_front_desk_focus",
-          "scene_id": "scn_daily_hotel_checkin_issue",
+          "scene_id": "scn_travel_hotel_checkin",
           "role_definition_id": "role_hotel_front_desk",
           "practice_mode": "FOCUS",
           "display_name": "重点练习",
