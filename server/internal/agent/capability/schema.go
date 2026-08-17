@@ -81,10 +81,25 @@ type InvocationEffectClassifier interface {
 	) (InvocationEffect, error)
 }
 
+// TurnOutcome tells the Agent loop whether a successful capability result has
+// completed the current user turn's domain work. It is orchestration metadata
+// and is never exposed to the model or persisted as tool result content.
+type TurnOutcome uint8
+
+const (
+	TurnOutcomeContinue TurnOutcome = iota
+	TurnOutcomeCompleted
+)
+
+func (outcome TurnOutcome) Valid() bool {
+	return outcome == TurnOutcomeContinue || outcome == TurnOutcomeCompleted
+}
+
 type Result struct {
 	Content       map[string]any             `json:"content"`
 	SourceRefs    []SourceRef                `json:"source_refs,omitempty"`
 	ClientActions []agentclientaction.Action `json:"client_actions,omitempty"`
+	TurnOutcome   TurnOutcome                `json:"-"`
 }
 
 type Tool interface {

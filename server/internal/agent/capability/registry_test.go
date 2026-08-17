@@ -305,6 +305,31 @@ func TestExecutorValidatesAndRunsTool(t *testing.T) {
 	}
 }
 
+func TestExecutorRejectsInvalidTurnOutcome(t *testing.T) {
+	tool := &stubTool{
+		definition: readToolDefinition("review.search.v1"),
+		result: Result{
+			Content:     map[string]any{"ok": true},
+			TurnOutcome: TurnOutcome(255),
+		},
+	}
+	registry, err := NewRegistry(tool)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	_, err = NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContext(),
+		Invocation{
+			Name:  "review.search.v1",
+			Input: json.RawMessage(`{"query":"last interview"}`),
+		},
+	)
+	if !errors.Is(err, ErrExecutionRejected) {
+		t.Fatalf("Execute() error = %v, want %v", err, ErrExecutionRejected)
+	}
+}
+
 func TestExecutorFiltersUnknownInputFields(t *testing.T) {
 	tool := &stubTool{
 		definition: readToolDefinition("review.search.v1"),

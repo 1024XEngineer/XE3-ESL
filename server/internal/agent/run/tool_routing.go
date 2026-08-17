@@ -10,6 +10,7 @@ import (
 const (
 	modelToolRoutingVersionV3 = "model-tool-routing-v3"
 	reasonModelToolSelection  = "model_tool_selection"
+	reasonDomainTurnCompleted = "domain_turn_completed"
 )
 
 type modelToolRouting struct {
