@@ -11,7 +11,7 @@ void main() {
     'scn_daily_product_shopping':
         'assets/images/scenes/daily-product-shopping.jpg',
     'scn_daily_return_refund': 'assets/images/scenes/daily-shopping-return.jpg',
-    'scn_daily_airport_transport': 'assets/images/scenes/airport-transport.jpg',
+    'scn_travel_airport_checkin': 'assets/images/scenes/airport-transport.jpg',
     'scn_travel_hotel_checkin': 'assets/images/scenes/travel-scene.jpg',
     'scn_daily_rental_maintenance':
         'assets/images/scenes/daily-rental-maintenance.jpg',
@@ -46,7 +46,7 @@ void main() {
     for (final entry in expectedAssets.entries) {
       final category = entry.key.startsWith('scn_workplace_')
           ? SceneCategory.workplaceGeneral
-          : entry.key == 'scn_daily_airport_transport' ||
+          : entry.key == 'scn_travel_airport_checkin' ||
                 entry.key == 'scn_travel_hotel_checkin'
           ? SceneCategory.lifeTravel
           : SceneCategory.lifeDaily;

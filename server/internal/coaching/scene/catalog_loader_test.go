@@ -43,6 +43,27 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	}
 }
 
+func TestBuiltinCatalogNarrowsAirportSceneToCheckin(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	definition, err := catalog.GetScene(context.Background(), "scn_travel_airport_checkin")
+	if err != nil {
+		t.Fatalf("GetScene(airport check-in) error = %v", err)
+	}
+	if definition.Name != "机场值机与航班信息" ||
+		definition.Prompt.UserRole != "旅客" ||
+		definition.Prompt.AIRole != "航空公司地勤" ||
+		definition.Prompt.PracticeGoal != "完成值机和行李沟通，确认航班时间、登机口及航班变化。" ||
+		definition.Prompt.TurnBlueprints[0] != "欢迎旅客，并询问目的地和预订信息" {
+		t.Fatalf("airport Scene = %#v", definition)
+	}
+	if _, err := catalog.GetScene(context.Background(), "scn_daily_airport_transport"); !errors.Is(err, ErrSceneNotFound) {
+		t.Fatalf("GetScene(old airport) error = %v", err)
+	}
+}
+
 func TestBuiltinCatalogNarrowsPhoneCallToInformationConfirmation(t *testing.T) {
 	catalog, err := NewBuiltinCatalog(testPolicyValidator())
 	if err != nil {
