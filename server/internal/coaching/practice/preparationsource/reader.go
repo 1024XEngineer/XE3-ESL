@@ -92,8 +92,8 @@ func ProjectConfirmedPlan(
 
 func projectSceneSelection(
 	selection scene.SelectionSnapshot,
-	selectedRoles []scene.RoleDefinition,
-	selectedOption scene.PracticeOption,
+	selectedRoles []scene.RoleSnapshot,
+	selectedOption scene.PracticeOptionSnapshot,
 ) practice.SceneSelection {
 	roles := make([]practice.RoleDefinition, len(selectedRoles))
 	for index, role := range selectedRoles {
@@ -101,14 +101,14 @@ func projectSceneSelection(
 	}
 	return practice.SceneSelection{
 		Scene: practice.SceneDefinition{
-			ID: selection.Scene.ID,
+			ID: selection.Scene.Key,
 			Experience: practice.PracticeExperience(
 				selection.Scene.Experience,
 			),
 			Category: practice.SceneCategory(selection.Scene.Category),
 			Name:     selection.Scene.Name,
-			Version:  selection.Scene.Version,
-			Status:   practice.SceneStatus(selection.Scene.Status),
+			Version:  selection.Scene.Revision,
+			Status:   practice.SceneStatusActive,
 			Prompt:   projectPrompt(selection.Scene.Prompt),
 			Roles:    roles,
 			PracticeOptions: []practice.PracticeOption{
@@ -135,7 +135,7 @@ func projectPrompt(prompt scene.ScenePrompt) practice.ScenePrompt {
 	}
 }
 
-func projectRole(role scene.RoleDefinition) practice.RoleDefinition {
+func projectRole(role scene.RoleSnapshot) practice.RoleDefinition {
 	objectives := make(
 		[]practice.PracticeObjectiveDefinition,
 		len(role.PracticeObjectives),
@@ -147,7 +147,7 @@ func projectRole(role scene.RoleDefinition) practice.RoleDefinition {
 	}
 	return practice.RoleDefinition{
 		ID:                 role.ID,
-		SceneID:            role.SceneID,
+		SceneID:            role.SceneKey,
 		Type:               role.Type,
 		DisplayName:        role.DisplayName,
 		Responsibilities:   role.Responsibilities,
@@ -158,11 +158,11 @@ func projectRole(role scene.RoleDefinition) practice.RoleDefinition {
 }
 
 func projectPracticeOption(
-	option scene.PracticeOption,
+	option scene.PracticeOptionSnapshot,
 ) practice.PracticeOption {
 	return practice.PracticeOption{
 		ID:                       option.ID,
-		SceneID:                  option.SceneID,
+		SceneID:                  option.SceneKey,
 		RoleDefinitionID:         option.RoleDefinitionID,
 		Mode:                     practice.PracticeMode(option.Mode),
 		DisplayName:              option.DisplayName,

@@ -339,11 +339,14 @@ const _ieltsPlanInput = CreatePracticePlanInput(
 
 Map<String, Object?> _ieltsPlanJson() {
   final response = contractPlanJson();
-  response['scene_selection'] = <String, Object?>{
-    'scene': encodeSceneDefinition(_ieltsScene),
-    'selected_role_ids': <String>['ielts-examiner'],
-    'practice_option_id': 'ielts-part-2',
-  };
+  response['scene_selection'] = encodeSceneSelectionSnapshot(
+    const SceneSelectionSnapshot(
+      source: SceneSource.catalog(sceneId: 'ielts-speaking', sceneVersion: 1),
+      scene: _ieltsScene,
+      selectedRoleIds: <String>['ielts-examiner'],
+      practiceOptionId: 'ielts-part-2',
+    ),
+  );
   response['session_policy'] = <String, Object?>{
     ...contractSessionPolicyJson(),
     'max_effective_turns': 7,

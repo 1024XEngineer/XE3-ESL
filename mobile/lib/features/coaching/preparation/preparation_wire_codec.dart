@@ -392,8 +392,8 @@ PreparationPracticeBootstrap decodePreparationPracticeBootstrapBody(
       experience.wireValue != snapshot['practice_experience'] ||
       category.wireValue != snapshot['scene_category'] ||
       mode.wireValue != snapshot['practice_mode'] ||
-      !sameSceneSelection(
-        decodeSceneSelectionSnapshot(snapshot['scene_selection']),
+      !_samePracticeExecutionSelection(
+        snapshot['scene_selection'],
         expectedPlan.sceneSelection,
       ) ||
       snapshotPolicy.maxEffectiveTurns !=
@@ -642,6 +642,31 @@ bool sameSceneSelection(
     left.scene.version == right.scene.version &&
     left.practiceOptionId == right.practiceOptionId &&
     _sameStrings(left.selectedRoleIds, right.selectedRoleIds);
+
+bool _samePracticeExecutionSelection(
+  Object? value,
+  SceneSelectionSnapshot expected,
+) {
+  try {
+    final selection = _object(
+      value,
+      required: const <String>{
+        'scene',
+        'selected_role_ids',
+        'practice_option_id',
+      },
+    );
+    final scene = decodeSceneDefinition(selection['scene']);
+    final selectedRoleIds = _resourceIdList(selection['selected_role_ids']);
+    final practiceOptionId = _resourceId(selection['practice_option_id']);
+    return scene.id == expected.scene.id &&
+        scene.version == expected.scene.version &&
+        practiceOptionId == expected.practiceOptionId &&
+        _sameStrings(selectedRoleIds, expected.selectedRoleIds);
+  } on SceneWireFormatException {
+    throw const PreparationWireFormatException();
+  }
+}
 
 Object? _decodeJson(String body) {
   try {

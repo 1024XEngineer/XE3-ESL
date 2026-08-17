@@ -8,20 +8,34 @@ import (
 	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 )
 
-const PracticePreviewToolName = "practice.preview.v1"
+const PracticePreviewToolName = "practice.preview.v2"
 
 const ConfirmPracticePlanActionType = "practice.plan.confirm.v1"
 
 type PreviewInput struct {
-	SceneQuery        string   `json:"scene_query,omitempty"`
-	BackgroundSummary string   `json:"background_summary,omitempty"`
-	SceneID           string   `json:"scene_id,omitempty"`
-	SceneVersion      int      `json:"scene_version,omitempty"`
-	SelectedRoleIDs   []string `json:"selected_role_ids,omitempty"`
-	PracticeOptionID  string   `json:"practice_option_id,omitempty"`
-	MaxEffectiveTurns int      `json:"max_effective_turns,omitempty"`
-	IELTSPracticeMode string   `json:"ielts_practice_mode,omitempty"`
-	IELTSTopicChoice  string   `json:"ielts_topic_choice,omitempty"`
+	SceneQuery        string       `json:"scene_query,omitempty"`
+	SceneIntent       *SceneIntent `json:"scene_intent,omitempty"`
+	BackgroundSummary string       `json:"background_summary,omitempty"`
+	IELTSPracticeMode string       `json:"ielts_practice_mode,omitempty"`
+	IELTSTopicChoice  string       `json:"ielts_topic_choice,omitempty"`
+
+	// The server resolves these fields from the catalog. They are intentionally
+	// absent from the model-facing schema.
+	SceneID           string   `json:"-"`
+	SceneVersion      int      `json:"-"`
+	SelectedRoleIDs   []string `json:"-"`
+	PracticeOptionID  string   `json:"-"`
+	MaxEffectiveTurns int      `json:"-"`
+}
+
+// SceneIntent contains only user-authored business facts. It never contains a
+// catalog id, source discriminator, policy reference, duration, or turn count.
+type SceneIntent struct {
+	Scenario       string `json:"scenario,omitempty"`
+	UserRole       string `json:"user_role,omitempty"`
+	AIRole         string `json:"ai_role,omitempty"`
+	PracticeGoal   string `json:"practice_goal,omitempty"`
+	ExperienceHint string `json:"experience_hint,omitempty"`
 }
 
 type CatalogCandidate struct {
@@ -68,39 +82,27 @@ func NewPreviewTool(port PreviewPort) PreviewTool {
 }
 
 func (value PreviewTool) Definition() capability.Definition {
-	identifierArray := map[string]any{
-		"type":        "array",
-		"description": "Exact role definition ids selected from the Scene catalog.",
-		"items":       capability.IdentifierSchema("One exact role definition id."),
-		"minItems":    1,
-		"maxItems":    8,
-	}
 	return capability.Definition{
 		Name:        PracticePreviewToolName,
-		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use whenever the user explicitly asks to create, arrange, prepare, or start a practice, exercise, simulation, or practice card, including practice for an upcoming interview, meeting, client conversation, or presentation. For a direct non-IELTS request, pass the user's natural scene description as scene_query in the first call; the server resolves the official Scene and owns its default role, practice mode, duration, and turn policy. Pass background_summary only when the user supplied additional preparation facts. Use after any optional IELTS warm-up is complete, when the user skips warm-up, or when arranging a full mock. For IELTS, pass ielts_practice_mode and, for PART_1/PART_2/PART_3, exactly one ielts_topic_choice; the server derives the preparation background from those choices. The server selects and freezes questions from the current published bank; never invent or request question ids. Omit max_effective_turns for IELTS because the frozen questions determine it. FULL_MOCK must omit ielts_topic_choice and never reveals questions before practice. Missing user-facing details return needs_input without creating a Plan; an unresolved scene query completes this turn with one clarification response and must not be called again until the user provides new input. Never say a practice was created or is ready unless this tool actually returns preview_ready. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession or claims that the user confirmed.",
+		Description: "Create one server-authoritative practice preview from the user's request. Always pass the user's natural scene wording as scene_query. Also pass scene_intent with the scenario, user role, AI counterpart role, practice goal, and WORKPLACE or LIFE_AND_TRAVEL hint when those facts are available; it is used only if the server confirms that no catalog scene matches. The server alone decides CATALOG versus CUSTOM and owns catalog ids, roles, practice options, duration, turn count, and execution policies. Extra personal conditions belong in background_summary and do not turn a matching catalog scene into CUSTOM. Interview customization stays in the interview preparation flow; IELTS customization stays in the IELTS flow. For IELTS, pass ielts_practice_mode and, for PART_1/PART_2/PART_3, one ielts_topic_choice. A result of preview_ready, ambiguous, needs_details, or rejected completes the current turn; never call this tool again until the user provides new information. Never claim a practice is ready unless this tool returns preview_ready.",
 		InputSchema: capability.ObjectSchema(map[string]any{
 			"scene_query": capability.TextSchema(
-				"Natural-language catalog query used only to return or resolve official Scene candidates.",
+				"The user's natural-language practice scene request, in any supported language.",
 				500,
 			),
+			"scene_intent": capability.ObjectSchema(map[string]any{
+				"scenario":      capability.TextSchema("Concrete situation to simulate.", 200),
+				"user_role":     capability.TextSchema("The user's role in the situation.", 200),
+				"ai_role":       capability.TextSchema("The counterpart role played by the AI.", 200),
+				"practice_goal": capability.TextSchema("What the user wants to practise or achieve.", 500),
+				"experience_hint": capability.StringEnumSchema(
+					"Broad experience inferred from the request; never use this to choose CATALOG or CUSTOM.",
+					"WORKPLACE", "LIFE_AND_TRAVEL", "INTERVIEW", "IELTS_SPEAKING",
+				),
+			}, nil),
 			"background_summary": capability.TextSchema(
 				"Concise preparation background assembled only from facts the user provided, such as their target, experience, and practice focus.",
 				6000,
-			),
-			"scene_id": capability.IdentifierSchema("Exact official Scene id."),
-			"scene_version": capability.IntegerRangeSchema(
-				"Exact Scene version.",
-				1,
-				1000000,
-			),
-			"selected_role_ids": identifierArray,
-			"practice_option_id": capability.IdentifierSchema(
-				"Exact official Practice option id.",
-			),
-			"max_effective_turns": capability.IntegerRangeSchema(
-				"Maximum effective turns for a non-IELTS Practice Plan. Omit for IELTS.",
-				1,
-				100,
 			),
 			"ielts_practice_mode": capability.StringEnumSchema(
 				"IELTS Speaking mode requested by the user.",
@@ -110,7 +112,7 @@ func (value PreviewTool) Definition() capability.Definition {
 				"For an IELTS specialty Part, the user's topic choice. random lets the server choose from the published bank.",
 				"random", "person", "place", "thing", "experience",
 			),
-		}, nil),
+		}, []string{"scene_query"}),
 		ReadOnly: false,
 		Risk:     capability.RiskLowRiskWrite,
 	}
@@ -123,7 +125,7 @@ func (value PreviewTool) ClassifyInvocationEffect(
 	if err != nil {
 		return 0, err
 	}
-	if parsed.SceneQuery != "" || parsed.BackgroundSummary != "" ||
+	if parsed.SceneQuery != "" || parsed.SceneIntent != nil || parsed.BackgroundSummary != "" ||
 		parsed.IELTSPracticeMode != "" {
 		return capability.InvocationEffectMayWrite, nil
 	}

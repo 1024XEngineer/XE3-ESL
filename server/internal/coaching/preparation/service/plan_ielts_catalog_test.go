@@ -142,9 +142,15 @@ func planIELTSSelectionFixture() scene.SelectionSnapshot {
 	if err != nil {
 		panic(err)
 	}
-	return scene.SelectionSnapshot{
-		Scene:            definition,
-		SelectedRoleIDs:  []string{definition.Roles[0].ID},
-		PracticeOptionID: definition.PracticeOptions[0].ID,
+	selection, err := catalog.ResolveSelection(
+		context.Background(),
+		definition.ID,
+		definition.Version,
+		[]string{definition.Roles[0].ID},
+		definition.PracticeOptions[0].ID,
+	)
+	if err != nil {
+		panic(err)
 	}
+	return selection
 }

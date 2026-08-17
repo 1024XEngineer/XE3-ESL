@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -595,6 +596,10 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         sessionId: record.sessionId!,
         scene: record.scene!,
       );
+    } on PracticeClientException catch (error) {
+      return error.kind == PracticeClientFailureKind.notFound
+          ? _PracticeResumeVerification.mismatch
+          : _PracticeResumeVerification.unavailable;
     } on Object {
       return _PracticeResumeVerification.unavailable;
     }

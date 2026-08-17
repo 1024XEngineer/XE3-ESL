@@ -54,6 +54,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to archive migration = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to Agent domain completion = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
@@ -75,6 +81,148 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 		t.Fatalf("second Up = %t, %v", changed, err)
 	}
 	assertCleanBaselineSchema(t, admin, schema)
+}
+
+func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
+	t *testing.T,
+) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v3 = %t, %v", changed, downErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect migration data database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID       = "10000000-0000-4000-8000-000000000011"
+		planID       = "30000000-0000-4000-8000-000000000011"
+		sessionID    = "40000000-0000-4000-8000-000000000011"
+		oldSelection = `{
+  "scene": {
+    "scene_id": "scn_daily_small_talk",
+    "scene_version": 2,
+    "status": "active",
+    "practice_experience": "LIFE_AND_TRAVEL",
+    "scene_category": "LIFE_DAILY",
+    "name": "日常寒暄与自我介绍",
+    "prompt": {},
+    "roles": [{"role_definition_id":"conversation_partner","scene_id":"scn_daily_small_talk"}],
+    "practice_options": [{"practice_option_id":"option_daily_small_talk_full","scene_id":"scn_daily_small_talk"}]
+  },
+  "selected_role_ids": ["conversation_partner"],
+  "practice_option_id": "option_daily_small_talk_full"
+}`
+	)
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email) VALUES ($1, 'migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed migration owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO practice_plans (
+    plan_id, user_id, preparation_snapshot, scene_selection, session_policy,
+    practice_objectives, practice_experience, status,
+    initial_client_request_id, initial_request_fingerprint
+) VALUES (
+    $2, $1, '{}'::jsonb, $3::jsonb, '{}'::jsonb, '[{}]'::jsonb,
+    'LIFE_AND_TRAVEL', 'ready', 'request-migration-plan',
+    decode(repeat('11', 32), 'hex')
+)
+`, userID, planID, oldSelection); err != nil {
+		t.Fatalf("seed v3 Practice Plan: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO practice_sessions (
+    session_id, user_id, plan_id, plan_version, practice_experience,
+    scene_category, practice_mode, evaluation_policy_ref, status,
+    plan_snapshot, participants, initial_client_request_id,
+    initial_request_fingerprint
+) VALUES (
+    $3, $1, $2, 1, 'LIFE_AND_TRAVEL', 'LIFE_DAILY', 'FULL_SIMULATION',
+    'daily.general.evaluation.v1', 'starting',
+    jsonb_build_object('scene_selection', $4::jsonb), '[{}]'::jsonb,
+    'request-migration-session', decode(repeat('12', 32), 'hex')
+)
+`, userID, planID, sessionID, oldSelection); err != nil {
+		t.Fatalf("seed v3 Practice Session: %v", err)
+	}
+
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("apply v4 = %t, %v", changed, upErr)
+	}
+	assertMigratedSceneSelection := func(query string, id string) {
+		t.Helper()
+		var sourceType, sourceID, sceneKey, roleKey, optionKey string
+		var sourceVersion, sceneRevision int
+		if err := database.QueryRow(context.Background(), query, id).Scan(
+			&sourceType,
+			&sourceID,
+			&sourceVersion,
+			&sceneKey,
+			&sceneRevision,
+			&roleKey,
+			&optionKey,
+		); err != nil {
+			t.Fatalf("read migrated snapshot: %v", err)
+		}
+		if sourceType != "CATALOG" || sourceID != "scn_daily_small_talk" ||
+			sourceVersion != 2 || sceneKey != sourceID || sceneRevision != 2 ||
+			roleKey != sceneKey || optionKey != sceneKey {
+			t.Fatalf("migrated snapshot = %q %q %d %q %d %q %q", sourceType, sourceID, sourceVersion, sceneKey, sceneRevision, roleKey, optionKey)
+		}
+	}
+	assertMigratedSceneSelection(`
+SELECT scene_selection #>> '{source,type}',
+       scene_selection #>> '{source,scene_id}',
+       (scene_selection #>> '{source,scene_version}')::integer,
+       scene_selection #>> '{scene,scene_key}',
+       (scene_selection #>> '{scene,scene_revision}')::integer,
+       scene_selection #>> '{scene,roles,0,scene_key}',
+       scene_selection #>> '{scene,practice_options,0,scene_key}'
+FROM practice_plans WHERE plan_id = $1
+`, planID)
+	var sessionSelectionUnchanged bool
+	if err := database.QueryRow(context.Background(), `
+SELECT plan_snapshot->'scene_selection' = $2::jsonb
+FROM practice_sessions WHERE session_id = $1
+`, sessionID, oldSelection).Scan(&sessionSelectionUnchanged); err != nil {
+		t.Fatalf("read preserved Practice Session snapshot: %v", err)
+	}
+	if !sessionSelectionUnchanged {
+		t.Fatal("Practice Session execution snapshot changed during Plan migration")
+	}
+
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v4 = %t, %v", changed, downErr)
+	}
+	var restoredID, restoredRoleID, restoredOptionID, restoredStatus string
+	var restoredVersion int
+	if err := database.QueryRow(context.Background(), `
+SELECT scene_selection #>> '{scene,scene_id}',
+       (scene_selection #>> '{scene,scene_version}')::integer,
+       scene_selection #>> '{scene,status}',
+       scene_selection #>> '{scene,roles,0,scene_id}',
+       scene_selection #>> '{scene,practice_options,0,scene_id}'
+FROM practice_plans WHERE plan_id = $1
+`, planID).Scan(&restoredID, &restoredVersion, &restoredStatus, &restoredRoleID, &restoredOptionID); err != nil {
+		t.Fatalf("read restored v3 snapshot: %v", err)
+	}
+	if restoredID != "scn_daily_small_talk" || restoredVersion != 2 ||
+		restoredStatus != "active" || restoredRoleID != restoredID ||
+		restoredOptionID != restoredID {
+		t.Fatalf("restored snapshot = %q %d %q %q %q", restoredID, restoredVersion, restoredStatus, restoredRoleID, restoredOptionID)
+	}
 }
 
 func TestCleanBaselineOwnershipStateAndPartialUniqueness(t *testing.T) {

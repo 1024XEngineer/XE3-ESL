@@ -562,10 +562,12 @@ components:
     SceneSelectionSnapshot:
       type: object
       additionalProperties: false
-      required: [scene, selected_role_ids, practice_option_id]
+      required: [source, scene, selected_role_ids, practice_option_id]
       properties:
+        source:
+          $ref: '#/components/schemas/SceneSource'
         scene:
-          $ref: ../modules/scene.yaml#/components/schemas/SceneDefinition
+          $ref: '#/components/schemas/ExecutableSceneSnapshot'
         selected_role_ids:
           type: array
           minItems: 1
@@ -573,6 +575,131 @@ components:
           items:
             $ref: '#/components/schemas/ResourceId'
         practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+    SceneSource:
+      oneOf:
+        - $ref: '#/components/schemas/CatalogSceneSource'
+        - $ref: '#/components/schemas/CustomSceneSource'
+      discriminator:
+        propertyName: type
+        mapping:
+          CATALOG: '#/components/schemas/CatalogSceneSource'
+          CUSTOM: '#/components/schemas/CustomSceneSource'
+    CatalogSceneSource:
+      type: object
+      additionalProperties: false
+      required: [type, scene_id, scene_version]
+      properties:
+        type:
+          type: string
+          enum: [CATALOG]
+        scene_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_version:
+          type: integer
+          minimum: 1
+    CustomSceneSource:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [CUSTOM]
+    ExecutableSceneSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - scene_key
+        - scene_revision
+        - practice_experience
+        - scene_category
+        - name
+        - prompt
+        - roles
+        - practice_options
+      properties:
+        scene_key:
+          $ref: '#/components/schemas/ResourceId'
+        scene_revision:
+          type: integer
+          minimum: 1
+        practice_experience:
+          $ref: ../modules/scene.yaml#/components/schemas/PracticeExperience
+        scene_category:
+          $ref: ../modules/scene.yaml#/components/schemas/SceneCategory
+        name:
+          type: string
+          minLength: 1
+        prompt:
+          $ref: ../modules/scene.yaml#/components/schemas/ScenePrompt
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RoleSnapshot'
+        practice_options:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PracticeOptionSnapshot'
+    RoleSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - role_definition_id
+        - scene_key
+        - role_type
+        - display_name
+        - responsibilities
+        - style
+        - practice_objectives
+      properties:
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_key:
+          $ref: '#/components/schemas/ResourceId'
+        role_type:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+        display_name: {type: string, minLength: 1}
+        responsibilities: {type: string, minLength: 1}
+        style: {type: string, minLength: 1}
+        practice_objectives:
+          type: array
+          minItems: 1
+          items:
+            $ref: ../modules/scene.yaml#/components/schemas/PracticeObjectiveDefinition
+        voice_config_ref:
+          $ref: '#/components/schemas/ResourceId'
+    PracticeOptionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_option_id
+        - scene_key
+        - practice_mode
+        - display_name
+        - suggested_duration_seconds
+        - turn_policy_ref
+        - session_policy_ref
+        - evaluation_policy_ref
+      properties:
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        scene_key:
+          $ref: '#/components/schemas/ResourceId'
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_mode:
+          $ref: ../modules/scene.yaml#/components/schemas/PracticeMode
+        display_name: {type: string, minLength: 1}
+        suggested_duration_seconds: {type: integer, minimum: 1}
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        evaluation_policy_ref:
           $ref: '#/components/schemas/ResourceId'
     PracticeSessionPolicy:
       type: object

@@ -39,17 +39,27 @@ func TestCatalogPreviewResolverReturnsOnlyExactSceneName(t *testing.T) {
 	}
 }
 
-func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
-	resolver, err := NewCatalogPreviewResolver(mustTestCatalog(t))
+func TestCatalogPreviewResolverResolvesEveryBuiltinSceneByName(t *testing.T) {
+	catalog := mustBuiltinCatalog(t)
+	resolver, err := NewCatalogPreviewResolver(catalog)
 	if err != nil {
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
-	items, err := resolver.ResolvePreviewCatalog(context.Background(), "interview")
+	definitions, err := catalog.ListActiveScenes(context.Background())
 	if err != nil {
-		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+		t.Fatalf("ListActiveScenes() error = %v", err)
 	}
-	if len(items) == 0 || len(items) > MaxPreviewCatalogCandidates {
-		t.Fatalf("candidate count = %d", len(items))
+	for _, definition := range definitions {
+		items, resolveErr := resolver.ResolvePreviewCatalog(
+			context.Background(),
+			definition.Name,
+		)
+		if resolveErr != nil {
+			t.Fatalf("ResolvePreviewCatalog(%q) error = %v", definition.Name, resolveErr)
+		}
+		if len(items) != 1 || items[0].Scene.ID != definition.ID {
+			t.Fatalf("ResolvePreviewCatalog(%q) = %#v", definition.Name, items)
+		}
 	}
 }
 
@@ -147,7 +157,7 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
 	tests := map[string]string{
-		"我想练习口语":       "scn_ielts_speaking",
+		"我想练习雅思口语":     "scn_ielts_speaking",
 		"我想练习看房":       "scn_daily_rental_viewing",
 		"我家水管坏了，想练习报修": "scn_daily_rental_maintenance",
 	}
@@ -167,16 +177,23 @@ func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T)
 	}
 }
 
-func TestCatalogPreviewResolverKeepsGenericInterviewAmbiguous(t *testing.T) {
+func TestCatalogPreviewResolverResolvesExperienceDefaults(t *testing.T) {
 	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
 	if err != nil {
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
-	items, err := resolver.ResolvePreviewCatalog(context.Background(), "面试")
-	if err != nil {
-		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
-	}
-	if len(items) < 2 {
-		t.Fatalf("generic interview candidates = %#v, want multiple", items)
+	for query, wantSceneID := range map[string]string{
+		"帮我创建一个面试练习":   "scn_interview_self_introduction",
+		"帮我创建一个雅思口语练习": "scn_ielts_speaking",
+		"帮我创建一个职场英语练习": "scn_workplace_progress_risk_update",
+		"帮我创建一个生活英语练习": "scn_daily_small_talk",
+	} {
+		items, resolveErr := resolver.ResolvePreviewCatalog(context.Background(), query)
+		if resolveErr != nil {
+			t.Fatalf("ResolvePreviewCatalog(%q) error = %v", query, resolveErr)
+		}
+		if len(items) != 1 || items[0].Scene.ID != wantSceneID {
+			t.Fatalf("ResolvePreviewCatalog(%q) = %#v", query, items)
+		}
 	}
 }

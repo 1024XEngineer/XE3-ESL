@@ -307,6 +307,7 @@ func routeIELTSPractice(
 	if selection.mode == "FULL_MOCK" || afterWarmUp ||
 		asksToStartDirectly(normalize(lastUserContent(messages))) {
 		toolName = preparationcapability.PracticePreviewToolName
+		arguments["scene_query"] = "IELTS"
 	}
 	if !containsString(allowed, toolName) {
 		return Route{Decision: DecisionDirect}

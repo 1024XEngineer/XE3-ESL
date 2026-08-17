@@ -27,6 +27,12 @@ type PlanApplication interface {
 		string,
 		preparation.CreatePlanRequest,
 	) (preparation.PracticePlan, bool, error)
+	PreviewCustomPlan(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		preparation.CreateCustomPlanRequest,
+	) (preparation.PracticePlan, bool, error)
 }
 
 func NewServicePort(
@@ -67,6 +73,16 @@ func (port *ServicePort) PreviewPractice(
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
+	if len(candidates) > 1 {
+		return PreviewResult{
+			Status:        "ambiguous",
+			Candidates:    candidates,
+			AssistantText: ambiguousSceneQuestion(candidates),
+		}, nil
+	}
+	if len(candidates) == 0 {
+		return port.previewCustomPractice(ctx, call, input)
+	}
 	if input.BackgroundSummary == "" && input.IELTSPracticeMode == "" &&
 		input.SceneID == "" && len(candidates) == 1 &&
 		input.SceneQuery != candidates[0].SceneID {
@@ -85,15 +101,11 @@ func (port *ServicePort) PreviewPractice(
 	}
 	missing := previewMissingFields(input, validationCandidates)
 	if len(missing) > 0 {
-		assistantText := ""
-		if len(candidates) == 0 && containsMissingField(missing, "scene_selection") {
-			assistantText = "我还不能确定你想练习的具体场景。请补充一个更具体的场景，例如会议表达异议、酒店入住或餐厅点餐。"
-		}
 		return PreviewResult{
-			Status:                "needs_input",
+			Status:                "needs_details",
 			RequiredMissingFields: missing,
 			Candidates:            candidates,
-			AssistantText:         assistantText,
+			AssistantText:         catalogDetailsQuestion(missing),
 		}, nil
 	}
 
@@ -128,6 +140,127 @@ func (port *ServicePort) PreviewPractice(
 		SourceRefs: []capability.SourceRef{
 			{Type: "practice_plan", ID: plan.ID},
 		},
+	}, nil
+}
+
+func catalogDetailsQuestion(missing []string) string {
+	if containsMissingField(missing, "ielts_practice_mode") {
+		return "你想练雅思口语完整模考，还是 Part 1、Part 2 或 Part 3 专项？"
+	}
+	if containsMissingField(missing, "ielts_topic_choice") {
+		return "请选择一个话题类型：随机、人物、地点、事物或经历。"
+	}
+	return "请补充这个练习所需的具体信息。"
+}
+
+func (port *ServicePort) previewCustomPractice(
+	ctx context.Context,
+	call capability.CallContext,
+	input PreviewInput,
+) (PreviewResult, error) {
+	missing := missingCustomSceneFields(input.SceneIntent)
+	if len(missing) > 0 {
+		return PreviewResult{
+			Status:                "needs_details",
+			RequiredMissingFields: missing,
+			AssistantText:         customSceneDetailsQuestion(missing),
+		}, nil
+	}
+	experience := scene.PracticeExperience(input.SceneIntent.ExperienceHint)
+	if experience != scene.PracticeExperienceWorkplace &&
+		experience != scene.PracticeExperienceLifeAndTravel {
+		return PreviewResult{
+			Status:        "rejected",
+			AssistantText: "面试和雅思练习需要使用对应的正式准备流程。请告诉我面试岗位，或选择雅思口语练习模式。",
+		}, nil
+	}
+	background := input.BackgroundSummary
+	if background == "" {
+		background = "User requested a custom practice scene: " +
+			strings.TrimSpace(input.SceneQuery)
+	}
+	plan, replayed, err := port.plans.PreviewCustomPlan(
+		ctx,
+		call.Actor,
+		call.RequestID,
+		preparation.CreateCustomPlanRequest{
+			SourceThreadID:    call.ThreadID,
+			BackgroundSummary: background,
+			SceneSpec: scene.CustomSceneSpec{
+				Scenario:       strings.TrimSpace(input.SceneIntent.Scenario),
+				UserRole:       strings.TrimSpace(input.SceneIntent.UserRole),
+				AIRole:         strings.TrimSpace(input.SceneIntent.AIRole),
+				PracticeGoal:   strings.TrimSpace(input.SceneIntent.PracticeGoal),
+				ExperienceHint: experience,
+			},
+		},
+	)
+	if err != nil {
+		return PreviewResult{}, mapPreparationToolError(err)
+	}
+	return readyPreviewResult(plan, replayed)
+}
+
+func missingCustomSceneFields(intent *SceneIntent) []string {
+	if intent == nil {
+		return []string{"scenario", "user_role", "ai_role", "practice_goal", "experience_hint"}
+	}
+	fields := make([]string, 0, 5)
+	if strings.TrimSpace(intent.Scenario) == "" {
+		fields = append(fields, "scenario")
+	}
+	if strings.TrimSpace(intent.UserRole) == "" {
+		fields = append(fields, "user_role")
+	}
+	if strings.TrimSpace(intent.AIRole) == "" {
+		fields = append(fields, "ai_role")
+	}
+	if strings.TrimSpace(intent.PracticeGoal) == "" {
+		fields = append(fields, "practice_goal")
+	}
+	if strings.TrimSpace(intent.ExperienceHint) == "" {
+		fields = append(fields, "experience_hint")
+	}
+	return fields
+}
+
+func customSceneDetailsQuestion(missing []string) string {
+	labels := map[string]string{
+		"scenario":        "具体情境",
+		"user_role":       "你扮演的角色",
+		"ai_role":         "对方角色",
+		"practice_goal":   "练习目标",
+		"experience_hint": "属于职场还是生活旅行",
+	}
+	return "这个场景不在现有目录里，可以为你定制。请补充" + labels[missing[0]] + "。"
+}
+
+func ambiguousSceneQuestion(candidates []CatalogCandidate) string {
+	names := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		names[index] = "“" + candidate.Name + "”"
+	}
+	return "我找到了多个可能的场景：" + strings.Join(names, "、") + "。你想练习哪一个？"
+}
+
+func readyPreviewResult(
+	plan preparation.PracticePlan,
+	replayed bool,
+) (PreviewResult, error) {
+	clientAction, err := practicePlanClientAction(plan)
+	if err != nil {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	return PreviewResult{
+		Status:       "preview_ready",
+		Replayed:     replayed,
+		ClientAction: clientAction,
+		AssistantText: "已为您准备好“" + plan.SceneSelection.Scene.Name +
+			"”练习，请确认开始。",
+		SourceRefs: []capability.SourceRef{{
+			Type: "practice_plan",
+			ID:   plan.ID,
+		}},
 	}, nil
 }
 
@@ -511,6 +644,7 @@ func mapPreparationToolError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, scene.ErrCatalogSelectionInvalid),
+		errors.Is(err, scene.ErrCustomSceneInvalid),
 		errors.Is(err, preparation.ErrPlanInvalid):
 		return capability.ErrInvalidInput
 	case errors.Is(err, preparation.ErrPlanNotFound),

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
@@ -152,6 +153,22 @@ void main() {
     expect(await harness.workspace.resumeCurrentPractice(), isFalse);
 
     expect(harness.workspace.hasResumable, isFalse);
+    expect(await harness.store.read(_accountId), isNull);
+  });
+
+  test('missing remote Session clears its stale local resume record', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-deleted');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.remove('practice-deleted');
+
+    final outcome = await harness.workspace.resumeCurrentPracticeWithOutcome();
+
+    expect(outcome, PracticeWorkspaceResumeOutcome.stale);
+    expect(harness.workspace.hasResumable, isFalse);
+    expect(harness.workspace.errorMessage, contains('记录已清理'));
     expect(await harness.store.read(_accountId), isNull);
   });
 
@@ -479,6 +496,7 @@ final class _Harness {
 final class _WorkspacePracticeClient
     implements PracticeClient, PracticeLifecycleClient {
   final Map<String, PracticeSessionSnapshot> _sessions = {};
+  final Set<String> _notFoundSessionIds = {};
   final List<String> endedSessionIds = [];
   PracticeSessionSnapshot? _armed;
   PracticeSessionSnapshot? restoreOverride;
@@ -491,6 +509,7 @@ final class _WorkspacePracticeClient
     required String sessionId,
     int completedTurns = 0,
   }) {
+    _notFoundSessionIds.remove(sessionId);
     _armed = testPracticeSnapshot(
       scene: scene,
       sessionId: sessionId,
@@ -512,6 +531,11 @@ final class _WorkspacePracticeClient
       turnLimit: current.turnLimit,
       sessionCompleted: true,
     );
+  }
+
+  void remove(String sessionId) {
+    _sessions.remove(sessionId);
+    _notFoundSessionIds.add(sessionId);
   }
 
   void replaceWithUnrelatedSession({
@@ -558,8 +582,16 @@ final class _WorkspacePracticeClient
     if (override != null) {
       return override;
     }
-    return _sessions[sessionId] ??
-        (throw StateError('Unknown Practice Session.'));
+    final snapshot = _sessions[sessionId];
+    if (snapshot != null) {
+      return snapshot;
+    }
+    if (_notFoundSessionIds.contains(sessionId)) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.notFound,
+      );
+    }
+    throw StateError('Unknown Practice Session.');
   }
 
   @override
@@ -588,6 +620,7 @@ final class _WorkspacePracticeClient
   @override
   Future<void> clearAccountState() async {
     _sessions.clear();
+    _notFoundSessionIds.clear();
     _armed = null;
   }
 

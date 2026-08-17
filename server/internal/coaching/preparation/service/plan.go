@@ -22,7 +22,10 @@ var planObjectiveIDPattern = regexp.MustCompile(
 
 // maxPlanEffectiveTurns is a transport/runtime safety bound, not an IELTS
 // question-count rule.
-const maxPlanEffectiveTurns = 64
+const (
+	maxPlanEffectiveTurns    = 64
+	customPlanEffectiveTurns = 5
+)
 
 type PlanService struct {
 	repository preparation.PlanRepository
@@ -52,11 +55,55 @@ func (s *PlanService) PreviewPlan(ctx context.Context, actor requestcontext.Acto
 	return s.createPlan(ctx, actor, clientRequestID, request, preparation.PlanStatusDraft)
 }
 
+func (s *PlanService) PreviewCustomPlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	clientRequestID string,
+	request preparation.CreateCustomPlanRequest,
+) (preparation.PracticePlan, bool, error) {
+	if ctx == nil || !actor.Valid() ||
+		!validIdempotencyKey(clientRequestID) ||
+		!validPlanAggregateID(request.SourceThreadID) ||
+		!validPlanPreparationSnapshot(preparation.Snapshot{
+			BackgroundSummary: request.BackgroundSummary,
+		}) {
+		return preparation.PracticePlan{}, false, preparation.ErrPlanInvalid
+	}
+	if err := s.validateSourceThread(ctx, actor, request.SourceThreadID); err != nil {
+		return preparation.PracticePlan{}, false, err
+	}
+	id, err := s.newPlanID()
+	if err != nil {
+		return preparation.PracticePlan{}, false, err
+	}
+	selection, err := scene.NewCustomSelection(id, request.SceneSpec)
+	if err != nil {
+		return preparation.PracticePlan{}, false, preparation.ErrPlanInvalid
+	}
+	return s.persistResolvedPlan(
+		ctx,
+		actor,
+		clientRequestID,
+		request,
+		id,
+		request.SourceThreadID,
+		preparation.Snapshot{BackgroundSummary: request.BackgroundSummary},
+		selection,
+		customPlanEffectiveTurns,
+		nil,
+		preparation.PlanStatusDraft,
+	)
+}
+
 func (s *PlanService) createPlan(ctx context.Context, actor requestcontext.Actor, clientRequestID string, request preparation.CreatePlanRequest, status preparation.PlanStatus) (preparation.PracticePlan, bool, error) {
 	if ctx == nil || !actor.Valid() || !validIdempotencyKey(clientRequestID) || !validCreatePlanRequest(request) {
 		return preparation.PracticePlan{}, false, preparation.ErrPlanInvalid
 	}
 	if err := s.validateSourceThread(ctx, actor, request.SourceThreadID); err != nil {
+		return preparation.PracticePlan{}, false, err
+	}
+	id, err := s.newPlanID()
+	if err != nil {
 		return preparation.PracticePlan{}, false, err
 	}
 	preparationSnapshot := preparation.Snapshot{BackgroundSummary: request.BackgroundSummary}
@@ -81,19 +128,55 @@ func (s *PlanService) createPlan(ctx context.Context, actor requestcontext.Actor
 	if err := freezeIELTSPreparedAnswers(assignment, request.IELTSPreparedAnswers); err != nil {
 		return preparation.PracticePlan{}, false, err
 	}
-	policy, objectives, err := buildPlanExecution(s.policies, selection, request.MaxEffectiveTurns)
+	return s.persistResolvedPlan(
+		ctx,
+		actor,
+		clientRequestID,
+		request,
+		id,
+		request.SourceThreadID,
+		preparationSnapshot,
+		selection,
+		request.MaxEffectiveTurns,
+		assignment,
+		status,
+	)
+}
+
+func (s *PlanService) newPlanID() (string, error) {
+	id, err := s.ids.NewID()
+	if err != nil || !validPlanAggregateID(id) {
+		return "", preparation.ErrPlanRepository
+	}
+	return id, nil
+}
+
+func (s *PlanService) persistResolvedPlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	clientRequestID string,
+	fingerprintInput any,
+	planID string,
+	sourceThreadID string,
+	preparationSnapshot preparation.Snapshot,
+	selection scene.SelectionSnapshot,
+	maxEffectiveTurns int,
+	assignment *preparation.IELTSAssignmentSnapshot,
+	status preparation.PlanStatus,
+) (preparation.PracticePlan, bool, error) {
+	policy, objectives, err := buildPlanExecution(
+		s.policies,
+		selection,
+		maxEffectiveTurns,
+	)
 	if err != nil {
 		return preparation.PracticePlan{}, false, err
 	}
-	id, err := s.ids.NewID()
-	if err != nil || !validPlanAggregateID(id) {
-		return preparation.PracticePlan{}, false, preparation.ErrPlanRepository
-	}
-	fingerprint, err := planRequestFingerprint(request)
+	fingerprint, err := planRequestFingerprint(fingerprintInput)
 	if err != nil {
 		return preparation.PracticePlan{}, false, preparation.ErrPlanInvalid
 	}
-	plan, replayed, err := s.repository.CreatePlan(ctx, actor, preparation.CreatePlanCommand{PlanID: id, SourceThreadID: request.SourceThreadID, PreparationSnapshot: clonePlanPreparationSnapshot(preparationSnapshot), SceneSelection: clonePlanSceneSelection(selection), SessionPolicy: policy, PracticeObjectives: clonePlanObjectives(objectives), IELTSAssignment: cloneIELTSAssignment(assignment), Status: status, ClientRequestID: clientRequestID, RequestFingerprint: fingerprint})
+	plan, replayed, err := s.repository.CreatePlan(ctx, actor, preparation.CreatePlanCommand{PlanID: planID, SourceThreadID: sourceThreadID, PreparationSnapshot: clonePlanPreparationSnapshot(preparationSnapshot), SceneSelection: clonePlanSceneSelection(selection), SessionPolicy: policy, PracticeObjectives: clonePlanObjectives(objectives), IELTSAssignment: cloneIELTSAssignment(assignment), Status: status, ClientRequestID: clientRequestID, RequestFingerprint: fingerprint})
 	if err != nil {
 		return preparation.PracticePlan{}, false, err
 	}
@@ -291,9 +374,11 @@ func selectionMatchesCreateRequest(
 	selection scene.SelectionSnapshot,
 	request preparation.CreatePlanRequest,
 ) bool {
-	if selection.Scene.ID != request.SceneID ||
-		selection.Scene.Version != request.SceneVersion ||
-		selection.Scene.Status != scene.SceneStatusActive ||
+	if selection.Source.Type != scene.SceneSourceCatalog ||
+		selection.Source.SceneID != request.SceneID ||
+		selection.Source.SceneVersion != request.SceneVersion ||
+		selection.Scene.Key != request.SceneID ||
+		selection.Scene.Revision != request.SceneVersion ||
 		selection.PracticeOptionID != request.PracticeOptionID ||
 		!equalPlanStrings(selection.SelectedRoleIDs, request.SelectedRoleIDs) {
 		return false
@@ -678,16 +763,16 @@ func ieltsAssignmentSceneBrief(assignment preparation.IELTSAssignmentSnapshot) s
 
 func validSelectedPlanOption(
 	selection scene.SelectionSnapshot,
-	roles []scene.RoleDefinition,
-	option scene.PracticeOption,
+	roles []scene.RoleSnapshot,
+	option scene.PracticeOptionSnapshot,
 ) bool {
 	if option.ID != selection.PracticeOptionID ||
-		option.SceneID != selection.Scene.ID {
+		option.SceneKey != selection.Scene.Key {
 		return false
 	}
 	for index, role := range roles {
 		if role.ID != selection.SelectedRoleIDs[index] ||
-			role.SceneID != selection.Scene.ID {
+			role.SceneKey != selection.Scene.Key {
 			return false
 		}
 	}
@@ -707,8 +792,8 @@ func validSelectedPlanOption(
 
 func ValidSelectedPlanOption(
 	selection scene.SelectionSnapshot,
-	roles []scene.RoleDefinition,
-	option scene.PracticeOption,
+	roles []scene.RoleSnapshot,
+	option scene.PracticeOptionSnapshot,
 ) bool {
 	return validSelectedPlanOption(selection, roles, option)
 }
@@ -745,7 +830,7 @@ func buildPlanExecution(
 }
 
 func practiceObjectives(
-	roles []scene.RoleDefinition,
+	roles []scene.RoleSnapshot,
 ) ([]preparation.PracticeObjective, error) {
 	seen := make(map[string]string)
 	objectives := make([]preparation.PracticeObjective, 0)
@@ -798,9 +883,7 @@ func validReturnedPlan(
 		!validPlanPreparationSnapshot(plan.PreparationSnapshot) {
 		return false
 	}
-	if !validPlanResourceID(plan.SceneSelection.Scene.ID) ||
-		plan.SceneSelection.Scene.Version < 1 ||
-		plan.SceneSelection.Scene.Status != scene.SceneStatusActive ||
+	if !scene.ValidSelectionSnapshot(plan.SceneSelection) ||
 		!validUniquePlanIDs(plan.SceneSelection.SelectedRoleIDs) {
 		return false
 	}
@@ -958,6 +1041,7 @@ func clonePlanSceneSelection(
 	source scene.SelectionSnapshot,
 ) scene.SelectionSnapshot {
 	return scene.SelectionSnapshot{
+		Source:           source.Source,
 		Scene:            clonePlanSceneDefinition(source.Scene),
 		SelectedRoleIDs:  clonePlanStrings(source.SelectedRoleIDs),
 		PracticeOptionID: source.PracticeOptionID,
@@ -965,14 +1049,14 @@ func clonePlanSceneSelection(
 }
 
 func clonePlanSceneDefinition(
-	source scene.SceneDefinition,
-) scene.SceneDefinition {
+	source scene.ExecutableSceneSnapshot,
+) scene.ExecutableSceneSnapshot {
 	result := source
 	result.Prompt.FocusAreas = clonePlanStrings(source.Prompt.FocusAreas)
 	result.Prompt.TurnBlueprints = clonePlanStrings(
 		source.Prompt.TurnBlueprints,
 	)
-	result.Roles = make([]scene.RoleDefinition, len(source.Roles))
+	result.Roles = make([]scene.RoleSnapshot, len(source.Roles))
 	for index, role := range source.Roles {
 		result.Roles[index] = role
 		result.Roles[index].PracticeObjectives = append(
@@ -981,7 +1065,7 @@ func clonePlanSceneDefinition(
 		)
 	}
 	result.PracticeOptions = append(
-		[]scene.PracticeOption(nil),
+		[]scene.PracticeOptionSnapshot(nil),
 		source.PracticeOptions...,
 	)
 	return result

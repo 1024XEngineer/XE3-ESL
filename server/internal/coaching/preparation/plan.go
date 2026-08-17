@@ -151,6 +151,14 @@ type CreatePlanRequest struct {
 	IELTSPreparedAnswers     []IELTSPreparedAnswerRequest `json:"ielts_prepared_answers,omitempty"`
 }
 
+// CreateCustomPlanRequest is internal to the Agent preparation capability.
+// The server derives every execution policy from SceneSpec.
+type CreateCustomPlanRequest struct {
+	SourceThreadID    string                `json:"source_thread_id"`
+	BackgroundSummary string                `json:"background_summary,omitempty"`
+	SceneSpec         scene.CustomSceneSpec `json:"scene_spec"`
+}
+
 type ConfirmPlanRequest struct {
 	ExpectedVersion int `json:"expected_version"`
 }
@@ -189,5 +197,5 @@ type PlanReader interface {
 }
 
 type PolicyResolver interface {
-	ResolveSessionPolicy(scene.SceneDefinition, scene.PracticeOption, int) (SessionPolicy, error)
+	ResolveSessionPolicy(scene.ExecutableSceneSnapshot, scene.PracticeOptionSnapshot, int) (SessionPolicy, error)
 }

@@ -154,12 +154,30 @@ final class SceneDefinition {
 
 final class SceneSelectionSnapshot {
   const SceneSelectionSnapshot({
+    required this.source,
     required this.scene,
     required this.selectedRoleIds,
     required this.practiceOptionId,
   });
 
+  final SceneSource source;
   final SceneDefinition scene;
   final List<String> selectedRoleIds;
   final String practiceOptionId;
+}
+
+enum SceneSourceType { catalog, custom }
+
+final class SceneSource {
+  const SceneSource.catalog({required this.sceneId, required this.sceneVersion})
+    : type = SceneSourceType.catalog;
+
+  const SceneSource.custom()
+    : type = SceneSourceType.custom,
+      sceneId = null,
+      sceneVersion = null;
+
+  final SceneSourceType type;
+  final String? sceneId;
+  final int? sceneVersion;
 }

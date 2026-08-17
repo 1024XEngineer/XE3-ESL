@@ -438,6 +438,7 @@ PracticePlan _ieltsPlanForThread(
     sourceThreadId: threadId,
     preparationSnapshot: base.preparationSnapshot,
     sceneSelection: const SceneSelectionSnapshot(
+      source: SceneSource.catalog(sceneId: 'ielts-speaking', sceneVersion: 1),
       scene: scene,
       selectedRoleIds: <String>['ielts-examiner'],
       practiceOptionId: 'ielts-part-1',

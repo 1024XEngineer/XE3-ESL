@@ -5,21 +5,10 @@ import (
 	"errors"
 	"sort"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
 const MaxPreviewCatalogCandidates = 5
-
-var previewCatalogGenericQueryTerms = map[string]struct{}{
-	"一下": {},
-	"场景": {},
-	"对话": {},
-	"想练": {},
-	"模拟": {},
-	"练习": {},
-	"英语": {},
-}
 
 type PreviewCatalogCandidate struct {
 	Scene          SceneDefinition
@@ -35,11 +24,21 @@ type PreviewCatalogResolver interface {
 }
 
 type CatalogPreviewResolver struct {
-	catalog CatalogReader
+	catalog *Catalog
+}
+
+// ResolvePreviewCatalog exposes discovery as a first-class Catalog port so
+// application composition does not need to recover a concrete Catalog from a
+// narrower interface.
+func (catalog *Catalog) ResolvePreviewCatalog(
+	ctx context.Context,
+	query string,
+) ([]PreviewCatalogCandidate, error) {
+	return (&CatalogPreviewResolver{catalog: catalog}).ResolvePreviewCatalog(ctx, query)
 }
 
 func NewCatalogPreviewResolver(
-	catalog CatalogReader,
+	catalog *Catalog,
 ) (*CatalogPreviewResolver, error) {
 	if catalog == nil {
 		return nil, errors.New("scene: catalog is required")
@@ -51,48 +50,87 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 	ctx context.Context,
 	query string,
 ) ([]PreviewCatalogCandidate, error) {
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = normalizeDiscoveryText(query)
 	if resolver == nil || resolver.catalog == nil || query == "" ||
 		!utf8.ValidString(query) || utf8.RuneCountInString(query) > 500 {
 		return nil, ErrCatalogSelectionInvalid
 	}
-
-	type scoredCandidate struct {
-		candidate PreviewCatalogCandidate
-		score     int
-	}
-	scored := make([]scoredCandidate, 0)
-	queryTerms := previewCatalogQueryTerms(query)
 	definitions, err := resolver.catalog.ListActiveScenes(ctx)
 	if err != nil {
 		return nil, err
 	}
+	byID := make(map[string]SceneDefinition, len(definitions))
 	for _, definition := range definitions {
-		score := previewCatalogScore(query, queryTerms, definition)
+		byID[definition.ID] = definition
+		if query == normalizeDiscoveryText(definition.ID) {
+			candidate, ok := catalogPreviewCandidate(definition, "")
+			if !ok {
+				return nil, ErrCatalogDefinitionInvalid
+			}
+			return []PreviewCatalogCandidate{candidate}, nil
+		}
+	}
+
+	type matchedCandidate struct {
+		candidate PreviewCatalogCandidate
+		score     int
+	}
+	matches := make(map[string]matchedCandidate)
+	hasExactSceneMatch := false
+	for _, definition := range definitions {
+		profile, found := resolver.catalog.sceneDiscovery[definition.ID]
+		if !found {
+			return nil, ErrCatalogDefinitionInvalid
+		}
+		phrases := append([]string{definition.Name}, profile.Aliases...)
+		score := discoveryMatchScore(query, phrases)
 		if score == 0 {
 			continue
 		}
-		defaultOption, found := defaultPracticeOption(definition.PracticeOptions)
-		if !found || len(definition.Roles) == 0 {
-			continue
+		if score >= 1000 {
+			hasExactSceneMatch = true
 		}
-		candidate := PreviewCatalogCandidate{
-			Scene:          definition,
-			DefaultRoleIDs: []string{definition.Roles[0].ID},
-			DefaultOption:  defaultOption,
+		candidate, ok := catalogPreviewCandidate(definition, "")
+		if !ok {
+			return nil, ErrCatalogDefinitionInvalid
 		}
-		if score >= 90 {
-			return []PreviewCatalogCandidate{candidate}, nil
+		matches[definition.ID] = matchedCandidate{candidate: candidate, score: score}
+	}
+	if hasExactSceneMatch {
+		for sceneID, match := range matches {
+			if match.score < 1000 {
+				delete(matches, sceneID)
+			}
 		}
-		scored = append(scored, scoredCandidate{
-			candidate: candidate,
-			score:     score,
-		})
+	}
+	if len(matches) == 0 {
+		for _, profile := range resolver.catalog.experienceDiscovery {
+			score := discoveryMatchScore(query, profile.Aliases)
+			if score == 0 {
+				continue
+			}
+			definition, found := byID[profile.DefaultSceneID]
+			if !found {
+				return nil, ErrCatalogDefinitionInvalid
+			}
+			candidate, ok := catalogPreviewCandidate(
+				definition,
+				profile.DefaultPracticeOptionID,
+			)
+			if !ok {
+				return nil, ErrCatalogDefinitionInvalid
+			}
+			matches[definition.ID] = matchedCandidate{candidate: candidate, score: score}
+		}
+	}
+
+	scored := make([]matchedCandidate, 0, len(matches))
+	for _, match := range matches {
+		scored = append(scored, match)
 	}
 	sort.Slice(scored, func(left, right int) bool {
 		if scored[left].score == scored[right].score {
-			return scored[left].candidate.Scene.ID <
-				scored[right].candidate.Scene.ID
+			return scored[left].candidate.Scene.ID < scored[right].candidate.Scene.ID
 		}
 		return scored[left].score > scored[right].score
 	})
@@ -100,90 +138,52 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 		scored = scored[:MaxPreviewCatalogCandidates]
 	}
 	result := make([]PreviewCatalogCandidate, len(scored))
-	for index := range scored {
-		result[index] = scored[index].candidate
+	for index, match := range scored {
+		result[index] = match.candidate
 	}
 	return result, nil
 }
 
-func previewCatalogScore(
-	query string,
-	queryTerms []string,
-	definition SceneDefinition,
-) int {
-	if query == strings.ToLower(definition.ID) {
-		return 100
-	}
-	if query == strings.ToLower(definition.Name) {
-		return 90
-	}
-	fields := []string{
-		definition.Name,
-		string(definition.Experience),
-		string(definition.Category),
-		definition.Prompt.PublicSceneBrief,
-		definition.Prompt.PracticeGoal,
-		definition.Prompt.UserRole,
-		definition.Prompt.AIRole,
-	}
-	for _, role := range definition.Roles {
-		fields = append(fields, role.DisplayName, role.Type)
-	}
-	score := 0
-	for _, field := range fields {
-		normalized := strings.ToLower(strings.TrimSpace(field))
-		if normalized != "" &&
-			(strings.Contains(normalized, query) ||
-				strings.Contains(query, normalized)) {
-			score++
+func discoveryMatchScore(query string, phrases []string) int {
+	best := 0
+	for _, phrase := range phrases {
+		normalized := normalizeDiscoveryText(phrase)
+		if normalized == "" || !strings.Contains(query, normalized) {
 			continue
 		}
-		for _, term := range queryTerms {
-			if strings.Contains(normalized, term) {
-				score++
-				break
-			}
+		score := utf8.RuneCountInString(normalized)
+		if query == normalized {
+			score += 1000
+		}
+		if score > best {
+			best = score
 		}
 	}
-	return score
+	return best
 }
 
-// previewCatalogQueryTerms extracts meaningful Chinese fragments from a
-// sentence-shaped query. The catalog remains the source of searchable text;
-// this only lets a request such as “我想练习看房” match the concise catalog
-// phrase “看房与租赁咨询”. Terms shorter than two runes are intentionally
-// ignored to avoid broad matches on individual Chinese characters.
-func previewCatalogQueryTerms(query string) []string {
-	const maxTermRunes = 6
-	seen := make(map[string]struct{})
-	terms := make([]string, 0)
-	appendSequence := func(sequence []rune) {
-		for width := min(maxTermRunes, len(sequence)); width >= 2; width-- {
-			for start := 0; start+width <= len(sequence); start++ {
-				term := string(sequence[start : start+width])
-				if _, generic := previewCatalogGenericQueryTerms[term]; generic {
-					continue
-				}
-				if _, duplicate := seen[term]; duplicate {
-					continue
-				}
-				seen[term] = struct{}{}
-				terms = append(terms, term)
-			}
-		}
+func catalogPreviewCandidate(
+	definition SceneDefinition,
+	optionID string,
+) (PreviewCatalogCandidate, bool) {
+	if len(definition.Roles) == 0 {
+		return PreviewCatalogCandidate{}, false
 	}
-
-	sequence := make([]rune, 0)
-	for _, character := range []rune(query) {
-		if unicode.Is(unicode.Han, character) {
-			sequence = append(sequence, character)
-			continue
-		}
-		appendSequence(sequence)
-		sequence = sequence[:0]
+	var option PracticeOption
+	var found bool
+	if optionID == "" {
+		option, found = defaultPracticeOption(definition.PracticeOptions)
+	} else {
+		option, found = findPracticeOption(definition.PracticeOptions, optionID)
 	}
-	appendSequence(sequence)
-	return terms
+	if !found {
+		return PreviewCatalogCandidate{}, false
+	}
+	return PreviewCatalogCandidate{
+		Scene:          definition,
+		DefaultRoleIDs: []string{definition.Roles[0].ID},
+		DefaultOption:  option,
+	}, true
 }
 
 func defaultPracticeOption(
