@@ -53,6 +53,24 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	}
 }
 
+func TestCatalogPreviewResolverMatchesHotelCheckin(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	resolver, err := NewCatalogPreviewResolver(catalog)
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(context.Background(), "酒店入住")
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Scene.ID != "scn_travel_hotel_checkin" {
+		t.Fatalf("hotel candidates = %#v", items)
+	}
+}
+
 func TestCatalogPreviewResolverSeparatesSplitScenarios(t *testing.T) {
 	catalog, err := NewBuiltinCatalog(testPolicyValidator())
 	if err != nil {

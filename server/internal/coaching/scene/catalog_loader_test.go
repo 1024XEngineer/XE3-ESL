@@ -43,6 +43,27 @@ func TestBuiltinCatalogLoadsVersionedRepositoryContent(t *testing.T) {
 	}
 }
 
+func TestBuiltinCatalogNarrowsHotelSceneToCheckin(t *testing.T) {
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	definition, err := catalog.GetScene(context.Background(), "scn_travel_hotel_checkin")
+	if err != nil {
+		t.Fatalf("GetScene(hotel check-in) error = %v", err)
+	}
+	if definition.Name != "酒店入住" ||
+		definition.Prompt.UserRole != "住客" ||
+		definition.Prompt.AIRole != "酒店前台" ||
+		definition.Prompt.PracticeGoal != "核验预订、入住日期、房型、付款和酒店服务，完成入住。" ||
+		definition.Prompt.TurnBlueprints[0] != "欢迎住客，并询问预订姓名" {
+		t.Fatalf("hotel Scene = %#v", definition)
+	}
+	if _, err := catalog.GetScene(context.Background(), "scn_daily_hotel_checkin_issue"); !errors.Is(err, ErrSceneNotFound) {
+		t.Fatalf("GetScene(old hotel) error = %v", err)
+	}
+}
+
 func TestBuiltinCatalogOmitsSocialInvitation(t *testing.T) {
 	catalog, err := NewBuiltinCatalog(testPolicyValidator())
 	if err != nil {
