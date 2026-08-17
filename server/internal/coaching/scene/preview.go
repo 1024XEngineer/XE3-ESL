@@ -81,7 +81,7 @@ func (resolver *CatalogPreviewResolver) ResolvePreviewCatalog(
 			DefaultRoleIDs: []string{definition.Roles[0].ID},
 			DefaultOption:  defaultOption,
 		}
-		if score == 100 {
+		if score >= 90 {
 			return []PreviewCatalogCandidate{candidate}, nil
 		}
 		scored = append(scored, scoredCandidate{

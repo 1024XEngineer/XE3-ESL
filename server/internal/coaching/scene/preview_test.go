@@ -21,6 +21,24 @@ func TestCatalogPreviewResolverReturnsExactScene(t *testing.T) {
 	}
 }
 
+func TestCatalogPreviewResolverReturnsOnlyExactSceneName(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(
+		context.Background(),
+		"英文自我介绍",
+	)
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) != 1 ||
+		items[0].Scene.ID != "scn_interview_self_introduction" {
+		t.Fatalf("exact-name candidates = %#v", items)
+	}
+}
+
 func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	resolver, err := NewCatalogPreviewResolver(mustTestCatalog(t))
 	if err != nil {
