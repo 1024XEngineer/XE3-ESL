@@ -34,7 +34,7 @@ var cleanBaselineTables = []string{
 	"users",
 }
 
-func TestCleanBaselineFreshUpDownUp(t *testing.T) {
+func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 	config, admin, schema := isolatedMigrationConfig(t)
 	runner, err := openConfig(config)
 	if err != nil {
@@ -54,7 +54,13 @@ func TestCleanBaselineFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne = %t, %v", changed, err)
+		t.Fatalf("DownOne to baseline = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to empty = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, 0)
 

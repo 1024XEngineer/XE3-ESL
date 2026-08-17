@@ -21,6 +21,24 @@ func TestCatalogPreviewResolverReturnsExactScene(t *testing.T) {
 	}
 }
 
+func TestCatalogPreviewResolverReturnsOnlyExactSceneName(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
+	if err != nil {
+		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
+	}
+	items, err := resolver.ResolvePreviewCatalog(
+		context.Background(),
+		"英文自我介绍",
+	)
+	if err != nil {
+		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	}
+	if len(items) != 1 ||
+		items[0].Scene.ID != "scn_interview_self_introduction" {
+		t.Fatalf("exact-name candidates = %#v", items)
+	}
+}
+
 func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	resolver, err := NewCatalogPreviewResolver(mustTestCatalog(t))
 	if err != nil {
@@ -35,20 +53,28 @@ func TestCatalogPreviewResolverBoundsNaturalLanguageCandidates(t *testing.T) {
 	}
 }
 
-func TestCatalogPreviewResolverDoesNotMatchRemovedSocialInvitation(t *testing.T) {
-	catalog, err := NewBuiltinCatalog(testPolicyValidator())
-	if err != nil {
-		t.Fatalf("NewBuiltinCatalog() error = %v", err)
-	}
-	resolver, err := NewCatalogPreviewResolver(catalog)
+func TestCatalogPreviewResolverMatchesSentenceShapedChineseQueries(t *testing.T) {
+	resolver, err := NewCatalogPreviewResolver(mustBuiltinCatalog(t))
 	if err != nil {
 		t.Fatalf("NewCatalogPreviewResolver() error = %v", err)
 	}
-	items, err := resolver.ResolvePreviewCatalog(context.Background(), "拒绝朋友邀请")
-	if err != nil {
-		t.Fatalf("ResolvePreviewCatalog() error = %v", err)
+	tests := map[string]string{
+		"我想练习口语":       "scn_ielts_speaking",
+		"我想练习看房":       "scn_daily_rental_viewing",
+		"我家水管坏了，想练习报修": "scn_daily_rental_maintenance",
 	}
-	if len(items) != 0 {
-		t.Fatalf("social invitation candidates = %#v", items)
+	for query, wantSceneID := range tests {
+		t.Run(query, func(t *testing.T) {
+			items, resolveErr := resolver.ResolvePreviewCatalog(
+				context.Background(),
+				query,
+			)
+			if resolveErr != nil {
+				t.Fatalf("ResolvePreviewCatalog() error = %v", resolveErr)
+			}
+			if len(items) != 1 || items[0].Scene.ID != wantSceneID {
+				t.Fatalf("candidates = %#v, want only %q", items, wantSceneID)
+			}
+		})
 	}
 }

@@ -48,6 +48,7 @@ type PreviewResult struct {
 	Replayed              bool
 	ClientAction          agentclientaction.Action
 	SourceRefs            []capability.SourceRef
+	AssistantText         string
 }
 
 type PreviewPort interface {
@@ -175,5 +176,6 @@ func previewToolResult(preview PreviewResult) capability.Result {
 		SourceRefs:    preview.SourceRefs,
 		ClientActions: clientActions,
 		TurnOutcome:   turnOutcome,
+		AssistantText: preview.AssistantText,
 	}
 }
