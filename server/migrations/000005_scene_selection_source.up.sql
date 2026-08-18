@@ -1,5 +1,7 @@
 BEGIN;
 
+-- Version 5 adds the authoritative Catalog/Custom scene source snapshot.
+
 WITH migrated AS (
     SELECT
         plans.plan_id,

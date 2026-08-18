@@ -16,7 +16,8 @@ import (
 const questionTipColumns = `
 	SELECT q.tip_id, q.session_id, q.question_id, q.tip_client_request_id,
 	       q.tip_status, q.tip_fencing_token, q.tip_lease_expires_at,
-	       COALESCE(q.tip_content, ''), q.tip_created_at, q.updated_at,
+	       COALESCE(q.tip_content, ''), COALESCE(q.tip_translation, ''),
+	       q.tip_created_at, q.updated_at,
 	       q.tip_completed_at
 	FROM practice_questions q
 	JOIN practice_sessions s ON s.session_id=q.session_id
@@ -114,7 +115,8 @@ func (r *Repository) ClaimQuestionTip(
 			UPDATE practice_questions q
 			SET tip_client_request_id = $4, tip_status = 'processing',
 			    tip_fencing_token = $5, tip_lease_expires_at = $6,
-			    tip_content = NULL, tip_provider = NULL, tip_model = NULL,
+			    tip_content = NULL, tip_translation = NULL,
+			    tip_provider = NULL, tip_model = NULL,
 			    tip_provider_request_id = NULL, tip_completed_at = NULL,
 			    updated_at = $7
 			FROM practice_sessions s
@@ -156,6 +158,46 @@ func (r *Repository) GetQuestionTip(
 	return tip, nil
 }
 
+func (r *Repository) RenewQuestionTipLease(
+	ctx context.Context,
+	actor practiceinteraction.Actor,
+	command practiceinteraction.RenewQuestionTipLeaseCommand,
+) error {
+	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
+		strings.TrimSpace(command.TipID) == "" || command.FencingToken <= 0 ||
+		command.DeletionGeneration != 0 || command.LeaseDuration <= 0 {
+		return practiceinteraction.ErrPersistenceInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := ensureActorWritable(ctx, tx, actor.UserID); err != nil {
+		return err
+	}
+	now := databaseTime(r.now)
+	tag, err := tx.Exec(ctx, `
+		UPDATE practice_questions q
+		SET tip_lease_expires_at = $4, updated_at = $5
+		FROM practice_sessions s
+		WHERE s.session_id=q.session_id AND s.user_id = $1 AND q.tip_id = $2
+		  AND q.tip_status = 'processing' AND q.tip_fencing_token = $3
+		  AND q.tip_lease_expires_at > $5
+	`, actor.UserID, command.TipID, command.FencingToken,
+		now.Add(command.LeaseDuration), now)
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return practiceinteraction.ErrPersistenceConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return safeDatabaseError(err)
+	}
+	return nil
+}
+
 func (r *Repository) CompleteQuestionTip(
 	ctx context.Context,
 	actor practiceinteraction.Actor,
@@ -164,6 +206,7 @@ func (r *Repository) CompleteQuestionTip(
 	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
 		strings.TrimSpace(command.TipID) == "" || command.FencingToken <= 0 ||
 		command.DeletionGeneration != 0 || strings.TrimSpace(command.Content) == "" ||
+		strings.TrimSpace(command.Translation) == "" ||
 		strings.TrimSpace(command.Provider) == "" || !modelid.Valid(command.Model) ||
 		strings.TrimSpace(command.ProviderRequestID) == "" {
 		return practiceinteraction.QuestionTip{}, practiceinteraction.ErrPersistenceInvalid
@@ -183,8 +226,9 @@ func (r *Repository) CompleteQuestionTip(
 		return practiceinteraction.QuestionTip{}, err
 	}
 	content := strings.TrimSpace(command.Content)
+	translation := strings.TrimSpace(command.Translation)
 	if tip.Status == practiceinteraction.QuestionTipCompleted {
-		if tip.Content != content {
+		if tip.Content != content || tip.Translation != translation {
 			return practiceinteraction.QuestionTip{}, practiceinteraction.ErrPersistenceConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -200,18 +244,19 @@ func (r *Repository) CompleteQuestionTip(
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE practice_questions q
-		SET tip_status = 'completed', tip_content = $3, tip_provider = $4,
-		    tip_model = $5, tip_provider_request_id = $6,
-		    tip_lease_expires_at = NULL, tip_completed_at = $7, updated_at = $7
+		SET tip_status = 'completed', tip_content = $3, tip_translation = $4,
+		    tip_provider = $5, tip_model = $6, tip_provider_request_id = $7,
+		    tip_lease_expires_at = NULL, tip_completed_at = $8, updated_at = $8
 		FROM practice_sessions s
 		WHERE s.session_id=q.session_id AND s.user_id = $1 AND q.tip_id = $2
-	`, actor.UserID, command.TipID, content, command.Provider, command.Model,
+	`, actor.UserID, command.TipID, content, translation, command.Provider, command.Model,
 		command.ProviderRequestID, now)
 	if err != nil {
 		return practiceinteraction.QuestionTip{}, safeDatabaseError(err)
 	}
 	tip.Status = practiceinteraction.QuestionTipCompleted
 	tip.Content = content
+	tip.Translation = translation
 	tip.UpdatedAt = now
 	tip.CompletedAt = &now
 	if err := tx.Commit(ctx); err != nil {
@@ -267,7 +312,7 @@ func scanQuestionTip(row rowScanner) (practiceinteraction.QuestionTip, error) {
 	var leaseExpiresAt sql.NullTime
 	err := row.Scan(
 		&tip.ID, &tip.SessionID, &tip.QuestionID, &tip.IdempotencyKey,
-		&tip.Status, &tip.FencingToken, &leaseExpiresAt, &tip.Content,
+		&tip.Status, &tip.FencingToken, &leaseExpiresAt, &tip.Content, &tip.Translation,
 		&tip.CreatedAt, &tip.UpdatedAt, &tip.CompletedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

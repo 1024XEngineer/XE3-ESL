@@ -73,7 +73,13 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to archive migration = %t, %v", changed, err)
+		t.Fatalf("DownOne to Question Tip translation = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to Practice Plan archive = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
 
@@ -115,7 +121,7 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
-		t.Fatalf("DownOne to v3 = %t, %v", changed, downErr)
+		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
 	}
 
 	database, err := pgx.ConnectConfig(context.Background(), config)
@@ -149,7 +155,7 @@ INSERT INTO practice_plans (
     decode(repeat('11', 32), 'hex')
 )
 `, userID, planID, oldSelection, policyJSON, objectivesJSON); err != nil {
-		t.Fatalf("seed v3 Practice Plan: %v", err)
+		t.Fatalf("seed legacy Practice Plan: %v", err)
 	}
 	if _, err := database.Exec(context.Background(), `
 INSERT INTO practice_sessions (
@@ -164,11 +170,11 @@ INSERT INTO practice_sessions (
     'request-migration-session', decode(repeat('12', 32), 'hex')
 )
 `, userID, planID, sessionID, oldSelection); err != nil {
-		t.Fatalf("seed v3 Practice Session: %v", err)
+		t.Fatalf("seed legacy Practice Session: %v", err)
 	}
 
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
-		t.Fatalf("apply v4 = %t, %v", changed, upErr)
+		t.Fatalf("apply v5 = %t, %v", changed, upErr)
 	}
 	assertMigratedSceneSelection := func(query string, id string) {
 		t.Helper()
@@ -242,7 +248,7 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
-		t.Fatalf("roll back v4 = %t, %v", changed, downErr)
+		t.Fatalf("roll back v5 = %t, %v", changed, downErr)
 	}
 	var restoredID, restoredRoleID, restoredOptionID, restoredStatus string
 	var restoredVersion int
@@ -254,7 +260,7 @@ SELECT scene_selection #>> '{scene,scene_id}',
        scene_selection #>> '{scene,practice_options,0,scene_id}'
 FROM practice_plans WHERE plan_id = $1
 `, planID).Scan(&restoredID, &restoredVersion, &restoredStatus, &restoredRoleID, &restoredOptionID); err != nil {
-		t.Fatalf("read restored v3 snapshot: %v", err)
+		t.Fatalf("read restored legacy snapshot: %v", err)
 	}
 	if restoredID != selection.Source.SceneID ||
 		restoredVersion != selection.Source.SceneVersion ||
@@ -275,7 +281,7 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
-		t.Fatalf("DownOne to v3 = %t, %v", changed, downErr)
+		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
 	}
 
 	ctx := context.Background()
@@ -309,10 +315,10 @@ INSERT INTO practice_plans (
 )
 `, userID, planID, legacySelectionJSON(t, selection), mustJSON(t, policy),
 		mustJSON(t, objectives)); err != nil {
-		t.Fatalf("seed v3 Catalog Plan lifecycle fixture: %v", err)
+		t.Fatalf("seed legacy Catalog Plan lifecycle fixture: %v", err)
 	}
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
-		t.Fatalf("apply v4 = %t, %v", changed, upErr)
+		t.Fatalf("apply v5 = %t, %v", changed, upErr)
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(config.ConnString())

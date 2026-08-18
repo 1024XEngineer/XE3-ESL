@@ -262,6 +262,7 @@ void main() {
           'question_id': _questionId,
           'content':
               'I would clarify the goal first. Then I would explain my approach clearly.',
+          'translation': '我会先确认目标，然后清晰地说明我的方法。',
           'created_at': _timestamp,
         }),
       ),
@@ -276,6 +277,7 @@ void main() {
     expect(tip.id, 'question-tip-1');
     expect(tip.questionId, _questionId);
     expect(tip.content, contains('clarify the goal'));
+    expect(tip.translation, '我会先确认目标，然后清晰地说明我的方法。');
     transport.expectDone();
   });
 

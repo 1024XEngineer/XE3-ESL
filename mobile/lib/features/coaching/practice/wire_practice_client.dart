@@ -1212,6 +1212,7 @@ PracticeQuestionTip _decodeQuestionTip(
       'practice_session_id',
       'question_id',
       'content',
+      'translation',
       'created_at',
     },
   );
@@ -1220,6 +1221,12 @@ PracticeQuestionTip _decodeQuestionTip(
     sessionId: _string(root, 'practice_session_id'),
     questionId: _string(root, 'question_id'),
     content: _utf8String(root, 'content', maxLength: 800, maxBytes: 2400),
+    translation: _utf8String(
+      root,
+      'translation',
+      maxLength: 2000,
+      maxBytes: 6000,
+    ),
     createdAt: _dateTime(root, 'created_at'),
   );
   if (tip.sessionId != expectedSessionId ||

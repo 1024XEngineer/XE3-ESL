@@ -1,5 +1,7 @@
 BEGIN;
 
+-- Version 5 restores legacy Catalog-only scene selections.
+
 DO $$
 BEGIN
     IF EXISTS (

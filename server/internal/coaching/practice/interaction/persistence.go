@@ -182,6 +182,7 @@ type QuestionTip struct {
 	LeaseAcquired      bool
 	LeaseExpiresAt     time.Time
 	Content            string
+	Translation        string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	CompletedAt        *time.Time
@@ -194,11 +195,19 @@ type ClaimQuestionTipCommand struct {
 	LeaseDuration  time.Duration
 }
 
+type RenewQuestionTipLeaseCommand struct {
+	TipID              string
+	FencingToken       int64
+	DeletionGeneration int64
+	LeaseDuration      time.Duration
+}
+
 type CompleteQuestionTipCommand struct {
 	TipID              string
 	FencingToken       int64
 	DeletionGeneration int64
 	Content            string
+	Translation        string
 	Provider           string
 	Model              string
 	ProviderRequestID  string
@@ -216,6 +225,11 @@ type QuestionTipStore interface {
 		Actor,
 		ClaimQuestionTipCommand,
 	) (QuestionTip, error)
+	RenewQuestionTipLease(
+		context.Context,
+		Actor,
+		RenewQuestionTipLeaseCommand,
+	) error
 	GetQuestionTip(
 		context.Context,
 		Actor,

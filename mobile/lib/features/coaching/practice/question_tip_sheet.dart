@@ -4,12 +4,14 @@ import 'package:speakup/design/speak_up_design.dart';
 class QuestionTipCard extends StatefulWidget {
   const QuestionTipCard({
     required this.content,
+    required this.translation,
     required this.onClose,
     required this.onSpeak,
     super.key,
   });
 
   final String content;
+  final String translation;
   final VoidCallback onClose;
   final Future<void> Function() onSpeak;
 
@@ -81,9 +83,29 @@ class _QuestionTipCardState extends State<QuestionTipCard> {
             ],
           ),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 112),
+            constraints: const BoxConstraints(maxHeight: 220),
             child: SingleChildScrollView(
-              child: Text(widget.content, style: SpeakUpDesign.body),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    widget.content,
+                    key: const Key('practice-question-tip-content'),
+                    style: SpeakUpDesign.body,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    widget.translation,
+                    key: const Key('practice-question-tip-translation'),
+                    style: const TextStyle(
+                      color: SpeakUpDesign.secondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -125,11 +147,13 @@ class _QuestionTipCardState extends State<QuestionTipCard> {
 class QuestionTipSheet extends StatefulWidget {
   const QuestionTipSheet({
     required this.content,
+    required this.translation,
     required this.onSpeak,
     super.key,
   });
 
   final String content;
+  final String translation;
   final Future<void> Function() onSpeak;
 
   @override
@@ -188,7 +212,30 @@ class _QuestionTipSheetState extends State<QuestionTipSheet> {
             ],
           ),
           const SizedBox(height: 12),
-          Text(widget.content, style: SpeakUpDesign.body),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.5,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(widget.content, style: SpeakUpDesign.body),
+                  const SizedBox(height: 10),
+                  Text(
+                    widget.translation,
+                    key: const Key('practice-question-tip-sheet-translation'),
+                    style: const TextStyle(
+                      color: SpeakUpDesign.secondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: 18),
           OutlinedButton.icon(
             key: const Key('practice-question-tip-speak'),
