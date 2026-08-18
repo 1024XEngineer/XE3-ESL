@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/interview/job_preparation_models.dart'
 import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
@@ -168,6 +169,58 @@ void main() {
       transport.calls.single.uri.path,
       '/v1/practice-plans/$contractPlanId',
     );
+  });
+
+  test(
+    'lists no practice plans without treating the empty state as an error',
+    () async {
+      final transport = _QueueTransport(<IdentityHttpResponse>[
+        _response(HttpStatus.ok, <String, Object?>{
+          'practice_plans': <Object?>[],
+        }),
+      ]);
+      final client = _client(transport);
+
+      final plans = await client.listPlans(
+        experience: PracticeExperience.interview,
+      );
+
+      expect(plans, isEmpty);
+    },
+  );
+
+  test('lists an interview plan whose required job title is empty', () async {
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(HttpStatus.ok, <String, Object?>{
+        'practice_plans': <Object?>[
+          <String, Object?>{
+            'practice_plan_id': contractPlanId,
+            'version': 1,
+            'practice_plan_status': 'ready',
+            'practice_experience': 'INTERVIEW',
+            'scene_name': 'Project deep dive',
+            'practice_scope': 'Full simulation',
+            'job_title': '',
+            'practice_objectives': <String>['Communicate clearly.'],
+            'resume_used': false,
+            'suggested_duration_seconds': 600,
+            'min_effective_turns': 3,
+            'max_effective_turns': 6,
+            'created_at': contractCreatedAt,
+            'updated_at': contractCreatedAt,
+          },
+        ],
+      }),
+    ]);
+    final client = _client(transport);
+
+    final plans = await client.listPlans(
+      experience: PracticeExperience.interview,
+    );
+
+    expect(plans, hasLength(1));
+    expect(plans.single.jobTitle, isEmpty);
+    expect(plans.single.sceneName, 'Project deep dive');
   });
 }
 
