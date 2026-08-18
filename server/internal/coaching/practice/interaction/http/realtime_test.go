@@ -249,6 +249,54 @@ func TestPracticeQuestionSpeechStreamsTrustedQuestionPCM(t *testing.T) {
 	}
 }
 
+func TestPracticePromptSpeechStreamsBoundedClientText(t *testing.T) {
+	application := &practiceRealtimeHTTPApplication{}
+	synthesizer := &practiceQuestionSpeechSynthesizer{}
+	server := httptest.NewServer(
+		newPracticeRealtimeHTTPRouterWithOptions(
+			t,
+			application,
+			Options{RealtimeSpeech: synthesizer},
+		),
+	)
+	defer server.Close()
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/v1/practice-speech/realtime"
+	connection, response, err := (&websocket.Dialer{
+		Subprotocols: []string{practiceQuestionSpeechWebSocketProtocol},
+	}).Dial(
+		endpoint,
+		http.Header{"Authorization": []string{"Bearer voice-token-a"}},
+	)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial status = %d: %v", response.StatusCode, err)
+		}
+		t.Fatalf("dial realtime prompt speech: %v", err)
+	}
+	defer connection.Close()
+	if _, _, err := connection.ReadMessage(); err != nil {
+		t.Fatalf("read ready: %v", err)
+	}
+	if err := connection.WriteJSON(gin.H{
+		"type": "speak", "text": "  Try this answer.  ",
+	}); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	messageType, audio, err := connection.ReadMessage()
+	if err != nil || messageType != websocket.BinaryMessage ||
+		string(audio) != "\x01\x02\x03\x04" {
+		t.Fatalf("audio = (%d, %v), err = %v", messageType, audio, err)
+	}
+	if _, completed, err := connection.ReadMessage(); err != nil ||
+		!strings.Contains(string(completed), `"type":"stream.completed"`) {
+		t.Fatalf("completed = %q, err = %v", completed, err)
+	}
+	if synthesizer.text != "Try this answer." {
+		t.Fatalf("speech text = %q", synthesizer.text)
+	}
+}
+
 func TestPracticeRealtimeFailureUsesStableSafeCategory(t *testing.T) {
 	providerFailure := practiceinteraction.NewProviderError(
 		practiceinteraction.ProviderOperationTranscription,

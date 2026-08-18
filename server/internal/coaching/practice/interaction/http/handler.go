@@ -164,6 +164,7 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 			"/v1/practice-questions/:question_id/speech/realtime",
 			handler.questionSpeechRealtime,
 		)
+		routes.GET("/v1/practice-speech/realtime", handler.promptSpeechRealtime)
 	}
 	routes.GET(
 		"/v1/practice-questions/:question_id/translation",

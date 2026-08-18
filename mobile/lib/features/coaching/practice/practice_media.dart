@@ -30,6 +30,10 @@ abstract interface class PracticeQuestionSpeechClient {
   Stream<Uint8List> streamQuestionSpeech(String questionId);
 }
 
+abstract interface class PracticeTextSpeechClient {
+  Stream<Uint8List> streamTextSpeech(String text);
+}
+
 final class PracticeMediaWireRequest {
   const PracticeMediaWireRequest({
     required this.method,
@@ -68,7 +72,10 @@ abstract interface class PracticeMediaWireTransport {
 /// signed URL is consumed by a separate request with no App Session header,
 /// then only the resulting WAV bytes cross the player boundary.
 final class WirePracticeMediaClient
-    implements PracticeMediaClient, PracticeQuestionSpeechClient {
+    implements
+        PracticeMediaClient,
+        PracticeQuestionSpeechClient,
+        PracticeTextSpeechClient {
   factory WirePracticeMediaClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -171,10 +178,34 @@ final class WirePracticeMediaClient
   @override
   Stream<Uint8List> streamQuestionSpeech(String questionId) async* {
     final id = _requireResourceId(questionId);
-    final generation = _accountGeneration;
     final uri = _practiceWebSocketBaseUri(_baseUri).resolve(
       '/v1/practice-questions/${Uri.encodeComponent(id)}/speech/realtime',
     );
+    yield* _streamSpeech(uri);
+  }
+
+  @override
+  Stream<Uint8List> streamTextSpeech(String text) async* {
+    final value = text.trim();
+    if (value.isEmpty || value.runes.length > 4096) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidRequest,
+      );
+    }
+    final uri = _practiceWebSocketBaseUri(
+      _baseUri,
+    ).resolve('/v1/practice-speech/realtime');
+    yield* _streamSpeech(
+      uri,
+      initialMessage: jsonEncode(<String, String>{
+        'type': 'speak',
+        'text': value,
+      }),
+    );
+  }
+
+  Stream<Uint8List> _streamSpeech(Uri uri, {String? initialMessage}) async* {
+    final generation = _accountGeneration;
     SessionAuthenticatedWebSocketConnection? connection;
     StreamIterator<dynamic>? messages;
     var receivedBytes = 0;
@@ -184,6 +215,9 @@ final class WirePracticeMediaClient
       messages = StreamIterator<dynamic>(connection.socket);
       final ready = await _nextPracticeSpeechMessage(messages);
       _requirePracticeSpeechEvent(ready, 'stream.ready');
+      if (initialMessage != null) {
+        connection.socket.add(initialMessage);
+      }
       while (true) {
         final message = await _nextPracticeSpeechMessage(messages);
         if (message is String) {

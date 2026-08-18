@@ -490,6 +490,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       return ScenarioPracticePage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
+        questionSpeaker: _practiceController.promptSpeaker,
         onPracticeCompleted: launchController?.parkCurrentPractice,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
@@ -501,6 +502,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     return InterviewPracticePage(
       previewMode: widget.allowFakePreview,
       practiceController: _practiceController,
+      practicePromptSpeaker: _practiceController.promptSpeaker,
       onOpenInterviewReport: widget.sessionEvaluationController == null
           ? null
           : _openInterviewReport,
@@ -516,6 +518,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   }) {
     return IeltsSpeakingMockPage(
       controller: _practiceController,
+      examinerSpeaker: _practiceController.promptSpeaker,
       onExitRequested: launchController?.parkCurrentPractice,
       ieltsController: widget.ieltsPreparationController,
       reportStatusController: widget.sessionEvaluationController,

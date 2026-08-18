@@ -17,6 +17,9 @@ ajv.addSchema(schema);
 const validate = ajv.compile({
   $ref: `${schema.$id}#/$defs/ServerEvent`,
 });
+const validateClient = ajv.compile({
+  $ref: `${schema.$id}#/$defs/ClientEvent`,
+});
 
 const validEvents = [
   {
@@ -52,6 +55,12 @@ for (const event of validEvents) {
 for (const event of invalidEvents) {
   assert.equal(validate(event), false, `accepted ${event.type}`);
 }
+assert.equal(validateClient({ type: 'speak', text: 'Try this answer.' }), true);
+assert.equal(validateClient({ type: 'speak', text: '' }), false);
+assert.equal(
+  validateClient({ type: 'speak', text: 'valid', provider: 'forbidden' }),
+  false,
+);
 
 console.log(
   `Validated ${validEvents.length} Practice Question speech events and ` +

@@ -11,6 +11,7 @@ import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
@@ -54,6 +55,11 @@ final class PracticeController extends ChangeNotifier
     if (mediaClient != null || questionSpeechPlayer != null) {
       WidgetsBinding.instance.addObserver(this);
     }
+    promptSpeaker = ModelFirstPracticePromptSpeaker(
+      speakTextWithModel: _speakPromptTextWithModel,
+      speakQuestionWithModel: _speakPromptQuestionWithModel,
+      stopModelSpeech: () => stopPracticeAudio(notify: false),
+    );
   }
 
   final PracticeClient client;
@@ -61,6 +67,7 @@ final class PracticeController extends ChangeNotifier
   final PracticeMediaClient? mediaClient;
   final PracticeAudioPlayer? audioPlayer;
   final PracticePCMStreamPlayer? questionSpeechPlayer;
+  late final CoachingSpeechPlayer promptSpeaker;
   final PracticeClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   String? _practiceSessionId;
@@ -598,6 +605,82 @@ final class PracticeController extends ChangeNotifier
       if (identical(_questionSpeechOperation, operation)) {
         _questionSpeechOperation = null;
       }
+    }
+  }
+
+  Future<void> _speakPromptTextWithModel(String text) {
+    final speechClient = mediaClient;
+    if (speechClient is! PracticeTextSpeechClient) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    return _playStandaloneModelSpeech(
+      (speechClient as PracticeTextSpeechClient).streamTextSpeech(text),
+    );
+  }
+
+  Future<void> _speakPromptQuestionWithModel(
+    String questionId,
+    String fallbackText,
+  ) {
+    final speechClient = mediaClient;
+    if (speechClient is! PracticeQuestionSpeechClient || questionId.isEmpty) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    return _playStandaloneModelSpeech(
+      (speechClient as PracticeQuestionSpeechClient).streamQuestionSpeech(
+        questionId,
+      ),
+    );
+  }
+
+  Future<void> _playStandaloneModelSpeech(Stream<Uint8List> stream) async {
+    final player = questionSpeechPlayer;
+    if (player == null || _disposed || !canUsePracticeAudio) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    await stopPracticeAudio();
+    final generation = ++_mediaGeneration;
+    var started = false;
+    final iterator = StreamIterator<Uint8List>(stream);
+    _questionSpeechIterator = iterator;
+    try {
+      while (await iterator.moveNext()) {
+        final bytes = iterator.current;
+        if (!_isCurrentMedia(generation)) {
+          throw ModelSpeechPlaybackException(audioStarted: started);
+        }
+        if (!started) {
+          await player.startPCMStream();
+          if (!_isCurrentMedia(generation)) {
+            await player.stopPCMStream();
+            throw const ModelSpeechPlaybackException(audioStarted: false);
+          }
+          started = true;
+        }
+        try {
+          await player.appendPCM(bytes);
+        } finally {
+          bytes.fillRange(0, bytes.length, 0);
+        }
+      }
+      if (!started) {
+        throw const ModelSpeechPlaybackException(audioStarted: false);
+      }
+      if (!_isCurrentMedia(generation)) {
+        throw const ModelSpeechPlaybackException(audioStarted: true);
+      }
+      await player.finishPCMStream();
+    } on ModelSpeechPlaybackException {
+      await player.stopPCMStream();
+      rethrow;
+    } catch (_) {
+      await player.stopPCMStream();
+      throw ModelSpeechPlaybackException(audioStarted: started);
+    } finally {
+      if (identical(_questionSpeechIterator, iterator)) {
+        _questionSpeechIterator = null;
+      }
+      await iterator.cancel();
     }
   }
 
@@ -1587,6 +1670,30 @@ final class PracticeController extends ChangeNotifier
     });
   }
 
+  /// Abandons an unsubmitted local recording so an explicit user exit never
+  /// waits for a slow or unavailable transcription provider.
+  Future<void> abandonPendingTranscriptionForExit() async {
+    final pending = _pendingPracticeAudio;
+    if (pending == null || _disposed) {
+      return;
+    }
+    _practiceGeneration++;
+    _pendingPracticeAudio = null;
+    _stopRecordingFuture = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await recorder.discard(pending.audio);
+    } catch (_) {
+      // The stale transcription also owns best-effort cleanup. Exiting must
+      // remain available if the temporary file was already removed.
+    }
+  }
+
   Future<void> discardPendingPracticeAudio() {
     final pending = _pendingPracticeAudio;
     final inFlight = _stopRecordingFuture;
@@ -2131,6 +2238,7 @@ final class PracticeController extends ChangeNotifier
     _mediaGeneration++;
     _speechFeedbackRetry = null;
     _speechFeedbackRetryCandidate = null;
+    unawaited(promptSpeaker.dispose());
     unawaited(
       Future<void>.sync(() async {
         await _recorderStartFuture;
