@@ -46,6 +46,7 @@ var cleanBaselineTables = []string{
 	"evaluations",
 	"interview_preparations",
 	"media_assets",
+	"pending_practice_actions",
 	"practice_plans",
 	"practice_questions",
 	"practice_sessions",
@@ -73,33 +74,39 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to Scene selection source = %t, %v", changed, err)
+		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to Question Tip translation = %t, %v", changed, err)
+		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to Practice Plan archive = %t, %v", changed, err)
+		t.Fatalf("DownOne to v4 Question Tip translation = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to Agent domain completion = %t, %v", changed, err)
+		t.Fatalf("DownOne to v3 Practice Plan archive = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to baseline = %t, %v", changed, err)
+		t.Fatalf("DownOne to v2 Agent domain completion = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v1 baseline = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
@@ -125,6 +132,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
@@ -257,6 +267,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v7 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v6 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -291,6 +304,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
@@ -544,6 +560,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
