@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../model/identity_models.dart';
 import '../network/bearer_authentication.dart';
@@ -19,6 +20,11 @@ enum IdentityFailureKind {
   network,
   invalidResponse,
   unexpected,
+  imageTooLarge,
+  invalidImage,
+  idempotencyConflict,
+  resourceNotFound,
+  resourceProcessing,
 }
 
 enum _IdentityOperation {
@@ -28,6 +34,9 @@ enum _IdentityOperation {
   currentProfile,
   updateProfile,
   logout,
+  uploadAvatar,
+  useDefaultAvatar,
+  avatarContent,
 }
 
 final class IdentityClientException implements Exception {
@@ -84,8 +93,45 @@ abstract interface class UserProfileClient {
   });
 }
 
+final class UserAvatarImage {
+  UserAvatarImage({required this.contentType, required Uint8List bytes})
+    : bytes = Uint8List.fromList(bytes);
+
+  final String contentType;
+  final Uint8List bytes;
+}
+
+final class UserAvatarContent {
+  const UserAvatarContent({required this.url, required this.expiresAt});
+
+  final Uri url;
+  final DateTime expiresAt;
+}
+
+abstract interface class UserAvatarClient {
+  Future<UserProfile> uploadAvatar({
+    required String sessionToken,
+    required UserAvatarImage image,
+    required int expectedProfileVersion,
+    required String idempotencyKey,
+  });
+
+  Future<UserProfile> useDefaultAvatar({
+    required String sessionToken,
+    required int expectedProfileVersion,
+  });
+
+  Future<UserAvatarContent> currentAvatarContent({
+    required String sessionToken,
+  });
+}
+
 final class WireIdentityClient
-    implements IdentityClient, ProfileRegistrationClient, UserProfileClient {
+    implements
+        IdentityClient,
+        ProfileRegistrationClient,
+        UserProfileClient,
+        UserAvatarClient {
   factory WireIdentityClient({
     required Uri baseUri,
     IdentityHttpTransport? transport,
@@ -203,10 +249,82 @@ final class WireIdentityClient
     _requireStatus(response, 204, _IdentityOperation.logout);
   }
 
+  @override
+  Future<UserProfile> uploadAvatar({
+    required String sessionToken,
+    required UserAvatarImage image,
+    required int expectedProfileVersion,
+    required String idempotencyKey,
+  }) async {
+    final response = await _send(
+      method: 'POST',
+      path: '/v1/me/avatar',
+      sessionToken: sessionToken,
+      bodyBytes: image.bytes,
+      headers: <String, String>{
+        HttpHeaders.contentTypeHeader: image.contentType,
+        HttpHeaders.ifMatchHeader: '"$expectedProfileVersion"',
+        'Idempotency-Key': idempotencyKey,
+      },
+    );
+    _requireStatus(response, 200, _IdentityOperation.uploadAvatar);
+    return _decode(response, UserProfile.fromJson);
+  }
+
+  @override
+  Future<UserProfile> useDefaultAvatar({
+    required String sessionToken,
+    required int expectedProfileVersion,
+  }) async {
+    final response = await _send(
+      method: 'DELETE',
+      path: '/v1/me/avatar',
+      sessionToken: sessionToken,
+      headers: <String, String>{
+        HttpHeaders.ifMatchHeader: '"$expectedProfileVersion"',
+      },
+    );
+    _requireStatus(response, 200, _IdentityOperation.useDefaultAvatar);
+    return _decode(response, UserProfile.fromJson);
+  }
+
+  @override
+  Future<UserAvatarContent> currentAvatarContent({
+    required String sessionToken,
+  }) async {
+    final response = await _send(
+      method: 'GET',
+      path: '/v1/me/avatar/content',
+      sessionToken: sessionToken,
+    );
+    _requireStatus(response, 200, _IdentityOperation.avatarContent);
+    return _decode(response, (json) {
+      if (!_hasExactJsonKeys(json, const {'content_url', 'expires_at'})) {
+        throw const FormatException('Invalid avatar content response.');
+      }
+      final rawUrl = json['content_url'];
+      final rawExpiry = json['expires_at'];
+      if (rawUrl is! String || rawExpiry is! String) {
+        throw const FormatException('Invalid avatar content response.');
+      }
+      final url = Uri.tryParse(rawUrl);
+      final expiresAt = DateTime.tryParse(rawExpiry)?.toUtc();
+      if (url == null ||
+          !url.hasAuthority ||
+          (url.scheme != 'https' && url.scheme != 'http') ||
+          expiresAt == null ||
+          !expiresAt.isAfter(DateTime.now().toUtc())) {
+        throw const FormatException('Invalid avatar content response.');
+      }
+      return UserAvatarContent(url: url, expiresAt: expiresAt);
+    });
+  }
+
   Future<IdentityHttpResponse> _send({
     required String method,
     required String path,
     Map<String, Object?>? body,
+    Uint8List? bodyBytes,
     String? sessionToken,
     Map<String, String> headers = const {},
   }) async {
@@ -228,6 +346,7 @@ final class WireIdentityClient
         uri: uri,
         headers: requestHeaders,
         body: body == null ? null : jsonEncode(body),
+        bodyBytes: bodyBytes,
       );
     } on IdentityClientException {
       rethrow;
@@ -307,6 +426,12 @@ final class WireIdentityClient
       'profile_version_conflict' => IdentityFailureKind.profileVersionConflict,
       'rate_limited' => IdentityFailureKind.rateLimited,
       'internal_error' => IdentityFailureKind.server,
+      'image_too_large' => IdentityFailureKind.imageTooLarge,
+      'invalid_image' ||
+      'unsupported_image_format' => IdentityFailureKind.invalidImage,
+      'idempotency_key_conflict' => IdentityFailureKind.idempotencyConflict,
+      'resource_not_found' => IdentityFailureKind.resourceNotFound,
+      'resource_processing' => IdentityFailureKind.resourceProcessing,
       _ => IdentityFailureKind.unexpected,
     };
 
@@ -339,6 +464,9 @@ final class WireIdentityClient
         _IdentityOperation.currentUser ||
             _IdentityOperation.currentProfile ||
             _IdentityOperation.updateProfile ||
+            _IdentityOperation.uploadAvatar ||
+            _IdentityOperation.useDefaultAvatar ||
+            _IdentityOperation.avatarContent ||
             _IdentityOperation.logout,
         401,
         'authentication_required',
@@ -352,6 +480,26 @@ final class WireIdentityClient
         'profile_version_conflict',
       (_IdentityOperation.updateProfile, 400, 'invalid_request') =>
         'invalid_request',
+      (_IdentityOperation.uploadAvatar, 400, 'invalid_request') =>
+        'invalid_request',
+      (_IdentityOperation.uploadAvatar, 400, 'invalid_image') =>
+        'invalid_image',
+      (_IdentityOperation.uploadAvatar, 400, 'unsupported_image_format') =>
+        'unsupported_image_format',
+      (_IdentityOperation.uploadAvatar, 413, 'image_too_large') =>
+        'image_too_large',
+      (_IdentityOperation.uploadAvatar, 409, 'idempotency_key_conflict') =>
+        'idempotency_key_conflict',
+      (_IdentityOperation.uploadAvatar, 409, 'resource_processing') =>
+        'resource_processing',
+      (
+        _IdentityOperation.uploadAvatar || _IdentityOperation.useDefaultAvatar,
+        409,
+        'profile_version_conflict',
+      ) =>
+        'profile_version_conflict',
+      (_IdentityOperation.avatarContent, 404, 'resource_not_found') =>
+        'resource_not_found',
       (
         _IdentityOperation.register || _IdentityOperation.login,
         429,
@@ -373,6 +521,9 @@ final class WireIdentityClient
         _IdentityOperation.currentUser ||
             _IdentityOperation.currentProfile ||
             _IdentityOperation.updateProfile ||
+            _IdentityOperation.uploadAvatar ||
+            _IdentityOperation.useDefaultAvatar ||
+            _IdentityOperation.avatarContent ||
             _IdentityOperation.logout,
         401,
       ) =>
@@ -381,6 +532,14 @@ final class WireIdentityClient
       (_IdentityOperation.currentProfile, 404) => 'profile_not_found',
       (_IdentityOperation.updateProfile, 400) => 'invalid_request',
       (_IdentityOperation.updateProfile, 409) => 'profile_version_conflict',
+      (_IdentityOperation.uploadAvatar, 400) => 'invalid_image',
+      (_IdentityOperation.uploadAvatar, 413) => 'image_too_large',
+      (
+        _IdentityOperation.uploadAvatar || _IdentityOperation.useDefaultAvatar,
+        409,
+      ) =>
+        'profile_version_conflict',
+      (_IdentityOperation.avatarContent, 404) => 'resource_not_found',
       (_IdentityOperation.register || _IdentityOperation.login, 429) =>
         'rate_limited',
       (_, >= 500) => 'internal_error',
@@ -410,4 +569,8 @@ final class WireIdentityClient
       );
     }
   }
+}
+
+bool _hasExactJsonKeys(Map<String, Object?> json, Set<String> expected) {
+  return json.length == expected.length && expected.every(json.containsKey);
 }

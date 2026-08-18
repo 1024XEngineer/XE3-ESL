@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/identity/client/identity_client.dart';
@@ -89,6 +90,61 @@ void main() {
           'display_name': '林同学',
           'expected_profile_version': 1,
         });
+      },
+    );
+
+    test(
+      'avatar operations preserve version, bytes, and private URL',
+      () async {
+        transport.response = const IdentityHttpResponse(
+          statusCode: 200,
+          body:
+              '{"user_id":"user_1","display_name":"小林",'
+              '"profile_version":2,"avatar":{"width":512,"height":512,'
+              '"updated_at":"2026-08-18T08:00:00Z"},'
+              '"created_at":"2026-08-18T07:00:00Z",'
+              '"updated_at":"2026-08-18T08:00:00Z"}',
+        );
+        final profile = await client.uploadAvatar(
+          sessionToken: 'sess_opaque-secret',
+          image: UserAvatarImage(
+            contentType: 'image/png',
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+          expectedProfileVersion: 1,
+          idempotencyKey: 'avatar-request-1',
+        );
+        expect(profile.avatar?.width, 512);
+        expect(transport.uri?.path, '/v1/me/avatar');
+        expect(transport.headers?[HttpHeaders.ifMatchHeader], '"1"');
+        expect(transport.headers?['Idempotency-Key'], 'avatar-request-1');
+        expect(transport.bodyBytes, [1, 2, 3]);
+
+        transport.response = const IdentityHttpResponse(
+          statusCode: 200,
+          body:
+              '{"user_id":"user_1","display_name":"小林",'
+              '"profile_version":3,"created_at":"2026-08-18T07:00:00Z",'
+              '"updated_at":"2026-08-18T09:00:00Z"}',
+        );
+        final defaultProfile = await client.useDefaultAvatar(
+          sessionToken: 'sess_opaque-secret',
+          expectedProfileVersion: 2,
+        );
+        expect(defaultProfile.avatar, isNull);
+        expect(transport.method, 'DELETE');
+
+        transport.response = const IdentityHttpResponse(
+          statusCode: 200,
+          body:
+              '{"content_url":"https://objects.example/avatar.png?sig=1",'
+              '"expires_at":"2099-08-18T10:00:00Z"}',
+        );
+        final content = await client.currentAvatarContent(
+          sessionToken: 'sess_opaque-secret',
+        );
+        expect(content.url.host, 'objects.example');
+        expect(transport.uri?.path, '/v1/me/avatar/content');
       },
     );
 
@@ -596,6 +652,7 @@ final class _FakeTransport implements IdentityHttpTransport {
   Uri? uri;
   Map<String, String>? headers;
   String? body;
+  List<int>? bodyBytes;
 
   @override
   Future<IdentityHttpResponse> send({
@@ -609,6 +666,7 @@ final class _FakeTransport implements IdentityHttpTransport {
     this.uri = uri;
     this.headers = Map<String, String>.of(headers);
     this.body = body;
+    this.bodyBytes = bodyBytes == null ? null : List<int>.of(bodyBytes);
     final failure = this.failure;
     if (failure != null) {
       throw failure;

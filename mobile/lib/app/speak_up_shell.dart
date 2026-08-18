@@ -33,6 +33,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
+import 'package:speakup/features/profile/profile_avatar_view.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -576,6 +577,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         profileErrorMessage: widget.authController?.profileErrorMessage,
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
+        avatarUrl: widget.authController?.avatarUrl,
+        avatarSaving: widget.authController?.avatarSaving ?? false,
+        onUploadAvatar: widget.authController?.updateAvatar,
+        onUseDefaultAvatar: widget.authController?.useDefaultAvatar,
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
         coachingProfileController: widget.coachingProfileController,
@@ -593,6 +598,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               : Colors.transparent,
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
+            avatarUrl: widget.authController?.avatarUrl,
             onOpenProfile: () => _selectDestination(3),
           ),
           onDrawerChanged: (open) {
@@ -778,10 +784,12 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.controller,
     required this.onOpenProfile,
+    this.avatarUrl,
   });
 
   final ConversationController controller;
   final VoidCallback onOpenProfile;
+  final Uri? avatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -940,12 +948,9 @@ class _ConversationDrawer extends StatelessWidget {
                             width: 48,
                             height: 48,
                           ),
-                          icon: const CircleAvatar(
-                            radius: 24,
-                            backgroundColor: SpeakUpDesign.surfaceMuted,
-                            backgroundImage: AssetImage(
-                              'assets/images/scenes/profile-avatar-alex.png',
-                            ),
+                          icon: ProfileAvatarView(
+                            size: 48,
+                            avatarUrl: avatarUrl,
                           ),
                         ),
                       ],

@@ -104,25 +104,43 @@ func (r *PostgresRepository) FindProfileByUserID(
 	userID string,
 ) (UserProfile, error) {
 	var profile UserProfile
+	var avatarID string
+	var avatarWidth, avatarHeight int
+	var avatarUpdatedAt time.Time
 	err := r.database.QueryRow(ctx, `
 SELECT
-    id::text,
-    display_name,
-    profile_version,
-    created_at,
-    updated_at
-FROM users
-WHERE id = $1 AND status = 'active' AND display_name IS NOT NULL`,
+    owner.id::text,
+    owner.display_name,
+    owner.profile_version,
+    COALESCE(asset.id::text, ''),
+    COALESCE(asset.width, 0),
+    COALESCE(asset.height, 0),
+    COALESCE(asset.updated_at, TIMESTAMPTZ 'epoch'),
+    owner.created_at,
+    owner.updated_at
+FROM users AS owner
+LEFT JOIN media_assets AS asset ON asset.id = owner.avatar_asset_id
+WHERE owner.id = $1 AND owner.status = 'active'
+  AND owner.display_name IS NOT NULL`,
 		userID,
 	).Scan(
 		&profile.UserID,
 		&profile.DisplayName,
 		&profile.ProfileVersion,
+		&avatarID,
+		&avatarWidth,
+		&avatarHeight,
+		&avatarUpdatedAt,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
 	if err != nil {
 		return UserProfile{}, mapPostgresError(err)
+	}
+	if avatarID != "" {
+		profile.Avatar = &ProfileAvatar{
+			Width: avatarWidth, Height: avatarHeight, UpdatedAt: avatarUpdatedAt,
+		}
 	}
 	return profile, nil
 }
@@ -132,13 +150,16 @@ func (r *PostgresRepository) PersistProfile(
 	command PersistProfileCommand,
 ) (UserProfile, error) {
 	var profile UserProfile
+	var avatarID string
+	var avatarWidth, avatarHeight int
+	var avatarUpdatedAt time.Time
 	err := r.database.QueryRow(ctx, `
 WITH locked_user AS (
     SELECT id, display_name, profile_version
     FROM users
     WHERE id = $1 AND status = 'active'
     FOR UPDATE
-)
+), updated AS (
 UPDATE users AS owner
 SET
     display_name = $2,
@@ -161,8 +182,22 @@ RETURNING
     owner.id::text,
     owner.display_name,
     owner.profile_version,
+    owner.avatar_asset_id,
     owner.created_at,
-    owner.updated_at`,
+    owner.updated_at
+)
+SELECT
+    updated.id,
+    updated.display_name,
+    updated.profile_version,
+    COALESCE(asset.id::text, ''),
+    COALESCE(asset.width, 0),
+    COALESCE(asset.height, 0),
+    COALESCE(asset.updated_at, TIMESTAMPTZ 'epoch'),
+    updated.created_at,
+    updated.updated_at
+FROM updated
+LEFT JOIN media_assets AS asset ON asset.id = updated.avatar_asset_id`,
 		command.UserID,
 		command.DisplayName,
 		command.ExpectedProfileVersion,
@@ -170,6 +205,10 @@ RETURNING
 		&profile.UserID,
 		&profile.DisplayName,
 		&profile.ProfileVersion,
+		&avatarID,
+		&avatarWidth,
+		&avatarHeight,
+		&avatarUpdatedAt,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
@@ -178,6 +217,11 @@ RETURNING
 	}
 	if err != nil {
 		return UserProfile{}, mapPostgresError(err)
+	}
+	if avatarID != "" {
+		profile.Avatar = &ProfileAvatar{
+			Width: avatarWidth, Height: avatarHeight, UpdatedAt: avatarUpdatedAt,
+		}
 	}
 	return profile, nil
 }

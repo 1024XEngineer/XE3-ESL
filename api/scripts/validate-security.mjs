@@ -491,6 +491,9 @@ const logout = requireOperation('POST /v1/auth/logout');
 const me = requireOperation('GET /v1/me');
 const getProfile = requireOperation('GET /v1/me/profile');
 const updateProfile = requireOperation('PATCH /v1/me/profile');
+const uploadAvatar = requireOperation('POST /v1/me/avatar');
+const useDefaultAvatar = requireOperation('DELETE /v1/me/avatar');
+const getAvatarContent = requireOperation('GET /v1/me/avatar/content');
 const createPracticePlan = requireOperation('POST /v1/practice-plans');
 const archivePracticePlan = requireOperation(
   'DELETE /v1/practice-plans/{practice_plan_id}',
@@ -502,6 +505,9 @@ assert.equal(logout.operationId, 'logoutCurrentSession');
 assert.equal(me.operationId, 'getCurrentUser');
 assert.equal(getProfile.operationId, 'getCurrentUserProfile');
 assert.equal(updateProfile.operationId, 'updateCurrentUserProfile');
+assert.equal(uploadAvatar.operationId, 'replaceCurrentUserAvatar');
+assert.equal(useDefaultAvatar.operationId, 'useDefaultCurrentUserAvatar');
+assert.equal(getAvatarContent.operationId, 'getCurrentUserAvatarContent');
 assert.equal(createPracticePlan.operationId, 'createPracticePlan');
 assert.equal(archivePracticePlan.operationId, 'archivePracticePlan');
 assert.ok(register.requestBody?.required);
@@ -544,6 +550,14 @@ assert.ok(getProfile.responses?.['404']);
 assert.ok(updateProfile.responses?.['200']);
 assert.ok(updateProfile.responses?.['409']);
 assert.ok(updateProfile.requestBody?.required);
+assert.ok(uploadAvatar.requestBody?.required);
+assert.ok(uploadAvatar.responses?.['200']);
+assert.ok(uploadAvatar.responses?.['409']);
+assert.ok(uploadAvatar.responses?.['413']);
+assert.ok(useDefaultAvatar.responses?.['200']);
+assert.ok(useDefaultAvatar.responses?.['409']);
+assert.ok(getAvatarContent.responses?.['200']);
+assert.ok(getAvatarContent.responses?.['404']);
 assert.equal(
   getJsonSchema(updateProfile.requestBody)?.$ref,
   '#/components/schemas/UpdateUserProfileRequest',
@@ -735,6 +749,17 @@ assert.deepEqual(sorted(userProfileSchema?.required ?? []), [
   'user_id',
 ]);
 assert.equal(userProfileSchema?.additionalProperties, false);
+assert.equal(
+  userProfileSchema?.properties?.avatar?.$ref,
+  '#/components/schemas/UserProfileAvatar',
+);
+const userProfileAvatarSchema = schemas.UserProfileAvatar;
+assert.deepEqual(sorted(userProfileAvatarSchema?.required ?? []), [
+  'height',
+  'updated_at',
+  'width',
+]);
+assert.equal(userProfileAvatarSchema?.additionalProperties, false);
 assert.equal(userProfileSchema?.properties?.user_id?.readOnly, true);
 assert.equal(
   userProfileSchema?.properties?.profile_version?.readOnly,

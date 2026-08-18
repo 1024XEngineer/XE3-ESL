@@ -26,8 +26,15 @@ type UserProfile struct {
 	UserID         string
 	DisplayName    string
 	ProfileVersion int64
+	Avatar         *ProfileAvatar
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type ProfileAvatar struct {
+	Width     int
+	Height    int
+	UpdatedAt time.Time
 }
 
 type UpdateProfileCommand struct {
