@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -377,11 +376,13 @@ final class AuthController extends ChangeNotifier {
         return null;
       }
       _profile = updated;
-      _avatarBytes = null;
+      _avatarBytes = Uint8List.fromList(image.bytes);
+      notifyListeners();
       await _loadAvatarContent(
         client: client,
         token: expectedToken,
         generation: expectedGeneration,
+        preserveCurrentOnFailure: true,
       );
       return null;
     } on IdentityClientException catch (error) {
@@ -448,6 +449,7 @@ final class AuthController extends ChangeNotifier {
       }
       _profile = updated;
       _avatarBytes = null;
+      notifyListeners();
       return null;
     } on IdentityClientException catch (error) {
       if (!_matchesCredential(expectedGeneration, expectedToken)) {
@@ -666,6 +668,7 @@ final class AuthController extends ChangeNotifier {
     required UserAvatarClient client,
     required String token,
     required int generation,
+    bool preserveCurrentOnFailure = false,
   }) async {
     try {
       final content = await client.currentAvatarContent(sessionToken: token);
@@ -673,7 +676,7 @@ final class AuthController extends ChangeNotifier {
         _avatarBytes = Uint8List.fromList(content.bytes);
       }
     } catch (_) {
-      if (_matchesCredential(generation, token)) {
+      if (_matchesCredential(generation, token) && !preserveCurrentOnFailure) {
         _avatarBytes = null;
       }
     }

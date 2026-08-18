@@ -127,6 +127,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void initState() {
     super.initState();
+    widget.authController?.addListener(_handleAuthState);
     widget.conversationController.addListener(_handleAgentInteractionState);
     widget.composerController.addListener(_handleAgentInteractionState);
     widget.practiceController.addListener(_handlePracticeState);
@@ -136,6 +137,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void didUpdateWidget(covariant SpeakUpShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.authController != widget.authController) {
+      oldWidget.authController?.removeListener(_handleAuthState);
+      widget.authController?.addListener(_handleAuthState);
+    }
     final conversationControllerChanged =
         oldWidget.conversationController != widget.conversationController;
     if (conversationControllerChanged) {
@@ -160,11 +165,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   @override
   void dispose() {
+    widget.authController?.removeListener(_handleAuthState);
     widget.conversationController.removeListener(_handleAgentInteractionState);
     widget.composerController.removeListener(_handleAgentInteractionState);
     widget.practiceController.removeListener(_handlePracticeState);
     _feedbackPresenter?.dispose();
     super.dispose();
+  }
+
+  void _handleAuthState() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _selectDestination(int index) {

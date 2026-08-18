@@ -127,6 +127,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
 	}
 
@@ -254,6 +257,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v6 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v5 = %t, %v", changed, downErr)
 	}
 	var restoredID, restoredRoleID, restoredOptionID, restoredStatus string
@@ -285,6 +291,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
@@ -535,6 +544,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, downErr)
 	}
 
 	database, err := pgx.ConnectConfig(context.Background(), config)
