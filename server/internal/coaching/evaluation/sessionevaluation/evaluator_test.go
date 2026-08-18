@@ -242,6 +242,64 @@ func TestGeneralEvaluatorRejectsPolicyCategoryMismatch(t *testing.T) {
 	}
 }
 
+func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *testing.T) {
+	tests := []struct {
+		name    string
+		prompt  string
+		version string
+	}{
+		{name: "interview", prompt: interviewSystemPrompt, version: "interview-report/v2"},
+		{name: "IELTS", prompt: ieltsSystemPrompt, version: "ielts-report/v2"},
+		{name: "general", prompt: generalSystemPrompt, version: "general-report/v2"},
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := map[string]string{
+		"interview": lineages.Interview.PromptVersion,
+		"IELTS":     lineages.IELTS.PromptVersion,
+		"general":   lineages.General.PromptVersion,
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, requirement := range []string{
+				"summary and every finding message in Simplified Chinese",
+				"suggestions for strengths and improvements in Simplified Chinese",
+				"directly reusable English expression in suggestion",
+				"question, answer, and evidence quote in its original language",
+			} {
+				if !strings.Contains(test.prompt, requirement) {
+					t.Fatalf("prompt omitted language requirement %q: %s", requirement, test.prompt)
+				}
+			}
+			if versions[test.name] != test.version {
+				t.Fatalf("PromptVersion = %q, want %q", versions[test.name], test.version)
+			}
+		})
+	}
+}
+
+func TestInsufficientReportUsesChineseSummaryAndPreservesOriginalText(t *testing.T) {
+	snapshot := sessionSnapshotFixture()
+	snapshot.Turns[0].Effective = false
+	report := insufficientReport(
+		snapshot,
+		evaluation.SceneIELTSSpeaking,
+		[]string{"FLUENCY_COHERENCE"},
+		report.ReportScaleIELTSBand,
+	)
+	if report.Summary != "本次练习的有效证据不足，暂时无法形成可靠的评估结论。" {
+		t.Fatalf("Summary = %q", report.Summary)
+	}
+	if len(report.Questions) != 1 || report.Questions[0].Text != snapshot.Questions[0].Text {
+		t.Fatalf("question projection = %#v", report.Questions)
+	}
+	if report.Questions[0].Answer != nil {
+		t.Fatalf("ineffective answer must not be projected: %#v", report.Questions[0].Answer)
+	}
+}
+
 type reportGeneratorFake struct {
 	last textgeneration.Request
 }

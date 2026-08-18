@@ -33,7 +33,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.InterviewStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   "interview-report/v1",
+			PromptVersion:   "interview-report/v2",
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -42,7 +42,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.IELTSStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   "ielts-report/v1",
+			PromptVersion:   "ielts-report/v2",
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -51,7 +51,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.GeneralStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   "general-report/v1",
+			PromptVersion:   "general-report/v2",
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -635,7 +635,7 @@ func insufficientReport(
 		SceneType:     sceneType, PracticeExperience: snapshot.PracticeExperience,
 		SceneCategory: snapshot.SceneCategory, PracticeMode: snapshot.PracticeMode,
 		ScoreabilityStatus: report.ReportScoreabilityInsufficient,
-		Summary:            "There is not enough confirmed practice evidence to produce a reliable evaluation.",
+		Summary:            "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
 		Questions:          reportQuestions(snapshot),
 		Dimensions:         dimensions, PriorityActions: []report.ReportPriorityAction{},
 	}
@@ -649,11 +649,11 @@ func encodeReport(value report.FormalReport) (json.RawMessage, error) {
 	return encoded, err
 }
 
-const interviewSystemPrompt = `You are an evidence-bound job interview English evaluator. Score only the requested interview dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Do not infer voice qualities from text.`
+const interviewSystemPrompt = `You are an evidence-bound job interview English evaluator. Score only the requested interview dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
-const ieltsSystemPrompt = `You are an evidence-bound IELTS Speaking practice evaluator. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. PRONUNCIATION is requested only when assessed acoustic checkpoints are present on effective turns; base that dimension on those checkpoints and their coverage, never on transcript spelling.`
+const ieltsSystemPrompt = `You are an evidence-bound IELTS Speaking practice evaluator. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. PRONUNCIATION is requested only when assessed acoustic checkpoints are present on effective turns; base that dimension on those checkpoints and their coverage, never on transcript spelling.`
 
-const generalSystemPrompt = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Do not infer voice qualities from text.`
+const generalSystemPrompt = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
 func (failure providerResponseFailure) Error() string          { return failure.message }
 func (failure providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
