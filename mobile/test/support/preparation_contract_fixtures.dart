@@ -141,9 +141,17 @@ Map<String, Object?> contractPlanJson({
       },
   },
   'scene_selection': <String, Object?>{
-    'scene': encodeSceneDefinition(contractScene),
-    'selected_role_ids': <String>['technical-interviewer'],
-    'practice_option_id': 'full-simulation',
+    ...encodeSceneSelectionSnapshot(
+      SceneSelectionSnapshot(
+        source: SceneSource.catalog(
+          sceneId: 'project-deep-dive',
+          sceneVersion: 1,
+        ),
+        scene: contractScene,
+        selectedRoleIds: <String>['technical-interviewer'],
+        practiceOptionId: 'full-simulation',
+      ),
+    ),
   },
   'session_policy': contractSessionPolicyJson(),
   'practice_objectives': <Object?>[

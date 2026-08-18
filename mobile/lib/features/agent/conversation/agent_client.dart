@@ -120,9 +120,11 @@ final class AgentRunCompleted extends AgentTextStreamEvent {
   const AgentRunCompleted({
     required super.runId,
     required this.assistantMessageId,
+    this.run,
   });
 
   final String assistantMessageId;
+  final AgentRun? run;
 }
 
 final class AgentRunFailed extends AgentTextStreamEvent {
@@ -130,10 +132,12 @@ final class AgentRunFailed extends AgentTextStreamEvent {
     required super.runId,
     required this.kind,
     required this.retryable,
+    this.run,
   });
 
   final String kind;
   final bool retryable;
+  final AgentRun? run;
 }
 
 enum AgentClientFailureKind {

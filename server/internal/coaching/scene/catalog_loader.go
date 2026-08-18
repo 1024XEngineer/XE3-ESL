@@ -23,7 +23,14 @@ type catalogDocument struct {
 func NewBuiltinCatalog(
 	policyValidator EvaluationPolicyReferenceValidator,
 ) (*Catalog, error) {
-	return LoadCatalog(bytes.NewReader(builtinCatalogData), policyValidator)
+	catalog, err := LoadCatalog(bytes.NewReader(builtinCatalogData), policyValidator)
+	if err != nil {
+		return nil, err
+	}
+	if err := loadBuiltinDiscovery(catalog); err != nil {
+		return nil, fmt.Errorf("load built-in Scene discovery: %w", err)
+	}
+	return catalog, nil
 }
 
 // LoadCatalog decodes and validates one complete Scene catalog document.

@@ -848,12 +848,20 @@ final class ConversationController extends ChangeNotifier {
             }
             completedAssistantMessageID = outputId;
           case AgentRunCompleted(:final assistantMessageId):
-            if (assistantMessageId != completedAssistantMessageID) {
+            if (completedAssistantMessageID != null &&
+                assistantMessageId != completedAssistantMessageID) {
               throw const AgentClientException(
                 kind: AgentClientFailureKind.invalidResponse,
                 retryable: true,
               );
             }
+            if (completedAssistantMessageID == null) {
+              _messages = <AgentMessage>[
+                for (final message in _messages)
+                  if (message.id != assistantID) message,
+              ];
+            }
+            completedAssistantMessageID = assistantMessageId;
           case AgentRunFailed(:final kind, :final retryable):
             throw AgentClientException(
               kind: AgentClientFailureKind.runFailed,

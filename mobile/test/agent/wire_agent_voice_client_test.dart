@@ -486,6 +486,7 @@ void main() {
     () async {
       final completedRun = _runJson(status: 'completed')
         ..['assistant_message_id'] = _assistantMessageId
+        ..['completion_source'] = 'model'
         ..['provider_completion_id'] = 'completion-voice-001'
         ..['provider_model'] = 'qwen-plus'
         ..['finish_reason'] = 'stop'
@@ -571,6 +572,170 @@ void main() {
       transport.expectDone();
     },
   );
+
+  test('decodes a domain-completed Run from stream and recovery GET', () async {
+    final completedRun = _completedRunJson(completionSource: 'domain');
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+        response: _sseResponse(<(String, Object?)>[
+          (
+            'input.committed',
+            <String, Object?>{
+              'draft': _draftJson(status: 'confirmed', confirmed: true),
+              'message': _voiceMessageJson(
+                content: 'Edited confirmed transcript',
+              ),
+              'run': _runJson(status: 'pending'),
+            },
+          ),
+          (
+            'assistant.output.started',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+            },
+          ),
+          (
+            'assistant.output.delta',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'sequence': 1,
+              'delta': 'Your practice is ready.',
+            },
+          ),
+          (
+            'assistant.output.completed',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'text': 'Your practice is ready.',
+            },
+          ),
+          ('run.completed', <String, Object?>{'run': completedRun}),
+        ]),
+      ),
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-runs/$_runId',
+        response: _jsonResponse(HttpStatus.ok, completedRun),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final events = await client
+        .confirmDraftStream(
+          draftId: _draftId,
+          draftVersion: 1,
+          clientMessageId: 'voice_message_001',
+          confirmedText: 'Edited confirmed transcript',
+        )
+        .toList();
+    final streamed = (events.last as AgentVoiceRunCompleted).run;
+    final restored = await client.getRun(runId: _runId);
+
+    expect(streamed.status, AgentVoiceRunStatus.completed);
+    expect(restored.status, AgentVoiceRunStatus.completed);
+    expect(restored.assistantMessageId, _assistantMessageId);
+    expect(streamed.attempt, 1);
+    expect(streamed.threadId, _threadId);
+    expect(streamed.inputMessageId, _messageId);
+    expect(streamed.completion, isA<AgentDomainRunCompletion>());
+    transport.expectDone();
+  });
+
+  test(
+    'preserves the authoritative failed Run from the terminal event',
+    () async {
+      final failedRun = _runJson(status: 'failed')
+        ..addAll(<String, Object?>{
+          'failure': <String, Object?>{
+            'kind': 'provider_unavailable',
+            'retryable': true,
+          },
+          'started_at': _timestamp,
+          'completed_at': _timestamp,
+        });
+      final transport = _ScriptedVoiceTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+          response: _sseResponse(<(String, Object?)>[
+            (
+              'input.committed',
+              <String, Object?>{
+                'draft': _draftJson(status: 'confirmed', confirmed: true),
+                'message': _voiceMessageJson(
+                  content: 'Edited confirmed transcript',
+                ),
+                'run': _runJson(status: 'pending'),
+              },
+            ),
+            (
+              'run.failed',
+              <String, Object?>{
+                'run': failedRun,
+                'kind': 'provider_unavailable',
+                'retryable': true,
+              },
+            ),
+          ]),
+        ),
+      ]);
+      final client = _client(transport);
+      addTearDown(client.dispose);
+
+      final events = await client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList();
+
+      final terminal = events.last as AgentVoiceRunFailed;
+      expect(terminal.run?.status, AgentRunStatus.failed);
+      expect(terminal.run?.threadId, _threadId);
+      expect(terminal.run?.inputMessageId, _messageId);
+      expect(terminal.run?.failureKind, 'provider_unavailable');
+      transport.expectDone();
+    },
+  );
+
+  test('rejects a retry response with different retry identity', () async {
+    final mismatched = _runJson(
+      status: 'pending',
+      runId: _retryRunId,
+      attempt: 2,
+      retryOfRunId: _assistantMessageId,
+      clientRetryId: 'voice_retry_001',
+    );
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-runs/$_runId/retries',
+        response: _jsonResponse(HttpStatus.accepted, mismatched),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.retryRun(runId: _runId, clientRetryId: 'voice_retry_001'),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
 
   test('rejects a non-contiguous assistant output sequence', () async {
     final transport = _ScriptedVoiceTransport([
@@ -719,6 +884,52 @@ void main() {
     },
   );
 
+  test('finds an assistant Message after multimodal history', () async {
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/messages?page_size=100',
+        response: _jsonResponse(HttpStatus.ok, {
+          'messages': <Object?>[
+            <String, Object?>{
+              'message_id': '88888888-8888-4888-8888-888888888888',
+              'thread_id': _threadId,
+              'sequence': 1,
+              'role': 'user',
+              'client_message_id': 'image-message-001',
+              'modality': 'multimodal',
+              'content': 'Please use this image.',
+              'images': <Object?>[
+                <String, Object?>{
+                  'image_asset_id': '99999999-9999-4999-8999-999999999999',
+                  'content_type': 'image/jpeg',
+                  'size_bytes': 2048,
+                  'width': 640,
+                  'height': 480,
+                  'status': 'ready',
+                  'created_at': _timestamp,
+                  'attached_at': _timestamp,
+                },
+              ],
+              'created_at': _timestamp,
+            },
+            _assistantMessageJson()..['sequence'] = 2,
+          ],
+        }),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final message = await client.getMessage(
+      threadId: _threadId,
+      messageId: _assistantMessageId,
+    );
+
+    expect(message?.id, _assistantMessageId);
+    transport.expectDone();
+  });
+
   test(
     'restores an assistant Message carrying a practice plan client action',
     () async {
@@ -730,12 +941,13 @@ void main() {
               'label': '确认并开始练习',
               'practice_plan_id': _practicePlanId,
               'plan_version': 2,
-              'target': '阿里高级 Java 开发面试',
               'scene_name': '项目经历深挖',
+              'user_role': '候选人',
+              'ai_roles': <Object?>['面试官'],
+              'practice_goal': '阿里高级 Java 开发面试',
               'practice_experience': 'INTERVIEW',
               'scene_category': 'INTERVIEW_PROFESSIONAL',
               'practice_mode': 'FULL_SIMULATION',
-              'roles': <Object?>['面试官', '候选人'],
               'practice_scope': '围绕项目难点完成三轮追问',
               'suggested_duration_seconds': 720,
               'min_effective_turns': 3,
@@ -1025,12 +1237,22 @@ Map<String, Object?> _assistantMessageJson() {
   };
 }
 
-Map<String, Object?> _runJson({required String status}) {
+Map<String, Object?> _runJson({
+  required String status,
+  String runId = _runId,
+  String threadId = _threadId,
+  String inputMessageId = _messageId,
+  int attempt = 1,
+  String? retryOfRunId,
+  String? clientRetryId,
+}) {
   return <String, Object?>{
-    'run_id': _runId,
-    'thread_id': _threadId,
-    'input_message_id': _messageId,
-    'attempt': 1,
+    'run_id': runId,
+    'thread_id': threadId,
+    'input_message_id': inputMessageId,
+    'attempt': attempt,
+    'retry_of_run_id': ?retryOfRunId,
+    'client_retry_id': ?clientRetryId,
     'status': status,
     'requested_provider': 'qwen',
     'requested_model': 'qwen-plus',
@@ -1040,10 +1262,33 @@ Map<String, Object?> _runJson({required String status}) {
   };
 }
 
+Map<String, Object?> _completedRunJson({required String completionSource}) {
+  return _runJson(status: 'completed')..addAll(<String, Object?>{
+    'assistant_message_id': _assistantMessageId,
+    'completion_source': completionSource,
+    if (completionSource == 'model') ...<String, Object?>{
+      'provider_completion_id': 'completion-voice-001',
+      'provider_model': 'qwen-plus',
+      'finish_reason': 'stop',
+      'usage': <String, Object?>{
+        'input_tokens': 10,
+        'output_tokens': 4,
+        'total_tokens': 14,
+      },
+    } else ...<String, Object?>{
+      'domain_tool_call_id': 'call-practice-preview-1',
+      'domain_tool_name': 'practice.preview.v2',
+    },
+    'started_at': _timestamp,
+    'completed_at': _timestamp,
+  });
+}
+
 const _threadId = '11111111-1111-4111-8111-111111111111';
 const _draftId = '22222222-2222-4222-8222-222222222222';
 const _messageId = '33333333-3333-4333-8333-333333333333';
 const _runId = '44444444-4444-4444-8444-444444444444';
+const _retryRunId = '44444444-4444-4444-8444-444444444445';
 const _audioId = '55555555-5555-4555-8555-555555555555';
 const _assistantMessageId = '66666666-6666-4666-8666-666666666666';
 const _practicePlanId = '77777777-7777-4777-8777-777777777777';

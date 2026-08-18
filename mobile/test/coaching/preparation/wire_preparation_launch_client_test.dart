@@ -92,6 +92,40 @@ void main() {
     },
   );
 
+  test('reads and confirms a historical Plan with legacy Scene data', () async {
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(
+        HttpStatus.ok,
+        _legacyPlanJson(status: PracticePlanStatus.draft, version: 1),
+      ),
+      _response(
+        HttpStatus.ok,
+        _legacyPlanJson(status: PracticePlanStatus.ready, version: 2),
+      ),
+    ]);
+    final client = _client(transport);
+
+    final historical = await client.getPlan(contractPlanId);
+    final confirmed = await client.confirmPlan(
+      planId: historical.id,
+      expectedVersion: historical.version,
+      idempotencyKey: 'legacy-plan-confirm-key',
+    );
+
+    expect(historical.sceneSelection.source.type, SceneSourceType.catalog);
+    expect(historical.sceneSelection.source.sceneId, contractScene.id);
+    expect(
+      historical.sceneSelection.source.sceneVersion,
+      contractScene.version,
+    );
+    expect(confirmed.status, PracticePlanStatus.ready);
+    expect(confirmed.version, 2);
+    expect(transport.calls.map((call) => call.uri.path), <String>[
+      '/v1/practice-plans/$contractPlanId',
+      '/v1/practice-plans/$contractPlanId/confirm',
+    ]);
+  });
+
   test('accepts a Part 2 Plan with a frozen prepared answer', () async {
     final transport = _QueueTransport(<IdentityHttpResponse>[
       _response(HttpStatus.created, _ieltsPlanJson()),
@@ -339,16 +373,32 @@ const _ieltsPlanInput = CreatePracticePlanInput(
 
 Map<String, Object?> _ieltsPlanJson() {
   final response = contractPlanJson();
-  response['scene_selection'] = <String, Object?>{
-    'scene': encodeSceneDefinition(_ieltsScene),
-    'selected_role_ids': <String>['ielts-examiner'],
-    'practice_option_id': 'ielts-part-2',
-  };
+  response['scene_selection'] = encodeSceneSelectionSnapshot(
+    const SceneSelectionSnapshot(
+      source: SceneSource.catalog(sceneId: 'ielts-speaking', sceneVersion: 1),
+      scene: _ieltsScene,
+      selectedRoleIds: <String>['ielts-examiner'],
+      practiceOptionId: 'ielts-part-2',
+    ),
+  );
   response['session_policy'] = <String, Object?>{
     ...contractSessionPolicyJson(),
     'max_effective_turns': 7,
   };
   response['ielts_assignment'] = _ieltsPart2AssignmentJson();
+  return response;
+}
+
+Map<String, Object?> _legacyPlanJson({
+  required PracticePlanStatus status,
+  required int version,
+}) {
+  final response = contractPlanJson(status: status, version: version);
+  response['scene_selection'] = <String, Object?>{
+    'scene': encodeSceneDefinition(contractScene),
+    'selected_role_ids': <String>['technical-interviewer'],
+    'practice_option_id': 'full-simulation',
+  };
   return response;
 }
 

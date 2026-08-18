@@ -214,7 +214,9 @@ func TestBuiltinCatalogDefinesDistinctRentalScenes(t *testing.T) {
 				if resolveErr != nil {
 					t.Fatalf("ResolveSelection(%s) error = %v", selection.mode, resolveErr)
 				}
-				if snapshot.Scene.ID != test.sceneID ||
+				if snapshot.Source.Type != SceneSourceCatalog ||
+					snapshot.Source.SceneID != test.sceneID ||
+					snapshot.Scene.Key != test.sceneID ||
 					snapshot.PracticeOptionID != selection.optionID {
 					t.Fatalf("selection = %#v", snapshot)
 				}

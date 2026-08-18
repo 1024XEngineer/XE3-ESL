@@ -40,6 +40,7 @@ type ProtectedRouteRegistrar interface {
 type preparationCatalog interface {
 	scene.CatalogReader
 	scene.AccessibleSelectionReader
+	scene.PreviewCatalog
 }
 
 // IdentityAgentPracticeComposition contains the production modules and the
@@ -290,20 +291,19 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 	if base.productionTools != nil {
-		previewCatalog, err := scene.NewCatalogPreviewResolver(catalog)
-		if err != nil {
-			return nil, err
-		}
 		previewPort, err := preparationagentcapability.NewServicePort(
+			ctx,
 			planApplication,
-			previewCatalog,
+			catalog,
 		)
 		if err != nil {
 			return nil, err
 		}
-		if err := base.productionTools.Register(
-			preparationagentcapability.NewPreviewTool(previewPort),
-		); err != nil {
+		previewTool, err := preparationagentcapability.NewPreviewTool(previewPort)
+		if err != nil {
+			return nil, err
+		}
+		if err := base.productionTools.Register(previewTool); err != nil {
 			return nil, err
 		}
 		if err := base.productionTools.Register(

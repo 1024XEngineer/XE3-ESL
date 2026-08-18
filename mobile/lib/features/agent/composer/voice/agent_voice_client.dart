@@ -214,6 +214,7 @@ final class FakeAgentVoiceClient
       role: AgentMessageRole.user,
       text: confirmedText,
       createdAt: now,
+      clientMessageId: clientMessageId,
       modality: AgentMessageModality.voice,
       audio: AgentMessageAudio(
         id: audioId,
@@ -230,13 +231,28 @@ final class FakeAgentVoiceClient
       text:
           'That was clear. Add one measurable result to make the answer stronger.',
       createdAt: now,
+      producedByRunId: 'voice_run_$draftId',
     );
     final run = AgentVoiceRun(
       id: 'voice_run_$draftId',
       threadId: draft.threadId,
       inputMessageId: message.id,
+      attempt: 1,
       status: AgentVoiceRunStatus.completed,
+      requestedProvider: 'fake',
+      requestedModel: 'fake-agent',
+      maxOutputTokens: 512,
       assistantMessageId: assistantMessage.id,
+      completion: const AgentModelRunCompletion(
+        providerCompletionId: 'fake-completion',
+        providerModel: 'fake-agent',
+        finishReason: 'stop',
+        usage: AgentRunUsage(inputTokens: 0, outputTokens: 0, totalTokens: 0),
+      ),
+      createdAt: now,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
     );
     final confirmedDraft = AgentVoiceDraft(
       id: draft.id,

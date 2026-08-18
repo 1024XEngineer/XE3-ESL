@@ -131,22 +131,22 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			BackgroundSummary: "background",
 		},
 		SceneSelection: scene.SelectionSnapshot{
-			Scene: scene.SceneDefinition{
-				ID:         "scene-1",
+			Source: scene.SceneSource{Type: scene.SceneSourceCatalog, SceneID: "scene-1", SceneVersion: 1},
+			Scene: scene.ExecutableSceneSnapshot{
+				Key:        "scene-1",
 				Experience: scene.PracticeExperienceLifeAndTravel,
 				Category:   scene.SceneCategoryLifeDaily,
 				Name:       "Scene",
-				Version:    1,
-				Status:     scene.SceneStatusActive,
+				Revision:   1,
 				Prompt:     prompt,
-				Roles: []scene.RoleDefinition{
-					{ID: "role-selected", SceneID: "scene-1", DisplayName: "selected"},
-					{ID: "role-unselected", SceneID: "scene-1", DisplayName: "unselected"},
+				Roles: []scene.RoleSnapshot{
+					{ID: "role-selected", SceneKey: "scene-1", DisplayName: "selected"},
+					{ID: "role-unselected", SceneKey: "scene-1", DisplayName: "unselected"},
 				},
-				PracticeOptions: []scene.PracticeOption{
+				PracticeOptions: []scene.PracticeOptionSnapshot{
 					{
 						ID:                       "option-selected",
-						SceneID:                  "scene-1",
+						SceneKey:                 "scene-1",
 						Mode:                     scene.PracticeModeFullSimulation,
 						SuggestedDurationSeconds: 600,
 						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
@@ -155,7 +155,7 @@ func confirmedPlanFixture() preparation.PracticePlan {
 					},
 					{
 						ID:                       "option-unselected",
-						SceneID:                  "scene-1",
+						SceneKey:                 "scene-1",
 						Mode:                     scene.PracticeModeFullSimulation,
 						SuggestedDurationSeconds: 600,
 						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,

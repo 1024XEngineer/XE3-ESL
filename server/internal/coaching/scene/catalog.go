@@ -73,7 +73,9 @@ type AccessibleSelectionReader interface {
 
 // Catalog is the immutable in-process authority for built-in Scene content.
 type Catalog struct {
-	scenes []SceneDefinition
+	scenes              []SceneDefinition
+	sceneDiscovery      map[string]SceneDiscoveryProfile
+	experienceDiscovery map[PracticeExperience]ExperienceDiscoveryProfile
 }
 
 func NewCatalog(
@@ -133,7 +135,18 @@ func newValidatedCatalog(
 		}
 		return scenes[i].DisplayOrder < scenes[j].DisplayOrder
 	})
-	return &Catalog{scenes: scenes}, nil
+	discovery := make(map[string]SceneDiscoveryProfile, len(scenes))
+	for _, definition := range scenes {
+		discovery[definition.ID] = SceneDiscoveryProfile{
+			SceneID: definition.ID,
+			Aliases: []string{definition.Name},
+		}
+	}
+	return &Catalog{
+		scenes:              scenes,
+		sceneDiscovery:      discovery,
+		experienceDiscovery: map[PracticeExperience]ExperienceDiscoveryProfile{},
+	}, nil
 }
 
 func (c *Catalog) ListActiveScenes(ctx context.Context) ([]SceneDefinition, error) {
@@ -214,7 +227,12 @@ func (c *Catalog) ResolveSelection(
 	}
 
 	return SelectionSnapshot{
-		Scene:            cloneScene(definition),
+		Source: SceneSource{
+			Type:         SceneSourceCatalog,
+			SceneID:      definition.ID,
+			SceneVersion: definition.Version,
+		},
+		Scene:            executableSceneSnapshot(definition),
 		SelectedRoleIDs:  append([]string(nil), selectedRoleIDs...),
 		PracticeOptionID: option.ID,
 	}, nil
@@ -504,6 +522,27 @@ func findPracticeOption(options []PracticeOption, id string) (PracticeOption, bo
 	return PracticeOption{}, false
 }
 
+func findRoleSnapshot(roles []RoleSnapshot, id string) (RoleSnapshot, bool) {
+	for _, role := range roles {
+		if role.ID == id {
+			return role, true
+		}
+	}
+	return RoleSnapshot{}, false
+}
+
+func findPracticeOptionSnapshot(
+	options []PracticeOptionSnapshot,
+	id string,
+) (PracticeOptionSnapshot, bool) {
+	for _, option := range options {
+		if option.ID == id {
+			return option, true
+		}
+	}
+	return PracticeOptionSnapshot{}, false
+}
+
 func sortRoles(roles []RoleDefinition) {
 	sort.Slice(roles, func(i, j int) bool {
 		if roles[i].DisplayOrder == roles[j].DisplayOrder {
@@ -550,4 +589,73 @@ func cloneRole(source RoleDefinition) RoleDefinition {
 
 func clonePracticeOptions(source []PracticeOption) []PracticeOption {
 	return append([]PracticeOption(nil), source...)
+}
+
+func executableSceneSnapshot(source SceneDefinition) ExecutableSceneSnapshot {
+	roles := make([]RoleSnapshot, len(source.Roles))
+	for index, role := range source.Roles {
+		roles[index] = RoleSnapshot{
+			ID:                 role.ID,
+			SceneKey:           source.ID,
+			Type:               role.Type,
+			DisplayName:        role.DisplayName,
+			Responsibilities:   role.Responsibilities,
+			Style:              role.Style,
+			PracticeObjectives: append([]PracticeObjectiveDefinition(nil), role.PracticeObjectives...),
+			VoiceConfigRef:     role.VoiceConfigRef,
+		}
+	}
+	options := make([]PracticeOptionSnapshot, len(source.PracticeOptions))
+	for index, option := range source.PracticeOptions {
+		options[index] = PracticeOptionSnapshot{
+			ID:                       option.ID,
+			SceneKey:                 source.ID,
+			RoleDefinitionID:         option.RoleDefinitionID,
+			Mode:                     option.Mode,
+			DisplayName:              option.DisplayName,
+			SuggestedDurationSeconds: option.SuggestedDurationSeconds,
+			TurnPolicyRef:            option.TurnPolicyRef,
+			SessionPolicyRef:         option.SessionPolicyRef,
+			EvaluationPolicyRef:      option.EvaluationPolicyRef,
+		}
+	}
+	result := ExecutableSceneSnapshot{
+		Key:             source.ID,
+		Revision:        source.Version,
+		Experience:      source.Experience,
+		Category:        source.Category,
+		Name:            source.Name,
+		Prompt:          source.Prompt,
+		Roles:           roles,
+		PracticeOptions: options,
+	}
+	result.Prompt.FocusAreas = append([]string(nil), source.Prompt.FocusAreas...)
+	result.Prompt.TurnBlueprints = append([]string(nil), source.Prompt.TurnBlueprints...)
+	return result
+}
+
+func cloneRoleSnapshot(source RoleSnapshot) RoleSnapshot {
+	result := source
+	result.PracticeObjectives = append(
+		[]PracticeObjectiveDefinition(nil),
+		source.PracticeObjectives...,
+	)
+	return result
+}
+
+func cloneExecutableSceneSnapshot(
+	source ExecutableSceneSnapshot,
+) ExecutableSceneSnapshot {
+	result := source
+	result.Prompt.FocusAreas = append([]string(nil), source.Prompt.FocusAreas...)
+	result.Prompt.TurnBlueprints = append([]string(nil), source.Prompt.TurnBlueprints...)
+	result.Roles = make([]RoleSnapshot, len(source.Roles))
+	for index, role := range source.Roles {
+		result.Roles[index] = cloneRoleSnapshot(role)
+	}
+	result.PracticeOptions = append(
+		[]PracticeOptionSnapshot(nil),
+		source.PracticeOptions...,
+	)
+	return result
 }

@@ -3,17 +3,35 @@ import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 
 void main() {
-  test('decodes one exact PracticePlan business payload', () {
-    final action = decodeConfirmPracticePlanClientAction(_validAction());
+  test('decodes a historical v1 payload into the canonical model', () {
+    final action = decodeConfirmPracticePlanClientAction(_validV1Action());
 
+    expect(action.protocol, ConfirmPracticePlanProtocol.v1);
     expect(action.practicePlanId, _planId);
     expect(action.planVersion, 2);
-    expect(action.roles, <String>['面试官']);
+    expect(action.userRole, isNull);
+    expect(action.aiRoles, <String>['面试官']);
+    expect(action.practiceGoal, '准备 Java 后端面试');
   });
 
-  test('decodes an open-ended PracticePlan payload', () {
-    final payload = Map<String, Object?>.of(_validAction().payload)
-      ..['max_effective_turns'] = 0;
+  test('encodes and decodes only the explicit v2 payload', () {
+    final envelope = encodeConfirmPracticePlanClientAction(_validV2Action());
+    final action = decodeConfirmPracticePlanClientAction(envelope);
+
+    expect(envelope.type, practicePlanConfirmClientActionType);
+    expect(envelope.payload, containsPair('user_role', '候选人'));
+    expect(envelope.payload['ai_roles'], <String>['面试官']);
+    expect(envelope.payload, containsPair('practice_goal', '准备 Java 后端面试'));
+    expect(envelope.payload, isNot(contains('target')));
+    expect(envelope.payload, isNot(contains('roles')));
+    expect(action.protocol, ConfirmPracticePlanProtocol.v2);
+    expect(action.userRole, '候选人');
+  });
+
+  test('decodes an open-ended v2 PracticePlan payload', () {
+    final payload = Map<String, Object?>.of(
+      encodeConfirmPracticePlanClientAction(_validV2Action()).payload,
+    )..['max_effective_turns'] = 0;
     final action = decodeConfirmPracticePlanClientAction(
       AgentClientAction(
         type: practicePlanConfirmClientActionType,
@@ -25,15 +43,18 @@ void main() {
     expect(action.maxEffectiveTurns, 0);
   });
 
-  test('rejects the wrong version or malformed business payload', () {
-    final invalidScene = Map<String, Object?>.of(_validAction().payload)
+  test('rejects mixed, malformed, or unknown version payloads', () {
+    final v2 = encodeConfirmPracticePlanClientAction(_validV2Action());
+    final invalidScene = Map<String, Object?>.of(v2.payload)
       ..['practice_experience'] = 'UNKNOWN';
-    final duplicateRoles = Map<String, Object?>.of(_validAction().payload)
-      ..['roles'] = <String>['面试官', '面试官'];
+    final duplicateRoles = Map<String, Object?>.of(v2.payload)
+      ..['ai_roles'] = <String>['面试官', '面试官'];
+    final mixedV1 = Map<String, Object?>.of(_validV1Action().payload)
+      ..['practice_goal'] = '不允许混用字段';
     for (final action in <AgentClientAction>[
       AgentClientAction(
-        type: 'practice.plan.confirm.v2',
-        payload: _validAction().payload,
+        type: 'practice.plan.confirm.v999',
+        payload: v2.payload,
       ),
       AgentClientAction(
         type: practicePlanConfirmClientActionType,
@@ -43,6 +64,10 @@ void main() {
         type: practicePlanConfirmClientActionType,
         payload: duplicateRoles,
       ),
+      AgentClientAction(
+        type: practicePlanConfirmClientActionV1Type,
+        payload: mixedV1,
+      ),
     ]) {
       expect(
         () => decodeConfirmPracticePlanClientAction(action),
@@ -50,10 +75,76 @@ void main() {
       );
     }
   });
+
+  test('presentation decoder skips unknown and malformed actions', () {
+    final v2 = encodeConfirmPracticePlanClientAction(_validV2Action());
+    expect(
+      tryDecodeConfirmPracticePlanClientAction(
+        AgentClientAction(
+          type: 'practice.plan.confirm.v999',
+          payload: v2.payload,
+        ),
+      ),
+      isNull,
+    );
+    expect(
+      tryDecodeConfirmPracticePlanClientAction(
+        AgentClientAction(
+          type: practicePlanConfirmClientActionType,
+          payload: Map<String, Object?>.of(v2.payload)..remove('user_role'),
+        ),
+      ),
+      isNull,
+    );
+  });
+
+  test('refuses to encode a historical v1 domain value', () {
+    expect(
+      () => encodeConfirmPracticePlanClientAction(
+        ConfirmPracticePlanClientAction(
+          protocol: ConfirmPracticePlanProtocol.v1,
+          label: '确认并开始练习',
+          practicePlanId: _planId,
+          planVersion: 2,
+          sceneName: '项目经历深挖',
+          practiceGoal: '准备 Java 后端面试',
+          aiRoles: const <String>['面试官'],
+          practiceExperience: 'INTERVIEW',
+          sceneCategory: 'INTERVIEW_PROFESSIONAL',
+          practiceMode: 'FULL_SIMULATION',
+          practiceScope: '完整模拟',
+          suggestedDuration: const Duration(seconds: 600),
+          minEffectiveTurns: 3,
+          maxEffectiveTurns: 6,
+          confirmationPrompt: '确认后将创建练习会话；确认前不会开始练习。',
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
 }
 
-AgentClientAction _validAction() => AgentClientAction(
-  type: practicePlanConfirmClientActionType,
+ConfirmPracticePlanClientAction _validV2Action() =>
+    const ConfirmPracticePlanClientAction(
+      label: '确认并开始练习',
+      practicePlanId: _planId,
+      planVersion: 2,
+      sceneName: '项目经历深挖',
+      userRole: '候选人',
+      aiRoles: <String>['面试官'],
+      practiceGoal: '准备 Java 后端面试',
+      practiceExperience: 'INTERVIEW',
+      sceneCategory: 'INTERVIEW_PROFESSIONAL',
+      practiceMode: 'FULL_SIMULATION',
+      practiceScope: '完整模拟',
+      suggestedDuration: Duration(seconds: 600),
+      minEffectiveTurns: 3,
+      maxEffectiveTurns: 6,
+      confirmationPrompt: '确认后将创建练习会话；确认前不会开始练习。',
+    );
+
+AgentClientAction _validV1Action() => const AgentClientAction(
+  type: practicePlanConfirmClientActionV1Type,
   payload: <String, Object?>{
     'label': '确认并开始练习',
     'practice_plan_id': _planId,

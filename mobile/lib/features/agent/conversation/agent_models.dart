@@ -7,6 +7,107 @@ enum AgentMessageRole { user, assistant }
 
 enum AgentMessageModality { text, voice, multimodal }
 
+enum AgentRunStatus { pending, running, completed, failed }
+
+final class AgentRunUsage {
+  const AgentRunUsage({
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.totalTokens,
+  });
+
+  final int inputTokens;
+  final int outputTokens;
+  final int totalTokens;
+}
+
+sealed class AgentRunCompletion {
+  const AgentRunCompletion();
+}
+
+final class AgentModelRunCompletion extends AgentRunCompletion {
+  const AgentModelRunCompletion({
+    required this.providerCompletionId,
+    required this.providerModel,
+    required this.finishReason,
+    required this.usage,
+  });
+
+  final String providerCompletionId;
+  final String providerModel;
+  final String finishReason;
+  final AgentRunUsage usage;
+}
+
+final class AgentDomainRunCompletion extends AgentRunCompletion {
+  const AgentDomainRunCompletion({
+    required this.toolCallId,
+    required this.toolName,
+  });
+
+  final String toolCallId;
+  final String toolName;
+}
+
+final class AgentRunFailure {
+  const AgentRunFailure({required this.kind, required this.retryable});
+
+  final String kind;
+  final bool retryable;
+}
+
+/// The authoritative durable Run returned by the Agent API.
+///
+/// Text and voice transports share this model. Presentation work such as
+/// Message hydration and TTS happens after a Run reaches a terminal status and
+/// must not change that durable outcome.
+final class AgentRun {
+  const AgentRun({
+    required this.id,
+    required this.threadId,
+    required this.inputMessageId,
+    required this.attempt,
+    required this.status,
+    required this.requestedProvider,
+    required this.requestedModel,
+    required this.maxOutputTokens,
+    required this.createdAt,
+    required this.updatedAt,
+    this.retryOfRunId,
+    this.clientRetryId,
+    this.assistantMessageId,
+    this.completion,
+    this.failure,
+    this.startedAt,
+    this.completedAt,
+  });
+
+  final String id;
+  final String threadId;
+  final String inputMessageId;
+  final int attempt;
+  final String? retryOfRunId;
+  final String? clientRetryId;
+  final AgentRunStatus status;
+  final String requestedProvider;
+  final String requestedModel;
+  final int maxOutputTokens;
+  final String? assistantMessageId;
+  final AgentRunCompletion? completion;
+  final AgentRunFailure? failure;
+  final DateTime createdAt;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final DateTime updatedAt;
+
+  bool get isTerminal =>
+      status == AgentRunStatus.completed || status == AgentRunStatus.failed;
+
+  String? get failureKind => failure?.kind;
+
+  bool get failureRetryable => failure?.retryable ?? false;
+}
+
 bool validAgentSpeechFeedbackStatusUrl(String value) =>
     _agentSpeechFeedbackStatusUrlPattern.hasMatch(value);
 
@@ -116,6 +217,8 @@ final class AgentMessage {
     required this.text,
     this.sequence,
     this.createdAt,
+    this.clientMessageId,
+    this.producedByRunId,
     this.modality = AgentMessageModality.text,
     this.audio,
     this.images = const <AgentImageAsset>[],
@@ -130,6 +233,8 @@ final class AgentMessage {
   final String text;
   final int? sequence;
   final DateTime? createdAt;
+  final String? clientMessageId;
+  final String? producedByRunId;
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
@@ -144,6 +249,8 @@ final class AgentMessage {
     AgentMessageAudio? audio,
     bool clearAudio = false,
     List<AgentImageAsset>? images,
+    String? clientMessageId,
+    String? producedByRunId,
     bool? isStreaming,
     bool? hasFailed,
     List<AgentClientAction>? clientActions,
@@ -156,6 +263,8 @@ final class AgentMessage {
       text: text ?? this.text,
       sequence: sequence,
       createdAt: createdAt,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
+      producedByRunId: producedByRunId ?? this.producedByRunId,
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
       images: images ?? this.images,

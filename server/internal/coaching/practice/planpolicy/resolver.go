@@ -19,8 +19,8 @@ func NewResolver() *Resolver {
 }
 
 func (*Resolver) ResolveSessionPolicy(
-	definition scene.SceneDefinition,
-	option scene.PracticeOption,
+	definition scene.ExecutableSceneSnapshot,
+	option scene.PracticeOptionSnapshot,
 	requestedMaxEffectiveTurns int,
 ) (preparation.SessionPolicy, error) {
 	policy, err := practice.ResolveSessionPolicy(
@@ -40,7 +40,7 @@ func (*Resolver) ResolveSessionPolicy(
 		},
 		practice.PracticeOption{
 			ID:                       option.ID,
-			SceneID:                  option.SceneID,
+			SceneID:                  option.SceneKey,
 			RoleDefinitionID:         option.RoleDefinitionID,
 			Mode:                     practice.PracticeMode(option.Mode),
 			DisplayName:              option.DisplayName,

@@ -1,34 +1,58 @@
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 
-const practicePlanConfirmClientActionType = 'practice.plan.confirm.v1';
+const practicePlanConfirmClientActionV1Type = 'practice.plan.confirm.v1';
+const practicePlanConfirmClientActionType = 'practice.plan.confirm.v2';
+
+bool isConfirmPracticePlanClientActionType(String type) =>
+    type == practicePlanConfirmClientActionV1Type ||
+    type == practicePlanConfirmClientActionType;
+
+ConfirmPracticePlanClientAction? tryDecodeConfirmPracticePlanClientAction(
+  AgentClientAction action,
+) {
+  if (!isConfirmPracticePlanClientActionType(action.type)) {
+    return null;
+  }
+  try {
+    return decodeConfirmPracticePlanClientAction(action);
+  } on FormatException {
+    return null;
+  }
+}
+
+enum ConfirmPracticePlanProtocol { v1, v2 }
 
 final class ConfirmPracticePlanClientAction {
   const ConfirmPracticePlanClientAction({
     required this.label,
     required this.practicePlanId,
     required this.planVersion,
-    required this.target,
     required this.sceneName,
+    required this.practiceGoal,
+    required this.aiRoles,
     required this.practiceExperience,
     required this.sceneCategory,
     required this.practiceMode,
-    required this.roles,
     required this.practiceScope,
     required this.suggestedDuration,
     required this.minEffectiveTurns,
     required this.maxEffectiveTurns,
     required this.confirmationPrompt,
+    this.userRole,
+    this.protocol = ConfirmPracticePlanProtocol.v2,
   });
 
+  final ConfirmPracticePlanProtocol protocol;
   final String label;
   final String practicePlanId;
   final int planVersion;
-  final String target;
   final String sceneName;
+  final String? userRole;
+  final List<String> aiRoles;
+  final String practiceGoal;
   final String practiceExperience;
   final String sceneCategory;
   final String practiceMode;
-  final List<String> roles;
   final String practiceScope;
   final Duration suggestedDuration;
   final int minEffectiveTurns;
@@ -36,7 +60,7 @@ final class ConfirmPracticePlanClientAction {
   final String confirmationPrompt;
 }
 
-const _confirmPracticePlanFields = <String>{
+const _confirmPracticePlanV1Fields = <String>{
   'label',
   'practice_plan_id',
   'plan_version',
@@ -46,6 +70,24 @@ const _confirmPracticePlanFields = <String>{
   'scene_category',
   'practice_mode',
   'roles',
+  'practice_scope',
+  'suggested_duration_seconds',
+  'min_effective_turns',
+  'max_effective_turns',
+  'confirmation_prompt',
+};
+
+const _confirmPracticePlanV2Fields = <String>{
+  'label',
+  'practice_plan_id',
+  'plan_version',
+  'scene_name',
+  'user_role',
+  'ai_roles',
+  'practice_goal',
+  'practice_experience',
+  'scene_category',
+  'practice_mode',
   'practice_scope',
   'suggested_duration_seconds',
   'min_effective_turns',
@@ -88,18 +130,23 @@ final _uuidPattern = RegExp(
 AgentClientAction encodeConfirmPracticePlanClientAction(
   ConfirmPracticePlanClientAction action,
 ) {
+  if (action.protocol != ConfirmPracticePlanProtocol.v2 ||
+      action.userRole == null) {
+    _rejectPracticePlanAction();
+  }
   final envelope = AgentClientAction(
     type: practicePlanConfirmClientActionType,
     payload: <String, Object?>{
       'label': action.label,
       'practice_plan_id': action.practicePlanId,
       'plan_version': action.planVersion,
-      'target': action.target,
       'scene_name': action.sceneName,
+      'user_role': action.userRole,
+      'ai_roles': action.aiRoles,
+      'practice_goal': action.practiceGoal,
       'practice_experience': action.practiceExperience,
       'scene_category': action.sceneCategory,
       'practice_mode': action.practiceMode,
-      'roles': action.roles,
       'practice_scope': action.practiceScope,
       'suggested_duration_seconds': action.suggestedDuration.inSeconds,
       'min_effective_turns': action.minEffectiveTurns,
@@ -114,45 +161,60 @@ AgentClientAction encodeConfirmPracticePlanClientAction(
 ConfirmPracticePlanClientAction decodeConfirmPracticePlanClientAction(
   AgentClientAction action,
 ) {
-  if (action.type != practicePlanConfirmClientActionType ||
-      action.payload.keys
-          .toSet()
-          .difference(_confirmPracticePlanFields)
-          .isNotEmpty ||
-      action.payload.length != _confirmPracticePlanFields.length) {
+  final protocol = switch (action.type) {
+    practicePlanConfirmClientActionV1Type => ConfirmPracticePlanProtocol.v1,
+    practicePlanConfirmClientActionType => ConfirmPracticePlanProtocol.v2,
+    _ => _rejectPracticePlanAction(),
+  };
+  final expectedFields = switch (protocol) {
+    ConfirmPracticePlanProtocol.v1 => _confirmPracticePlanV1Fields,
+    ConfirmPracticePlanProtocol.v2 => _confirmPracticePlanV2Fields,
+  };
+  final actualFields = action.payload.keys.toSet();
+  if (actualFields.length != expectedFields.length ||
+      !actualFields.containsAll(expectedFields)) {
     _rejectPracticePlanAction();
   }
   final object = action.payload;
   final practiceExperience = _string(object['practice_experience'], 1, 100);
   final sceneCategory = _string(object['scene_category'], 1, 200);
   final practiceMode = _string(object['practice_mode'], 1, 64);
-  final rolesValue = object['roles'];
-  if (rolesValue is! List || rolesValue.isEmpty || rolesValue.length > 8) {
-    _rejectPracticePlanAction();
-  }
-  final roles = rolesValue
-      .map((role) => _string(role, 1, 200))
-      .toList(growable: false);
+  final aiRoles = _roles(
+    object[switch (protocol) {
+      ConfirmPracticePlanProtocol.v1 => 'roles',
+      ConfirmPracticePlanProtocol.v2 => 'ai_roles',
+    }],
+  );
   final minTurns = _integer(object['min_effective_turns'], 1, 100);
   final maxTurns = _integer(object['max_effective_turns'], 0, 100);
   if (!_practiceExperiences.contains(practiceExperience) ||
       !_sceneCategories.contains(sceneCategory) ||
       !_practiceModes.contains(practiceMode) ||
-      roles.toSet().length != roles.length ||
       (maxTurns != 0 && maxTurns < minTurns)) {
     _rejectPracticePlanAction();
   }
 
   return ConfirmPracticePlanClientAction(
+    protocol: protocol,
     label: _string(object['label'], 1, 100),
     practicePlanId: _uuid(object['practice_plan_id']),
     planVersion: _integer(object['plan_version'], 1),
-    target: _string(object['target'], 1, 500),
     sceneName: _string(object['scene_name'], 1, 200),
+    userRole: protocol == ConfirmPracticePlanProtocol.v2
+        ? _string(object['user_role'], 1, 200)
+        : null,
+    aiRoles: aiRoles,
+    practiceGoal: _string(
+      object[switch (protocol) {
+        ConfirmPracticePlanProtocol.v1 => 'target',
+        ConfirmPracticePlanProtocol.v2 => 'practice_goal',
+      }],
+      1,
+      500,
+    ),
     practiceExperience: practiceExperience,
     sceneCategory: sceneCategory,
     practiceMode: practiceMode,
-    roles: List<String>.unmodifiable(roles),
     practiceScope: _string(object['practice_scope'], 1, 200),
     suggestedDuration: Duration(
       seconds: _integer(object['suggested_duration_seconds'], 1),
@@ -161,6 +223,19 @@ ConfirmPracticePlanClientAction decodeConfirmPracticePlanClientAction(
     maxEffectiveTurns: maxTurns,
     confirmationPrompt: _string(object['confirmation_prompt'], 1, 300),
   );
+}
+
+List<String> _roles(Object? value) {
+  if (value is! List || value.isEmpty || value.length > 8) {
+    _rejectPracticePlanAction();
+  }
+  final roles = value
+      .map((role) => _string(role, 1, 200))
+      .toList(growable: false);
+  if (roles.toSet().length != roles.length) {
+    _rejectPracticePlanAction();
+  }
+  return List<String>.unmodifiable(roles);
 }
 
 String _string(Object? value, int minimum, int maximum) {

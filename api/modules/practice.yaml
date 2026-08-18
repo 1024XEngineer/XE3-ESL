@@ -496,6 +496,25 @@ components:
           type: boolean
         speech_feedback_allowed:
           type: boolean
+    PracticeExecutionSelectionSnapshot:
+      type: object
+      additionalProperties: false
+      description: |
+        Immutable Practice-owned execution projection. Catalog or custom
+        provenance remains on the Preparation Plan and is not reinterpreted
+        as Practice Session identity.
+      required: [scene, selected_role_ids, practice_option_id]
+      properties:
+        scene:
+          $ref: ./scene.yaml#/components/schemas/SceneDefinition
+        selected_role_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
     PracticeSessionSnapshot:
       type: object
       additionalProperties: false
@@ -523,7 +542,7 @@ components:
         practice_mode:
           $ref: '#/components/schemas/PracticeMode'
         scene_selection:
-          $ref: ./preparation.yaml#/components/schemas/SceneSelectionSnapshot
+          $ref: '#/components/schemas/PracticeExecutionSelectionSnapshot'
         preparation_snapshot:
           $ref: ./preparation.yaml#/components/schemas/PlanPreparationSnapshot
         participants:

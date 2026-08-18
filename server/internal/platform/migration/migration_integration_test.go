@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/ielts"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
+	practiceinteractionpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/planpolicy"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/preparationsource"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
+	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var cleanBaselineTables = []string{
@@ -54,6 +73,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to Question Tip translation = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to Practice Plan archive = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
@@ -81,6 +106,798 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 		t.Fatalf("second Up = %t, %v", changed, err)
 	}
 	assertCleanBaselineSchema(t, admin, schema)
+}
+
+func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
+	t *testing.T,
+) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect migration data database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID    = "10000000-0000-4000-8000-000000000011"
+		planID    = "30000000-0000-4000-8000-000000000011"
+		sessionID = "40000000-0000-4000-8000-000000000011"
+	)
+	selection, policy, objectives := catalogPlanMigrationFixture(t)
+	oldSelection := legacySelectionJSON(t, selection)
+	policyJSON := mustJSON(t, policy)
+	objectivesJSON := mustJSON(t, objectives)
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email) VALUES ($1, 'migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed migration owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO practice_plans (
+    plan_id, user_id, preparation_snapshot, scene_selection, session_policy,
+    practice_objectives, practice_experience, status,
+    initial_client_request_id, initial_request_fingerprint
+) VALUES (
+    $2, $1, '{"background_summary":"A complete legacy Catalog Plan."}'::jsonb,
+    $3::jsonb, $4::jsonb, $5::jsonb,
+    'LIFE_AND_TRAVEL', 'ready', 'request-migration-plan',
+    decode(repeat('11', 32), 'hex')
+)
+`, userID, planID, oldSelection, policyJSON, objectivesJSON); err != nil {
+		t.Fatalf("seed legacy Practice Plan: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO practice_sessions (
+    session_id, user_id, plan_id, plan_version, practice_experience,
+    scene_category, practice_mode, evaluation_policy_ref, status,
+    plan_snapshot, participants, initial_client_request_id,
+    initial_request_fingerprint
+) VALUES (
+    $3, $1, $2, 1, 'LIFE_AND_TRAVEL', 'LIFE_DAILY', 'FULL_SIMULATION',
+    'daily.general.evaluation.v1', 'starting',
+    jsonb_build_object('scene_selection', $4::jsonb), '[{}]'::jsonb,
+    'request-migration-session', decode(repeat('12', 32), 'hex')
+)
+`, userID, planID, sessionID, oldSelection); err != nil {
+		t.Fatalf("seed legacy Practice Session: %v", err)
+	}
+
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("apply v5 = %t, %v", changed, upErr)
+	}
+	assertMigratedSceneSelection := func(query string, id string) {
+		t.Helper()
+		var sourceType, sourceID, sceneKey, roleKey, optionKey string
+		var sourceVersion, sceneRevision int
+		if err := database.QueryRow(context.Background(), query, id).Scan(
+			&sourceType,
+			&sourceID,
+			&sourceVersion,
+			&sceneKey,
+			&sceneRevision,
+			&roleKey,
+			&optionKey,
+		); err != nil {
+			t.Fatalf("read migrated snapshot: %v", err)
+		}
+		if sourceType != "CATALOG" || sourceID != selection.Source.SceneID ||
+			sourceVersion != selection.Source.SceneVersion || sceneKey != sourceID ||
+			sceneRevision != selection.Scene.Revision ||
+			roleKey != sceneKey || optionKey != sceneKey {
+			t.Fatalf("migrated snapshot = %q %q %d %q %d %q %q", sourceType, sourceID, sourceVersion, sceneKey, sceneRevision, roleKey, optionKey)
+		}
+	}
+	assertMigratedSceneSelection(`
+SELECT scene_selection #>> '{source,type}',
+       scene_selection #>> '{source,scene_id}',
+       (scene_selection #>> '{source,scene_version}')::integer,
+       scene_selection #>> '{scene,scene_key}',
+       (scene_selection #>> '{scene,scene_revision}')::integer,
+       scene_selection #>> '{scene,roles,0,scene_key}',
+       scene_selection #>> '{scene,practice_options,0,scene_key}'
+FROM practice_plans WHERE plan_id = $1
+	`, planID)
+	poolConfig, err := pgxpool.ParseConfig(config.ConnString())
+	if err != nil {
+		t.Fatalf("parse migrated repository pool config: %v", err)
+	}
+	if poolConfig.ConnConfig.RuntimeParams == nil {
+		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	for key, value := range config.RuntimeParams {
+		poolConfig.ConnConfig.RuntimeParams[key] = value
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		t.Fatalf("open migrated repository pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	actor := requestcontext.Actor{
+		UserID: userID, SessionID: "20000000-0000-4000-8000-000000000011",
+	}
+	migratedPlan, err := preparationpostgres.NewPostgresPlanRepository(pool).
+		ReadCurrentPlan(context.Background(), actor, planID)
+	if err != nil {
+		t.Fatalf("strict Repository read of migrated Catalog Plan: %v", err)
+	}
+	if !preparationservice.ValidReturnedPlan(migratedPlan, actor, planID) ||
+		migratedPlan.SceneSelection.Source.Type != scene.SceneSourceCatalog ||
+		migratedPlan.SceneSelection.Scene.Key != selection.Scene.Key {
+		t.Fatalf("migrated Catalog Plan is not executable: %#v", migratedPlan)
+	}
+	var sessionSelectionUnchanged bool
+	if err := database.QueryRow(context.Background(), `
+SELECT plan_snapshot->'scene_selection' = $2::jsonb
+FROM practice_sessions WHERE session_id = $1
+`, sessionID, oldSelection).Scan(&sessionSelectionUnchanged); err != nil {
+		t.Fatalf("read preserved Practice Session snapshot: %v", err)
+	}
+	if !sessionSelectionUnchanged {
+		t.Fatal("Practice Session execution snapshot changed during Plan migration")
+	}
+
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v5 = %t, %v", changed, downErr)
+	}
+	var restoredID, restoredRoleID, restoredOptionID, restoredStatus string
+	var restoredVersion int
+	if err := database.QueryRow(context.Background(), `
+SELECT scene_selection #>> '{scene,scene_id}',
+       (scene_selection #>> '{scene,scene_version}')::integer,
+       scene_selection #>> '{scene,status}',
+       scene_selection #>> '{scene,roles,0,scene_id}',
+       scene_selection #>> '{scene,practice_options,0,scene_id}'
+FROM practice_plans WHERE plan_id = $1
+`, planID).Scan(&restoredID, &restoredVersion, &restoredStatus, &restoredRoleID, &restoredOptionID); err != nil {
+		t.Fatalf("read restored legacy snapshot: %v", err)
+	}
+	if restoredID != selection.Source.SceneID ||
+		restoredVersion != selection.Source.SceneVersion ||
+		restoredStatus != "active" || restoredRoleID != restoredID ||
+		restoredOptionID != restoredID {
+		t.Fatalf("restored snapshot = %q %d %q %q %q", restoredID, restoredVersion, restoredStatus, restoredRoleID, restoredOptionID)
+	}
+}
+
+func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v4 legacy Scene selection = %t, %v", changed, downErr)
+	}
+
+	ctx := context.Background()
+	database, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect migration data database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID       = "10000000-0000-4000-8000-000000000013"
+		actorSession = "20000000-0000-4000-8000-000000000013"
+		planID       = "30000000-0000-4000-8000-000000000013"
+	)
+	selection, policy, objectives := catalogPlanMigrationFixture(t)
+	if _, err := database.Exec(ctx, `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'migration-lifecycle@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed migrated Catalog Plan owner: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+INSERT INTO practice_plans (
+    plan_id, user_id, preparation_snapshot, scene_selection, session_policy,
+    practice_objectives, practice_experience, status,
+    initial_client_request_id, initial_request_fingerprint
+) VALUES (
+    $2, $1, '{"background_summary":"Confirm an existing hotel booking."}'::jsonb,
+    $3::jsonb, $4::jsonb, $5::jsonb,
+    'LIFE_AND_TRAVEL', 'draft', 'request-migration-lifecycle-plan',
+    decode(repeat('14', 32), 'hex')
+)
+`, userID, planID, legacySelectionJSON(t, selection), mustJSON(t, policy),
+		mustJSON(t, objectives)); err != nil {
+		t.Fatalf("seed legacy Catalog Plan lifecycle fixture: %v", err)
+	}
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("apply v5 = %t, %v", changed, upErr)
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(config.ConnString())
+	if err != nil {
+		t.Fatalf("parse migrated lifecycle pool config: %v", err)
+	}
+	if poolConfig.ConnConfig.RuntimeParams == nil {
+		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	for key, value := range config.RuntimeParams {
+		poolConfig.ConnConfig.RuntimeParams[key] = value
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		t.Fatalf("open migrated lifecycle pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	actor := requestcontext.Actor{UserID: userID, SessionID: actorSession}
+	ids := identity.NewUUIDv4Generator(nil)
+	planService, err := preparationservice.NewPlanService(
+		preparationpostgres.NewPostgresPlanRepository(pool),
+		ids,
+		migrationUnusedPlanDependencies{},
+		migrationUnusedPlanDependencies{},
+		migrationUnusedPlanDependencies{},
+		migrationUnusedPlanDependencies{},
+		planpolicy.NewResolver(),
+	)
+	if err != nil {
+		t.Fatalf("compose migrated Catalog Plan service: %v", err)
+	}
+	migratedPlan, err := planService.ReadPlan(ctx, actor, planID)
+	if err != nil || migratedPlan.Status != preparation.PlanStatusDraft ||
+		migratedPlan.SceneSelection.Source.Type != scene.SceneSourceCatalog ||
+		migratedPlan.SceneSelection.Scene.Key != selection.Scene.Key {
+		t.Fatalf("strict read of migrated Catalog Plan = %#v, %v", migratedPlan, err)
+	}
+	confirmed, replayed, err := planService.ConfirmPlan(
+		ctx,
+		actor,
+		planID,
+		"migration-lifecycle-plan-confirm-0001",
+		preparation.ConfirmPlanRequest{ExpectedVersion: migratedPlan.Version},
+	)
+	if err != nil || replayed || confirmed.Status != preparation.PlanStatusReady ||
+		confirmed.Version != migratedPlan.Version+1 {
+		t.Fatalf("confirm migrated Catalog Plan = %#v, replayed=%t, err=%v", confirmed, replayed, err)
+	}
+
+	evaluationComposition, err := app.NewEvaluationComposition(
+		pool,
+		migrationReportGenerator{},
+		migrationSpeechFeedbackGenerator{},
+		nil,
+		app.EvaluationConfiguration{
+			Provider:     "qianwen",
+			SessionModel: "qwen-plus",
+			SpeechModel:  "qwen-plus",
+			Worker:       migrationEvaluationWorkerConfiguration(),
+		},
+	)
+	if err != nil {
+		t.Fatalf("compose Evaluation runtime: %v", err)
+	}
+	schedulers := evaluationComposition.PracticeSchedulers()
+	practiceRepository, err := practiceinteractionpostgres.New(
+		pool,
+		schedulers.Completion,
+		schedulers.TurnFeedback,
+		ids,
+	)
+	if err != nil {
+		t.Fatalf("compose Practice repository: %v", err)
+	}
+	planSource, err := preparationsource.New(planService)
+	if err != nil {
+		t.Fatalf("compose Preparation Plan projection: %v", err)
+	}
+	sessionService, err := practice.NewSessionApplication(
+		practiceRepository,
+		ids,
+		planSource,
+	)
+	if err != nil {
+		t.Fatalf("compose Practice Session service: %v", err)
+	}
+	bootstrap, replayed, err := sessionService.CreateSession(
+		ctx,
+		actor,
+		confirmed.ID,
+		"migration-lifecycle-session-create-0001",
+		practice.CreateSessionRequest{ExpectedPlanVersion: confirmed.Version},
+	)
+	if err != nil || replayed || bootstrap.Session.ID == "" ||
+		bootstrap.Snapshot.SceneSelection.Scene.ID != selection.Scene.Key {
+		t.Fatalf("create Session from migrated Catalog Plan = %#v, replayed=%t, err=%v", bootstrap, replayed, err)
+	}
+
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("compose Practice temporary audio vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	practiceProviders := migrationPracticeProviders{}
+	newInteractionRuntime := func() *practiceinteraction.SessionApplication {
+		t.Helper()
+		application, _, runtimeErr := practiceinteraction.NewRuntimeApplications(
+			practiceinteraction.RuntimeConfiguration{
+				Repository:         practiceRepository,
+				IDs:                ids,
+				TemporaryAudio:     vault,
+				Recognizer:         practiceProviders,
+				RecordedRecognizer: practiceProviders,
+				Synthesizer:        practiceProviders,
+				QuestionGenerator:  practiceProviders,
+				Recordings:         practiceProviders,
+				ASRLease:           time.Minute,
+			},
+		)
+		if runtimeErr != nil {
+			t.Fatalf("compose Practice Interaction runtime: %v", runtimeErr)
+		}
+		return application
+	}
+	started, err := newInteractionRuntime().Start(
+		ctx,
+		actor,
+		bootstrap.Session.ID,
+		"migration-lifecycle-session-start-0001",
+	)
+	if err != nil || started.Session.Status != string(practice.SessionInProgress) ||
+		started.Question == nil {
+		t.Fatalf("start migrated Catalog Session = %#v, %v", started, err)
+	}
+	recovered, err := newInteractionRuntime().Resume(ctx, actor, bootstrap.Session.ID)
+	if err != nil || recovered.Session.ID != bootstrap.Session.ID ||
+		recovered.Session.Status != string(practice.SessionInProgress) ||
+		recovered.Question == nil || recovered.Question.ID != started.Question.ID {
+		t.Fatalf("recover migrated Catalog Session = %#v, %v", recovered, err)
+	}
+	answered, err := newInteractionRuntime().SubmitText(
+		ctx,
+		actor,
+		practiceinteraction.SubmitTextAnswerCommand{
+			SessionID:      bootstrap.Session.ID,
+			QuestionID:     recovered.Question.ID,
+			IdempotencyKey: "migration-lifecycle-text-turn-0001",
+			AnswerText:     "I booked a double room for two nights and would like to confirm breakfast is included.",
+		},
+	)
+	if err != nil || answered.Turn == nil || answered.Turn.EffectiveTurns != 1 ||
+		answered.Session.SessionVersion <= recovered.Session.SessionVersion {
+		t.Fatalf("answer migrated Catalog Session = %#v, %v", answered, err)
+	}
+	completed, replayed, err := sessionService.TransitionSession(
+		ctx,
+		actor,
+		bootstrap.Session.ID,
+		"migration-lifecycle-session-complete-0001",
+		answered.Session.SessionVersion,
+		practice.SessionComplete,
+	)
+	if err != nil || replayed || completed.Status != practice.SessionCompleted {
+		t.Fatalf("complete migrated Catalog Session = %#v, replayed=%t, err=%v", completed, replayed, err)
+	}
+	record, err := evaluationComposition.Store().GetRecordBySource(
+		ctx,
+		userID,
+		evaluation.KindSessionReport,
+		bootstrap.Session.ID,
+	)
+	if err != nil || record.Status != evaluation.JobQueued {
+		t.Fatalf("queued migrated Catalog Evaluation = %#v, %v", record, err)
+	}
+	processed, err := evaluationComposition.Worker().ProcessSession(ctx)
+	if err != nil || !processed {
+		t.Fatalf("process migrated Catalog Evaluation = %t, %v", processed, err)
+	}
+	record, err = evaluationComposition.Store().GetRecordBySource(
+		ctx,
+		userID,
+		evaluation.KindSessionReport,
+		bootstrap.Session.ID,
+	)
+	if err != nil || record.Status != evaluation.JobReady {
+		t.Fatalf("ready migrated Catalog Evaluation = %#v, %v", record, err)
+	}
+	formal, err := evaluationComposition.Store().GetFormalReport(ctx, userID, record.ID)
+	if err != nil || !formal.Valid() || formal.PracticeSessionID != bootstrap.Session.ID ||
+		formal.Report.SceneCategory != string(selection.Scene.Category) {
+		t.Fatalf("read migrated Catalog formal Report = %#v, %v", formal, err)
+	}
+}
+
+func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect migration data database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID = "10000000-0000-4000-8000-000000000012"
+		planID = "30000000-0000-4000-8000-000000000012"
+	)
+	selection, err := scene.NewCustomSelection(planID, scene.CustomSceneSpec{
+		Scenario:       "向社区活动负责人提议举办英语角",
+		UserRole:       "活动发起人",
+		AIRole:         "社区活动负责人",
+		PracticeGoal:   "说明活动价值并协商时间、场地和报名方式",
+		ExperienceHint: scene.PracticeExperienceLifeAndTravel,
+	})
+	if err != nil {
+		t.Fatalf("build valid Custom selection: %v", err)
+	}
+	policy, objectives := customPlanMigrationExecution(t, selection)
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email) VALUES ($1, 'custom-down@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed Custom Plan owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO practice_plans (
+    plan_id, user_id, preparation_snapshot, scene_selection, session_policy,
+    practice_objectives, practice_experience, status,
+    initial_client_request_id, initial_request_fingerprint
+) VALUES (
+    $2, $1, '{}'::jsonb, $3::jsonb, $4::jsonb, $5::jsonb,
+    'LIFE_AND_TRAVEL', 'draft', 'request-custom-down-plan',
+    decode(repeat('13', 32), 'hex')
+)
+`, userID, planID, mustJSON(t, selection), mustJSON(t, policy), mustJSON(t, objectives)); err != nil {
+		t.Fatalf("seed valid Custom Plan: %v", err)
+	}
+
+	changed, downErr := runner.DownOne()
+	if downErr == nil || changed ||
+		!strings.Contains(downErr.Error(), "cannot roll back scene selection source while CUSTOM snapshots exist") {
+		t.Fatalf("DownOne with Custom Plan = %t, %v", changed, downErr)
+	}
+	var sourceType string
+	if err := database.QueryRow(context.Background(), `
+SELECT scene_selection #>> '{source,type}'
+FROM practice_plans WHERE plan_id=$1
+`, planID).Scan(&sourceType); err != nil {
+		t.Fatalf("read Custom Plan after rejected DownOne: %v", err)
+	}
+	if sourceType != "CUSTOM" {
+		t.Fatalf("Custom Plan source after rejected DownOne = %q", sourceType)
+	}
+}
+
+func catalogPlanMigrationFixture(
+	t *testing.T,
+) (scene.SelectionSnapshot, preparation.SessionPolicy, []preparation.PracticeObjective) {
+	t.Helper()
+	const (
+		sceneID  = "scn_migration_hotel_checkin"
+		roleID   = "role_migration_hotel_front_desk"
+		optionID = "option_migration_hotel_full"
+	)
+	selection := scene.SelectionSnapshot{
+		Source: scene.SceneSource{
+			Type: scene.SceneSourceCatalog, SceneID: sceneID, SceneVersion: 2,
+		},
+		Scene: scene.ExecutableSceneSnapshot{
+			Key:        sceneID,
+			Revision:   2,
+			Experience: scene.PracticeExperienceLifeAndTravel,
+			Category:   scene.SceneCategoryLifeTravel,
+			Name:       "迁移测试酒店入住",
+			Prompt: scene.ScenePrompt{
+				PublicSceneBrief: "在酒店前台核对预订并办理入住。",
+				PracticeGoal:     "清楚确认预订、房型和入住安排。",
+				UserRole:         "住客",
+				AIRole:           "酒店前台",
+				PersonaSummary:   "专业且乐于协助的酒店前台。",
+				FocusAreas:       []string{"预订确认", "入住安排"},
+				TurnBlueprints:   []string{"核对预订", "确认房型", "完成入住"},
+			},
+			Roles: []scene.RoleSnapshot{{
+				ID:               roleID,
+				SceneKey:         sceneID,
+				Type:             "HOTEL_FRONT_DESK",
+				DisplayName:      "酒店前台",
+				Responsibilities: "核验预订并完成入住。",
+				Style:            "专业、清晰。",
+				PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+					ID: "confirm_booking", Description: "准确确认预订和入住信息。",
+				}},
+			}},
+			PracticeOptions: []scene.PracticeOptionSnapshot{{
+				ID:                       optionID,
+				SceneKey:                 sceneID,
+				Mode:                     scene.PracticeModeFullSimulation,
+				DisplayName:              "完整模拟",
+				SuggestedDurationSeconds: 480,
+				TurnPolicyRef:            "generic.practice.turn.v1",
+				SessionPolicyRef:         "daily.practice.session.v1",
+				EvaluationPolicyRef:      "daily.general.evaluation.v1",
+			}},
+		},
+		SelectedRoleIDs:  []string{roleID},
+		PracticeOptionID: optionID,
+	}
+	if !scene.ValidSelectionSnapshot(selection) {
+		t.Fatal("Catalog migration fixture is not a valid current selection")
+	}
+	policy, objectives := customPlanMigrationExecution(t, selection)
+	return selection, policy, objectives
+}
+
+func customPlanMigrationExecution(
+	t *testing.T,
+	selection scene.SelectionSnapshot,
+) (preparation.SessionPolicy, []preparation.PracticeObjective) {
+	t.Helper()
+	option, err := selection.PracticeOption()
+	if err != nil {
+		t.Fatalf("read migration fixture option: %v", err)
+	}
+	policy, err := planpolicy.NewResolver().ResolveSessionPolicy(
+		selection.Scene, option, 0,
+	)
+	if err != nil {
+		t.Fatalf("resolve migration fixture policy: %v", err)
+	}
+	roles, err := selection.SelectedRoles()
+	if err != nil {
+		t.Fatalf("read migration fixture roles: %v", err)
+	}
+	objectives := make([]preparation.PracticeObjective, 0)
+	seen := make(map[string]struct{})
+	for _, role := range roles {
+		for _, objective := range role.PracticeObjectives {
+			if _, duplicate := seen[objective.ID]; duplicate {
+				continue
+			}
+			seen[objective.ID] = struct{}{}
+			objectives = append(objectives, preparation.PracticeObjective{
+				ID: objective.ID, Description: objective.Description,
+			})
+		}
+	}
+	return policy, objectives
+}
+
+func legacySelectionJSON(t *testing.T, selection scene.SelectionSnapshot) string {
+	t.Helper()
+	raw := mustJSON(t, selection)
+	var document map[string]any
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		t.Fatalf("decode current selection fixture: %v", err)
+	}
+	delete(document, "source")
+	sceneDocument, ok := document["scene"].(map[string]any)
+	if !ok {
+		t.Fatal("current selection fixture has no scene object")
+	}
+	sceneDocument["scene_id"] = sceneDocument["scene_key"]
+	sceneDocument["scene_version"] = sceneDocument["scene_revision"]
+	sceneDocument["status"] = "active"
+	delete(sceneDocument, "scene_key")
+	delete(sceneDocument, "scene_revision")
+	for _, field := range []string{"roles", "practice_options"} {
+		values, ok := sceneDocument[field].([]any)
+		if !ok {
+			t.Fatalf("current selection fixture %s is not an array", field)
+		}
+		for _, value := range values {
+			item, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("current selection fixture %s item is not an object", field)
+			}
+			item["scene_id"] = item["scene_key"]
+			delete(item, "scene_key")
+		}
+	}
+	return mustJSON(t, document)
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal JSON fixture: %v", err)
+	}
+	return string(raw)
+}
+
+type migrationUnusedPlanDependencies struct{}
+
+func (migrationUnusedPlanDependencies) ReadConfirmed(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	int,
+) (preparation.InterviewPreparationSnapshot, error) {
+	return preparation.InterviewPreparationSnapshot{}, errors.New(
+		"unused migrated Catalog Plan dependency",
+	)
+}
+
+func (migrationUnusedPlanDependencies) ReadOwnedThread(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (preparation.SourceThread, error) {
+	return preparation.SourceThread{}, errors.New(
+		"unused migrated Catalog Plan dependency",
+	)
+}
+
+func (migrationUnusedPlanDependencies) ResolveAccessibleSelection(
+	context.Context,
+	string,
+	string,
+	int,
+	[]string,
+	string,
+) (scene.SelectionSnapshot, error) {
+	return scene.SelectionSnapshot{}, errors.New(
+		"unused migrated Catalog Plan dependency",
+	)
+}
+
+func (migrationUnusedPlanDependencies) ResolveQuestionSet(
+	context.Context,
+	ielts.QuestionSetSelection,
+) (ielts.ResolvedQuestionSet, error) {
+	return ielts.ResolvedQuestionSet{}, errors.New(
+		"unused migrated Catalog Plan dependency",
+	)
+}
+
+func (migrationUnusedPlanDependencies) AssignQuestionSet(
+	context.Context,
+	ielts.PracticeMode,
+	string,
+) (ielts.ResolvedQuestionSet, error) {
+	return ielts.ResolvedQuestionSet{}, errors.New(
+		"unused migrated Catalog Plan dependency",
+	)
+}
+
+type migrationPracticeProviders struct{}
+
+func (migrationPracticeProviders) GenerateQuestion(
+	context.Context,
+	practiceinteraction.QuestionGenerationRequest,
+) (string, error) {
+	return "Could you confirm the booking details and the dates of your stay?", nil
+}
+
+func (migrationPracticeProviders) Transcribe(
+	context.Context,
+	practiceinteraction.TranscriptionRequest,
+) (practiceinteraction.TranscriptionResult, error) {
+	return practiceinteraction.TranscriptionResult{}, errors.New(
+		"unexpected speech recognition in migrated Catalog text lifecycle",
+	)
+}
+
+func (migrationPracticeProviders) Synthesize(
+	context.Context,
+	practiceinteraction.SynthesisRequest,
+) (practiceinteraction.SynthesisResult, error) {
+	return practiceinteraction.SynthesisResult{}, errors.New(
+		"unexpected speech synthesis in migrated Catalog text lifecycle",
+	)
+}
+
+func (migrationPracticeProviders) Upload(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	platformmedia.AudioSource,
+) (string, error) {
+	return "", errors.New(
+		"unexpected recording upload in migrated Catalog text lifecycle",
+	)
+}
+
+type migrationReportGenerator struct{}
+
+func (migrationReportGenerator) Generate(
+	_ context.Context,
+	request textgeneration.Request,
+) (textgeneration.Result, error) {
+	var input struct {
+		DimensionKeys []string `json:"dimension_keys"`
+	}
+	if err := json.Unmarshal([]byte(request.UserPrompt), &input); err != nil {
+		return textgeneration.Result{}, err
+	}
+	dimensions := make([]map[string]any, len(input.DimensionKeys))
+	for index, key := range input.DimensionKeys {
+		dimensions[index] = map[string]any{
+			"key":                  key,
+			"score":                75.0,
+			"coverage":             1.0,
+			"confidence":           0.8,
+			"reason_codes":         []string{},
+			"strengths":            []any{},
+			"improvements":         []any{},
+			"recommended_examples": []any{},
+		}
+	}
+	content, err := json.Marshal(map[string]any{
+		"scoreability_status": "PROVISIONAL",
+		"summary":             "The hotel check-in response is clear and task-focused.",
+		"dimensions":          dimensions,
+		"priority_actions":    []any{},
+	})
+	if err != nil {
+		return textgeneration.Result{}, err
+	}
+	return textgeneration.Result{
+		RequestID: "migration-report-request-1",
+		Content:   string(content),
+		Provider:  "qianwen",
+		Model:     "qwen-plus",
+	}, nil
+}
+
+type migrationSpeechFeedbackGenerator struct{}
+
+func (migrationSpeechFeedbackGenerator) Generate(
+	context.Context,
+	speechfeedback.TextGenerationRequest,
+) (speechfeedback.TextGenerationResult, error) {
+	return speechfeedback.TextGenerationResult{
+		RequestID: "migration-speech-request-1",
+		Content: `{"items":[{"kind":"STRENGTH","explanation":"The answer is clear.",` +
+			`"suggested_text":null}]}`,
+		Provider: "qianwen",
+		Model:    "qwen-plus",
+	}, nil
+}
+
+func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
+	return evaluation.WorkerConfiguration{
+		SessionLane: evaluation.ClaimLane{
+			Kinds:         []evaluation.Kind{evaluation.KindSessionReport},
+			LeaseDuration: 3 * time.Minute,
+			MaxAttempts:   3,
+		},
+		SpeechLane: evaluation.ClaimLane{
+			Kinds: []evaluation.Kind{
+				evaluation.KindPracticeTurnFeedback,
+				evaluation.KindAgentMessageFeedback,
+			},
+			LeaseDuration: 3 * time.Minute,
+			MaxAttempts:   3,
+		},
+		InterviewDeadline: 30 * time.Second,
+		IELTSDeadline:     110 * time.Second,
+		GeneralDeadline:   30 * time.Second,
+		SpeechDeadline:    30 * time.Second,
+		RetryDelay:        time.Second,
+		DependencyDelay:   time.Second,
+		FinalizeTimeout:   5 * time.Second,
+	}
 }
 
 func TestCleanBaselineOwnershipStateAndPartialUniqueness(t *testing.T) {

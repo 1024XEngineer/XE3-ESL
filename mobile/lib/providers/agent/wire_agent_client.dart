@@ -5,12 +5,12 @@ import 'dart:typed_data';
 
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
-import 'package:speakup/features/agent/client_action/agent_client_action.dart';
-import 'package:speakup/features/agent/client_action/agent_client_action_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
+
+import 'agent_wire_codec.dart';
 
 final class WireAgentClient
     implements
@@ -252,7 +252,7 @@ final class WireAgentClient
   Future<_RestoredTextRun> _restoreLastTextRun({
     required int generation,
     required String threadId,
-    required List<_WireMessage> messages,
+    required List<AgentWireMessage> messages,
   }) async {
     if (messages.isEmpty || messages.last.role != AgentMessageRole.user) {
       return const _RestoredTextRun();
@@ -289,7 +289,7 @@ final class WireAgentClient
         retryable: true,
       );
     }
-    if (terminalRun.status == _WireRunStatus.completed) {
+    if (terminalRun.status == AgentRunStatus.completed) {
       _failedRuns.remove(operationKey);
       final exchange = await _loadCompletedExchange(
         generation: generation,
@@ -317,9 +317,8 @@ final class WireAgentClient
     }
     if (terminalRun.failureRetryable) {
       _failedRuns[operationKey] = _FailedRun(
-        runId: terminalRun.id,
-        threadId: threadId,
-        inputMessageId: terminalRun.inputMessageId,
+        run: terminalRun,
+        clientMessageId: clientMessageId,
         content: userMessage.content,
         imageAssetIds: imageAssetIds,
       );
@@ -438,9 +437,11 @@ final class WireAgentClient
       _requireContent(text);
       _requireImageAssetIds(imageAssetIds);
       final operationKey = '$threadId\u{0}$clientMessageId';
-      final failedRun = _failedRuns[operationKey];
+      var failedRun = _failedRuns[operationKey];
       if (failedRun != null &&
-          (failedRun.content != text ||
+          (failedRun.threadId != threadId ||
+              failedRun.clientMessageId != clientMessageId ||
+              failedRun.content != text ||
               !_sameStrings(failedRun.imageAssetIds, imageAssetIds))) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.conflict,
@@ -448,7 +449,41 @@ final class WireAgentClient
         );
       }
 
-      late _WireRun initialRun;
+      if (failedRun?.requiresReconciliation == true) {
+        final reconciled = await _reconcileInterruptedRun(
+          generation: generation,
+          interrupted: failedRun!,
+        );
+        if (reconciled == null) {
+          _failedRuns.remove(operationKey);
+          failedRun = null;
+        } else if (reconciled.status == AgentRunStatus.completed) {
+          _failedRuns.remove(operationKey);
+          return _loadCompletedExchange(
+            generation: generation,
+            run: reconciled,
+            expectedUserContent: text,
+            expectedClientMessageId: clientMessageId,
+            expectedImageAssetIds: imageAssetIds,
+          );
+        } else if (!reconciled.failureRetryable) {
+          _failedRuns.remove(operationKey);
+          throw AgentClientException(
+            kind: AgentClientFailureKind.runFailed,
+            errorCode: reconciled.failureKind,
+          );
+        } else {
+          failedRun = _FailedRun(
+            run: reconciled,
+            clientMessageId: clientMessageId,
+            content: text,
+            imageAssetIds: imageAssetIds,
+          );
+          _failedRuns[operationKey] = failedRun;
+        }
+      }
+
+      late AgentRun initialRun;
       if (failedRun != null) {
         initialRun = await _retryRun(
           generation: generation,
@@ -471,13 +506,12 @@ final class WireAgentClient
           rethrow;
         }
         if (_ambiguousSubmissions.contains(operationKey)) {
-          if (initialRun.status == _WireRunStatus.failed &&
+          if (initialRun.status == AgentRunStatus.failed &&
               initialRun.failureRetryable) {
             _ambiguousSubmissions.remove(operationKey);
             final recoveredFailure = _FailedRun(
-              runId: initialRun.id,
-              threadId: threadId,
-              inputMessageId: initialRun.inputMessageId,
+              run: initialRun,
+              clientMessageId: clientMessageId,
               content: text,
               imageAssetIds: imageAssetIds,
             );
@@ -497,13 +531,12 @@ final class WireAgentClient
       var resolvedRun = terminalRun;
 
       if (_ambiguousSubmissions.contains(operationKey) &&
-          resolvedRun.status == _WireRunStatus.failed &&
+          resolvedRun.status == AgentRunStatus.failed &&
           resolvedRun.failureRetryable) {
         _ambiguousSubmissions.remove(operationKey);
         final recoveredFailure = _FailedRun(
-          runId: resolvedRun.id,
-          threadId: threadId,
-          inputMessageId: resolvedRun.inputMessageId,
+          run: resolvedRun,
+          clientMessageId: clientMessageId,
           content: text,
           imageAssetIds: imageAssetIds,
         );
@@ -519,12 +552,11 @@ final class WireAgentClient
       }
       _ambiguousSubmissions.remove(operationKey);
 
-      if (resolvedRun.status == _WireRunStatus.failed) {
+      if (resolvedRun.status == AgentRunStatus.failed) {
         if (resolvedRun.failureRetryable) {
           _failedRuns[operationKey] = _FailedRun(
-            runId: resolvedRun.id,
-            threadId: threadId,
-            inputMessageId: resolvedRun.inputMessageId,
+            run: resolvedRun,
+            clientMessageId: clientMessageId,
             content: text,
             imageAssetIds: imageAssetIds,
           );
@@ -560,20 +592,57 @@ final class WireAgentClient
     _requireUuid(threadId);
     _requireClientIdentity(clientMessageId);
     _requireContent(text);
+    final operationKey = '$threadId\u{0}$clientMessageId';
+    var failedRun = _failedRuns[operationKey];
+    if (failedRun != null &&
+        (failedRun.threadId != threadId ||
+            failedRun.clientMessageId != clientMessageId ||
+            failedRun.content != text)) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.conflict,
+        errorCode: 'idempotency_key_conflict',
+      );
+    }
+    if (failedRun?.requiresReconciliation == true) {
+      final reconciled = await _reconcileInterruptedRun(
+        generation: generation,
+        interrupted: failedRun!,
+      );
+      if (reconciled == null) {
+        _failedRuns.remove(operationKey);
+        failedRun = null;
+      } else if (reconciled.status == AgentRunStatus.completed) {
+        _failedRuns.remove(operationKey);
+        yield AgentRunCompleted(
+          runId: reconciled.id,
+          assistantMessageId: reconciled.assistantMessageId!,
+          run: reconciled,
+        );
+        return;
+      } else if (!reconciled.failureRetryable) {
+        _failedRuns.remove(operationKey);
+        yield AgentRunFailed(
+          runId: reconciled.id,
+          kind: reconciled.failureKind!,
+          retryable: false,
+          run: reconciled,
+        );
+        return;
+      } else {
+        failedRun = _FailedRun(
+          run: reconciled,
+          clientMessageId: clientMessageId,
+          content: text,
+        );
+        _failedRuns[operationKey] = failedRun;
+      }
+    }
     final credential = _credentialProvider();
     if (credential == null) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.authenticationRequired,
         statusCode: HttpStatus.unauthorized,
         errorCode: 'authentication_required',
-      );
-    }
-    final operationKey = '$threadId\u{0}$clientMessageId';
-    final failedRun = _failedRuns[operationKey];
-    if (failedRun != null && failedRun.content != text) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.conflict,
-        errorCode: 'idempotency_key_conflict',
       );
     }
     final uri = _baseUri.resolve(
@@ -596,6 +665,22 @@ final class WireAgentClient
             : <String, Object?>{'client_retry_id': 'retry:${failedRun.runId}'},
       ),
     );
+    AgentRun? committedRun;
+    var reachedTerminal = false;
+
+    void retainCommittedRunForReconciliation() {
+      final run = committedRun;
+      if (run == null || reachedTerminal || generation != _accountGeneration) {
+        return;
+      }
+      _failedRuns[operationKey] = _FailedRun(
+        run: run,
+        clientMessageId: clientMessageId,
+        content: text,
+        requiresReconciliation: true,
+      );
+    }
+
     final httpClient = HttpClient()..connectionTimeout = _requestTimeout;
     try {
       final request = await httpClient.postUrl(uri).timeout(_requestTimeout);
@@ -683,13 +768,51 @@ final class WireAgentClient
             retryable: true,
           );
         }
-        final event = _decodeTextStreamEvent(
+        final decodedEvent = _decodeTextStreamEvent(
           eventName,
           decoded,
           expectedThreadId: threadId,
+          expectedText: text,
+          expectedClientMessageId: clientMessageId,
+          failedRun: failedRun,
         );
+        final event = decodedEvent.event;
+        if (committedRun != null && event.runId != committedRun.id) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        switch (event) {
+          case AgentRunCompleted(run: final terminalRun):
+            if (committedRun == null ||
+                terminalRun == null ||
+                !sameAgentRunIdentity(terminalRun, committedRun)) {
+              throw const AgentClientException(
+                kind: AgentClientFailureKind.invalidResponse,
+                retryable: true,
+              );
+            }
+          case AgentRunFailed(run: final terminalRun) when terminalRun != null:
+            if (committedRun == null ||
+                !sameAgentRunIdentity(terminalRun, committedRun)) {
+              throw const AgentClientException(
+                kind: AgentClientFailureKind.invalidResponse,
+                retryable: true,
+              );
+            }
+          default:
+            break;
+        }
         switch (event) {
           case AgentInputCommitted() when streamPhase == 0:
+            committedRun = decodedEvent.run;
+            if (committedRun == null) {
+              throw const AgentClientException(
+                kind: AgentClientFailureKind.invalidResponse,
+                retryable: true,
+              );
+            }
             streamPhase = 1;
           case AgentToolStepEvent(:final stepId, :final name, :final status)
               when streamPhase == 1:
@@ -736,6 +859,13 @@ final class WireAgentClient
           case AgentRunCompleted(:final assistantMessageId)
               when streamPhase == 3 && assistantMessageId == outputId:
             streamPhase = 4;
+          case AgentRunCompleted(:final assistantMessageId)
+              when streamPhase == 1 &&
+                  activeToolSteps.isEmpty &&
+                  outputId == null &&
+                  committedRun!.status == AgentRunStatus.completed &&
+                  assistantMessageId == committedRun.assistantMessageId:
+            streamPhase = 4;
           case AgentRunFailed() when streamPhase >= 1 && streamPhase <= 3:
             streamPhase = 4;
           default:
@@ -744,13 +874,15 @@ final class WireAgentClient
               retryable: true,
             );
         }
-        if (event case AgentRunFailed(:final runId, :final retryable)) {
+        reachedTerminal = streamPhase == 4;
+        if (event case AgentRunFailed(:final retryable, :final run)) {
           if (retryable) {
+            final failureRun = run ?? committedRun!;
             _failedRuns[operationKey] = _FailedRun(
-              runId: runId,
-              threadId: threadId,
-              inputMessageId: failedRun?.inputMessageId ?? '',
+              run: failureRun,
+              clientMessageId: clientMessageId,
               content: text,
+              requiresReconciliation: run == null,
             );
           } else {
             _failedRuns.remove(operationKey);
@@ -774,20 +906,36 @@ final class WireAgentClient
         );
       }
     } on AgentClientException {
+      retainCommittedRunForReconciliation();
       rethrow;
     } on AgentClientOperationCancelled {
       rethrow;
     } on TimeoutException {
+      retainCommittedRunForReconciliation();
       throw const AgentClientException(
         kind: AgentClientFailureKind.network,
         retryable: true,
       );
     } on SocketException {
+      retainCommittedRunForReconciliation();
       throw const AgentClientException(
         kind: AgentClientFailureKind.network,
         retryable: true,
       );
+    } on AgentWireCodecException {
+      retainCommittedRunForReconciliation();
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    } on _InvalidAgentResponse {
+      retainCommittedRunForReconciliation();
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
     } on FormatException {
+      retainCommittedRunForReconciliation();
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidResponse,
         retryable: true,
@@ -797,146 +945,224 @@ final class WireAgentClient
     }
   }
 
-  AgentTextStreamEvent _decodeTextStreamEvent(
+  _DecodedTextStreamEvent _decodeTextStreamEvent(
     String eventName,
     Map<String, dynamic> data, {
     required String expectedThreadId,
+    required String expectedText,
+    required String expectedClientMessageId,
+    required _FailedRun? failedRun,
   }) {
-    final run = data['run'];
-    final runId = switch (run) {
-      final Map<String, dynamic> value => value['run_id'],
-      _ => data['run_id'],
-    };
-    if (runId is! String || runId.isEmpty) {
+    switch (eventName) {
+      case 'input.committed':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run', 'message'},
+          required: const <String>{'run', 'message'},
+        );
+        final run = decodeAgentWireRun(object['run']);
+        final message = _decodeMessageObject(
+          object['message'],
+          expectedThreadId: expectedThreadId,
+        );
+        if (run.threadId != expectedThreadId ||
+            run.inputMessageId != message.id ||
+            message.clientMessageId != expectedClientMessageId ||
+            message.content != expectedText) {
+          throw const _InvalidAgentResponse();
+        }
+        if (failedRun == null) {
+          if (run.attempt != 1 ||
+              run.retryOfRunId != null ||
+              run.clientRetryId != null) {
+            throw const _InvalidAgentResponse();
+          }
+        } else {
+          final expectedRetryId = 'retry:${failedRun.runId}';
+          if (run.id == failedRun.runId ||
+              run.threadId != failedRun.threadId ||
+              run.inputMessageId != failedRun.inputMessageId ||
+              run.attempt != failedRun.attempt + 1 ||
+              run.retryOfRunId != failedRun.runId ||
+              run.clientRetryId != expectedRetryId) {
+            throw const _InvalidAgentResponse();
+          }
+        }
+        return _DecodedTextStreamEvent(
+          event: AgentInputCommitted(
+            runId: run.id,
+            userMessage: message.presentation,
+          ),
+          run: run,
+        );
+      case 'tool.started':
+      case 'tool.completed':
+      case 'tool.failed':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run_id', 'step_id', 'name'},
+          required: const <String>{'run_id', 'step_id', 'name'},
+        );
+        return _DecodedTextStreamEvent(
+          event: AgentToolStepEvent(
+            runId: _strictUuid(object['run_id']),
+            stepId: _strictPatternString(
+              object['step_id'],
+              pattern: _clientIdentityPattern,
+              maxLength: 128,
+            ),
+            name: _strictPatternString(
+              object['name'],
+              pattern: _clientIdentityPattern,
+              maxLength: 128,
+            ),
+            status: switch (eventName) {
+              'tool.started' => AgentToolStepStatus.started,
+              'tool.completed' => AgentToolStepStatus.completed,
+              _ => AgentToolStepStatus.failed,
+            },
+          ),
+        );
+      case 'assistant.output.started':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run_id', 'output_id'},
+          required: const <String>{'run_id', 'output_id'},
+        );
+        return _DecodedTextStreamEvent(
+          event: AgentAssistantOutputStarted(
+            runId: _strictUuid(object['run_id']),
+            outputId: _strictUuid(object['output_id']),
+          ),
+        );
+      case 'assistant.output.delta':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run_id', 'output_id', 'sequence', 'delta'},
+          required: const <String>{'run_id', 'output_id', 'sequence', 'delta'},
+        );
+        return _DecodedTextStreamEvent(
+          event: AgentAssistantOutputDelta(
+            runId: _strictUuid(object['run_id']),
+            outputId: _strictUuid(object['output_id']),
+            sequence: _strictInt(
+              object['sequence'],
+              minimum: 1,
+              maximum: 10000,
+            ),
+            delta: _strictDelta(object['delta']),
+          ),
+        );
+      case 'assistant.output.completed':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run_id', 'output_id', 'text'},
+          required: const <String>{'run_id', 'output_id', 'text'},
+        );
+        return _DecodedTextStreamEvent(
+          event: AgentAssistantOutputCompleted(
+            runId: _strictUuid(object['run_id']),
+            outputId: _strictUuid(object['output_id']),
+            text: _strictContent(object['text']),
+          ),
+        );
+      case 'run.completed':
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run'},
+          required: const <String>{'run'},
+        );
+        final decodedRun = decodeAgentWireRun(object['run']);
+        final assistantMessageId = decodedRun.assistantMessageId;
+        if (decodedRun.threadId != expectedThreadId ||
+            decodedRun.status != AgentRunStatus.completed ||
+            assistantMessageId == null) {
+          throw const _InvalidAgentResponse();
+        }
+        return _DecodedTextStreamEvent(
+          event: AgentRunCompleted(
+            runId: decodedRun.id,
+            assistantMessageId: assistantMessageId,
+            run: decodedRun,
+          ),
+          run: decodedRun,
+        );
+      case 'run.failed':
+        if (data.containsKey('run')) {
+          final object = _strictObject(
+            data,
+            allowed: const <String>{'run', 'kind', 'retryable'},
+            required: const <String>{'run', 'kind', 'retryable'},
+          );
+          final decodedRun = decodeAgentWireRun(object['run']);
+          final kind = _strictString(
+            object['kind'],
+            minLength: 1,
+            maxLength: 64,
+          );
+          final retryable = _strictBool(object['retryable']);
+          if (decodedRun.threadId != expectedThreadId ||
+              decodedRun.status != AgentRunStatus.failed ||
+              decodedRun.failureKind != kind ||
+              decodedRun.failureRetryable != retryable) {
+            throw const _InvalidAgentResponse();
+          }
+          return _DecodedTextStreamEvent(
+            event: AgentRunFailed(
+              runId: decodedRun.id,
+              kind: kind,
+              retryable: retryable,
+              run: decodedRun,
+            ),
+            run: decodedRun,
+          );
+        }
+        final object = _strictObject(
+          data,
+          allowed: const <String>{'run_id', 'kind', 'retryable'},
+          required: const <String>{'run_id', 'kind', 'retryable'},
+        );
+        final runId = _strictUuid(object['run_id']);
+        final kind = _strictString(object['kind'], minLength: 1, maxLength: 64);
+        final retryable = _strictBool(object['retryable']);
+        if (kind != 'stream_interrupted' || !retryable) {
+          throw const _InvalidAgentResponse();
+        }
+        return _DecodedTextStreamEvent(
+          event: AgentRunFailed(runId: runId, kind: kind, retryable: retryable),
+        );
+      default:
+        throw const _InvalidAgentResponse();
+    }
+  }
+
+  Future<AgentRun?> _reconcileInterruptedRun({
+    required int generation,
+    required _FailedRun interrupted,
+  }) async {
+    final response = await _send(
+      generation: generation,
+      method: 'GET',
+      path: '/v1/agent-runs/${interrupted.runId}',
+    );
+    if (response.statusCode == HttpStatus.notFound) {
+      return null;
+    }
+    _requireStatus(response, const <int>{HttpStatus.ok});
+    final authoritative = _decodeRun(response.body);
+    if (!sameAgentRunIdentity(authoritative, interrupted.run)) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidResponse,
         retryable: true,
       );
     }
-    switch (eventName) {
-      case 'input.committed':
-        final message = data['message'];
-        if (message is! Map<String, dynamic>) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentInputCommitted(
-          runId: runId,
-          userMessage: _decodeMessageObject(
-            message,
-            expectedThreadId: expectedThreadId,
-          ).presentation,
-        );
-      case 'tool.started':
-      case 'tool.completed':
-      case 'tool.failed':
-        final stepId = data['step_id'];
-        final name = data['name'];
-        if (stepId is! String ||
-            stepId.isEmpty ||
-            name is! String ||
-            name.isEmpty) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentToolStepEvent(
-          runId: runId,
-          stepId: stepId,
-          name: name,
-          status: switch (eventName) {
-            'tool.started' => AgentToolStepStatus.started,
-            'tool.completed' => AgentToolStepStatus.completed,
-            _ => AgentToolStepStatus.failed,
-          },
-        );
-      case 'assistant.output.started':
-        final outputId = data['output_id'];
-        if (outputId is! String || outputId.isEmpty) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentAssistantOutputStarted(runId: runId, outputId: outputId);
-      case 'assistant.output.delta':
-        final outputId = data['output_id'];
-        final sequence = data['sequence'];
-        final delta = data['delta'];
-        if (outputId is! String ||
-            outputId.isEmpty ||
-            sequence is! int ||
-            sequence < 1 ||
-            delta is! String ||
-            delta.isEmpty) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentAssistantOutputDelta(
-          runId: runId,
-          outputId: outputId,
-          sequence: sequence,
-          delta: delta,
-        );
-      case 'assistant.output.completed':
-        final outputId = data['output_id'];
-        final text = data['text'];
-        if (outputId is! String ||
-            outputId.isEmpty ||
-            text is! String ||
-            text.trim().isEmpty) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentAssistantOutputCompleted(
-          runId: runId,
-          outputId: outputId,
-          text: text,
-        );
-      case 'run.completed':
-        if (run is! Map<String, dynamic>) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        final assistantMessageId = run['assistant_message_id'];
-        if (assistantMessageId is! String || assistantMessageId.isEmpty) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentRunCompleted(
-          runId: runId,
-          assistantMessageId: assistantMessageId,
-        );
-      case 'run.failed':
-        final kind = data['kind'];
-        final retryable = data['retryable'];
-        if (kind is! String || retryable is! bool) {
-          throw const AgentClientException(
-            kind: AgentClientFailureKind.invalidResponse,
-            retryable: true,
-          );
-        }
-        return AgentRunFailed(runId: runId, kind: kind, retryable: retryable);
-      default:
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.invalidResponse,
-          retryable: true,
-        );
-    }
+    return _pollUntilTerminal(
+      generation: generation,
+      initialRun: authoritative,
+    );
   }
 
-  Future<_WireRun> _submitRun({
+  Future<AgentRun> _submitRun({
     required int generation,
     required String threadId,
     required String text,
@@ -959,7 +1185,10 @@ final class WireAgentClient
     });
     final run = _decodeRun(response.body);
     _validateRunWriteStatus(response.statusCode, run);
-    if (run.threadId != threadId) {
+    if (run.threadId != threadId ||
+        run.attempt != 1 ||
+        run.retryOfRunId != null ||
+        run.clientRetryId != null) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidResponse,
         retryable: true,
@@ -968,7 +1197,7 @@ final class WireAgentClient
     return run;
   }
 
-  Future<_WireRun> _retryRun({
+  Future<AgentRun> _retryRun({
     required int generation,
     required _FailedRun failedRun,
   }) async {
@@ -986,8 +1215,10 @@ final class WireAgentClient
     });
     final run = _decodeRun(response.body);
     _validateRunWriteStatus(response.statusCode, run);
-    if (run.threadId != failedRun.threadId ||
+    if (run.id == failedRun.runId ||
+        run.threadId != failedRun.threadId ||
         run.inputMessageId != failedRun.inputMessageId ||
+        run.attempt != failedRun.attempt + 1 ||
         run.retryOfRunId != failedRun.runId ||
         run.clientRetryId != retryClientId) {
       throw const AgentClientException(
@@ -998,9 +1229,9 @@ final class WireAgentClient
     return run;
   }
 
-  Future<_WireRun> _pollUntilTerminal({
+  Future<AgentRun> _pollUntilTerminal({
     required int generation,
-    required _WireRun initialRun,
+    required AgentRun initialRun,
   }) async {
     var run = initialRun;
     for (var attempt = 0; attempt < _maxRunPollAttempts; attempt++) {
@@ -1018,9 +1249,7 @@ final class WireAgentClient
       );
       _requireStatus(response, const <int>{HttpStatus.ok});
       final restored = _decodeRun(response.body);
-      if (restored.id != run.id ||
-          restored.threadId != run.threadId ||
-          restored.inputMessageId != run.inputMessageId) {
+      if (!sameAgentRunIdentity(restored, initialRun)) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.invalidResponse,
           retryable: true,
@@ -1036,7 +1265,7 @@ final class WireAgentClient
 
   Future<AgentExchange> _loadCompletedExchange({
     required int generation,
-    required _WireRun run,
+    required AgentRun run,
     required String expectedUserContent,
     required String expectedClientMessageId,
     List<String> expectedImageAssetIds = const <String>[],
@@ -1053,8 +1282,8 @@ final class WireAgentClient
         generation: generation,
         threadId: run.threadId,
       );
-      _WireMessage? userMessage;
-      _WireMessage? assistantMessage;
+      AgentWireMessage? userMessage;
+      AgentWireMessage? assistantMessage;
       for (final message in messagePage.messages) {
         if (message.id == run.inputMessageId) {
           userMessage = message;
@@ -1089,7 +1318,7 @@ final class WireAgentClient
     );
   }
 
-  Future<_WireMessagePage> _fetchMessagePage({
+  Future<AgentWireMessagePage> _fetchMessagePage({
     required int generation,
     required String threadId,
     int? pageSize,
@@ -1371,20 +1600,32 @@ final class _UnresolvedThreadCreation implements Exception {
   const _UnresolvedThreadCreation();
 }
 
+final class _DecodedTextStreamEvent {
+  const _DecodedTextStreamEvent({required this.event, this.run});
+
+  final AgentTextStreamEvent event;
+  final AgentRun? run;
+}
+
 final class _FailedRun {
   const _FailedRun({
-    required this.runId,
-    required this.threadId,
-    required this.inputMessageId,
+    required this.run,
+    required this.clientMessageId,
     required this.content,
     this.imageAssetIds = const <String>[],
+    this.requiresReconciliation = false,
   });
 
-  final String runId;
-  final String threadId;
-  final String inputMessageId;
+  final AgentRun run;
+  final String clientMessageId;
   final String content;
   final List<String> imageAssetIds;
+  final bool requiresReconciliation;
+
+  String get runId => run.id;
+  String get threadId => run.threadId;
+  String get inputMessageId => run.inputMessageId;
+  int get attempt => run.attempt;
 }
 
 final class _WireThread {
@@ -1422,97 +1663,11 @@ final class _WireThreadPage {
   );
 }
 
-final class _WireMessage {
-  const _WireMessage({
-    required this.id,
-    required this.role,
-    required this.content,
-    required this.sequence,
-    required this.createdAt,
-    required this.modality,
-    this.clientMessageId,
-    this.producedByRunId,
-    this.audio,
-    this.images = const <AgentImageAsset>[],
-    this.clientActions = const <AgentClientAction>[],
-    this.speechFeedbackStatusUrl,
-  });
-
-  final String id;
-  final AgentMessageRole role;
-  final String content;
-  final int sequence;
-  final DateTime createdAt;
-  final AgentMessageModality modality;
-  final String? clientMessageId;
-  final String? producedByRunId;
-  final AgentMessageAudio? audio;
-  final List<AgentImageAsset> images;
-  final List<AgentClientAction> clientActions;
-  final String? speechFeedbackStatusUrl;
-
-  AgentMessage get presentation => AgentMessage(
-    id: id,
-    role: role,
-    text: content,
-    sequence: sequence,
-    createdAt: createdAt,
-    modality: modality,
-    audio: audio,
-    images: images,
-    clientActions: clientActions,
-    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
-  );
-}
-
-final class _WireMessagePage {
-  const _WireMessagePage({required this.messages, this.nextCursor});
-
-  final List<_WireMessage> messages;
-  final String? nextCursor;
-
-  AgentMessagePage get presentation => AgentMessagePage(
-    messages: List<AgentMessage>.unmodifiable(
-      messages.map((message) => message.presentation),
-    ),
-    nextCursor: nextCursor,
-  );
-}
-
 final class _RestoredTextRun {
   const _RestoredTextRun({this.failure, this.completedAssistant});
 
   final AgentTextRecovery? failure;
   final AgentMessage? completedAssistant;
-}
-
-enum _WireRunStatus { pending, running, completed, failed }
-
-final class _WireRun {
-  const _WireRun({
-    required this.id,
-    required this.threadId,
-    required this.inputMessageId,
-    required this.status,
-    required this.failureRetryable,
-    this.assistantMessageId,
-    this.failureKind,
-    this.retryOfRunId,
-    this.clientRetryId,
-  });
-
-  final String id;
-  final String threadId;
-  final String inputMessageId;
-  final _WireRunStatus status;
-  final String? assistantMessageId;
-  final String? failureKind;
-  final bool failureRetryable;
-  final String? retryOfRunId;
-  final String? clientRetryId;
-
-  bool get isTerminal =>
-      status == _WireRunStatus.completed || status == _WireRunStatus.failed;
 }
 
 _WireThreadPage _decodeThreadPage(String body) {
@@ -1609,513 +1764,29 @@ _WireThread _decodeThreadObject(Object? value) {
   );
 }
 
-_WireMessagePage _decodeMessagePage(
+AgentWireMessagePage _decodeMessagePage(
   String body, {
   required String expectedThreadId,
 }) {
-  return _decodeBody(body, (value) {
-    final root = _strictObject(
-      value,
-      allowed: const <String>{'messages', 'next_cursor'},
-      required: const <String>{'messages'},
-    );
-    final values = _strictList(root['messages'], maxLength: 100);
-    final result = <_WireMessage>[];
-    final messageIds = <String>{};
-    var previousSequence = 0;
-    for (final value in values) {
-      final message = _decodeMessageObject(
-        value,
-        expectedThreadId: expectedThreadId,
-      );
-      if (!messageIds.add(message.id) || message.sequence <= previousSequence) {
-        throw const _InvalidAgentResponse();
-      }
-      previousSequence = message.sequence;
-      result.add(message);
-    }
-    return _WireMessagePage(
-      messages: result,
-      nextCursor: _absentOnlyOptional(
-        root,
-        'next_cursor',
-        (value) => _strictString(value, minLength: 1, maxLength: 1024),
-      ),
-    );
-  });
+  return _decodeBody(
+    body,
+    (value) =>
+        decodeAgentWireMessagePage(value, expectedThreadId: expectedThreadId),
+  );
 }
 
-_WireMessage _decodeMessageObject(
+AgentWireMessage _decodeMessageObject(
   Object? value, {
   required String expectedThreadId,
 }) {
-  final object = _strictObject(
-    value,
-    allowed: const <String>{
-      'message_id',
-      'thread_id',
-      'sequence',
-      'role',
-      'client_message_id',
-      'produced_by_run_id',
-      'modality',
-      'content',
-      'audio',
-      'images',
-      'client_actions',
-      'speech_feedback_status_url',
-      'created_at',
-    },
-    required: const <String>{
-      'message_id',
-      'thread_id',
-      'sequence',
-      'role',
-      'content',
-      'created_at',
-    },
-  );
-  final id = _strictUuid(object['message_id']);
-  if (_strictUuid(object['thread_id']) != expectedThreadId) {
-    throw const _InvalidAgentResponse();
-  }
-  final sequence = _strictInt(object['sequence'], minimum: 1);
-  final roleValue = _strictString(object['role'], minLength: 1, maxLength: 16);
-  final role = switch (roleValue) {
-    'user' => AgentMessageRole.user,
-    'assistant' => AgentMessageRole.assistant,
-    _ => throw const _InvalidAgentResponse(),
-  };
-  final content = _strictString(
-    object['content'],
-    minLength: 1,
-    maxLength: 4096,
-  );
-  if (content.trim().isEmpty || utf8.encode(content).length > 16384) {
-    throw const _InvalidAgentResponse();
-  }
-  final createdAt = _strictDateTime(object['created_at']);
-  final modality = _absentOnlyOptional(
-    object,
-    'modality',
-    (value) => switch (_strictString(value, minLength: 1, maxLength: 16)) {
-      'voice' => AgentMessageModality.voice,
-      'multimodal' => AgentMessageModality.multimodal,
-      _ => throw const _InvalidAgentResponse(),
-    },
-  );
-  final audio = _absentOnlyOptional(object, 'audio', _decodeMessageAudio);
-  final images =
-      _absentOnlyOptional(
-        object,
-        'images',
-        (value) => _decodeMessageImages(value),
-      ) ??
-      const <AgentImageAsset>[];
-  final effectiveModality = modality ?? AgentMessageModality.text;
-  final clientMessageId = _absentOnlyOptional(
-    object,
-    'client_message_id',
-    _strictClientIdentity,
-  );
-  final producedByRunId = _absentOnlyOptional(
-    object,
-    'produced_by_run_id',
-    _strictUuid,
-  );
-  final clientActions =
-      _absentOnlyOptional(object, 'client_actions', decodeAgentClientActions) ??
-      const <AgentClientAction>[];
-  final speechFeedbackStatusUrl = _absentOnlyOptional(
-    object,
-    'speech_feedback_status_url',
-    (value) {
-      final path = _strictString(value, minLength: 1, maxLength: 160);
-      if (!validAgentSpeechFeedbackStatusUrl(path)) {
-        throw const _InvalidAgentResponse();
-      }
-      return path;
-    },
-  );
-  if ((role == AgentMessageRole.user &&
-          (clientMessageId == null ||
-              producedByRunId != null ||
-              clientActions.isNotEmpty)) ||
-      (role == AgentMessageRole.assistant &&
-          (clientMessageId != null || producedByRunId == null)) ||
-      (effectiveModality != AgentMessageModality.voice && audio != null) ||
-      (effectiveModality == AgentMessageModality.multimodal &&
-          (role != AgentMessageRole.user || audio != null || images.isEmpty)) ||
-      (effectiveModality != AgentMessageModality.multimodal &&
-          images.isNotEmpty) ||
-      (effectiveModality == AgentMessageModality.voice &&
-          role != AgentMessageRole.user) ||
-      (speechFeedbackStatusUrl != null &&
-          (role != AgentMessageRole.user ||
-              effectiveModality != AgentMessageModality.voice ||
-              audio == null))) {
-    throw const _InvalidAgentResponse();
-  }
-  return _WireMessage(
-    id: id,
-    role: role,
-    content: content,
-    sequence: sequence,
-    createdAt: createdAt,
-    modality: effectiveModality,
-    clientMessageId: clientMessageId,
-    producedByRunId: producedByRunId,
-    audio: audio,
-    images: images,
-    clientActions: clientActions,
-    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
-  );
+  return decodeAgentWireMessage(value, expectedThreadId: expectedThreadId);
 }
 
-List<AgentImageAsset> _decodeMessageImages(Object? value) {
-  final values = _strictList(value, maxLength: agentMaximumImagesPerMessage);
-  if (values.isEmpty) {
-    throw const _InvalidAgentResponse();
-  }
-  final ids = <String>{};
-  return List<AgentImageAsset>.unmodifiable(
-    values.map((item) {
-      final object = _strictObject(
-        item,
-        allowed: const <String>{
-          'image_asset_id',
-          'content_type',
-          'size_bytes',
-          'width',
-          'height',
-          'status',
-          'created_at',
-          'attached_at',
-        },
-        required: const <String>{
-          'image_asset_id',
-          'content_type',
-          'size_bytes',
-          'width',
-          'height',
-          'status',
-          'created_at',
-        },
-      );
-      final id = _strictUuid(object['image_asset_id']);
-      final contentType = _strictString(
-        object['content_type'],
-        minLength: 1,
-        maxLength: 32,
-      );
-      final status = switch (_strictString(
-        object['status'],
-        minLength: 1,
-        maxLength: 16,
-      )) {
-        'staged' => AgentImageAssetStatus.staged,
-        'ready' => AgentImageAssetStatus.ready,
-        'deleting' => AgentImageAssetStatus.deleting,
-        _ => throw const _InvalidAgentResponse(),
-      };
-      if (!ids.add(id) ||
-          (contentType != 'image/jpeg' &&
-              contentType != 'image/png' &&
-              contentType != 'image/webp')) {
-        throw const _InvalidAgentResponse();
-      }
-      return AgentImageAsset(
-        id: id,
-        contentType: contentType,
-        sizeBytes: _strictInt(
-          object['size_bytes'],
-          minimum: 1,
-          maximum: agentMaximumImageBytes,
-        ),
-        width: _strictInt(object['width'], minimum: 1, maximum: 16384),
-        height: _strictInt(object['height'], minimum: 1, maximum: 16384),
-        status: status,
-        createdAt: _strictDateTime(object['created_at']),
-        attachedAt: _absentOnlyOptional(object, 'attached_at', _strictDateTime),
-      );
-    }),
-  );
+AgentRun _decodeRun(String body) {
+  return _decodeBody(body, decodeAgentWireRun);
 }
 
-AgentMessageAudio _decodeMessageAudio(Object? value) {
-  final object = _strictObject(
-    value,
-    allowed: const <String>{
-      'audio_id',
-      'status',
-      'content_type',
-      'size_bytes',
-      'duration_ms',
-      'playback_path',
-    },
-    required: const <String>{
-      'audio_id',
-      'status',
-      'content_type',
-      'size_bytes',
-      'duration_ms',
-      'playback_path',
-    },
-  );
-  final id = _strictUuid(object['audio_id']);
-  if (_strictString(object['status'], minLength: 1, maxLength: 16) !=
-      'readable') {
-    throw const _InvalidAgentResponse();
-  }
-  if (_strictString(object['content_type'], minLength: 1, maxLength: 32) !=
-      'audio/wav') {
-    throw const _InvalidAgentResponse();
-  }
-  final sizeBytes = _strictInt(
-    object['size_bytes'],
-    minimum: 1,
-    maximum: 7400000,
-  );
-  final durationMs = _strictInt(
-    object['duration_ms'],
-    minimum: 1,
-    maximum: 60000,
-  );
-  final playbackPath = _absentOnlyOptional(
-    object,
-    'playback_path',
-    (value) => _strictPatternString(
-      value,
-      pattern: _agentMessageAudioPlaybackPathPattern,
-      maxLength: 256,
-    ),
-  );
-  if (playbackPath != '/v1/agent-message-audios/$id/playback') {
-    throw const _InvalidAgentResponse();
-  }
-  return AgentMessageAudio(
-    id: id,
-    status: AgentMessageAudioStatus.readable,
-    contentType: 'audio/wav',
-    sizeBytes: sizeBytes,
-    duration: Duration(milliseconds: durationMs),
-    playbackPath: playbackPath,
-  );
-}
-
-_WireRun _decodeRun(String body) {
-  return _decodeBody(body, (value) {
-    final object = _strictObject(
-      value,
-      allowed: const <String>{
-        'run_id',
-        'thread_id',
-        'input_message_id',
-        'attempt',
-        'retry_of_run_id',
-        'client_retry_id',
-        'status',
-        'requested_provider',
-        'requested_model',
-        'max_output_tokens',
-        'assistant_message_id',
-        'completion_source',
-        'provider_completion_id',
-        'provider_model',
-        'finish_reason',
-        'usage',
-        'domain_tool_call_id',
-        'domain_tool_name',
-        'failure',
-        'created_at',
-        'started_at',
-        'completed_at',
-        'updated_at',
-      },
-      required: const <String>{
-        'run_id',
-        'thread_id',
-        'input_message_id',
-        'attempt',
-        'status',
-        'requested_provider',
-        'requested_model',
-        'max_output_tokens',
-        'created_at',
-        'updated_at',
-      },
-    );
-    final id = _strictUuid(object['run_id']);
-    final threadId = _strictUuid(object['thread_id']);
-    final inputMessageId = _strictUuid(object['input_message_id']);
-    _strictInt(object['attempt'], minimum: 1);
-    final retryOfRunId = object['retry_of_run_id'] == null
-        ? null
-        : _strictUuid(object['retry_of_run_id']);
-    final clientRetryId = object['client_retry_id'] == null
-        ? null
-        : _strictClientIdentity(object['client_retry_id']);
-    if ((retryOfRunId == null) != (clientRetryId == null)) {
-      throw const _InvalidAgentResponse();
-    }
-    final statusValue = _strictString(
-      object['status'],
-      minLength: 1,
-      maxLength: 16,
-    );
-    final status = switch (statusValue) {
-      'pending' => _WireRunStatus.pending,
-      'running' => _WireRunStatus.running,
-      'completed' => _WireRunStatus.completed,
-      'failed' => _WireRunStatus.failed,
-      _ => throw const _InvalidAgentResponse(),
-    };
-    _strictPatternString(
-      object['requested_provider'],
-      pattern: _providerPattern,
-      maxLength: 64,
-    );
-    _strictClientIdentity(object['requested_model']);
-    _strictInt(object['max_output_tokens'], minimum: 1);
-    final createdAt = _strictDateTime(object['created_at']);
-    final updatedAt = _strictDateTime(object['updated_at']);
-    if (updatedAt.isBefore(createdAt)) {
-      throw const _InvalidAgentResponse();
-    }
-    final startedAt = object['started_at'] == null
-        ? null
-        : _strictDateTime(object['started_at']);
-    final completedAt = object['completed_at'] == null
-        ? null
-        : _strictDateTime(object['completed_at']);
-    if (startedAt != null && startedAt.isBefore(createdAt) ||
-        completedAt != null && startedAt == null ||
-        completedAt != null && completedAt.isBefore(startedAt!)) {
-      throw const _InvalidAgentResponse();
-    }
-
-    final assistantMessageId = object['assistant_message_id'] == null
-        ? null
-        : _strictUuid(object['assistant_message_id']);
-    final failureObject = object['failure'] == null
-        ? null
-        : _strictObject(
-            object['failure'],
-            allowed: const <String>{'kind', 'retryable'},
-            required: const <String>{'kind', 'retryable'},
-          );
-    final failureKind = failureObject == null
-        ? null
-        : _strictPatternString(
-            failureObject['kind'],
-            pattern: _failureKindPattern,
-            maxLength: 64,
-          );
-    if (failureKind != null && !_knownRunFailureKinds.contains(failureKind)) {
-      throw const _InvalidAgentResponse();
-    }
-    final failureRetryable = failureObject == null
-        ? false
-        : _strictBool(failureObject['retryable']);
-
-    switch (status) {
-      case _WireRunStatus.completed:
-        if (assistantMessageId == null ||
-            failureObject != null ||
-            startedAt == null ||
-            completedAt == null) {
-          throw const _InvalidAgentResponse();
-        }
-        final completionSource = _strictString(
-          object['completion_source'],
-          minLength: 1,
-          maxLength: 16,
-        );
-        switch (completionSource) {
-          case 'model':
-            if (object['domain_tool_call_id'] != null ||
-                object['domain_tool_name'] != null) {
-              throw const _InvalidAgentResponse();
-            }
-            _strictClientIdentity(object['provider_completion_id']);
-            _strictClientIdentity(object['provider_model']);
-            final finishReason = _strictString(
-              object['finish_reason'],
-              minLength: 1,
-              maxLength: 16,
-            );
-            if (finishReason != 'stop' && finishReason != 'length') {
-              throw const _InvalidAgentResponse();
-            }
-            final usage = _strictObject(
-              object['usage'],
-              allowed: const <String>{
-                'input_tokens',
-                'output_tokens',
-                'total_tokens',
-              },
-              required: const <String>{
-                'input_tokens',
-                'output_tokens',
-                'total_tokens',
-              },
-            );
-            _strictInt(usage['input_tokens'], minimum: 0);
-            _strictInt(usage['output_tokens'], minimum: 0);
-            _strictInt(usage['total_tokens'], minimum: 0);
-          case 'domain':
-            if (object['provider_completion_id'] != null ||
-                object['provider_model'] != null ||
-                object['finish_reason'] != null ||
-                object['usage'] != null) {
-              throw const _InvalidAgentResponse();
-            }
-            _strictClientIdentity(object['domain_tool_call_id']);
-            _strictClientIdentity(object['domain_tool_name']);
-          default:
-            throw const _InvalidAgentResponse();
-        }
-      case _WireRunStatus.failed:
-        if (failureObject == null ||
-            assistantMessageId != null ||
-            startedAt == null ||
-            completedAt == null ||
-            object['usage'] != null) {
-          throw const _InvalidAgentResponse();
-        }
-      case _WireRunStatus.pending:
-        if (assistantMessageId != null ||
-            failureObject != null ||
-            startedAt != null ||
-            completedAt != null ||
-            object['usage'] != null) {
-          throw const _InvalidAgentResponse();
-        }
-      case _WireRunStatus.running:
-        if (assistantMessageId != null ||
-            failureObject != null ||
-            startedAt == null ||
-            completedAt != null ||
-            object['usage'] != null) {
-          throw const _InvalidAgentResponse();
-        }
-    }
-
-    return _WireRun(
-      id: id,
-      threadId: threadId,
-      inputMessageId: inputMessageId,
-      status: status,
-      assistantMessageId: assistantMessageId,
-      failureKind: failureKind,
-      failureRetryable: failureRetryable,
-      retryOfRunId: retryOfRunId,
-      clientRetryId: clientRetryId,
-    );
-  });
-}
-
-void _validateRunWriteStatus(int statusCode, _WireRun run) {
+void _validateRunWriteStatus(int statusCode, AgentRun run) {
   final valid =
       (statusCode == HttpStatus.created && run.isTerminal) ||
       (statusCode == HttpStatus.accepted && !run.isTerminal);
@@ -2213,14 +1884,6 @@ String _strictUuid(Object? value) {
   return _strictPatternString(value, pattern: _uuidPattern, maxLength: 36);
 }
 
-String _strictClientIdentity(Object? value) {
-  return _strictPatternString(
-    value,
-    pattern: _clientIdentityPattern,
-    maxLength: 128,
-  );
-}
-
 int _strictInt(Object? value, {required int minimum, int? maximum}) {
   if (value is! int ||
       value < minimum ||
@@ -2228,6 +1891,22 @@ int _strictInt(Object? value, {required int minimum, int? maximum}) {
     throw const _InvalidAgentResponse();
   }
   return value;
+}
+
+String _strictContent(Object? value) {
+  final content = _strictString(value, minLength: 1, maxLength: 4096);
+  if (content.trim().isEmpty || utf8.encode(content).length > 16384) {
+    throw const _InvalidAgentResponse();
+  }
+  return content;
+}
+
+String _strictDelta(Object? value) {
+  final delta = _strictString(value, minLength: 1, maxLength: 4096);
+  if (utf8.encode(delta).length > 16384) {
+    throw const _InvalidAgentResponse();
+  }
+  return delta;
 }
 
 bool _strictBool(Object? value) {
@@ -2313,26 +1992,6 @@ final RegExp _uuidPattern = RegExp(
 final RegExp _clientIdentityPattern = RegExp(
   r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
 );
-final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
-final RegExp _failureKindPattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
-final RegExp _agentMessageAudioPlaybackPathPattern = RegExp(
-  r'^/v1/agent-message-audios/[0-9a-f-]+/playback$',
-);
-const Set<String> _knownRunFailureKinds = <String>{
-  'interrupted',
-  'invalid_context',
-  'internal_error',
-  'invalid_request',
-  'configuration',
-  'authentication',
-  'authorization',
-  'quota_exhausted',
-  'rate_limited',
-  'timeout',
-  'provider_unavailable',
-  'invalid_response',
-  'cancelled',
-};
 
 final class _InvalidAgentResponse implements Exception {
   const _InvalidAgentResponse();

@@ -103,32 +103,89 @@ type SceneDefinition struct {
 	DisplayOrder    int                `json:"-"`
 }
 
-// SelectionSnapshot freezes one exact Scene version and the user's selection.
-type SelectionSnapshot struct {
-	Scene            SceneDefinition `json:"scene"`
-	SelectedRoleIDs  []string        `json:"selected_role_ids"`
-	PracticeOptionID string          `json:"practice_option_id"`
+type SceneSourceType string
+
+const (
+	SceneSourceCatalog SceneSourceType = "CATALOG"
+	SceneSourceCustom  SceneSourceType = "CUSTOM"
+)
+
+// SceneSource identifies where an executable scene came from. Catalog
+// identity is kept here instead of being imitated by a custom scene.
+type SceneSource struct {
+	Type         SceneSourceType `json:"type"`
+	SceneID      string          `json:"scene_id,omitempty"`
+	SceneVersion int             `json:"scene_version,omitempty"`
 }
 
-func (selection SelectionSnapshot) SelectedRoles() ([]RoleDefinition, error) {
-	roles := make([]RoleDefinition, 0, len(selection.SelectedRoleIDs))
+// RoleSnapshot is the execution form of one selected-scene role. SceneKey is
+// a plan-scoped execution key, not necessarily a Catalog scene identifier.
+type RoleSnapshot struct {
+	ID                 string                        `json:"role_definition_id"`
+	SceneKey           string                        `json:"scene_key"`
+	Type               string                        `json:"role_type"`
+	DisplayName        string                        `json:"display_name"`
+	Responsibilities   string                        `json:"responsibilities"`
+	Style              string                        `json:"style"`
+	PracticeObjectives []PracticeObjectiveDefinition `json:"practice_objectives"`
+	VoiceConfigRef     string                        `json:"voice_config_ref,omitempty"`
+}
+
+// PracticeOptionSnapshot contains only execution data frozen into a Plan.
+type PracticeOptionSnapshot struct {
+	ID                       string       `json:"practice_option_id"`
+	SceneKey                 string       `json:"scene_key"`
+	RoleDefinitionID         string       `json:"role_definition_id,omitempty"`
+	Mode                     PracticeMode `json:"practice_mode"`
+	DisplayName              string       `json:"display_name"`
+	SuggestedDurationSeconds int          `json:"suggested_duration_seconds"`
+	TurnPolicyRef            string       `json:"turn_policy_ref"`
+	SessionPolicyRef         string       `json:"session_policy_ref"`
+	EvaluationPolicyRef      string       `json:"evaluation_policy_ref"`
+}
+
+// ExecutableSceneSnapshot is the immutable runtime content shared by Catalog
+// and one-off Custom scenes. Publication status and Catalog identity do not
+// belong to this value.
+type ExecutableSceneSnapshot struct {
+	Key             string                   `json:"scene_key"`
+	Revision        int                      `json:"scene_revision"`
+	Experience      PracticeExperience       `json:"practice_experience"`
+	Category        SceneCategory            `json:"scene_category"`
+	Name            string                   `json:"name"`
+	Prompt          ScenePrompt              `json:"prompt"`
+	Roles           []RoleSnapshot           `json:"roles"`
+	PracticeOptions []PracticeOptionSnapshot `json:"practice_options"`
+}
+
+// SelectionSnapshot freezes one exact executable scene and the user's
+// selection. Source is an explicit discriminator for Catalog and Custom data.
+type SelectionSnapshot struct {
+	Source           SceneSource             `json:"source"`
+	Scene            ExecutableSceneSnapshot `json:"scene"`
+	SelectedRoleIDs  []string                `json:"selected_role_ids"`
+	PracticeOptionID string                  `json:"practice_option_id"`
+}
+
+func (selection SelectionSnapshot) SelectedRoles() ([]RoleSnapshot, error) {
+	roles := make([]RoleSnapshot, 0, len(selection.SelectedRoleIDs))
 	for _, roleID := range selection.SelectedRoleIDs {
-		role, found := findRole(selection.Scene.Roles, roleID)
+		role, found := findRoleSnapshot(selection.Scene.Roles, roleID)
 		if !found {
 			return nil, ErrRoleDefinitionNotFound
 		}
-		roles = append(roles, cloneRole(role))
+		roles = append(roles, cloneRoleSnapshot(role))
 	}
 	return roles, nil
 }
 
-func (selection SelectionSnapshot) PracticeOption() (PracticeOption, error) {
-	option, found := findPracticeOption(
+func (selection SelectionSnapshot) PracticeOption() (PracticeOptionSnapshot, error) {
+	option, found := findPracticeOptionSnapshot(
 		selection.Scene.PracticeOptions,
 		selection.PracticeOptionID,
 	)
 	if !found {
-		return PracticeOption{}, ErrPracticeOptionNotFound
+		return PracticeOptionSnapshot{}, ErrPracticeOptionNotFound
 	}
 	return option, nil
 }

@@ -33,7 +33,10 @@ func TestCatalogResolveSelectionPinsExactVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSelection() error = %v", err)
 	}
-	if selection.Scene.ID != testSceneID || selection.Scene.Version != 1 ||
+	if selection.Source.Type != SceneSourceCatalog ||
+		selection.Source.SceneID != testSceneID ||
+		selection.Source.SceneVersion != 1 ||
+		selection.Scene.Key != testSceneID || selection.Scene.Revision != 1 ||
 		!reflect.DeepEqual(selection.SelectedRoleIDs, []string{testRoleID}) ||
 		selection.PracticeOptionID != testFocusOptionID {
 		t.Fatalf("selection = %#v", selection)

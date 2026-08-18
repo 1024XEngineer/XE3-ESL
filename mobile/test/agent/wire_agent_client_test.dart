@@ -60,12 +60,13 @@ void main() {
                       'label': '确认并开始练习',
                       'practice_plan_id': _practicePlanId,
                       'plan_version': 2,
-                      'target': 'Java Interview Practice',
                       'scene_name': '项目经历深挖',
+                      'user_role': '候选人',
+                      'ai_roles': ['面试官'],
+                      'practice_goal': 'Java Interview Practice',
                       'practice_experience': 'INTERVIEW',
                       'scene_category': 'INTERVIEW_PROFESSIONAL',
                       'practice_mode': 'FULL_SIMULATION',
-                      'roles': ['面试官', '候选人'],
                       'practice_scope': '围绕项目难点完成三轮追问',
                       'suggested_duration_seconds': 720,
                       'min_effective_turns': 3,
@@ -104,6 +105,67 @@ void main() {
       );
       transport.expectDone();
     });
+
+    test(
+      'restores a historical v1 practice action from Thread history',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId',
+            response: _jsonResponse(HttpStatus.ok, _threadJson()),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId/messages',
+            response: _jsonResponse(HttpStatus.ok, {
+              'messages': [
+                _messageJson(
+                  id: _assistantMessageId,
+                  sequence: 1,
+                  role: 'assistant',
+                  content: 'Your historical practice is ready.',
+                  producedByRunId: _runId,
+                  clientActions: const <Object?>[
+                    {
+                      'type': practicePlanConfirmClientActionV1Type,
+                      'payload': {
+                        'label': '确认并开始练习',
+                        'practice_plan_id': _practicePlanId,
+                        'plan_version': 2,
+                        'target': 'Java Interview Practice',
+                        'scene_name': '项目经历深挖',
+                        'practice_experience': 'INTERVIEW',
+                        'scene_category': 'INTERVIEW_PROFESSIONAL',
+                        'practice_mode': 'FULL_SIMULATION',
+                        'roles': ['面试官'],
+                        'practice_scope': '围绕项目难点完成三轮追问',
+                        'suggested_duration_seconds': 720,
+                        'min_effective_turns': 3,
+                        'max_effective_turns': 5,
+                        'confirmation_prompt': '请确认是否按此方案开始练习。',
+                      },
+                    },
+                  ],
+                ),
+              ],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        final snapshot = await harness.client.getThread(threadId: _threadId);
+        final action = decodeConfirmPracticePlanClientAction(
+          snapshot.messages.single.clientActions.single,
+        );
+
+        expect(action.protocol, ConfirmPracticePlanProtocol.v1);
+        expect(action.userRole, isNull);
+        expect(action.practiceGoal, 'Java Interview Practice');
+        expect(action.aiRoles, <String>['面试官']);
+        transport.expectDone();
+      },
+    );
 
     test('does not replay a voice Message through the text Run API', () async {
       final transport = _ScriptedTransport([
@@ -1013,6 +1075,80 @@ void main() {
       },
     );
 
+    test('rejects a retry identity returned by the initial endpoint', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              attempt: 2,
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: 'Keep the initial identity frozen.',
+          clientMessageId: 'message_initial_identity',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+
+    test('rejects immutable Run identity drift while polling', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.accepted,
+            _runJson(status: 'pending'),
+          ),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-runs/$_runId',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _runJson(status: 'completed', requestedModel: 'qwen-max'),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport, maxRunPollAttempts: 2);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: 'Keep the polled identity frozen.',
+          clientMessageId: 'message_poll_identity',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+
     test(
       'uses the explicit retry endpoint after a retryable failed Run',
       () async {
@@ -1089,6 +1225,63 @@ void main() {
         transport.expectDone();
       },
     );
+
+    test('rejects a retry that skips the next attempt number', () async {
+      const text = 'Retry without skipping attempts.';
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              status: 'failed',
+              failureKind: 'internal_error',
+              failureRetryable: true,
+            ),
+          ),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-runs/$_runId/retries',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              attempt: 3,
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_retry_attempt',
+        ),
+        throwsA(isA<AgentClientException>()),
+      );
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_retry_attempt',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
 
     test(
       'one retry recovers an ambiguous submit and creates a new attempt',
@@ -1292,6 +1485,7 @@ void main() {
             _runJson(
               id: _thirdRunId,
               status: 'completed',
+              attempt: 3,
               retryOfRunId: _retryRunId,
               clientRetryId: 'retry:$_retryRunId',
             ),
@@ -1816,22 +2010,25 @@ Map<String, Object?> _messageJson({
 Map<String, Object?> _runJson({
   String id = _runId,
   required String status,
+  int? attempt,
   String? failureKind,
   bool failureRetryable = false,
   String? retryOfRunId,
   String? clientRetryId,
   String completionSource = 'model',
+  String requestedProvider = 'qianwen',
+  String requestedModel = 'qwen-flash',
 }) {
   return {
     'run_id': id,
     'thread_id': _threadId,
     'input_message_id': _userMessageId,
-    'attempt': retryOfRunId == null ? 1 : 2,
+    'attempt': attempt ?? (retryOfRunId == null ? 1 : 2),
     'retry_of_run_id': ?retryOfRunId,
     'client_retry_id': ?clientRetryId,
     'status': status,
-    'requested_provider': 'qianwen',
-    'requested_model': 'qwen-flash',
+    'requested_provider': requestedProvider,
+    'requested_model': requestedModel,
     'max_output_tokens': 512,
     if (status == 'running' || status == 'completed' || status == 'failed')
       'started_at': _startedAt,

@@ -4,6 +4,7 @@ import {
   calculateMetrics,
   evaluateCases,
   parseJsonLog,
+  renderHtml,
   renderMarkdown,
 } from "./report.mjs";
 
@@ -159,7 +160,7 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
       name: "leaky_preview",
       messages: ["直接开始"],
       expected_decision: "tool_call",
-      expected_tools: ["practice.preview.v1"],
+      expected_tools: ["practice.preview.v2"],
       required_response_terms: ["好。"],
       forbidden_response_terms: ["PART_1", "5 分钟", "准备好", "卡片"],
       max_non_empty_paragraphs: 1,
@@ -190,7 +191,7 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
   ];
   const events = [
     ...successfulToolEvents("run-warmup", "ielts.warmup.v1"),
-    ...successfulToolEvents("run-preview", "practice.preview.v1"),
+    ...successfulToolEvents("run-preview", "practice.preview.v2"),
   ];
 
   const results = evaluateCases(cases, executions, events);
@@ -215,6 +216,117 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
     total: 2,
     percentage: 50,
   });
+});
+
+test("evaluates the structured preview resolution without raw scene text", () => {
+  const cases = [
+    {
+      name: "catalog_preview",
+      messages: ["自然语言场景请求"],
+      expected_decision: "tool_call",
+      expected_tools: ["practice.preview.v2"],
+      expected_preview_input: {
+        kind: "CATALOG",
+        catalog_scene_id: "scn_travel_hotel_checkin",
+      },
+    },
+    {
+      name: "wrong_custom_preview",
+      messages: ["另一个自然语言场景请求"],
+      expected_decision: "tool_call",
+      expected_tools: ["practice.preview.v2"],
+      expected_preview_input: {
+        kind: "CUSTOM",
+      },
+    },
+  ];
+  const executions = cases.map((testCase, index) => ({
+    name: testCase.name,
+    target_run_id: `run-${index + 1}`,
+    http_ok: true,
+    status: "completed",
+  }));
+  const events = [
+    ...successfulToolEvents("run-1", "practice.preview.v2"),
+    {
+      msg: "agent.benchmark.preview.input",
+      run_id: "run-1",
+      kind: "CATALOG",
+      catalog_scene_id: "scn_travel_hotel_checkin",
+    },
+    ...successfulToolEvents("run-2", "practice.preview.v2"),
+    {
+      msg: "agent.benchmark.preview.input",
+      run_id: "run-2",
+      kind: "CATALOG",
+      catalog_scene_id: "scn_daily_small_talk",
+    },
+  ];
+
+  const results = evaluateCases(cases, executions, events);
+  assert.equal(results[0].passed, true);
+  assert.deepEqual(results[0].actual_preview_input, {
+    kind: "CATALOG",
+    catalog_scene_id: "scn_travel_hotel_checkin",
+    candidate_scene_ids: [],
+  });
+  assert.equal(results[1].passed, false);
+  assert.equal(results[1].preview_input_contract_passed, false);
+  assert.match(results[1].reason, /Preview 场景决议输入不匹配/);
+  assert.deepEqual(calculateMetrics(results).preview_input_contract, {
+    passed: 1,
+    total: 2,
+    percentage: 50,
+  });
+});
+
+test("does not persist raw user messages in benchmark results or reports", () => {
+  const privateMessage = "PRIVATE_ORIGINAL_QUERY";
+  const cases = [
+    {
+      name: "private_preview",
+      messages: [privateMessage],
+      expected_decision: "direct_response",
+      expected_tools: [],
+    },
+  ];
+  const executions = [
+    {
+      name: "private_preview",
+      target_run_id: "run-private",
+      thread_id: "thread-private",
+      assistant_message_id: "message-private",
+      assistant_response: "已处理。",
+      http_ok: true,
+      status: "completed",
+    },
+  ];
+  const events = [
+    {
+      msg: "agent.routing.decision",
+      run_id: "run-private",
+      decision: "direct_response",
+    },
+    { msg: "agent.run.completed", run_id: "run-private" },
+  ];
+  const metadata = {
+    generated_at: "now",
+    base_url: "local",
+    cases_file: "cases.json",
+  };
+
+  const results = evaluateCases(cases, executions, events);
+  const metrics = calculateMetrics(results);
+
+  assert.doesNotMatch(JSON.stringify(results), new RegExp(privateMessage));
+  assert.doesNotMatch(
+    renderMarkdown(metadata, results, metrics),
+    new RegExp(privateMessage),
+  );
+  assert.doesNotMatch(
+    renderHtml(metadata, results, metrics),
+    new RegExp(privateMessage),
+  );
 });
 
 function successfulToolEvents(runId, toolName) {

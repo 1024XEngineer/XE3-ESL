@@ -25,13 +25,22 @@ type EvalMessage struct {
 }
 
 type RoutingCase struct {
-	Name              string
-	Messages          []EvalMessage
-	ExpectedDecision  string
-	ExpectedToolNames []string
-	ForbiddenTools    []string
-	ExpectedArgs      map[string]map[string]any
-	ForbiddenArgs     map[string][]string
+	Name                 string
+	Messages             []EvalMessage
+	ExpectedDecision     string
+	ExpectedToolNames    []string
+	ForbiddenTools       []string
+	ExpectedArgs         map[string]map[string]any
+	ForbiddenArgs        map[string][]string
+	ExpectedPreviewInput *PreviewInputRecord
+}
+
+// PreviewInputRecord intentionally excludes scene_query and user-authored
+// context. Routing tests retain only the non-sensitive resolution decision.
+type PreviewInputRecord struct {
+	Kind              preparationcapability.SceneResolutionKind
+	CatalogSceneID    string
+	CandidateSceneIDs []string
 }
 
 func BaselineCases() []RoutingCase {
@@ -62,13 +71,17 @@ func BaselineCases() []RoutingCase {
 		},
 		{
 			Name:              "practice_preview",
-			Messages:          userOnly("先预览一下英文产品经理面试的练习方案"),
+			Messages:          userOnly("先预览一下面试英文自我介绍的练习方案"),
 			ExpectedDecision:  DecisionToolCall,
 			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
 			ExpectedArgs: map[string]map[string]any{
 				preparationcapability.PracticePreviewToolName: {
-					"scene_query": "英文产品经理面试",
+					"scene_query": "先预览一下面试英文自我介绍的练习方案",
 				},
+			},
+			ExpectedPreviewInput: &PreviewInputRecord{
+				Kind:           preparationcapability.SceneResolutionKindCatalog,
+				CatalogSceneID: "scn_interview_self_introduction",
 			},
 		},
 		{
@@ -134,6 +147,10 @@ func BaselineCases() []RoutingCase {
 					"ielts_topic_choice":  "random",
 				},
 			},
+			ExpectedPreviewInput: &PreviewInputRecord{
+				Kind:           preparationcapability.SceneResolutionKindCatalog,
+				CatalogSceneID: "scn_ielts_speaking",
+			},
 		},
 		{
 			Name: "ielts_warmup_answer_creates_preview",
@@ -150,6 +167,10 @@ func BaselineCases() []RoutingCase {
 					"ielts_practice_mode": "PART_2",
 					"ielts_topic_choice":  "person",
 				},
+			},
+			ExpectedPreviewInput: &PreviewInputRecord{
+				Kind:           preparationcapability.SceneResolutionKindCatalog,
+				CatalogSceneID: "scn_ielts_speaking",
 			},
 		},
 		{
@@ -168,6 +189,10 @@ func BaselineCases() []RoutingCase {
 					"ielts_topic_choice":  "experience",
 				},
 			},
+			ExpectedPreviewInput: &PreviewInputRecord{
+				Kind:           preparationcapability.SceneResolutionKindCatalog,
+				CatalogSceneID: "scn_ielts_speaking",
+			},
 		},
 		{
 			Name:              "ielts_full_mock_preview",
@@ -184,6 +209,10 @@ func BaselineCases() []RoutingCase {
 				preparationcapability.PracticePreviewToolName: {
 					"ielts_topic_choice",
 				},
+			},
+			ExpectedPreviewInput: &PreviewInputRecord{
+				Kind:           preparationcapability.SceneResolutionKindCatalog,
+				CatalogSceneID: "scn_ielts_speaking",
 			},
 		},
 		{

@@ -9,6 +9,7 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
+import 'package:speakup/identity/network/identity_http_transport.dart';
 
 void main() {
   test(
@@ -463,6 +464,126 @@ void main() {
     },
   );
 
+  test('hydrates a terminal replay without assistant output frames', () async {
+    final client = _StreamingHistoryAgentClient();
+    final controller = ConversationController(
+      client: client,
+      clientIdFactory: (_) => 'stream-terminal-replay-message',
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    expect(await controller.sendText('Replay the completed request.'), isTrue);
+    client.authoritativeMessages = const <AgentMessage>[
+      AgentMessage(
+        id: 'user-terminal-replay-1',
+        role: AgentMessageRole.user,
+        text: 'Replay the completed request.',
+        sequence: 1,
+      ),
+      AgentMessage(
+        id: 'assistant-terminal-replay-1',
+        role: AgentMessageRole.assistant,
+        text: 'This Run was already completed.',
+        sequence: 2,
+      ),
+    ];
+    client.events
+      ..add(
+        const AgentInputCommitted(
+          runId: 'run-terminal-replay-1',
+          userMessage: AgentMessage(
+            id: 'user-terminal-replay-1',
+            role: AgentMessageRole.user,
+            text: 'Replay the completed request.',
+            sequence: 1,
+          ),
+        ),
+      )
+      ..add(
+        const AgentRunCompleted(
+          runId: 'run-terminal-replay-1',
+          assistantMessageId: 'assistant-terminal-replay-1',
+        ),
+      );
+    await client.events.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.errorMessage, isNull);
+    expect(controller.messages.map((message) => message.id), <String>[
+      'user-terminal-replay-1',
+      'assistant-terminal-replay-1',
+    ]);
+    expect(controller.messages.last.text, 'This Run was already completed.');
+    expect(client.messagePageCalls, 1);
+  });
+
+  test(
+    'terminal replay hydration failure keeps the Run successful and recoverable',
+    () async {
+      final client = _StreamingHistoryAgentClient(messageFailuresRemaining: 1);
+      final controller = ConversationController(
+        client: client,
+        clientIdFactory: (_) => 'stream-terminal-replay-recovery-message',
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.sendText('Recover terminal history.'), isTrue);
+      client.authoritativeMessages = const <AgentMessage>[
+        AgentMessage(
+          id: 'user-terminal-replay-recovery-1',
+          role: AgentMessageRole.user,
+          text: 'Recover terminal history.',
+          sequence: 1,
+        ),
+        AgentMessage(
+          id: 'assistant-terminal-replay-recovery-1',
+          role: AgentMessageRole.assistant,
+          text: 'Recovered from authoritative history.',
+          sequence: 2,
+        ),
+      ];
+      client.events
+        ..add(
+          const AgentInputCommitted(
+            runId: 'run-terminal-replay-recovery-1',
+            userMessage: AgentMessage(
+              id: 'user-terminal-replay-recovery-1',
+              role: AgentMessageRole.user,
+              text: 'Recover terminal history.',
+              sequence: 1,
+            ),
+          ),
+        )
+        ..add(
+          const AgentRunCompleted(
+            runId: 'run-terminal-replay-recovery-1',
+            assistantMessageId: 'assistant-terminal-replay-recovery-1',
+          ),
+        );
+      await client.events.close();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.errorMessage, isNull);
+      expect(controller.canRetry, isFalse);
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.messages.any((message) => message.hasFailed), isFalse);
+      expect(
+        controller.messages.any((message) => message.isStreaming),
+        isFalse,
+      );
+
+      await controller.retryThreadHistory();
+
+      expect(controller.canRetryThreadHistory, isFalse);
+      expect(
+        controller.messages.last.text,
+        'Recovered from authoritative history.',
+      );
+    },
+  );
+
   test(
     'retries only the authoritative client-action Message refresh',
     () async {
@@ -547,88 +668,806 @@ void main() {
     },
   );
 
-  test('sends Unicode stream input as UTF-8 and preserves retry', () async {
-    const threadId = '11111111-1111-4111-8111-111111111111';
-    const runId = '22222222-2222-4222-8222-222222222222';
-    const retryRunId = '33333333-3333-4333-8333-333333333333';
-    const userMessageId = '44444444-4444-4444-8444-444444444444';
-    const assistantMessageId = '55555555-5555-4555-8555-555555555555';
-    const clientMessageId = 'unicode-message';
-    const content = '你好，小花';
-    const createdAt = '2026-07-30T03:00:00Z';
-    final requests = <({String path, Map<String, dynamic> body})>[];
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final subscription = server.listen((request) async {
-      final bodyBytes = await request.fold<List<int>>(
-        <int>[],
-        (buffer, chunk) => buffer..addAll(chunk),
+  test(
+    'reconciles invalid framing after committed input to completed durable Run',
+    () async {
+      const threadId = '11111111-1111-4111-8111-111111111111';
+      const runId = '22222222-2222-4222-8222-222222222222';
+      const userMessageId = '44444444-4444-4444-8444-444444444444';
+      const assistantMessageId = '55555555-5555-4555-8555-555555555555';
+      const clientMessageId = 'completed-reconciliation-message';
+      const content = 'Recover the completed response.';
+      const createdAt = '2026-07-30T03:00:00Z';
+      final requests = <({String method, String path})>[];
+      final committedRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'pending',
+        createdAt: createdAt,
       );
-      requests.add((
-        path: request.uri.path,
-        body: jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>,
-      ));
-      final isRetry = requests.length == 2;
-      final effectiveRunId = isRetry ? retryRunId : runId;
-      final events = <String>[
-        _sse('input.committed', {
-          'run_id': effectiveRunId,
-          'message': <String, Object?>{
-            'message_id': userMessageId,
-            'thread_id': threadId,
-            'sequence': 1,
-            'role': 'user',
-            'client_message_id': clientMessageId,
-            'content': content,
-            'created_at': createdAt,
-          },
-        }),
-        if (!isRetry)
-          _sse('run.failed', {
-            'run_id': runId,
-            'kind': 'provider_unavailable',
-            'retryable': true,
-          })
-        else ...[
-          _sse('tool.started', {
-            'run_id': retryRunId,
-            'step_id': 'tool-step-1',
-            'name': 'practice.preview.v1',
-          }),
-          _sse('tool.completed', {
-            'run_id': retryRunId,
-            'step_id': 'tool-step-1',
-            'name': 'practice.preview.v1',
-          }),
-          _sse('assistant.output.started', {
-            'run_id': retryRunId,
-            'output_id': assistantMessageId,
-          }),
-          _sse('assistant.output.delta', {
-            'run_id': retryRunId,
-            'output_id': assistantMessageId,
-            'sequence': 1,
-            'delta': '你好，小花。',
-          }),
-          _sse('assistant.output.completed', {
-            'run_id': retryRunId,
-            'output_id': assistantMessageId,
-            'text': '你好，小花。',
-          }),
-          _sse('run.completed', {
-            'run': <String, Object?>{
-              'run_id': retryRunId,
-              'assistant_message_id': assistantMessageId,
+      final completedRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'completed',
+        assistantMessageId: assistantMessageId,
+        createdAt: createdAt,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        requests.add((method: request.method, path: request.uri.path));
+        await request.drain<void>();
+        if (request.method == 'GET') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode(completedRun));
+        } else {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+            ..add(
+              utf8.encode(
+                <String>[
+                  _sse('input.committed', <String, Object?>{
+                    'run': committedRun,
+                    'message': <String, Object?>{
+                      'message_id': userMessageId,
+                      'thread_id': threadId,
+                      'sequence': 1,
+                      'role': 'user',
+                      'client_message_id': clientMessageId,
+                      'content': content,
+                      'created_at': createdAt,
+                    },
+                  }),
+                  'invalid framing after committed input\n',
+                ].join(),
+              ),
+            );
+        }
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_completed_reconciliation',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        pollInterval: Duration.zero,
+      );
+      addTearDown(client.clearAccountState);
+
+      await expectLater(
+        client
+            .sendTextStream(
+              threadId: threadId,
+              text: content,
+              clientMessageId: clientMessageId,
+            )
+            .toList(),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      final recoveredEvents = await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      expect(recoveredEvents, hasLength(1));
+      expect(
+        recoveredEvents.single,
+        isA<AgentRunCompleted>()
+            .having(
+              (event) => event.assistantMessageId,
+              'assistantMessageId',
+              assistantMessageId,
+            )
+            .having((event) => event.run, 'run', isNotNull),
+      );
+      expect(requests, <({String method, String path})>[
+        (method: 'POST', path: '/v1/agent-threads/$threadId/runs/stream'),
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+      ]);
+    },
+  );
+
+  test(
+    'keeps polling an interrupted running Run and never creates a retry',
+    () async {
+      const threadId = '11111111-1111-4111-8111-111111111111';
+      const runId = '22222222-2222-4222-8222-222222222222';
+      const userMessageId = '44444444-4444-4444-8444-444444444444';
+      const assistantMessageId = '55555555-5555-4555-8555-555555555555';
+      const clientMessageId = 'running-reconciliation-message';
+      const content = 'Wait for the existing response.';
+      const createdAt = '2026-07-30T03:00:00Z';
+      final requests = <({String method, String path})>[];
+      var getCount = 0;
+      final committedRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'pending',
+        createdAt: createdAt,
+      );
+      final runningRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'running',
+        createdAt: createdAt,
+      );
+      final completedRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'completed',
+        assistantMessageId: assistantMessageId,
+        createdAt: createdAt,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        requests.add((method: request.method, path: request.uri.path));
+        await request.drain<void>();
+        if (request.method == 'GET') {
+          getCount++;
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode(getCount == 1 ? runningRun : completedRun));
+        } else {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+            ..add(
+              utf8.encode(
+                <String>[
+                  _sse('input.committed', <String, Object?>{
+                    'run': committedRun,
+                    'message': <String, Object?>{
+                      'message_id': userMessageId,
+                      'thread_id': threadId,
+                      'sequence': 1,
+                      'role': 'user',
+                      'client_message_id': clientMessageId,
+                      'content': content,
+                      'created_at': createdAt,
+                    },
+                  }),
+                  _sse('run.failed', <String, Object?>{
+                    'run_id': runId,
+                    'kind': 'stream_interrupted',
+                    'retryable': true,
+                  }),
+                ].join(),
+              ),
+            );
+        }
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_running_reconciliation',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        pollInterval: Duration.zero,
+      );
+      addTearDown(client.clearAccountState);
+
+      await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+      final recoveredEvents = await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      expect(recoveredEvents.single, isA<AgentRunCompleted>());
+      expect(requests, <({String method, String path})>[
+        (method: 'POST', path: '/v1/agent-threads/$threadId/runs/stream'),
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+      ]);
+    },
+  );
+
+  test(
+    'committed EOF reconciles failed Run and retries once with UTF-8 command',
+    () async {
+      const threadId = '11111111-1111-4111-8111-111111111111';
+      const runId = '22222222-2222-4222-8222-222222222222';
+      const retryRunId = '33333333-3333-4333-8333-333333333333';
+      const userMessageId = '44444444-4444-4444-8444-444444444444';
+      const assistantMessageId = '55555555-5555-4555-8555-555555555555';
+      const clientMessageId = 'unicode-message';
+      const content = '你好，小花';
+      const createdAt = '2026-07-30T03:00:00Z';
+      final requests =
+          <({String method, String path, Map<String, dynamic>? body})>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        final bodyBytes = await request.fold<List<int>>(
+          <int>[],
+          (buffer, chunk) => buffer..addAll(chunk),
+        );
+        requests.add((
+          method: request.method,
+          path: request.uri.path,
+          body: bodyBytes.isEmpty
+              ? null
+              : jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>,
+        ));
+        if (request.method == 'GET') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode(
+                _streamRunJson(
+                  runId: runId,
+                  threadId: threadId,
+                  inputMessageId: userMessageId,
+                  status: 'failed',
+                  failureKind: 'provider_unavailable',
+                  failureRetryable: true,
+                  createdAt: createdAt,
+                ),
+              ),
+            );
+          await request.response.close();
+          return;
+        }
+        final isRetry =
+            request.uri.path == '/v1/agent-runs/$runId/retries/stream';
+        final effectiveRunId = isRetry ? retryRunId : runId;
+        final committedRun = _streamRunJson(
+          runId: effectiveRunId,
+          threadId: threadId,
+          inputMessageId: userMessageId,
+          status: 'pending',
+          attempt: isRetry ? 2 : 1,
+          retryOfRunId: isRetry ? runId : null,
+          clientRetryId: isRetry ? 'retry:$runId' : null,
+          createdAt: createdAt,
+        );
+        final events = <String>[
+          _sse('input.committed', {
+            'run': committedRun,
+            'message': <String, Object?>{
+              'message_id': userMessageId,
+              'thread_id': threadId,
+              'sequence': 1,
+              'role': 'user',
+              'client_message_id': clientMessageId,
+              'content': content,
+              'created_at': createdAt,
             },
           }),
-        ],
-      ];
+          if (isRetry) ...[
+            _sse('tool.started', {
+              'run_id': retryRunId,
+              'step_id': 'tool-step-1',
+              'name': 'practice.preview.v1',
+            }),
+            _sse('tool.completed', {
+              'run_id': retryRunId,
+              'step_id': 'tool-step-1',
+              'name': 'practice.preview.v1',
+            }),
+            _sse('assistant.output.started', {
+              'run_id': retryRunId,
+              'output_id': assistantMessageId,
+            }),
+            _sse('assistant.output.delta', {
+              'run_id': retryRunId,
+              'output_id': assistantMessageId,
+              'sequence': 1,
+              'delta': '\n',
+            }),
+            _sse('assistant.output.delta', {
+              'run_id': retryRunId,
+              'output_id': assistantMessageId,
+              'sequence': 2,
+              'delta': '你好，小花。',
+            }),
+            _sse('assistant.output.completed', {
+              'run_id': retryRunId,
+              'output_id': assistantMessageId,
+              'text': '\n你好，小花。',
+            }),
+            _sse('run.completed', {
+              'run': _streamRunJson(
+                runId: retryRunId,
+                threadId: threadId,
+                inputMessageId: userMessageId,
+                status: 'completed',
+                attempt: 2,
+                retryOfRunId: runId,
+                clientRetryId: 'retry:$runId',
+                assistantMessageId: assistantMessageId,
+                createdAt: createdAt,
+              ),
+            }),
+          ],
+        ];
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.set(
+            HttpHeaders.contentTypeHeader,
+            'text/event-stream; charset=utf-8',
+          )
+          ..add(utf8.encode(events.join()));
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_unicode',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+      );
+      addTearDown(client.clearAccountState);
+
+      await expectLater(
+        client
+            .sendTextStream(
+              threadId: threadId,
+              text: content,
+              clientMessageId: clientMessageId,
+            )
+            .toList(),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.network,
+          ),
+        ),
+      );
+      final retryEvents = await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      expect(retryEvents.last, isA<AgentRunCompleted>());
+      expect(requests.map((request) => (request.method, request.path)), [
+        ('POST', '/v1/agent-threads/$threadId/runs/stream'),
+        ('GET', '/v1/agent-runs/$runId'),
+        ('POST', '/v1/agent-runs/$runId/retries/stream'),
+      ]);
+      expect(requests[0].body, {
+        'client_message_id': clientMessageId,
+        'content': content,
+      });
+      expect(requests[1].body, isNull);
+      expect(requests[2].body, {'client_retry_id': 'retry:$runId'});
+    },
+  );
+
+  test(
+    'keeps an interrupted Run ambiguous when authoritative GET has a network failure',
+    () async {
+      const threadId = '11111111-1111-4111-8111-111111111111';
+      const runId = '22222222-2222-4222-8222-222222222222';
+      const userMessageId = '44444444-4444-4444-8444-444444444444';
+      const clientMessageId = 'network-reconciliation-message';
+      const content = 'Do not submit this twice.';
+      const createdAt = '2026-07-30T03:00:00Z';
+      final postPaths = <String>[];
+      final committedRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'pending',
+        createdAt: createdAt,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        postPaths.add(request.uri.path);
+        await request.drain<void>();
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+          ..add(
+            utf8.encode(
+              <String>[
+                _sse('input.committed', <String, Object?>{
+                  'run': committedRun,
+                  'message': <String, Object?>{
+                    'message_id': userMessageId,
+                    'thread_id': threadId,
+                    'sequence': 1,
+                    'role': 'user',
+                    'client_message_id': clientMessageId,
+                    'content': content,
+                    'created_at': createdAt,
+                  },
+                }),
+                _sse('run.failed', <String, Object?>{
+                  'run_id': runId,
+                  'kind': 'stream_interrupted',
+                  'retryable': true,
+                }),
+              ].join(),
+            ),
+          );
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      final transport = _CallbackTransport((call) {
+        throw const SocketException('authoritative Run lookup failed');
+      });
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_network_reconciliation',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        transport: transport,
+        pollInterval: Duration.zero,
+      );
+      addTearDown(client.clearAccountState);
+
+      await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await expectLater(
+          client
+              .sendTextStream(
+                threadId: threadId,
+                text: content,
+                clientMessageId: clientMessageId,
+              )
+              .toList(),
+          throwsA(
+            isA<AgentClientException>().having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.network,
+            ),
+          ),
+        );
+      }
+
+      expect(postPaths, <String>['/v1/agent-threads/$threadId/runs/stream']);
+      expect(transport.calls, <({String method, String path})>[
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+      ]);
+    },
+  );
+
+  test(
+    'replays only the frozen idempotent command when interrupted Run is absent',
+    () async {
+      const threadId = '11111111-1111-4111-8111-111111111111';
+      const runId = '22222222-2222-4222-8222-222222222222';
+      const replayRunId = '33333333-3333-4333-8333-333333333333';
+      const userMessageId = '44444444-4444-4444-8444-444444444444';
+      const assistantMessageId = '55555555-5555-4555-8555-555555555555';
+      const clientMessageId = 'missing-run-reconciliation-message';
+      const content = 'Safely replay this command.';
+      const createdAt = '2026-07-30T03:00:00Z';
+      final requests = <({String path, Map<String, dynamic> body})>[];
+      var postCount = 0;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        final body =
+            jsonDecode(await utf8.decoder.bind(request).join())
+                as Map<String, dynamic>;
+        requests.add((path: request.uri.path, body: body));
+        postCount++;
+        final effectiveRunId = postCount == 1 ? runId : replayRunId;
+        final run = _streamRunJson(
+          runId: effectiveRunId,
+          threadId: threadId,
+          inputMessageId: userMessageId,
+          status: postCount == 1 ? 'pending' : 'completed',
+          assistantMessageId: postCount == 1 ? null : assistantMessageId,
+          createdAt: createdAt,
+        );
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+          ..add(
+            utf8.encode(
+              <String>[
+                _sse('input.committed', <String, Object?>{
+                  'run': run,
+                  'message': <String, Object?>{
+                    'message_id': userMessageId,
+                    'thread_id': threadId,
+                    'sequence': 1,
+                    'role': 'user',
+                    'client_message_id': clientMessageId,
+                    'content': content,
+                    'created_at': createdAt,
+                  },
+                }),
+                if (postCount == 1)
+                  _sse('run.failed', <String, Object?>{
+                    'run_id': runId,
+                    'kind': 'stream_interrupted',
+                    'retryable': true,
+                  })
+                else
+                  _sse('run.completed', <String, Object?>{'run': run}),
+              ].join(),
+            ),
+          );
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      final transport = _CallbackTransport(
+        (call) => IdentityHttpResponse(
+          statusCode: HttpStatus.notFound,
+          body: jsonEncode(<String, Object?>{
+            'error': <String, Object?>{
+              'code': 'resource_not_found',
+              'message': 'Run not found.',
+              'retryable': false,
+              'correlation_id': 'corr_missing_run',
+            },
+          }),
+        ),
+      );
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_missing_run_reconciliation',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        transport: transport,
+        pollInterval: Duration.zero,
+      );
+      addTearDown(client.clearAccountState);
+
+      await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+      final replayEvents = await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      expect(replayEvents.last, isA<AgentRunCompleted>());
+      expect(requests.map((request) => request.path), <String>[
+        '/v1/agent-threads/$threadId/runs/stream',
+        '/v1/agent-threads/$threadId/runs/stream',
+      ]);
+      expect(requests[1].body, requests[0].body);
+      expect(transport.calls, <({String method, String path})>[
+        (method: 'GET', path: '/v1/agent-runs/$runId'),
+      ]);
+    },
+  );
+
+  test(
+    'accepts an idempotent terminal Run replay without output frames',
+    () async {
+      const threadId = '61111111-1111-4111-8111-111111111111';
+      const runId = '62222222-2222-4222-8222-222222222222';
+      const userMessageId = '63333333-3333-4333-8333-333333333333';
+      const assistantMessageId = '64444444-4444-4444-8444-444444444444';
+      const clientMessageId = 'terminal-replay-message';
+      const content = 'Replay this completed request.';
+      const createdAt = '2026-07-30T04:00:00Z';
+      final terminalRun = _streamRunJson(
+        runId: runId,
+        threadId: threadId,
+        inputMessageId: userMessageId,
+        status: 'completed',
+        assistantMessageId: assistantMessageId,
+        createdAt: createdAt,
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        await request.drain<void>();
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+          ..add(
+            utf8.encode(
+              <String>[
+                _sse('input.committed', <String, Object?>{
+                  'run': terminalRun,
+                  'message': <String, Object?>{
+                    'message_id': userMessageId,
+                    'thread_id': threadId,
+                    'sequence': 1,
+                    'role': 'user',
+                    'client_message_id': clientMessageId,
+                    'content': content,
+                    'created_at': createdAt,
+                  },
+                }),
+                _sse('run.completed', <String, Object?>{'run': terminalRun}),
+              ].join(),
+            ),
+          );
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      const credential = AuthSessionCredential(
+        sessionToken: 'sess_terminal_replay',
+        generation: 1,
+      );
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => credential,
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+      );
+      addTearDown(client.clearAccountState);
+
+      final events = await client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList();
+
+      expect(events, hasLength(2));
+      expect(events.first, isA<AgentInputCommitted>());
+      expect(events.last, isA<AgentRunCompleted>());
+    },
+  );
+
+  test('rejects immutable Run identity drift in a text stream', () async {
+    const threadId = '71111111-1111-4111-8111-111111111111';
+    const runId = '72222222-2222-4222-8222-222222222222';
+    const userMessageId = '73333333-3333-4333-8333-333333333333';
+    const assistantMessageId = '74444444-4444-4444-8444-444444444444';
+    const clientMessageId = 'stream-identity-message';
+    const content = 'Keep this stream identity frozen.';
+    const createdAt = '2026-07-30T05:00:00Z';
+    final committedRun = _streamRunJson(
+      runId: runId,
+      threadId: threadId,
+      inputMessageId: userMessageId,
+      status: 'pending',
+      createdAt: createdAt,
+    );
+    final driftedTerminalRun = _streamRunJson(
+      runId: runId,
+      threadId: threadId,
+      inputMessageId: userMessageId,
+      status: 'completed',
+      assistantMessageId: assistantMessageId,
+      requestedModel: 'qwen-max',
+      createdAt: createdAt,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
       request.response
         ..statusCode = HttpStatus.ok
-        ..headers.set(
-          HttpHeaders.contentTypeHeader,
-          'text/event-stream; charset=utf-8',
-        )
-        ..add(utf8.encode(events.join()));
+        ..headers.set(HttpHeaders.contentTypeHeader, 'text/event-stream')
+        ..add(
+          utf8.encode(
+            <String>[
+              _sse('input.committed', <String, Object?>{
+                'run': committedRun,
+                'message': <String, Object?>{
+                  'message_id': userMessageId,
+                  'thread_id': threadId,
+                  'sequence': 1,
+                  'role': 'user',
+                  'client_message_id': clientMessageId,
+                  'content': content,
+                  'created_at': createdAt,
+                },
+              }),
+              _sse('assistant.output.started', <String, Object?>{
+                'run_id': runId,
+                'output_id': assistantMessageId,
+              }),
+              _sse('assistant.output.delta', <String, Object?>{
+                'run_id': runId,
+                'output_id': assistantMessageId,
+                'sequence': 1,
+                'delta': 'Done.',
+              }),
+              _sse('assistant.output.completed', <String, Object?>{
+                'run_id': runId,
+                'output_id': assistantMessageId,
+                'text': 'Done.',
+              }),
+              _sse('run.completed', <String, Object?>{
+                'run': driftedTerminalRun,
+              }),
+            ].join(),
+          ),
+        );
       await request.response.close();
     });
     addTearDown(() async {
@@ -636,7 +1475,7 @@ void main() {
       await server.close(force: true);
     });
     const credential = AuthSessionCredential(
-      sessionToken: 'sess_unicode',
+      sessionToken: 'sess_stream_identity',
       generation: 1,
     );
     final client = WireAgentClient(
@@ -650,37 +1489,99 @@ void main() {
     );
     addTearDown(client.clearAccountState);
 
-    final firstEvents = await client
-        .sendTextStream(
-          threadId: threadId,
-          text: content,
-          clientMessageId: clientMessageId,
-        )
-        .toList();
-    final retryEvents = await client
-        .sendTextStream(
-          threadId: threadId,
-          text: content,
-          clientMessageId: clientMessageId,
-        )
-        .toList();
-
-    expect(firstEvents.last, isA<AgentRunFailed>());
-    expect(retryEvents.last, isA<AgentRunCompleted>());
-    expect(requests.map((request) => request.path), [
-      '/v1/agent-threads/$threadId/runs/stream',
-      '/v1/agent-runs/$runId/retries/stream',
-    ]);
-    expect(requests[0].body, {
-      'client_message_id': clientMessageId,
-      'content': content,
-    });
-    expect(requests[1].body, {'client_retry_id': 'retry:$runId'});
+    await expectLater(
+      client
+          .sendTextStream(
+            threadId: threadId,
+            text: content,
+            clientMessageId: clientMessageId,
+          )
+          .toList(),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
   });
 }
 
 String _sse(String event, Map<String, Object?> data) {
   return 'event: $event\ndata: ${jsonEncode(data)}\n\n';
+}
+
+Map<String, Object?> _streamRunJson({
+  required String runId,
+  required String threadId,
+  required String inputMessageId,
+  required String status,
+  required String createdAt,
+  int attempt = 1,
+  String? retryOfRunId,
+  String? clientRetryId,
+  String? assistantMessageId,
+  String requestedModel = 'qwen-flash',
+  String? failureKind,
+  bool failureRetryable = false,
+}) {
+  return <String, Object?>{
+    'run_id': runId,
+    'thread_id': threadId,
+    'input_message_id': inputMessageId,
+    'attempt': attempt,
+    'retry_of_run_id': ?retryOfRunId,
+    'client_retry_id': ?clientRetryId,
+    'status': status,
+    'requested_provider': 'qianwen',
+    'requested_model': requestedModel,
+    'max_output_tokens': 512,
+    if (status == 'running' || status == 'completed' || status == 'failed')
+      'started_at': createdAt,
+    if (status == 'completed' || status == 'failed') 'completed_at': createdAt,
+    if (status == 'completed') ...<String, Object?>{
+      'assistant_message_id': assistantMessageId,
+      'completion_source': 'model',
+      'provider_completion_id': 'completion-$runId',
+      'provider_model': requestedModel,
+      'finish_reason': 'stop',
+      'usage': <String, Object?>{
+        'input_tokens': 8,
+        'output_tokens': 5,
+        'total_tokens': 13,
+      },
+    },
+    if (status == 'failed')
+      'failure': <String, Object?>{
+        'kind': failureKind,
+        'retryable': failureRetryable,
+      },
+    'created_at': createdAt,
+    'updated_at': createdAt,
+  };
+}
+
+final class _CallbackTransport implements IdentityHttpTransport {
+  _CallbackTransport(this._callback);
+
+  final IdentityHttpResponse Function(({String method, String path}) call)
+  _callback;
+  final List<({String method, String path})> calls =
+      <({String method, String path})>[];
+
+  @override
+  Future<IdentityHttpResponse> send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    String? body,
+    List<int>? bodyBytes,
+  }) async {
+    final call = (method: method, path: uri.path);
+    calls.add(call);
+    return _callback(call);
+  }
 }
 
 final class _StreamingAgentClient

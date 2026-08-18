@@ -120,31 +120,8 @@ final class AgentVoiceDraftCompleted extends AgentVoiceTranscriptionEvent {
   final AgentVoiceDraft draft;
 }
 
-enum AgentVoiceRunStatus { pending, running, completed, failed }
-
-final class AgentVoiceRun {
-  const AgentVoiceRun({
-    required this.id,
-    required this.threadId,
-    required this.inputMessageId,
-    required this.status,
-    this.assistantMessageId,
-    this.failureKind,
-    this.failureRetryable = false,
-  });
-
-  final String id;
-  final String threadId;
-  final String inputMessageId;
-  final AgentVoiceRunStatus status;
-  final String? assistantMessageId;
-  final String? failureKind;
-  final bool failureRetryable;
-
-  bool get isTerminal =>
-      status == AgentVoiceRunStatus.completed ||
-      status == AgentVoiceRunStatus.failed;
-}
+typedef AgentVoiceRunStatus = AgentRunStatus;
+typedef AgentVoiceRun = AgentRun;
 
 final class AgentVoiceConfirmation {
   const AgentVoiceConfirmation({
@@ -236,11 +213,13 @@ final class AgentVoiceRunFailed extends AgentVoiceConfirmationStreamEvent {
     required this.runId,
     required this.kind,
     required this.retryable,
+    this.run,
   });
 
   final String runId;
   final String kind;
   final bool retryable;
+  final AgentRun? run;
 }
 
 enum AgentVoiceComposerState {

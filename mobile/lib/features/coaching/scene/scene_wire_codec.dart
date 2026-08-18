@@ -64,6 +64,50 @@ Map<String, Object?> encodeSceneDefinition(SceneDefinition scene) =>
           .toList(growable: false),
     };
 
+Map<String, Object?> encodeSceneSelectionSnapshot(
+  SceneSelectionSnapshot selection,
+) {
+  final definition = encodeSceneDefinition(selection.scene);
+  final roles = (definition['roles']! as List<Object?>)
+      .map((value) {
+        final role = Map<String, Object?>.from(value! as Map<String, Object?>);
+        role['scene_key'] = role.remove('scene_id');
+        return role;
+      })
+      .toList(growable: false);
+  final options = (definition['practice_options']! as List<Object?>)
+      .map((value) {
+        final option = Map<String, Object?>.from(
+          value! as Map<String, Object?>,
+        );
+        option['scene_key'] = option.remove('scene_id');
+        return option;
+      })
+      .toList(growable: false);
+  return <String, Object?>{
+    'source': switch (selection.source.type) {
+      SceneSourceType.catalog => <String, Object?>{
+        'type': 'CATALOG',
+        'scene_id': selection.source.sceneId,
+        'scene_version': selection.source.sceneVersion,
+      },
+      SceneSourceType.custom => <String, Object?>{'type': 'CUSTOM'},
+    },
+    'scene': <String, Object?>{
+      'scene_key': definition['scene_id'],
+      'scene_revision': definition['scene_version'],
+      'practice_experience': definition['practice_experience'],
+      'scene_category': definition['scene_category'],
+      'name': definition['name'],
+      'prompt': definition['prompt'],
+      'roles': roles,
+      'practice_options': options,
+    },
+    'selected_role_ids': selection.selectedRoleIds,
+    'practice_option_id': selection.practiceOptionId,
+  };
+}
+
 SceneDefinition decodeSceneDefinition(Object? value) {
   final object = _object(
     value,
@@ -142,6 +186,42 @@ SceneDefinition decodeSceneDefinition(Object? value) {
 }
 
 SceneSelectionSnapshot decodeSceneSelectionSnapshot(Object? value) {
+  if (value is! Map<String, Object?>) {
+    throw const SceneWireFormatException();
+  }
+  return value.containsKey('source')
+      ? _decodeCurrentSceneSelectionSnapshot(value)
+      : _decodeLegacySceneSelectionSnapshot(value);
+}
+
+SceneSelectionSnapshot _decodeCurrentSceneSelectionSnapshot(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'source',
+      'scene',
+      'selected_role_ids',
+      'practice_option_id',
+    },
+  );
+  final source = _decodeSceneSource(object['source']);
+  final scene = _decodeExecutableSceneSnapshot(object['scene']);
+  if ((source.type == SceneSourceType.catalog &&
+          (source.sceneId != scene.id ||
+              source.sceneVersion != scene.version)) ||
+      (source.type == SceneSourceType.custom &&
+          (!scene.id.startsWith('custom:') || scene.version != 1))) {
+    throw const SceneWireFormatException();
+  }
+  return _validatedSceneSelectionSnapshot(
+    source: source,
+    scene: scene,
+    selectedRoleIds: object['selected_role_ids'],
+    practiceOptionId: object['practice_option_id'],
+  );
+}
+
+SceneSelectionSnapshot _decodeLegacySceneSelectionSnapshot(Object? value) {
   final object = _object(
     value,
     required: const <String>{
@@ -151,18 +231,132 @@ SceneSelectionSnapshot decodeSceneSelectionSnapshot(Object? value) {
     },
   );
   final scene = decodeSceneDefinition(object['scene']);
-  final selectedRoleIds = _resourceIdList(object['selected_role_ids']);
-  final practiceOptionId = _resourceId(object['practice_option_id']);
+  return _validatedSceneSelectionSnapshot(
+    source: SceneSource.catalog(sceneId: scene.id, sceneVersion: scene.version),
+    scene: scene,
+    selectedRoleIds: object['selected_role_ids'],
+    practiceOptionId: object['practice_option_id'],
+  );
+}
+
+SceneSelectionSnapshot _validatedSceneSelectionSnapshot({
+  required SceneSource source,
+  required SceneDefinition scene,
+  required Object? selectedRoleIds,
+  required Object? practiceOptionId,
+}) {
+  final decodedRoleIds = _resourceIdList(selectedRoleIds);
+  final decodedOptionId = _resourceId(practiceOptionId);
   final roleIds = scene.roles.map((role) => role.id).toSet();
-  if (selectedRoleIds.any((id) => !roleIds.contains(id)) ||
-      !scene.practiceOptions.any((option) => option.id == practiceOptionId)) {
+  if (decodedRoleIds.any((id) => !roleIds.contains(id)) ||
+      !scene.practiceOptions.any((option) => option.id == decodedOptionId)) {
     throw const SceneWireFormatException();
   }
   return SceneSelectionSnapshot(
+    source: source,
     scene: scene,
-    selectedRoleIds: selectedRoleIds,
-    practiceOptionId: practiceOptionId,
+    selectedRoleIds: decodedRoleIds,
+    practiceOptionId: decodedOptionId,
   );
+}
+
+SceneSource _decodeSceneSource(Object? value) {
+  final base = _object(
+    value,
+    required: const <String>{'type'},
+    optional: const <String>{'scene_id', 'scene_version'},
+  );
+  return switch (_string(base['type'], maximumBytes: 16)) {
+    'CATALOG' => SceneSource.catalog(
+      sceneId: _resourceId(base['scene_id']),
+      sceneVersion: _version(base['scene_version']),
+    ),
+    'CUSTOM'
+        when !base.containsKey('scene_id') &&
+            !base.containsKey('scene_version') =>
+      const SceneSource.custom(),
+    _ => throw const SceneWireFormatException(),
+  };
+}
+
+// The Practice UI consumes the frozen executable scene through the existing
+// SceneDefinition view model. This adapter does not recover catalog identity:
+// custom scenes keep their runtime scene_key and remain distinguished by
+// SceneSelectionSnapshot.source.
+SceneDefinition _decodeExecutableSceneSnapshot(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'scene_key',
+      'scene_revision',
+      'practice_experience',
+      'scene_category',
+      'name',
+      'prompt',
+      'roles',
+      'practice_options',
+    },
+  );
+  final sceneKey = _resourceId(object['scene_key']);
+  final roles = object['roles'];
+  final options = object['practice_options'];
+  if (roles is! List<Object?> || options is! List<Object?>) {
+    throw const SceneWireFormatException();
+  }
+  return decodeSceneDefinition(<String, Object?>{
+    'scene_id': sceneKey,
+    'scene_version': object['scene_revision'],
+    'practice_experience': object['practice_experience'],
+    'scene_category': object['scene_category'],
+    'name': object['name'],
+    'status': 'active',
+    'prompt': object['prompt'],
+    'roles': roles
+        .map((value) {
+          final role = _object(
+            value,
+            required: const <String>{
+              'role_definition_id',
+              'scene_key',
+              'role_type',
+              'display_name',
+              'responsibilities',
+              'style',
+              'practice_objectives',
+            },
+            optional: const <String>{'voice_config_ref'},
+          );
+          if (_resourceId(role['scene_key']) != sceneKey) {
+            throw const SceneWireFormatException();
+          }
+          return <String, Object?>{...role, 'scene_id': role['scene_key']}
+            ..remove('scene_key');
+        })
+        .toList(growable: false),
+    'practice_options': options
+        .map((value) {
+          final option = _object(
+            value,
+            required: const <String>{
+              'practice_option_id',
+              'scene_key',
+              'practice_mode',
+              'display_name',
+              'suggested_duration_seconds',
+              'turn_policy_ref',
+              'session_policy_ref',
+              'evaluation_policy_ref',
+            },
+            optional: const <String>{'role_definition_id'},
+          );
+          if (_resourceId(option['scene_key']) != sceneKey) {
+            throw const SceneWireFormatException();
+          }
+          return <String, Object?>{...option, 'scene_id': option['scene_key']}
+            ..remove('scene_key');
+        })
+        .toList(growable: false),
+  });
 }
 
 RoleDefinition decodeRoleDefinition(Object? value) {
