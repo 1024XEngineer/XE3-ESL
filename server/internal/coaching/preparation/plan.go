@@ -127,7 +127,7 @@ type PracticePlanSummary struct {
 	PracticeExperience       scene.PracticeExperience `json:"practice_experience"`
 	SceneName                string                   `json:"scene_name"`
 	PracticeScope            string                   `json:"practice_scope"`
-	JobTitle                 string                   `json:"job_title,omitempty"`
+	JobTitle                 string                   `json:"job_title"`
 	PracticeObjectives       []string                 `json:"practice_objectives"`
 	ResumeUsed               bool                     `json:"resume_used"`
 	SuggestedDurationSeconds int                      `json:"suggested_duration_seconds"`
