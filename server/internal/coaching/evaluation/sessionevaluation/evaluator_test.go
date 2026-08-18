@@ -242,6 +242,174 @@ func TestGeneralEvaluatorRejectsPolicyCategoryMismatch(t *testing.T) {
 	}
 }
 
+func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *testing.T) {
+	tests := []struct {
+		name    string
+		prompt  string
+		version string
+	}{
+		{name: "interview", prompt: interviewSystemPromptV2, version: interviewPromptVersionV2},
+		{name: "IELTS", prompt: ieltsSystemPromptV2, version: ieltsPromptVersionV2},
+		{name: "general", prompt: generalSystemPromptV2, version: generalPromptVersionV2},
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := map[string]string{
+		"interview": lineages.Interview.PromptVersion,
+		"IELTS":     lineages.IELTS.PromptVersion,
+		"general":   lineages.General.PromptVersion,
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, requirement := range []string{
+				"summary and every finding message in Simplified Chinese",
+				"suggestions for strengths and improvements in Simplified Chinese",
+				"directly reusable English expression in suggestion",
+				"question, answer, and evidence quote in its original language",
+			} {
+				if !strings.Contains(test.prompt, requirement) {
+					t.Fatalf("prompt omitted language requirement %q: %s", requirement, test.prompt)
+				}
+			}
+			if versions[test.name] != test.version {
+				t.Fatalf("PromptVersion = %q, want %q", versions[test.name], test.version)
+			}
+		})
+	}
+}
+
+func TestSessionEvaluationPromptsFollowRecordedVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		v1Version string
+		v1Prompt  string
+		v2Version string
+		v2Prompt  string
+	}{
+		{
+			name: "interview", v1Version: interviewPromptVersionV1,
+			v1Prompt: interviewSystemPromptV1, v2Version: interviewPromptVersionV2,
+			v2Prompt: interviewSystemPromptV2,
+		},
+		{
+			name: "IELTS", v1Version: ieltsPromptVersionV1,
+			v1Prompt: ieltsSystemPromptV1, v2Version: ieltsPromptVersionV2,
+			v2Prompt: ieltsSystemPromptV2,
+		},
+		{
+			name: "general", v1Version: generalPromptVersionV1,
+			v1Prompt: generalSystemPromptV1, v2Version: generalPromptVersionV2,
+			v2Prompt: generalSystemPromptV2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			v1, err := selectReportPrompt(
+				test.v1Version, test.v1Version, test.v1Prompt,
+				test.v2Version, test.v2Prompt,
+			)
+			if err != nil || v1.system != test.v1Prompt ||
+				v1.insufficientSummary != "There is not enough confirmed practice evidence to produce a reliable evaluation." {
+				t.Fatalf("v1 prompt = %#v, error = %v", v1, err)
+			}
+			v2, err := selectReportPrompt(
+				test.v2Version, test.v1Version, test.v1Prompt,
+				test.v2Version, test.v2Prompt,
+			)
+			if err != nil || v2.system != test.v2Prompt ||
+				v2.insufficientSummary != "本次练习的有效证据不足，暂时无法形成可靠的评估结论。" {
+				t.Fatalf("v2 prompt = %#v, error = %v", v2, err)
+			}
+			if _, err := selectReportPrompt(
+				"unknown/v1", test.v1Version, test.v1Prompt,
+				test.v2Version, test.v2Prompt,
+			); err != evaluation.ErrInvalidRequest {
+				t.Fatalf("unknown version error = %v", err)
+			}
+		})
+	}
+}
+
+func TestInterviewEvaluatorUsesRecordedV1Prompt(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages.Interview.PromptVersion = interviewPromptVersionV1
+	snapshot := sessionSnapshotFixture()
+	snapshot.EvaluationPolicyRef = evaluation.InterviewEvaluationPolicyRef
+	snapshot.PracticeExperience = "INTERVIEW"
+	snapshot.SceneCategory = "INTERVIEW_RECRUITER"
+	snapshot.PracticeMode = "FULL_SIMULATION"
+	if _, err := evaluators.EvaluateInterview(
+		context.Background(), evaluation.Record{}, snapshot, lineages.Interview,
+	); err != nil {
+		t.Fatalf("EvaluateInterview() error = %v", err)
+	}
+	if generator.last.SystemPrompt != interviewSystemPromptV1 {
+		t.Fatal("v1 lineage did not use the v1 interview prompt")
+	}
+}
+
+func TestInsufficientReportFollowsRecordedVersionAndPreservesOriginalText(t *testing.T) {
+	snapshot := sessionSnapshotFixture()
+	snapshot.Turns[0].Effective = false
+	evaluators, err := New(&reportGeneratorFake{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{
+			name: "v1", version: ieltsPromptVersionV1,
+			want: "There is not enough confirmed practice evidence to produce a reliable evaluation.",
+		},
+		{
+			name: "v2", version: ieltsPromptVersionV2,
+			want: "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lineage := lineages.IELTS
+			lineage.PromptVersion = test.version
+			encoded, err := evaluators.EvaluateIELTS(
+				context.Background(), evaluation.Record{}, snapshot, lineage,
+			)
+			if err != nil {
+				t.Fatalf("EvaluateIELTS() error = %v", err)
+			}
+			var formal report.FormalReport
+			if err := evaluation.DecodeStrict(encoded, &formal); err != nil {
+				t.Fatal(err)
+			}
+			if formal.Summary != test.want {
+				t.Fatalf("Summary = %q", formal.Summary)
+			}
+			if len(formal.Questions) != 1 || formal.Questions[0].Text != snapshot.Questions[0].Text {
+				t.Fatalf("question projection = %#v", formal.Questions)
+			}
+			if formal.Questions[0].Answer != nil {
+				t.Fatalf("ineffective answer must not be projected: %#v", formal.Questions[0].Answer)
+			}
+		})
+	}
+}
+
 type reportGeneratorFake struct {
 	last textgeneration.Request
 }
