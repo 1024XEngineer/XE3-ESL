@@ -404,6 +404,7 @@ type confirmPracticePlanActionPayload struct {
 	Label                    string   `json:"label"`
 	PracticePlanID           string   `json:"practice_plan_id"`
 	PlanVersion              int      `json:"plan_version"`
+	SceneID                  string   `json:"scene_id"`
 	SceneName                string   `json:"scene_name"`
 	UserRole                 string   `json:"user_role"`
 	AIRoles                  []string `json:"ai_roles"`
@@ -420,7 +421,7 @@ type confirmPracticePlanActionPayload struct {
 
 var confirmPracticePlanActionFields = map[string]struct{}{
 	"label": {}, "practice_plan_id": {}, "plan_version": {},
-	"scene_name": {}, "user_role": {}, "ai_roles": {},
+	"scene_id": {}, "scene_name": {}, "user_role": {}, "ai_roles": {},
 	"practice_goal": {}, "practice_experience": {},
 	"scene_category": {}, "practice_mode": {}, "practice_scope": {},
 	"suggested_duration_seconds": {}, "min_effective_turns": {},
@@ -446,11 +447,16 @@ func practicePlanClientAction(
 	for index, role := range roles {
 		roleNames[index] = role.DisplayName
 	}
+	sceneID := strings.TrimSpace(plan.SceneSelection.Source.SceneID)
+	if sceneID == "" {
+		sceneID = strings.TrimSpace(plan.SceneSelection.Scene.Key)
+	}
 	prompt := plan.SceneSelection.Scene.Prompt
 	payload := confirmPracticePlanActionPayload{
 		Label:                    "确认并开始练习",
 		PracticePlanID:           plan.ID,
 		PlanVersion:              plan.Version,
+		SceneID:                  sceneID,
 		SceneName:                plan.SceneSelection.Scene.Name,
 		UserRole:                 strings.TrimSpace(prompt.UserRole),
 		AIRoles:                  roleNames,
@@ -484,6 +490,7 @@ func validConfirmPracticePlanActionPayload(
 	if !validActionText(payload.Label, 100) ||
 		!practicePlanUUIDPattern.MatchString(payload.PracticePlanID) ||
 		payload.PlanVersion < 1 ||
+		!validActionText(payload.SceneID, 200) ||
 		!validActionText(payload.SceneName, 200) ||
 		!validActionText(payload.UserRole, 200) ||
 		!validActionText(payload.PracticeGoal, 500) ||

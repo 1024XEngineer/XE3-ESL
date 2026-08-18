@@ -625,7 +625,8 @@ func TestPracticePlanClientActionEmitsExactV2BusinessPayload(t *testing.T) {
 	if _, found := payload["roles"]; found {
 		t.Fatalf("v2 payload contains legacy roles: %#v", payload)
 	}
-	if payload["scene_name"] != "在展会上介绍机器人" ||
+	if payload["scene_id"] == "" ||
+		payload["scene_name"] != "在展会上介绍机器人" ||
 		payload["user_role"] != "销售代表" ||
 		payload["practice_goal"] != "说明产品价值并回应疑虑" {
 		t.Fatalf("payload values = %#v", payload)
