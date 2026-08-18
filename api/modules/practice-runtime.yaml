@@ -418,6 +418,54 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-speech/realtime:
+    get:
+      tags:
+        - Practice
+      summary: Stream authenticated Coaching prompt text as synthesized PCM
+      description: |
+        Authenticates the Actor before upgrading. After `stream.ready`, the
+        client sends exactly one bounded `speak` event. The server streams mono
+        24 kHz signed 16-bit little-endian PCM chunks and then exactly one
+        `stream.completed` or `stream.failed` event. The prompt is ephemeral and
+        must not be persisted or logged.
+      operationId: streamPracticePromptSpeech
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          schema:
+            type: string
+            const: speakup.practice-question-speech.v1
+      responses:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              schema:
+                type: string
+                const: speakup.practice-question-speech.v1
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+      x-websocket-client-event-schema:
+        $ref: ../websocket/practice-question-speech.schema.json#/$defs/ClientEvent
+      x-websocket-event-schema:
+        $ref: ../websocket/practice-question-speech.schema.json#/$defs/ServerEvent
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        subprotocol:
+          allowed:
+            - speakup.practice-question-speech.v1
+          carries_credentials: false
   /v1/audio-assets/{audio_asset_id}:
     delete:
       tags:

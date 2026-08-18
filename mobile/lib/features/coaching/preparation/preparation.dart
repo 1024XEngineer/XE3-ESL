@@ -723,6 +723,7 @@ class _PreparationPageState extends State<PreparationPage> {
           IeltsCatalog(
             controller: ielts!,
             scenes: scenes,
+            answerSpeaker: widget.practiceController?.promptSpeaker,
             speechClient: widget.practiceController?.mediaClient == null
                 ? null
                 : WireIeltsSpeechClient(

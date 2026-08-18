@@ -165,7 +165,9 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       return;
     }
     await _stopQuestionNarration();
-    final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
+    final speaker =
+        widget.questionSpeaker ??
+        (_ownedTipSpeaker ??= SystemPracticePromptSpeaker());
     await speaker.speak(tip.content);
   }
 
@@ -179,7 +181,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _stopQuestionTipSpeech() async {
     try {
-      await _ownedTipSpeaker?.stop();
+      await (widget.questionSpeaker ?? _ownedTipSpeaker)?.stop();
     } on Object {
       // Recording and dismissal must not be blocked by a platform TTS error.
     }
@@ -240,7 +242,15 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       _questionNarrationErrorId = null;
     });
     try {
-      await _questionSpeaker.speak(message.text);
+      final speaker = _questionSpeaker;
+      if (speaker is CoachingSpeechPlayer) {
+        await speaker.speakQuestion(
+          questionId: message.id,
+          fallbackText: message.text,
+        );
+      } else {
+        await speaker.speak(message.text);
+      }
     } on Object {
       if (mounted && generation == _questionNarrationGeneration) {
         setState(() => _questionNarrationErrorId = message.id);

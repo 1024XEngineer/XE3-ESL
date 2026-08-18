@@ -1,9 +1,14 @@
 package voicehttp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"log/slog"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -12,6 +17,13 @@ import (
 )
 
 const practiceQuestionSpeechWebSocketProtocol = "speakup.practice-question-speech.v1"
+
+const maxPracticePromptSpeechRunes = 4096
+
+type practicePromptSpeechFrame struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
 
 func (handler *Handler) questionSpeechRealtime(c *gin.Context) {
 	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
@@ -38,14 +50,62 @@ func (handler *Handler) questionSpeechRealtime(c *gin.Context) {
 		handler.write(c, invalidRequest(nil))
 		return
 	}
-	connection, err := (&websocket.Upgrader{
-		Subprotocols: []string{practiceQuestionSpeechWebSocketProtocol},
-	}).Upgrade(c.Writer, c.Request, nil)
+	connection, err := upgradePracticeSpeech(c)
 	if err != nil {
 		return
 	}
 	defer connection.Close()
-	if err := connection.WriteJSON(gin.H{
+	if writePracticeSpeechReady(connection) != nil {
+		return
+	}
+	handler.streamPracticeSpeech(c.Request.Context(), connection, text)
+}
+
+func (handler *Handler) promptSpeechRealtime(c *gin.Context) {
+	if _, ok := requestcontext.ActorFromContext(c.Request.Context()); !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	if !containsWebSocketProtocol(
+		websocket.Subprotocols(c.Request),
+		practiceQuestionSpeechWebSocketProtocol,
+	) {
+		handler.write(c, invalidRequest(nil))
+		return
+	}
+	connection, err := upgradePracticeSpeech(c)
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+	connection.SetReadLimit(16 * 1024)
+	if writePracticeSpeechReady(connection) != nil {
+		return
+	}
+	messageType, payload, err := connection.ReadMessage()
+	if err != nil {
+		return
+	}
+	if messageType != websocket.TextMessage {
+		writePracticeSpeechFailure(connection, false)
+		return
+	}
+	text, err := decodePracticePromptSpeech(payload)
+	if err != nil {
+		writePracticeSpeechFailure(connection, false)
+		return
+	}
+	handler.streamPracticeSpeech(c.Request.Context(), connection, text)
+}
+
+func upgradePracticeSpeech(c *gin.Context) (*websocket.Conn, error) {
+	return (&websocket.Upgrader{
+		Subprotocols: []string{practiceQuestionSpeechWebSocketProtocol},
+	}).Upgrade(c.Writer, c.Request, nil)
+}
+
+func writePracticeSpeechReady(connection *websocket.Conn) error {
+	return connection.WriteJSON(gin.H{
 		"type": "stream.ready",
 		"data": gin.H{
 			"content_type":    agentconversation.AssistantSpeechContentTypePCM,
@@ -53,11 +113,35 @@ func (handler *Handler) questionSpeechRealtime(c *gin.Context) {
 			"channel_count":   agentconversation.AssistantSpeechChannelCount,
 			"bits_per_sample": agentconversation.AssistantSpeechBitsPerSample,
 		},
-	}); err != nil {
-		return
-	}
+	})
+}
 
-	streamContext, cancel := context.WithCancel(c.Request.Context())
+func decodePracticePromptSpeech(payload []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var frame practicePromptSpeechFrame
+	if err := decoder.Decode(&frame); err != nil {
+		return "", err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return "", context.Canceled
+	}
+	text := strings.TrimSpace(frame.Text)
+	if frame.Type != "speak" || text == "" || !utf8.ValidString(text) ||
+		utf8.RuneCountInString(text) > maxPracticePromptSpeechRunes {
+		return "", context.Canceled
+	}
+	return text, nil
+}
+
+func (handler *Handler) streamPracticeSpeech(
+	requestContext context.Context,
+	connection *websocket.Conn,
+	text string,
+) {
+
+	streamContext, cancel := context.WithCancel(requestContext)
 	defer cancel()
 	var firstAudio sync.Once
 	chunks, bytes := 0, 0
