@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	sharedmedia "github.com/1024XEngineer/XE3-ESL/server/internal/media"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -20,13 +22,24 @@ type Service struct {
 	repository Repository
 	media      *sharedmedia.Service
 	config     Config
+	httpClient *http.Client
 }
 
 func NewService(repository Repository, media *sharedmedia.Service, config Config) (*Service, error) {
 	if repository == nil || media == nil || config.StagedTTL <= 0 {
 		return nil, ErrInvalidRequest
 	}
-	return &Service{repository: repository, media: media, config: config}, nil
+	return &Service{
+		repository: repository,
+		media:      media,
+		config:     config,
+		httpClient: &http.Client{
+			Timeout: defaultReadTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}, nil
 }
 
 func (service *Service) Upload(
@@ -87,19 +100,49 @@ func (service *Service) UseDefault(
 func (service *Service) Content(
 	ctx context.Context,
 	actor requestcontext.Actor,
-) (objectstore.SignedGetResult, error) {
+) (Content, error) {
 	if ctx == nil || !actor.Valid() {
-		return objectstore.SignedGetResult{}, ErrNotFound
+		return Content{}, ErrNotFound
 	}
 	assetID, err := service.repository.CurrentAssetID(ctx, actor.UserID)
 	if err != nil {
-		return objectstore.SignedGetResult{}, err
+		return Content{}, err
 	}
-	content, err := service.media.SignedGet(ctx, actor.UserID, assetID)
+	asset, err := service.media.FindOwned(ctx, actor.UserID, assetID)
+	if err != nil || asset.Kind != sharedmedia.KindImage ||
+		asset.Status != sharedmedia.StatusReady || asset.Size < 1 || asset.Size > MaxBytes {
+		return Content{}, ErrNotFound
+	}
+	signed, err := service.media.SignedGet(ctx, actor.UserID, assetID)
 	if err != nil {
-		return objectstore.SignedGetResult{}, mapMediaError(err)
+		return Content{}, mapMediaError(err)
 	}
-	return content, nil
+	signedURL, err := url.Parse(signed.URL)
+	if err != nil || signedURL.Scheme != "https" || signedURL.Host == "" {
+		return Content{}, ErrRepository
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, signedURL.String(), nil)
+	if err != nil {
+		return Content{}, ErrRepository
+	}
+	response, err := service.httpClient.Do(request)
+	if err != nil {
+		return Content{}, ErrRepository
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK ||
+		!strings.EqualFold(strings.TrimSpace(response.Header.Get("Content-Type")), asset.ContentType) {
+		return Content{}, ErrRepository
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, MaxBytes+1))
+	if err != nil || int64(len(payload)) != asset.Size || len(payload) > MaxBytes {
+		return Content{}, ErrRepository
+	}
+	checksum := sha256.Sum256(payload)
+	if hex.EncodeToString(checksum[:]) != asset.ChecksumSHA256 {
+		return Content{}, ErrRepository
+	}
+	return Content{Payload: payload, ContentType: asset.ContentType}, nil
 }
 
 func mapMediaError(err error) error {

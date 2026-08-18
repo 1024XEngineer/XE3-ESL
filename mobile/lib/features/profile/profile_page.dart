@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
@@ -16,7 +18,7 @@ class ProfilePage extends StatelessWidget {
     required this.profileErrorMessage,
     required this.profileSaving,
     required this.onSaveDisplayName,
-    required this.avatarUrl,
+    required this.avatarBytes,
     required this.avatarSaving,
     required this.onUploadAvatar,
     required this.onUseDefaultAvatar,
@@ -33,7 +35,7 @@ class ProfilePage extends StatelessWidget {
   final String? profileErrorMessage;
   final bool profileSaving;
   final Future<String?> Function(String)? onSaveDisplayName;
-  final Uri? avatarUrl;
+  final Uint8List? avatarBytes;
   final bool avatarSaving;
   final Future<String?> Function(UserAvatarImage)? onUploadAvatar;
   final Future<String?> Function()? onUseDefaultAvatar;
@@ -74,7 +76,7 @@ class ProfilePage extends StatelessWidget {
                       ProfileAvatarView(
                         avatarKey: const Key('profile-avatar'),
                         size: 132,
-                        avatarUrl: avatarUrl,
+                        avatarBytes: avatarBytes,
                         editable: user != null && onUploadAvatar != null,
                         saving: avatarSaving,
                         onTap: () => _editAvatar(context),

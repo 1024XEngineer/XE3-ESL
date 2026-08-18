@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -30,6 +29,11 @@ type UploadRequest struct {
 	ExpectedProfileVersion int64
 }
 
+type Content struct {
+	Payload     []byte
+	ContentType string
+}
+
 type Repository interface {
 	Attach(context.Context, string, string, int64) (identity.UserProfile, error)
 	UseDefault(context.Context, string, int64) (identity.UserProfile, error)
@@ -39,7 +43,7 @@ type Repository interface {
 type Application interface {
 	Upload(context.Context, requestcontext.Actor, UploadRequest) (identity.UserProfile, error)
 	UseDefault(context.Context, requestcontext.Actor, int64) (identity.UserProfile, error)
-	Content(context.Context, requestcontext.Actor) (objectstore.SignedGetResult, error)
+	Content(context.Context, requestcontext.Actor) (Content, error)
 }
 
 type Config struct {

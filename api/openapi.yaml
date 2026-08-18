@@ -242,8 +242,6 @@ components:
       $ref: ./modules/identity.yaml#/components/schemas/UserProfile
     UserProfileAvatar:
       $ref: ./modules/identity.yaml#/components/schemas/UserProfileAvatar
-    UserAvatarContent:
-      $ref: ./modules/identity.yaml#/components/schemas/UserAvatarContent
     UpdateUserProfileRequest:
       $ref: ./modules/identity.yaml#/components/schemas/UpdateUserProfileRequest
     CoachingProfile:

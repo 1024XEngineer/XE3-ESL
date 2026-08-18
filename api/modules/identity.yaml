@@ -258,20 +258,33 @@ paths:
     get:
       tags:
         - Identity
-      summary: Issue a short-lived read capability for the current avatar
+      summary: Read the current private avatar through the authenticated API
       operationId: getCurrentUserAvatarContent
       responses:
         '200':
-          description: Ephemeral private avatar content capability.
+          description: Validated private avatar bytes.
           headers:
             Cache-Control:
               schema:
                 type: string
                 const: no-store
-          content:
-            application/json:
+            X-Content-Type-Options:
               schema:
-                $ref: '#/components/schemas/UserAvatarContent'
+                type: string
+                const: nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
@@ -462,21 +475,6 @@ components:
           maximum: 16384
           readOnly: true
         updated_at:
-          type: string
-          format: date-time
-          readOnly: true
-    UserAvatarContent:
-      type: object
-      additionalProperties: false
-      required:
-        - content_url
-        - expires_at
-      properties:
-        content_url:
-          type: string
-          format: uri
-          readOnly: true
-        expires_at:
           type: string
           format: date-time
           readOnly: true

@@ -77,7 +77,7 @@ Widget _app({
       profileErrorMessage: null,
       profileSaving: false,
       onSaveDisplayName: (_) async => null,
-      avatarUrl: null,
+      avatarBytes: null,
       avatarSaving: false,
       onUploadAvatar: onUpload ?? (_) async => null,
       onUseDefaultAvatar: onDefault ?? () async => null,

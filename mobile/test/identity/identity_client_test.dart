@@ -136,14 +136,15 @@ void main() {
 
         transport.response = const IdentityHttpResponse(
           statusCode: 200,
-          body:
-              '{"content_url":"https://objects.example/avatar.png?sig=1",'
-              '"expires_at":"2099-08-18T10:00:00Z"}',
+          body: '',
+          bodyBytes: [1, 2, 3],
+          headers: {'content-type': 'image/png'},
         );
         final content = await client.currentAvatarContent(
           sessionToken: 'sess_opaque-secret',
         );
-        expect(content.url.host, 'objects.example');
+        expect(content.contentType, 'image/png');
+        expect(content.bytes, [1, 2, 3]);
         expect(transport.uri?.path, '/v1/me/avatar/content');
       },
     );

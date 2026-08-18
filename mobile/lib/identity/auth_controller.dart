@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -34,7 +35,7 @@ final class AuthController extends ChangeNotifier {
   bool _profileSaving = false;
   bool _profilePromptDismissed = false;
   String? _profileErrorMessage;
-  Uri? _avatarUrl;
+  Uint8List? _avatarBytes;
   bool _avatarSaving = false;
   int _avatarRequestSequence = 0;
 
@@ -42,7 +43,7 @@ final class AuthController extends ChangeNotifier {
   UserProfile? get profile => _profile;
   bool get profileSaving => _profileSaving;
   String? get profileErrorMessage => _profileErrorMessage;
-  Uri? get avatarUrl => _avatarUrl;
+  Uint8List? get avatarBytes => _avatarBytes;
   bool get avatarSaving => _avatarSaving;
   bool get shouldPromptForProfile =>
       profileClient != null &&
@@ -376,7 +377,7 @@ final class AuthController extends ChangeNotifier {
         return null;
       }
       _profile = updated;
-      _avatarUrl = null;
+      _avatarBytes = null;
       await _loadAvatarContent(
         client: client,
         token: expectedToken,
@@ -446,7 +447,7 @@ final class AuthController extends ChangeNotifier {
         return null;
       }
       _profile = updated;
-      _avatarUrl = null;
+      _avatarBytes = null;
       return null;
     } on IdentityClientException catch (error) {
       if (!_matchesCredential(expectedGeneration, expectedToken)) {
@@ -625,7 +626,7 @@ final class AuthController extends ChangeNotifier {
       }
       _profile = loaded;
       _profileLoaded = true;
-      _avatarUrl = null;
+      _avatarBytes = null;
       if (loaded.avatar != null && avatarClient != null) {
         await _loadAvatarContent(
           client: avatarClient!,
@@ -657,7 +658,7 @@ final class AuthController extends ChangeNotifier {
     _profileSaving = false;
     _profilePromptDismissed = false;
     _profileErrorMessage = null;
-    _avatarUrl = null;
+    _avatarBytes = null;
     _avatarSaving = false;
   }
 
@@ -669,11 +670,11 @@ final class AuthController extends ChangeNotifier {
     try {
       final content = await client.currentAvatarContent(sessionToken: token);
       if (_matchesCredential(generation, token)) {
-        _avatarUrl = content.url;
+        _avatarBytes = Uint8List.fromList(content.bytes);
       }
     } catch (_) {
       if (_matchesCredential(generation, token)) {
-        _avatarUrl = null;
+        _avatarBytes = null;
       }
     }
   }

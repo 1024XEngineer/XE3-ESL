@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
@@ -577,7 +578,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         profileErrorMessage: widget.authController?.profileErrorMessage,
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
-        avatarUrl: widget.authController?.avatarUrl,
+        avatarBytes: widget.authController?.avatarBytes,
         avatarSaving: widget.authController?.avatarSaving ?? false,
         onUploadAvatar: widget.authController?.updateAvatar,
         onUseDefaultAvatar: widget.authController?.useDefaultAvatar,
@@ -598,7 +599,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               : Colors.transparent,
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
-            avatarUrl: widget.authController?.avatarUrl,
+            avatarBytes: widget.authController?.avatarBytes,
             onOpenProfile: () => _selectDestination(3),
           ),
           onDrawerChanged: (open) {
@@ -784,12 +785,12 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.controller,
     required this.onOpenProfile,
-    this.avatarUrl,
+    this.avatarBytes,
   });
 
   final ConversationController controller;
   final VoidCallback onOpenProfile;
-  final Uri? avatarUrl;
+  final Uint8List? avatarBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -950,7 +951,7 @@ class _ConversationDrawer extends StatelessWidget {
                           ),
                           icon: ProfileAvatarView(
                             size: 48,
-                            avatarUrl: avatarUrl,
+                            avatarBytes: avatarBytes,
                           ),
                         ),
                       ],

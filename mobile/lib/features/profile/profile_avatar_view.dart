@@ -1,10 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
 class ProfileAvatarView extends StatelessWidget {
   const ProfileAvatarView({
     required this.size,
-    this.avatarUrl,
+    this.avatarBytes,
     this.editable = false,
     this.saving = false,
     this.onTap,
@@ -13,7 +15,7 @@ class ProfileAvatarView extends StatelessWidget {
   });
 
   final double size;
-  final Uri? avatarUrl;
+  final Uint8List? avatarBytes;
   final bool editable;
   final bool saving;
   final VoidCallback? onTap;
@@ -40,13 +42,13 @@ class ProfileAvatarView extends StatelessWidget {
             : null,
       ),
       child: ClipOval(
-        child: avatarUrl == null
+        child: avatarBytes == null
             ? Image.asset(
                 'assets/images/scenes/profile-avatar-alex.png',
                 fit: BoxFit.cover,
               )
-            : Image.network(
-                avatarUrl.toString(),
+            : Image.memory(
+                avatarBytes!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => Image.asset(
                   'assets/images/scenes/profile-avatar-alex.png',

@@ -87,10 +87,8 @@ func (handler *Handler) content(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, gin.H{
-		"content_url": content.URL,
-		"expires_at":  content.ExpiresAt.UTC().Format(time.RFC3339Nano),
-	})
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Data(http.StatusOK, content.ContentType, content.Payload)
 }
 
 func (handler *Handler) useDefault(c *gin.Context) {

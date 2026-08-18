@@ -102,10 +102,11 @@ final class UserAvatarImage {
 }
 
 final class UserAvatarContent {
-  const UserAvatarContent({required this.url, required this.expiresAt});
+  UserAvatarContent({required this.contentType, required Uint8List bytes})
+    : bytes = Uint8List.fromList(bytes);
 
-  final Uri url;
-  final DateTime expiresAt;
+  final String contentType;
+  final Uint8List bytes;
 }
 
 abstract interface class UserAvatarClient {
@@ -298,26 +299,25 @@ final class WireIdentityClient
       sessionToken: sessionToken,
     );
     _requireStatus(response, 200, _IdentityOperation.avatarContent);
-    return _decode(response, (json) {
-      if (!_hasExactJsonKeys(json, const {'content_url', 'expires_at'})) {
-        throw const FormatException('Invalid avatar content response.');
-      }
-      final rawUrl = json['content_url'];
-      final rawExpiry = json['expires_at'];
-      if (rawUrl is! String || rawExpiry is! String) {
-        throw const FormatException('Invalid avatar content response.');
-      }
-      final url = Uri.tryParse(rawUrl);
-      final expiresAt = DateTime.tryParse(rawExpiry)?.toUtc();
-      if (url == null ||
-          !url.hasAuthority ||
-          (url.scheme != 'https' && url.scheme != 'http') ||
-          expiresAt == null ||
-          !expiresAt.isAfter(DateTime.now().toUtc())) {
-        throw const FormatException('Invalid avatar content response.');
-      }
-      return UserAvatarContent(url: url, expiresAt: expiresAt);
-    });
+    final contentType = response.headers[HttpHeaders.contentTypeHeader]
+        ?.split(';')
+        .first
+        .trim()
+        .toLowerCase();
+    if ((contentType != 'image/jpeg' &&
+            contentType != 'image/png' &&
+            contentType != 'image/webp') ||
+        response.bodyBytes.isEmpty ||
+        response.bodyBytes.length > 10 * 1024 * 1024) {
+      throw IdentityClientException(
+        kind: IdentityFailureKind.invalidResponse,
+        statusCode: response.statusCode,
+      );
+    }
+    return UserAvatarContent(
+      contentType: contentType!,
+      bytes: Uint8List.fromList(response.bodyBytes),
+    );
   }
 
   Future<IdentityHttpResponse> _send({
@@ -569,8 +569,4 @@ final class WireIdentityClient
       );
     }
   }
-}
-
-bool _hasExactJsonKeys(Map<String, Object?> json, Set<String> expected) {
-  return json.length == expected.length && expected.every(json.containsKey);
 }

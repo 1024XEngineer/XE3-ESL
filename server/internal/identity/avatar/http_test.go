@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -21,9 +20,8 @@ func TestAvatarHTTPUploadContentAndDefault(t *testing.T) {
 		UserID: "user-1", DisplayName: "小林", ProfileVersion: 2,
 		Avatar:    &identity.ProfileAvatar{Width: 512, Height: 512, UpdatedAt: now},
 		CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
-	}, content: objectstore.SignedGetResult{
-		URL:       "https://objects.invalid/avatar.png?signature=safe",
-		ExpiresAt: now.Add(time.Minute),
+	}, content: Content{
+		Payload: []byte{1, 2, 3}, ContentType: "image/png",
 	}}
 	router := avatarRouter(t, application)
 
@@ -46,7 +44,9 @@ func TestAvatarHTTPUploadContentAndDefault(t *testing.T) {
 	contentResponse := httptest.NewRecorder()
 	router.ServeHTTP(contentResponse, content)
 	if contentResponse.Code != http.StatusOK ||
-		contentResponse.Header().Get("Cache-Control") != "no-store" {
+		contentResponse.Header().Get("Cache-Control") != "no-store" ||
+		contentResponse.Header().Get("Content-Type") != "image/png" ||
+		!bytes.Equal(contentResponse.Body.Bytes(), []byte{1, 2, 3}) {
 		t.Fatalf("content response = %d / %#v", contentResponse.Code, contentResponse.Header())
 	}
 
@@ -94,7 +94,7 @@ func avatarRouter(t *testing.T, application Application) *gin.Engine {
 
 type avatarApplicationStub struct {
 	profile        identity.UserProfile
-	content        objectstore.SignedGetResult
+	content        Content
 	upload         UploadRequest
 	uploadBody     []byte
 	uploadCalls    int
@@ -126,6 +126,6 @@ func (stub *avatarApplicationStub) UseDefault(
 func (stub *avatarApplicationStub) Content(
 	context.Context,
 	requestcontext.Actor,
-) (objectstore.SignedGetResult, error) {
+) (Content, error) {
 	return stub.content, nil
 }
