@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
@@ -33,6 +34,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
+import 'package:speakup/features/profile/profile_avatar_view.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -125,6 +127,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void initState() {
     super.initState();
+    widget.authController?.addListener(_handleAuthState);
     widget.conversationController.addListener(_handleAgentInteractionState);
     widget.composerController.addListener(_handleAgentInteractionState);
     widget.practiceController.addListener(_handlePracticeState);
@@ -134,6 +137,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void didUpdateWidget(covariant SpeakUpShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.authController != widget.authController) {
+      oldWidget.authController?.removeListener(_handleAuthState);
+      widget.authController?.addListener(_handleAuthState);
+    }
     final conversationControllerChanged =
         oldWidget.conversationController != widget.conversationController;
     if (conversationControllerChanged) {
@@ -158,11 +165,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   @override
   void dispose() {
+    widget.authController?.removeListener(_handleAuthState);
     widget.conversationController.removeListener(_handleAgentInteractionState);
     widget.composerController.removeListener(_handleAgentInteractionState);
     widget.practiceController.removeListener(_handlePracticeState);
     _feedbackPresenter?.dispose();
     super.dispose();
+  }
+
+  void _handleAuthState() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _selectDestination(int index) {
@@ -576,6 +590,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         profileErrorMessage: widget.authController?.profileErrorMessage,
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
+        avatarBytes: widget.authController?.avatarBytes,
+        avatarSaving: widget.authController?.avatarSaving ?? false,
+        onUploadAvatar: widget.authController?.updateAvatar,
+        onUseDefaultAvatar: widget.authController?.useDefaultAvatar,
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
         coachingProfileController: widget.coachingProfileController,
@@ -593,6 +611,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               : Colors.transparent,
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
+            avatarBytes: widget.authController?.avatarBytes,
             onOpenProfile: () => _selectDestination(3),
           ),
           onDrawerChanged: (open) {
@@ -778,10 +797,12 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.controller,
     required this.onOpenProfile,
+    this.avatarBytes,
   });
 
   final ConversationController controller;
   final VoidCallback onOpenProfile;
+  final Uint8List? avatarBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -940,12 +961,9 @@ class _ConversationDrawer extends StatelessWidget {
                             width: 48,
                             height: 48,
                           ),
-                          icon: const CircleAvatar(
-                            radius: 24,
-                            backgroundColor: SpeakUpDesign.surfaceMuted,
-                            backgroundImage: AssetImage(
-                              'assets/images/scenes/profile-avatar-alex.png',
-                            ),
+                          icon: ProfileAvatarView(
+                            size: 48,
+                            avatarBytes: avatarBytes,
                           ),
                         ),
                       ],

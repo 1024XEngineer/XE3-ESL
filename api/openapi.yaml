@@ -79,6 +79,10 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me
   /v1/me/profile:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
+  /v1/me/avatar:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1me~1avatar
+  /v1/me/avatar/content:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1me~1avatar~1content
   /v1/me/coaching-profile:
     $ref: ./modules/coaching-profile.yaml#/paths/~1v1~1me~1coaching-profile
   /v1/scenes:
@@ -238,6 +242,8 @@ components:
       $ref: ./modules/identity.yaml#/components/schemas/User
     UserProfile:
       $ref: ./modules/identity.yaml#/components/schemas/UserProfile
+    UserProfileAvatar:
+      $ref: ./modules/identity.yaml#/components/schemas/UserProfileAvatar
     UpdateUserProfileRequest:
       $ref: ./modules/identity.yaml#/components/schemas/UpdateUserProfileRequest
     CoachingProfile:

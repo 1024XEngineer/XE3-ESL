@@ -21,6 +21,20 @@ type normalizedImage struct {
 	height      int
 }
 
+// NormalizePayload validates an untrusted image, strips metadata, applies JPEG
+// orientation, and returns a canonical payload shared by image-owning domains.
+func NormalizePayload(
+	declaredContentType string,
+	payload []byte,
+) ([]byte, string, int, int, error) {
+	normalized, err := normalizeImage(declaredContentType, payload)
+	if err != nil {
+		return nil, "", 0, 0, err
+	}
+	return normalized.payload, normalized.contentType,
+		normalized.width, normalized.height, nil
+}
+
 func normalizeImage(
 	declaredContentType string,
 	payload []byte,

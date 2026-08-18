@@ -13,12 +13,14 @@ final class AuthController extends ChangeNotifier {
     required this.identityClient,
     required this.sessionStore,
     this.profileClient,
+    this.avatarClient,
     PrivateStateCleanup? clearPrivateState,
   }) : _clearPrivateState = clearPrivateState ?? _noCleanup;
 
   final IdentityClient identityClient;
   final SessionStore sessionStore;
   final UserProfileClient? profileClient;
+  final UserAvatarClient? avatarClient;
   final PrivateStateCleanup _clearPrivateState;
 
   AuthState _state = const AuthLoading();
@@ -32,11 +34,16 @@ final class AuthController extends ChangeNotifier {
   bool _profileSaving = false;
   bool _profilePromptDismissed = false;
   String? _profileErrorMessage;
+  Uint8List? _avatarBytes;
+  bool _avatarSaving = false;
+  int _avatarRequestSequence = 0;
 
   AuthState get state => _state;
   UserProfile? get profile => _profile;
   bool get profileSaving => _profileSaving;
   String? get profileErrorMessage => _profileErrorMessage;
+  Uint8List? get avatarBytes => _avatarBytes;
+  bool get avatarSaving => _avatarSaving;
   bool get shouldPromptForProfile =>
       profileClient != null &&
       _profileLoaded &&
@@ -340,6 +347,140 @@ final class AuthController extends ChangeNotifier {
     }
   }
 
+  Future<String?> updateAvatar(UserAvatarImage image) async {
+    final client = avatarClient;
+    final credential = currentCredential;
+    final currentState = _state;
+    final currentProfile = _profile;
+    if (client == null ||
+        credential == null ||
+        currentState is! AuthAuthenticated ||
+        currentProfile == null ||
+        _avatarSaving) {
+      return '当前账号暂时不能修改头像。';
+    }
+    final expectedGeneration = credential.generation;
+    final expectedToken = credential.sessionToken;
+    _avatarSaving = true;
+    notifyListeners();
+    try {
+      final updated = await client.uploadAvatar(
+        sessionToken: expectedToken,
+        image: image,
+        expectedProfileVersion: currentProfile.profileVersion,
+        idempotencyKey:
+            'avatar-${DateTime.now().microsecondsSinceEpoch}-${++_avatarRequestSequence}',
+      );
+      if (!_matchesCredential(expectedGeneration, expectedToken) ||
+          updated.userId != currentState.user.id) {
+        return null;
+      }
+      _profile = updated;
+      _avatarBytes = Uint8List.fromList(image.bytes);
+      notifyListeners();
+      await _loadAvatarContent(
+        client: client,
+        token: expectedToken,
+        generation: expectedGeneration,
+        preserveCurrentOnFailure: true,
+      );
+      return null;
+    } on IdentityClientException catch (error) {
+      if (!_matchesCredential(expectedGeneration, expectedToken)) {
+        return null;
+      }
+      if (error.isAuthenticationFailure) {
+        await invalidateSession(
+          expectedSessionToken: expectedToken,
+          expectedGeneration: expectedGeneration,
+        );
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == IdentityFailureKind.profileVersionConflict) {
+        await _loadProfile(
+          epoch: _authEpoch,
+          token: expectedToken,
+          userId: currentState.user.id,
+        );
+        return '头像已在其他设备修改，已为你刷新。';
+      }
+      return switch (error.kind) {
+        IdentityFailureKind.imageTooLarge => '图片过大，请选择 10 MB 以内的图片。',
+        IdentityFailureKind.invalidImage => '暂不支持这张图片，请选择 JPG、PNG 或 WebP。',
+        _ => '头像上传失败，请稍后重试。',
+      };
+    } catch (_) {
+      return '头像上传失败，请稍后重试。';
+    } finally {
+      if (_matchesCredential(expectedGeneration, expectedToken)) {
+        _avatarSaving = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<String?> useDefaultAvatar() async {
+    final client = avatarClient;
+    final credential = currentCredential;
+    final currentState = _state;
+    final currentProfile = _profile;
+    if (client == null ||
+        credential == null ||
+        currentState is! AuthAuthenticated ||
+        currentProfile == null ||
+        _avatarSaving) {
+      return '当前账号暂时不能修改头像。';
+    }
+    if (currentProfile.avatar == null) {
+      return null;
+    }
+    final expectedGeneration = credential.generation;
+    final expectedToken = credential.sessionToken;
+    _avatarSaving = true;
+    notifyListeners();
+    try {
+      final updated = await client.useDefaultAvatar(
+        sessionToken: expectedToken,
+        expectedProfileVersion: currentProfile.profileVersion,
+      );
+      if (!_matchesCredential(expectedGeneration, expectedToken) ||
+          updated.userId != currentState.user.id) {
+        return null;
+      }
+      _profile = updated;
+      _avatarBytes = null;
+      notifyListeners();
+      return null;
+    } on IdentityClientException catch (error) {
+      if (!_matchesCredential(expectedGeneration, expectedToken)) {
+        return null;
+      }
+      if (error.isAuthenticationFailure) {
+        await invalidateSession(
+          expectedSessionToken: expectedToken,
+          expectedGeneration: expectedGeneration,
+        );
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == IdentityFailureKind.profileVersionConflict) {
+        await _loadProfile(
+          epoch: _authEpoch,
+          token: expectedToken,
+          userId: currentState.user.id,
+        );
+        return '头像已在其他设备修改，已为你刷新。';
+      }
+      return '暂时无法使用默认头像，请稍后重试。';
+    } catch (_) {
+      return '暂时无法使用默认头像，请稍后重试。';
+    } finally {
+      if (_matchesCredential(expectedGeneration, expectedToken)) {
+        _avatarSaving = false;
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> retry() async {
     final current = _state;
     if (current is! AuthRetryableError) {
@@ -487,6 +628,14 @@ final class AuthController extends ChangeNotifier {
       }
       _profile = loaded;
       _profileLoaded = true;
+      _avatarBytes = null;
+      if (loaded.avatar != null && avatarClient != null) {
+        await _loadAvatarContent(
+          client: avatarClient!,
+          token: token,
+          generation: _sessionGeneration,
+        );
+      }
     } on IdentityClientException catch (error) {
       if (!_isCurrentSession(epoch, token)) {
         return;
@@ -511,6 +660,26 @@ final class AuthController extends ChangeNotifier {
     _profileSaving = false;
     _profilePromptDismissed = false;
     _profileErrorMessage = null;
+    _avatarBytes = null;
+    _avatarSaving = false;
+  }
+
+  Future<void> _loadAvatarContent({
+    required UserAvatarClient client,
+    required String token,
+    required int generation,
+    bool preserveCurrentOnFailure = false,
+  }) async {
+    try {
+      final content = await client.currentAvatarContent(sessionToken: token);
+      if (_matchesCredential(generation, token)) {
+        _avatarBytes = Uint8List.fromList(content.bytes);
+      }
+    } catch (_) {
+      if (_matchesCredential(generation, token) && !preserveCurrentOnFailure) {
+        _avatarBytes = null;
+      }
+    }
   }
 
   Future<T> _withSessionStoreLock<T>(Future<T> Function() action) {

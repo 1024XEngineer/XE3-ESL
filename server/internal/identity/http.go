@@ -614,13 +614,21 @@ func userResponse(user User) gin.H {
 }
 
 func profileResponse(profile UserProfile) gin.H {
-	return gin.H{
+	response := gin.H{
 		"user_id":         profile.UserID,
 		"display_name":    profile.DisplayName,
 		"profile_version": profile.ProfileVersion,
 		"created_at":      profile.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":      profile.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if profile.Avatar != nil {
+		response["avatar"] = gin.H{
+			"width":      profile.Avatar.Width,
+			"height":     profile.Avatar.Height,
+			"updated_at": profile.Avatar.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
+	return response
 }
 
 func newCorrelationID() string {

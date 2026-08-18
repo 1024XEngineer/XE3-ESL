@@ -1,8 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/profile/profile_avatar_picker.dart';
+import 'package:speakup/features/profile/profile_avatar_view.dart';
+import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 
 class ProfilePage extends StatelessWidget {
@@ -13,9 +18,14 @@ class ProfilePage extends StatelessWidget {
     required this.profileErrorMessage,
     required this.profileSaving,
     required this.onSaveDisplayName,
+    required this.avatarBytes,
+    required this.avatarSaving,
+    required this.onUploadAvatar,
+    required this.onUseDefaultAvatar,
     required this.onLogout,
     required this.reviewHistoryController,
     required this.coachingProfileController,
+    this.avatarPicker,
     super.key,
   });
 
@@ -25,9 +35,14 @@ class ProfilePage extends StatelessWidget {
   final String? profileErrorMessage;
   final bool profileSaving;
   final Future<String?> Function(String)? onSaveDisplayName;
+  final Uint8List? avatarBytes;
+  final bool avatarSaving;
+  final Future<String?> Function(UserAvatarImage)? onUploadAvatar;
+  final Future<String?> Function()? onUseDefaultAvatar;
   final VoidCallback? onLogout;
   final ReviewHistoryController? reviewHistoryController;
   final CoachingProfileController? coachingProfileController;
+  final ProfileAvatarPicker? avatarPicker;
 
   @override
   Widget build(BuildContext context) {
@@ -58,28 +73,13 @@ class ProfilePage extends StatelessWidget {
                 Center(
                   child: Column(
                     children: [
-                      Container(
-                        key: const Key('profile-avatar'),
-                        width: 132,
-                        height: 132,
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: SpeakUpDesign.surface,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Color(0x14000000),
-                              blurRadius: 20,
-                              offset: Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: const CircleAvatar(
-                          backgroundColor: SpeakUpDesign.surfaceMuted,
-                          backgroundImage: AssetImage(
-                            'assets/images/scenes/profile-avatar-alex.png',
-                          ),
-                        ),
+                      ProfileAvatarView(
+                        avatarKey: const Key('profile-avatar'),
+                        size: 132,
+                        avatarBytes: avatarBytes,
+                        editable: user != null && onUploadAvatar != null,
+                        saving: avatarSaving,
+                        onTap: () => _editAvatar(context),
                       ),
                       const SizedBox(height: SpeakUpDesign.space20),
                       Row(
@@ -183,7 +183,79 @@ class ProfilePage extends StatelessWidget {
       ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
     }
   }
+
+  Future<void> _editAvatar(BuildContext context) async {
+    final action = await showModalBottomSheet<_AvatarAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const Key('profile-avatar-gallery'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('从相册选择'),
+                onTap: () => Navigator.pop(sheetContext, _AvatarAction.gallery),
+              ),
+              ListTile(
+                key: const Key('profile-avatar-camera'),
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('拍照'),
+                onTap: () => Navigator.pop(sheetContext, _AvatarAction.camera),
+              ),
+              ListTile(
+                key: const Key('profile-avatar-default'),
+                enabled: profile?.avatar != null,
+                leading: const Icon(Icons.account_circle_outlined),
+                title: const Text('使用默认头像'),
+                trailing: profile?.avatar == null
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: profile?.avatar == null
+                    ? null
+                    : () =>
+                          Navigator.pop(sheetContext, _AvatarAction.useDefault),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !context.mounted) return;
+    if (action == _AvatarAction.useDefault) {
+      final error = await onUseDefaultAvatar?.call();
+      if (context.mounted) {
+        _showAvatarMessage(context, error ?? '已使用默认头像');
+      }
+      return;
+    }
+    String? error;
+    try {
+      final picker = avatarPicker ?? SystemProfileAvatarPicker();
+      final image = action == _AvatarAction.gallery
+          ? await picker.pickFromGallery()
+          : await picker.takePhoto();
+      if (image == null || !context.mounted) return;
+      error = await onUploadAvatar?.call(image);
+    } catch (_) {
+      error = '无法读取图片，请检查照片权限后重试。';
+    }
+    if (context.mounted) {
+      _showAvatarMessage(context, error ?? '头像已更新');
+    }
+  }
+
+  void _showAvatarMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 }
+
+enum _AvatarAction { gallery, camera, useDefault }
 
 class _DisplayNameDialog extends StatefulWidget {
   const _DisplayNameDialog({required this.initialName, required this.onSave});

@@ -188,7 +188,127 @@ paths:
           $ref: '#/components/responses/ProfileConflict'
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/avatar:
+    post:
+      tags:
+        - Identity
+      summary: Replace the current user's private profile avatar
+      operationId: replaceCurrentUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/png:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/webp:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+      responses:
+        '200':
+          description: The updated profile after the avatar is committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '413':
+          $ref: ../common/errors.yaml#/components/responses/PayloadTooLarge
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Identity
+      summary: Restore the current user's default profile avatar
+      operationId: useDefaultCurrentUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionMatch'
+      responses:
+        '200':
+          description: The profile after restoring the default avatar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/avatar/content:
+    get:
+      tags:
+        - Identity
+      summary: Read the current private avatar through the authenticated API
+      operationId: getCurrentUserAvatarContent
+      responses:
+        '200':
+          description: Validated private avatar bytes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Content-Type-Options:
+              schema:
+                type: string
+                const: nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
+  parameters:
+    ProfileVersionMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^"[1-9][0-9]*"$'
+      description: Quoted current UserProfile version.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
   responses:
     InvalidCredentials:
       description: |
@@ -326,9 +446,33 @@ components:
           format: int64
           minimum: 1
           readOnly: true
+        avatar:
+          $ref: '#/components/schemas/UserProfileAvatar'
         created_at:
           type: string
           format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    UserProfileAvatar:
+      type: object
+      additionalProperties: false
+      required:
+        - width
+        - height
+        - updated_at
+      properties:
+        width:
+          type: integer
+          minimum: 1
+          maximum: 16384
+          readOnly: true
+        height:
+          type: integer
+          minimum: 1
+          maximum: 16384
           readOnly: true
         updated_at:
           type: string

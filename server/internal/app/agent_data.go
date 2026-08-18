@@ -38,6 +38,7 @@ import (
 	profilehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile/transport/http"
 	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
+	identityavatar "github.com/1024XEngineer/XE3-ESL/server/internal/identity/avatar"
 	sharedmedia "github.com/1024XEngineer/XE3-ESL/server/internal/media"
 	mediapostgres "github.com/1024XEngineer/XE3-ESL/server/internal/media/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -408,6 +409,25 @@ func buildIdentityAgentComposition(
 		conversationHTTP,
 		translationHTTP,
 		runHTTP,
+	}
+	if imageConfiguration != nil {
+		avatarRepository, avatarErr := identityavatar.NewPostgresRepository(database)
+		if avatarErr != nil {
+			return nil, avatarErr
+		}
+		avatarService, avatarErr := identityavatar.NewService(
+			avatarRepository,
+			agentMedia,
+			identityavatar.Config{StagedTTL: imageConfiguration.StagedTTL},
+		)
+		if avatarErr != nil {
+			return nil, avatarErr
+		}
+		avatarHTTP, avatarErr := identityavatar.NewHandler(avatarService, errorRenderer)
+		if avatarErr != nil {
+			return nil, avatarErr
+		}
+		registrars = append(registrars, avatarHTTP)
 	}
 	if realtimeRecognizer != nil {
 		ephemeralHTTP, ephemeralHTTPErr :=

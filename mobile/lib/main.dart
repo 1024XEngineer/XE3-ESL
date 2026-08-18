@@ -451,6 +451,7 @@ ProductionAppDependencies createProductionAppDependencies({
   authController = AuthController(
     identityClient: identityClient,
     profileClient: identityClient,
+    avatarClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
     clearPrivateState: () => _runAllPrivateStateCleanups([
       sessionEvaluationController.clearAccountState,
