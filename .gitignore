@@ -39,3 +39,6 @@ server/bin/
 
 #docs
 server/internal/agent/docs
+server/internal/coaching/preparation/docs
+server/internal/resume/docs
+docs
