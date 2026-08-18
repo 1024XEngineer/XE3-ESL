@@ -334,21 +334,44 @@ func (s *InterviewPreparationService) Create(ctx context.Context, actor requestc
 		return existing, found, err
 	}
 	var resume *ResumeMaterial
-	if request.Resume != nil {
+	var candidate JobTargetCandidate
+	var parseErr error
+	if request.Resume == nil {
+		candidate, parseErr = s.parser.ParseJobTarget(ctx, request.Input)
+	} else {
 		if s.resumes == nil {
 			return InterviewPreparation{}, false, ErrInterviewPreparationGeneration
 		}
-		material, extractErr := s.resumes.Extract(
-			ctx, actor.UserID, clientRequestID, *request.Resume,
-		)
-		if extractErr != nil {
-			return InterviewPreparation{}, false, extractErr
+		type resumeParseResult struct {
+			material ResumeMaterial
+			err      error
 		}
-		resume = &material
+		type candidateParseResult struct {
+			candidate JobTargetCandidate
+			err       error
+		}
+		resumeResults := make(chan resumeParseResult, 1)
+		candidateResults := make(chan candidateParseResult, 1)
+		go func() {
+			material, err := s.resumes.Extract(
+				ctx, actor.UserID, clientRequestID, *request.Resume,
+			)
+			resumeResults <- resumeParseResult{material: material, err: err}
+		}()
+		go func() {
+			parsed, err := s.parser.ParseJobTarget(ctx, request.Input)
+			candidateResults <- candidateParseResult{candidate: parsed, err: err}
+		}()
+		resumeResult := <-resumeResults
+		candidateResult := <-candidateResults
+		if resumeResult.err != nil {
+			return InterviewPreparation{}, false, resumeResult.err
+		}
+		resume = &resumeResult.material
+		candidate, parseErr = candidateResult.candidate, candidateResult.err
 	}
-	candidate, err := s.parser.ParseJobTarget(ctx, request.Input)
-	if err != nil {
-		return InterviewPreparation{}, false, errors.Join(ErrInterviewPreparationGeneration, err)
+	if parseErr != nil {
+		return InterviewPreparation{}, false, errors.Join(ErrInterviewPreparationGeneration, parseErr)
 	}
 	if err := validateJobTargetCandidate(ctx, candidate, request.Input.Source, s.catalog); err != nil {
 		return InterviewPreparation{}, false, err
