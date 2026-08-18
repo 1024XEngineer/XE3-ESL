@@ -151,6 +151,8 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1speech
   /v1/practice-questions/{question_id}/speech/realtime:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1speech~1realtime
+  /v1/practice-speech/realtime:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-speech~1realtime
   /v1/practice-questions/{question_id}/translation:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1translation
   /v1/evaluation-reports:

@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dar
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
 import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -19,6 +20,7 @@ class IeltsCatalog extends StatefulWidget {
     required this.onRetry,
     this.speechClient,
     this.audioPlayer,
+    this.answerSpeaker,
     super.key,
   }) : assert((speechClient == null) == (audioPlayer == null));
 
@@ -34,6 +36,7 @@ class IeltsCatalog extends StatefulWidget {
   final Future<void> Function() onRetry;
   final IeltsSpeechClient? speechClient;
   final PracticeAudioPlayer? audioPlayer;
+  final PracticePromptSpeaker? answerSpeaker;
   IeltsAnswerGenerator? get answerGenerator => controller.answerGenerator;
 
   @override
@@ -274,6 +277,7 @@ class _IeltsCatalogState extends State<IeltsCatalog> {
           speechClient: widget.speechClient,
           audioPlayer: widget.audioPlayer,
           answerGenerator: widget.answerGenerator,
+          answerSpeaker: widget.answerSpeaker,
           cueCardQuestionReference: item.mode == PracticeMode.part2
               ? IeltsQuestionReference(
                   bankId: bank.bankId,

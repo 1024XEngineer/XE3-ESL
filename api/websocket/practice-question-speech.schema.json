@@ -4,6 +4,18 @@
   "title": "Practice Question realtime speech",
   "description": "Server text events surrounding binary PCM chunks for one authenticated, Actor-owned Practice Question.",
   "$defs": {
+    "ClientEvent": {
+      "$ref": "#/$defs/Speak"
+    },
+    "Speak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "speak" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
     "ServerEvent": {
       "oneOf": [
         { "$ref": "#/$defs/StreamReady" },

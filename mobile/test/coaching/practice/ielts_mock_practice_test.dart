@@ -637,6 +637,113 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
   });
 
+  testWidgets('Part 2 can exit while transcription is still in flight', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final transcriptionGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcriptionGate = transcriptionGate;
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              key: const Key('open-part2'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => IeltsSpeakingMockPage(
+                    controller: controller,
+                    progressStore: _MemoryProgressStore(),
+                    examinerSpeaker: _ImmediateExaminerSpeaker(),
+                    onExitRequested: controller.parkPractice,
+                  ),
+                ),
+              ),
+              child: const Text('Open Part 2'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open-part2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.transcribing);
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pump(const Duration(milliseconds: 500));
+    tester
+        .widget<FilledButton>(find.byKey(const Key('ielts-mock-save-and-exit')))
+        .onPressed!();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byKey(const Key('open-part2')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
+    expect(controller.practiceSessionId, isNull);
+    expect(recorder.discardedAudioPaths, contains('ielts-1.wav'));
+
+    transcriptionGate.complete();
+    await tester.pump();
+    expect(controller.practiceSessionId, isNull);
+  });
+
+  testWidgets('opening Part 2 exit confirmation pauses failed ASR retries', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcribeFailure = StateError('provider unavailable');
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await controller.finishRecordingGesture();
+    await tester.pump();
+
+    expect(practice.transcriptionRequests, hasLength(1));
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+
+    expect(find.byKey(const Key('ielts-mock-exit-sheet')), findsOneWidget);
+    expect(practice.transcriptionRequests, hasLength(1));
+  });
+
   testWidgets('Part 2 records locally while Part 3 keeps realtime ASR', (
     tester,
   ) async {

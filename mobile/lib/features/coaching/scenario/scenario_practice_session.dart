@@ -79,6 +79,7 @@ class ScenarioPracticeSession extends StatelessWidget {
       surfaceKey: const Key('scenario-avatar-surface'),
       builder: (context, avatar) => ScenarioPracticePage(
         practiceController: practiceController,
+        questionSpeaker: practiceController.promptSpeaker,
         avatarSurfaceBuilder: avatar.surfaceBuilder,
         avatarStatusLabel: avatar.statusLabel,
         onBeforeStartRecording: avatar.interruptForUserTurn,

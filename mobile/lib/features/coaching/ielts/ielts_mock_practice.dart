@@ -137,13 +137,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   String? _part2QuestionId;
   int _part2TranscriptionRetryAttempts = 0;
   bool _exitApproved = false;
+  bool _exitPromptOpen = false;
   bool _exitInFlight = false;
   bool _narrationBusy = false;
   bool _introNarrated = false;
   String? _narrationError;
   String? _answerLanguageError;
   final Map<String, String> _questionTranslations = <String, String>{};
-  PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
   String? _autoNarratedQuestionId;
   String? _autoNarratedQuestionText;
@@ -315,9 +315,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     unawaited(_stopExaminerSpeakerSafely());
     if (_ownsExaminerSpeaker) {
       unawaited(_examinerSpeaker.dispose());
-    }
-    if (_ownedTipSpeaker case final speaker?) {
-      unawaited(speaker.dispose());
     }
     final reportSessionId = widget.reportStatusController?.practiceSessionId;
     if (reportSessionId != null) {
@@ -725,7 +722,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _questionNarrationErrorId = null;
     });
     try {
-      await _examinerSpeaker.speak(text);
+      final speaker = _examinerSpeaker;
+      if (speaker is CoachingSpeechPlayer) {
+        await speaker.speakQuestion(questionId: questionId, fallbackText: text);
+      } else {
+        await speaker.speak(text);
+      }
     } catch (_) {
       if (mounted && generation == _questionNarrationGeneration) {
         setState(() => _questionNarrationErrorId = questionId);
@@ -789,8 +791,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (tip == null || _visibleTipQuestionId != tip.questionId) {
       return;
     }
-    final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
-    await speaker.speak(tip.content);
+    await _examinerSpeaker.speak(tip.content);
   }
 
   void _hideQuestionTip() {
@@ -803,7 +804,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _stopQuestionTipSpeech() async {
     try {
-      await _ownedTipSpeaker?.stop();
+      await _examinerSpeaker.stop();
     } on Object {
       // Recording must remain usable if platform TTS cannot stop cleanly.
     }
@@ -1221,6 +1222,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   void _schedulePart2TranscriptionRetry() {
     if (!mounted ||
+        _exitPromptOpen ||
+        _exitInFlight ||
         _part2TranscriptionRetryTimer != null ||
         _part2TranscriptionRetryAttempts >= 3 ||
         widget.controller.recordingState != PracticeRecordingState.idle ||
@@ -1440,9 +1443,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     IeltsPracticeRouteResult? result,
     bool fromCompletion = false,
   }) async {
-    if (_exitApproved || _exitInFlight || !mounted) {
+    if (_exitApproved || _exitPromptOpen || _exitInFlight || !mounted) {
       return;
     }
+    _exitPromptOpen = true;
+    _part2TranscriptionRetryTimer?.cancel();
+    _part2TranscriptionRetryTimer = null;
     final shouldExit =
         fromCompletion ||
         _progress?.phase == IeltsMockPhase.complete ||
@@ -1457,10 +1463,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
               ),
             ) ==
             true;
+    _exitPromptOpen = false;
     if (!shouldExit || !mounted) {
+      _schedulePart2TranscriptionRetry();
       return;
     }
     setState(() => _exitInFlight = true);
+    await widget.controller.abandonPendingTranscriptionForExit();
+    if (!mounted) {
+      return;
+    }
     final callback = widget.onExitRequested;
     var parked = callback == null;
     try {
