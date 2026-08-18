@@ -212,6 +212,7 @@ func (port *benchmarkPreviewPort) PreviewPractice(
   "label": "确认并开始练习",
   "practice_plan_id": "00000000-0000-4000-8000-000000000001",
   "plan_version": 1,
+  "scene_id": "benchmark_scene",
   "scene_name": "Agent Routing Benchmark",
   "user_role": "练习者",
   "ai_roles": ["对话角色"],
