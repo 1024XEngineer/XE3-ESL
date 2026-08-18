@@ -774,6 +774,7 @@ class _ConversationPanel extends StatelessWidget {
                                 padding: const EdgeInsets.only(top: 4),
                                 child: QuestionTipCard(
                                   content: tip.content,
+                                  translation: tip.translation,
                                   onClose: onHideTip,
                                   onSpeak: onSpeakTip,
                                 ),

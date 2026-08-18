@@ -2209,6 +2209,7 @@ final class _IeltsPracticeClient
     sessionId: sessionId,
     questionId: questionId,
     content: 'Give a direct answer and one short reason.',
+    translation: '直接回答，并给出一个简短的理由。',
     createdAt: DateTime.utc(2026, 8, 10),
   );
 }

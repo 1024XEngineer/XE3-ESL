@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 const (
@@ -20,11 +21,12 @@ const (
 )
 
 type QuestionTipResult struct {
-	ID         string
-	SessionID  string
-	QuestionID string
-	Content    string
-	CreatedAt  time.Time
+	ID          string
+	SessionID   string
+	QuestionID  string
+	Content     string
+	Translation string
+	CreatedAt   time.Time
 }
 
 type QuestionTipPort interface {
@@ -39,18 +41,20 @@ type QuestionTipPort interface {
 }
 
 type QuestionTipService struct {
-	store     QuestionTipStore
-	generator AnswerTipGenerator
+	store      QuestionTipStore
+	generator  AnswerTipGenerator
+	translator sharedtranslation.Translator
 }
 
 func NewQuestionTipService(
 	store QuestionTipStore,
 	generator AnswerTipGenerator,
+	translator sharedtranslation.Translator,
 ) (*QuestionTipService, error) {
-	if store == nil || generator == nil {
+	if store == nil || generator == nil || translator == nil {
 		return nil, ErrInvalidRequest
 	}
-	return &QuestionTipService{store: store, generator: generator}, nil
+	return &QuestionTipService{store: store, generator: generator, translator: translator}, nil
 }
 
 func (service *QuestionTipService) EnsureQuestionTip(
@@ -61,7 +65,7 @@ func (service *QuestionTipService) EnsureQuestionTip(
 	history []TurnExchange,
 	idempotencyKey string,
 ) (QuestionTipResult, error) {
-	if service == nil || service.store == nil || service.generator == nil ||
+	if service == nil || service.store == nil || service.generator == nil || service.translator == nil ||
 		!actor.Valid() || session.ID == "" || !session.QuestionTipsAllowed ||
 		question.ID == "" || question.SessionID != session.ID ||
 		strings.TrimSpace(question.Content) == "" ||
@@ -129,23 +133,7 @@ func (service *QuestionTipService) generateQuestionTip(
 		question.Sequence,
 		question.Content,
 	); ok {
-		completed, err := service.store.CompleteQuestionTip(
-			ctx,
-			actor,
-			CompleteQuestionTipCommand{
-				TipID:              tip.ID,
-				FencingToken:       tip.FencingToken,
-				DeletionGeneration: tip.DeletionGeneration,
-				Content:            answer,
-				Provider:           "practice-plan",
-				Model:              "prepared-answer-v1",
-				ProviderRequestID:  tip.ID,
-			},
-		)
-		if err != nil {
-			return QuestionTipResult{}, mapPersistenceError(err)
-		}
-		return mapQuestionTip(completed)
+		return service.translateAndComplete(ctx, actor, tip, answer, "practice-plan", "prepared-answer-v1", tip.ID)
 	}
 	result, err := service.generator.GenerateAnswerTip(
 		ctx,
@@ -176,6 +164,24 @@ func (service *QuestionTipService) generateQuestionTip(
 		}
 		return QuestionTipResult{}, ErrInvalidContext
 	}
+	return service.translateAndComplete(ctx, actor, tip, content, result.Provider, result.Model, result.RequestID)
+}
+
+func (service *QuestionTipService) translateAndComplete(
+	ctx context.Context,
+	actor Actor,
+	tip QuestionTip,
+	content, provider, model, providerRequestID string,
+) (QuestionTipResult, error) {
+	translation, err := service.translator.Translate(ctx, sharedtranslation.Request{Text: content})
+	translation = strings.TrimSpace(translation)
+	if err != nil || translation == "" || utf8.RuneCountInString(translation) > questionTipMaxRunes {
+		service.failQuestionTip(ctx, actor, tip)
+		if err != nil {
+			return QuestionTipResult{}, err
+		}
+		return QuestionTipResult{}, ErrInvalidContext
+	}
 	completed, err := service.store.CompleteQuestionTip(
 		ctx,
 		actor,
@@ -184,15 +190,25 @@ func (service *QuestionTipService) generateQuestionTip(
 			FencingToken:       tip.FencingToken,
 			DeletionGeneration: tip.DeletionGeneration,
 			Content:            content,
-			Provider:           result.Provider,
-			Model:              result.Model,
-			ProviderRequestID:  result.RequestID,
+			Translation:        translation,
+			Provider:           provider,
+			Model:              model,
+			ProviderRequestID:  providerRequestID,
 		},
 	)
 	if err != nil {
 		return QuestionTipResult{}, mapPersistenceError(err)
 	}
 	return mapQuestionTip(completed)
+}
+
+func (service *QuestionTipService) failQuestionTip(ctx context.Context, actor Actor, tip QuestionTip) {
+	failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = service.store.FailQuestionTip(failureCtx, actor, FailQuestionTipCommand{
+		TipID: tip.ID, FencingToken: tip.FencingToken,
+		DeletionGeneration: tip.DeletionGeneration,
+	})
 }
 
 func preparedIELTSAnswer(
@@ -260,15 +276,16 @@ func questionTipRequest(
 func mapQuestionTip(tip QuestionTip) (QuestionTipResult, error) {
 	if tip.Status != QuestionTipCompleted || tip.ID == "" ||
 		tip.SessionID == "" || tip.QuestionID == "" ||
-		strings.TrimSpace(tip.Content) == "" || tip.CreatedAt.IsZero() {
+		strings.TrimSpace(tip.Content) == "" || strings.TrimSpace(tip.Translation) == "" || tip.CreatedAt.IsZero() {
 		return QuestionTipResult{}, ErrInvalidContext
 	}
 	return QuestionTipResult{
-		ID:         tip.ID,
-		SessionID:  tip.SessionID,
-		QuestionID: tip.QuestionID,
-		Content:    tip.Content,
-		CreatedAt:  tip.CreatedAt,
+		ID:          tip.ID,
+		SessionID:   tip.SessionID,
+		QuestionID:  tip.QuestionID,
+		Content:     tip.Content,
+		Translation: tip.Translation,
+		CreatedAt:   tip.CreatedAt,
 	}, nil
 }
 

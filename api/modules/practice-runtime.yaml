@@ -906,6 +906,7 @@ components:
         - practice_session_id
         - question_id
         - content
+        - translation
         - created_at
       properties:
         tip_id:
@@ -918,6 +919,11 @@ components:
           type: string
           minLength: 1
           maxLength: 800
+        translation:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Simplified Chinese translation of the English Tip content.
         created_at:
           type: string
           format: date-time

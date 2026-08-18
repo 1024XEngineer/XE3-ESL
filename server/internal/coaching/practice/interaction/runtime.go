@@ -120,10 +120,11 @@ func NewRuntimeApplications(
 		)
 	}
 	var tipPort QuestionTipPort
-	if configuration.AnswerTipGenerator != nil {
+	if configuration.AnswerTipGenerator != nil && configuration.QuestionTranslator != nil {
 		tipService, tipErr := NewQuestionTipService(
 			configuration.Repository,
 			configuration.AnswerTipGenerator,
+			configuration.QuestionTranslator,
 		)
 		if tipErr != nil {
 			return nil, nil, tipErr

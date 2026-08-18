@@ -149,6 +149,7 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
       useSafeArea: true,
       builder: (context) => QuestionTipSheet(
         content: tip.content,
+        translation: tip.translation,
         onSpeak: () async {
           final speaker =
               widget.practicePromptSpeaker ??
