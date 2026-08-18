@@ -21,6 +21,8 @@ SHELL := /bin/bash
 	check-api-dependencies \
 	check-api-contracts \
 	dev-android \
+	dev-backend \
+	dev-ios-frontend \
 	dev-ios-simulator \
 	test-ios-simulator-scenes
 
@@ -35,6 +37,8 @@ help:
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
+		'  make dev-backend    Start PostgreSQL, migrations, and the backend only' \
+		'  make dev-ios-frontend  Run only the App on an iOS Simulator' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator'
 	@printf '%s\n' \
 		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
@@ -180,6 +184,12 @@ check-api-contracts: check-api-dependencies
 
 dev-android:
 	./tools/android-dev/run.sh
+
+dev-backend:
+	./tools/ios-simulator-dev/run.sh backend
+
+dev-ios-frontend:
+	./tools/ios-simulator-dev/run.sh frontend
 
 dev-ios-simulator:
 	./tools/ios-simulator-dev/run.sh

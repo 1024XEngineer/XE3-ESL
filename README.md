@@ -40,10 +40,18 @@ tools/    本地开发、模拟器验证和专项检查脚本
 cp .env.example .env
 ```
 
-启动一个 iPhone Simulator 后，可从仓库根目录运行：
+在 macOS Finder 中可直接双击仓库根目录的启动器：
+
+- `Start SpeakUp.command`：先在独立 Terminal 窗口启动后端，确认就绪后启动 iOS 前端。
+- `Start SpeakUp Backend.command`：只启动 PostgreSQL、数据库迁移和 Go 后端。
+- `Start SpeakUp iOS.command`：只启动 iOS 前端；后端不可用时会提示，但不会阻止前端运行。
+
+完整启动器会自动启动或复用 iPhone Simulator。后端和前端使用独立 Terminal 会话，因此可以单独退出或重启。也可从仓库根目录使用对应的命令行入口：
 
 ```shell
 make dev-ios-simulator
+make dev-backend
+make dev-ios-frontend
 ```
 
 连接并授权一台 arm64 Android 真机后，可运行：
@@ -52,7 +60,7 @@ make dev-ios-simulator
 make dev-android
 ```
 
-这两个入口会启动 PostgreSQL、执行数据库迁移、启动本地后端并运行 App。移动端的设备要求和模拟器限制见 [mobile/README.md](mobile/README.md)。
+完整 iOS 和 Android 入口会启动 PostgreSQL、执行数据库迁移、启动本地后端并运行 App。移动端的设备要求和模拟器限制见 [mobile/README.md](mobile/README.md)。
 
 ## 质量检查
 
