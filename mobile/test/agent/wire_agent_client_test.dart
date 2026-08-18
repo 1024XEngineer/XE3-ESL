@@ -60,6 +60,7 @@ void main() {
                       'label': '确认并开始练习',
                       'practice_plan_id': _practicePlanId,
                       'plan_version': 2,
+                      'scene_id': 'scn_interview_project_deep_dive',
                       'scene_name': '项目经历深挖',
                       'user_role': '候选人',
                       'ai_roles': ['面试官'],

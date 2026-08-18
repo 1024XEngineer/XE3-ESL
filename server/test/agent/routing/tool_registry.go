@@ -93,6 +93,7 @@ func (ports *routingPorts) PreviewPractice(
   "label": "确认并开始练习",
   "practice_plan_id": "00000000-0000-4000-8000-000000000001",
   "plan_version": 1,
+  "scene_id": "scn_workplace_meeting_disagreement",
   "scene_name": "会议发言与表达异议",
   "user_role": "参会者",
   "ai_roles": ["会议主持人"],

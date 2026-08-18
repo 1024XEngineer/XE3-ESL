@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
+import 'package:speakup/features/coaching/scenario/scenario_assets.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 final class PracticePlanClientActionCard extends StatelessWidget {
   const PracticePlanClientActionCard({
@@ -24,6 +26,7 @@ final class PracticePlanClientActionCard extends StatelessWidget {
     final role = action.userRole == null
         ? aiRole
         : '你：${action.userRole} · AI：$aiRole';
+    final heroStyle = _practiceHeroStyle(action);
 
     return Align(
       alignment: Alignment.center,
@@ -40,8 +43,7 @@ final class PracticePlanClientActionCard extends StatelessWidget {
               title: title,
               goal: action.practiceGoal,
               role: role,
-              isIELTS: isIELTS,
-              isInterview: isInterview,
+              style: heroStyle,
             ),
             Transform.translate(
               offset: const Offset(0, -7),
@@ -147,15 +149,13 @@ final class _PracticeHero extends StatelessWidget {
     required this.title,
     required this.goal,
     required this.role,
-    required this.isIELTS,
-    required this.isInterview,
+    required this.style,
   });
 
   final String title;
   final String goal;
   final String role;
-  final bool isIELTS;
-  final bool isInterview;
+  final _PracticeHeroStyle style;
 
   @override
   Widget build(BuildContext context) {
@@ -172,13 +172,11 @@ final class _PracticeHero extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: isInterview
-                      ? const [Color(0xFFF3F0EA), Color(0xFFE6DDD2)]
-                      : const [Color(0xFFF4F1FF), Color(0xFFE9E3FF)],
+                  colors: [style.backgroundStart, style.backgroundEnd],
                 ),
               ),
             ),
-            if (isIELTS || isInterview)
+            if (style.imageAsset case final imageAsset?)
               Positioned(
                 top: 0,
                 right: -4,
@@ -186,7 +184,7 @@ final class _PracticeHero extends StatelessWidget {
                 width: 160,
                 child: Semantics(
                   image: true,
-                  label: isIELTS ? 'IELTS 考官头像' : '面试官场景图',
+                  label: style.imageLabel,
                   child: ShaderMask(
                     blendMode: BlendMode.dstIn,
                     shaderCallback: (bounds) => const LinearGradient(
@@ -194,33 +192,23 @@ final class _PracticeHero extends StatelessWidget {
                       stops: [0, 0.3],
                     ).createShader(bounds),
                     child: Image.asset(
-                      isIELTS
-                          ? 'assets/images/scenes/ielts-examiner.jpg'
-                          : 'assets/images/scenes/interview-plan-card-v2.webp',
+                      imageAsset,
                       fit: BoxFit.cover,
-                      alignment: isIELTS
-                          ? const Alignment(0, -0.3)
-                          : const Alignment(-1, -0.2),
+                      alignment: style.imageAlignment,
                     ),
                   ),
                 ),
               ),
-            if (isIELTS || isInterview)
+            if (style.imageAsset != null)
               Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: isInterview
-                          ? const [
-                              Color(0xFFF3F0EA),
-                              Color(0xE6F3F0EA),
-                              Color(0x00F3F0EA),
-                            ]
-                          : const [
-                              Color(0xFFF4F1FF),
-                              Color(0xE6F4F1FF),
-                              Color(0x00F4F1FF),
-                            ],
+                      colors: [
+                        style.backgroundStart,
+                        style.backgroundStart.withAlpha(230),
+                        style.backgroundStart.withAlpha(0),
+                      ],
                       stops: [0, 0.42, 0.78],
                     ),
                   ),
@@ -233,7 +221,7 @@ final class _PracticeHero extends StatelessWidget {
                   padding: EdgeInsets.fromLTRB(
                     14,
                     14,
-                    isIELTS || isInterview ? 74 : 14,
+                    style.imageAsset != null ? 74 : 14,
                     14,
                   ),
                   child: Column(
@@ -321,6 +309,78 @@ final class _PracticeHero extends StatelessWidget {
       ),
     );
   }
+}
+
+final class _PracticeHeroStyle {
+  const _PracticeHeroStyle({
+    required this.backgroundStart,
+    required this.backgroundEnd,
+    required this.imageAsset,
+    required this.imageAlignment,
+    required this.imageLabel,
+  });
+
+  final Color backgroundStart;
+  final Color backgroundEnd;
+  final String? imageAsset;
+  final Alignment imageAlignment;
+  final String? imageLabel;
+}
+
+_PracticeHeroStyle _practiceHeroStyle(ConfirmPracticePlanClientAction action) {
+  if (action.practiceExperience == 'IELTS_SPEAKING') {
+    return const _PracticeHeroStyle(
+      backgroundStart: Color(0xFFF4F1FF),
+      backgroundEnd: Color(0xFFE9E3FF),
+      imageAsset: 'assets/images/scenes/ielts-examiner.jpg',
+      imageAlignment: Alignment(0, -0.3),
+      imageLabel: 'IELTS 考官头像',
+    );
+  }
+  if (action.practiceExperience == 'INTERVIEW') {
+    return const _PracticeHeroStyle(
+      backgroundStart: Color(0xFFF3F0EA),
+      backgroundEnd: Color(0xFFE6DDD2),
+      imageAsset: 'assets/images/scenes/interview-plan-card-v2.webp',
+      imageAlignment: Alignment(-1, -0.2),
+      imageLabel: '面试官场景图',
+    );
+  }
+
+  final category = SceneCategory.fromWireValue(action.sceneCategory);
+  final imageAsset = category == null
+      ? null
+      : scenarioAssetPathFor(sceneId: action.sceneId ?? '', category: category);
+  return switch (category) {
+    SceneCategory.workplaceGeneral => _PracticeHeroStyle(
+      backgroundStart: const Color(0xFFE8EBED),
+      backgroundEnd: const Color(0xFFD8E0E4),
+      imageAsset: imageAsset,
+      imageAlignment: Alignment.topCenter,
+      imageLabel: '职场场景图',
+    ),
+    SceneCategory.lifeTravel => _PracticeHeroStyle(
+      backgroundStart: const Color(0xFFDDEBF0),
+      backgroundEnd: const Color(0xFFC9DFE7),
+      imageAsset: imageAsset,
+      imageAlignment: Alignment.center,
+      imageLabel: '旅行场景图',
+    ),
+    SceneCategory.lifeDaily => _PracticeHeroStyle(
+      backgroundStart: const Color(0xFFF2E8DE),
+      backgroundEnd: const Color(0xFFE6D5C5),
+      imageAsset: imageAsset,
+      imageAlignment: const Alignment(0, -0.4),
+      imageLabel: '生活场景图',
+    ),
+    _ => _PracticeHeroStyle(
+      backgroundStart: const Color(0xFFF4F1FF),
+      backgroundEnd: const Color(0xFFE9E3FF),
+      imageAsset: imageAsset,
+      imageAlignment: Alignment.center,
+      imageLabel: imageAsset == null ? null : '练习场景图',
+    ),
+  };
 }
 
 final class _PracticeFact extends StatelessWidget {

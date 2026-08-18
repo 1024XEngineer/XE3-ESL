@@ -310,6 +310,7 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000001',
       planVersion: 2,
+      sceneId: 'scn_interview_project_deep_dive',
       sceneName: '项目经历深挖',
       userRole: '候选人',
       practiceGoal: 'Java Interview Practice',
@@ -377,6 +378,7 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000006',
       planVersion: 1,
+      sceneId: 'scn_interview_self_introduction',
       sceneName: '英文自我介绍',
       userRole: '候选人',
       practiceGoal: '说清背景、优势和岗位匹配，并自然回应一到两个追问。',
@@ -445,6 +447,7 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000003',
       planVersion: 1,
+      sceneId: 'ielts-speaking',
       sceneName: 'IELTS 口语',
       userRole: '考生',
       practiceGoal: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
@@ -524,6 +527,7 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000004',
       planVersion: 1,
+      sceneId: 'ielts-speaking',
       sceneName: 'IELTS 口语',
       userRole: '考生',
       practiceGoal: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
@@ -600,13 +604,14 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000002',
       planVersion: 1,
-      sceneName: '酒店入住',
-      userRole: '住客',
-      practiceGoal: 'Travel English Practice',
+      sceneId: 'scn_daily_rental_viewing',
+      sceneName: '看房与租赁咨询',
+      userRole: '租客',
+      practiceGoal: '了解房屋条件、租金费用、租期和入住要求',
       practiceExperience: 'LIFE_AND_TRAVEL',
-      sceneCategory: 'LIFE_TRAVEL',
+      sceneCategory: 'LIFE_DAILY',
       practiceMode: 'FULL_SIMULATION',
-      aiRoles: <String>['前台'],
+      aiRoles: <String>['房产中介'],
       practiceScope: '开放对话',
       suggestedDuration: Duration(minutes: 10),
       minEffectiveTurns: 1,
@@ -632,6 +637,13 @@ void main() {
     );
 
     expect(find.text('约 10 分钟'), findsOneWidget);
+    expect(find.text('看房与租赁咨询'), findsOneWidget);
+    expect(find.bySemanticsLabel('生活场景图'), findsOneWidget);
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(
+      (image.image as AssetImage).assetName,
+      'assets/images/scenes/daily-rental-viewing.jpg',
+    );
     expect(find.textContaining('轮'), findsNothing);
   });
 
@@ -690,6 +702,7 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000007',
       planVersion: 1,
+      sceneId: 'scn_daily_restaurant_ordering',
       sceneName: '餐厅点餐',
       userRole: '顾客',
       aiRoles: <String>['服务员'],
@@ -741,6 +754,7 @@ void main() {
           label: '确认并开始练习',
           practicePlanId: '10000000-0000-4000-8000-000000000008',
           planVersion: 1,
+          sceneId: 'custom_scene_long',
           sceneName: List<String>.filled(100, '场景').join(),
           userRole: List<String>.filled(100, '用户').join(),
           aiRoles: List<String>.generate(

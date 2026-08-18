@@ -27,6 +27,7 @@ final class ConfirmPracticePlanClientAction {
     required this.label,
     required this.practicePlanId,
     required this.planVersion,
+    required this.sceneId,
     required this.sceneName,
     required this.practiceGoal,
     required this.aiRoles,
@@ -46,6 +47,7 @@ final class ConfirmPracticePlanClientAction {
   final String label;
   final String practicePlanId;
   final int planVersion;
+  final String? sceneId;
   final String sceneName;
   final String? userRole;
   final List<String> aiRoles;
@@ -81,6 +83,7 @@ const _confirmPracticePlanV2Fields = <String>{
   'label',
   'practice_plan_id',
   'plan_version',
+  'scene_id',
   'scene_name',
   'user_role',
   'ai_roles',
@@ -140,6 +143,7 @@ AgentClientAction encodeConfirmPracticePlanClientAction(
       'label': action.label,
       'practice_plan_id': action.practicePlanId,
       'plan_version': action.planVersion,
+      'scene_id': action.sceneId,
       'scene_name': action.sceneName,
       'user_role': action.userRole,
       'ai_roles': action.aiRoles,
@@ -199,6 +203,9 @@ ConfirmPracticePlanClientAction decodeConfirmPracticePlanClientAction(
     label: _string(object['label'], 1, 100),
     practicePlanId: _uuid(object['practice_plan_id']),
     planVersion: _integer(object['plan_version'], 1),
+    sceneId: protocol == ConfirmPracticePlanProtocol.v2
+        ? _string(object['scene_id'], 1, 200)
+        : null,
     sceneName: _string(object['scene_name'], 1, 200),
     userRole: protocol == ConfirmPracticePlanProtocol.v2
         ? _string(object['user_role'], 1, 200)

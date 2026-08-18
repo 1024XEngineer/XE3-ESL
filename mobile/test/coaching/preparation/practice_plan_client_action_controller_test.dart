@@ -467,6 +467,7 @@ ConfirmPracticePlanClientAction _action(PracticePlan plan) =>
       label: 'Confirm and start',
       practicePlanId: plan.id,
       planVersion: plan.version,
+      sceneId: plan.sceneSelection.scene.id,
       sceneName: plan.sceneSelection.scene.name,
       userRole: plan.sceneSelection.scene.prompt.userRole,
       practiceGoal: plan.sceneSelection.scene.prompt.practiceGoal,

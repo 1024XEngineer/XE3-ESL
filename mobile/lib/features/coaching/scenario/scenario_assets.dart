@@ -1,6 +1,13 @@
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 String? scenarioAssetPath(SceneDefinition scene) {
+  return scenarioAssetPathFor(sceneId: scene.id, category: scene.category);
+}
+
+String? scenarioAssetPathFor({
+  required String sceneId,
+  required SceneCategory category,
+}) {
   const sceneAssets = <String, String>{
     'scn_daily_small_talk': 'assets/images/scenes/small-talk.jpg',
     'scn_daily_restaurant_ordering': 'assets/images/scenes/daily-tutor.jpg',
@@ -35,10 +42,10 @@ String? scenarioAssetPath(SceneDefinition scene) {
     'scn_workplace_negotiation':
         'assets/images/scenes/workplace-negotiation.jpg',
   };
-  if (sceneAssets[scene.id] case final assetPath?) {
+  if (sceneAssets[sceneId] case final assetPath?) {
     return assetPath;
   }
-  return switch (scene.category) {
+  return switch (category) {
     SceneCategory.workplaceGeneral =>
       'assets/images/scenes/workplace-scene.jpg',
     SceneCategory.lifeTravel => 'assets/images/scenes/travel-scene.jpg',

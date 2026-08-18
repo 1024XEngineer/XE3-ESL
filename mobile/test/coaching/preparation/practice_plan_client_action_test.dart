@@ -9,6 +9,7 @@ void main() {
     expect(action.protocol, ConfirmPracticePlanProtocol.v1);
     expect(action.practicePlanId, _planId);
     expect(action.planVersion, 2);
+    expect(action.sceneId, isNull);
     expect(action.userRole, isNull);
     expect(action.aiRoles, <String>['面试官']);
     expect(action.practiceGoal, '准备 Java 后端面试');
@@ -20,6 +21,10 @@ void main() {
 
     expect(envelope.type, practicePlanConfirmClientActionType);
     expect(envelope.payload, containsPair('user_role', '候选人'));
+    expect(
+      envelope.payload,
+      containsPair('scene_id', 'scn_interview_project_deep_dive'),
+    );
     expect(envelope.payload['ai_roles'], <String>['面试官']);
     expect(envelope.payload, containsPair('practice_goal', '准备 Java 后端面试'));
     expect(envelope.payload, isNot(contains('target')));
@@ -106,6 +111,7 @@ void main() {
           label: '确认并开始练习',
           practicePlanId: _planId,
           planVersion: 2,
+          sceneId: null,
           sceneName: '项目经历深挖',
           practiceGoal: '准备 Java 后端面试',
           aiRoles: const <String>['面试官'],
@@ -129,6 +135,7 @@ ConfirmPracticePlanClientAction _validV2Action() =>
       label: '确认并开始练习',
       practicePlanId: _planId,
       planVersion: 2,
+      sceneId: 'scn_interview_project_deep_dive',
       sceneName: '项目经历深挖',
       userRole: '候选人',
       aiRoles: <String>['面试官'],

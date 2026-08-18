@@ -1350,6 +1350,7 @@ const _ieltsPart1ScrollAction = ConfirmPracticePlanClientAction(
   label: '确认并开始练习',
   practicePlanId: '10000000-0000-4000-8000-000000000005',
   planVersion: 1,
+  sceneId: 'ielts-speaking',
   sceneName: 'IELTS 口语',
   userRole: '考生',
   practiceGoal: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
