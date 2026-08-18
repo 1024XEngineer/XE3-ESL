@@ -90,6 +90,7 @@ type PendingActionRepository interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
+		string,
 		int64,
 	) (bool, error)
 	CreateOrReplay(

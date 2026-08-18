@@ -30,19 +30,22 @@ func (repository *PostgresPendingActionRepository) HasOpenForReply(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	threadID string,
+	inputMessageID string,
 	inputSequence int64,
 ) (bool, error) {
 	if repository == nil || repository.pool == nil || ctx == nil ||
 		!actor.Valid() || !preparation.ValidAggregateID(threadID) ||
-		inputSequence < 3 {
+		!preparation.ValidAggregateID(inputMessageID) || inputSequence < 3 {
 		return false, preparation.ErrPendingActionInvalid
 	}
 	var exists bool
 	if err := repository.pool.QueryRow(ctx, `SELECT EXISTS (
 SELECT 1 FROM pending_practice_actions
-WHERE owner_id=$1 AND thread_id=$2 AND state='OPEN'
-  AND source_input_sequence + 2 = $3)`,
-		actor.UserID, threadID, inputSequence).Scan(&exists); err != nil {
+WHERE owner_id=$1 AND thread_id=$2
+  AND ((state='OPEN' AND source_input_sequence + 2 = $4)
+    OR (resolution_input_message_id=$3
+      AND state IN ('CONFIRMING','CONFIRMED','REJECTED'))))`,
+		actor.UserID, threadID, inputMessageID, inputSequence).Scan(&exists); err != nil {
 		return false, preparation.ErrPendingActionRepository
 	}
 	return exists, nil

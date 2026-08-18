@@ -133,7 +133,9 @@ func TestPreviewExposureNarrowsSchemaToAuthorizedBehaviorIntent(t *testing.T) {
 			if test.wantNoFields {
 				messageReader.sequence = 3
 				pendingActions = &memoryPendingActionRepository{
-					item: preparation.PendingPracticeAction{State: preparation.PendingActionOpen},
+					item: preparation.PendingPracticeAction{
+						State: preparation.PendingActionOpen, SourceInputSequence: 1,
+					},
 				}
 			}
 			port, err := NewServicePort(
@@ -169,6 +171,48 @@ func TestPreviewExposureNarrowsSchemaToAuthorizedBehaviorIntent(t *testing.T) {
 			if !slices.Contains(enums, test.wantEnum) ||
 				slices.Contains(enums, string(SceneResolutionKindNeedsClarification)) {
 				t.Fatalf("authorized enum = %#v", enums)
+			}
+		})
+	}
+}
+
+func TestPreviewExposureAllowsPendingResolutionRetry(t *testing.T) {
+	tests := []struct {
+		state  preparation.PendingActionState
+		intent PracticeTurnIntent
+	}{
+		{preparation.PendingActionConfirming, PracticeTurnIntentConfirmPending},
+		{preparation.PendingActionConfirmed, PracticeTurnIntentConfirmPending},
+		{preparation.PendingActionRejected, PracticeTurnIntentRejectPending},
+	}
+	for _, test := range tests {
+		t.Run(string(test.state), func(t *testing.T) {
+			catalog := newTestCatalog(t)
+			call := validPreviewCallContext()
+			pending := &memoryPendingActionRepository{item: preparation.PendingPracticeAction{
+				State: test.state, ResolutionInputMessageID: call.InputMessageID,
+			}}
+			port, err := NewServicePort(
+				context.Background(), &readyPlanApplication{catalog: catalog}, catalog,
+				staticTrustedMessageReader{content: "对的", sequence: 3}, pending,
+				staticPracticeTurnIntentGenerator{content: `{"intent":"` + string(test.intent) + `"}`},
+			)
+			if err != nil {
+				t.Fatalf("NewServicePort() error = %v", err)
+			}
+			tool, err := NewPreviewTool(port)
+			if err != nil {
+				t.Fatalf("NewPreviewTool() error = %v", err)
+			}
+			decision, err := tool.AuthorizeExposure(
+				context.Background(), capability.ExposureRequest{
+					Actor: call.Actor, ThreadID: call.ThreadID, RunID: call.RunID,
+					InputMessageID: call.InputMessageID,
+				},
+			)
+			if err != nil || !decision.Expose || !decision.Require ||
+				decision.AuditLabel != string(test.intent) {
+				t.Fatalf("AuthorizeExposure() = %#v, %v", decision, err)
 			}
 		})
 	}
@@ -362,11 +406,12 @@ func TestAmbiguousThenImmediateConfirmationCreatesOnePlan(t *testing.T) {
 	catalog := newTestCatalog(t)
 	plans := &readyPlanApplication{catalog: catalog}
 	pending := &memoryPendingActionRepository{}
+	longMessage := strings.Repeat("雅", agentconversation.MaxMessageContentRunes)
 	messages := mapTrustedMessageReader{messages: map[string]agentconversation.Message{
 		"50000000-0000-4000-8000-000000000001": {
 			ID: "50000000-0000-4000-8000-000000000001", OwnerID: "10000000-0000-4000-8000-000000000001",
 			ThreadID: "30000000-0000-4000-8000-000000000001", Sequence: 1,
-			Role: agentconversation.MessageRoleUser, Content: "雅思也可以",
+			Role: agentconversation.MessageRoleUser, Content: longMessage,
 		},
 		"50000000-0000-4000-8000-000000000003": {
 			ID: "50000000-0000-4000-8000-000000000003", OwnerID: "10000000-0000-4000-8000-000000000001",
@@ -384,7 +429,7 @@ func TestAmbiguousThenImmediateConfirmationCreatesOnePlan(t *testing.T) {
 	call := validPreviewCallContext()
 	input := catalogPreviewInput("", "scn_ielts_speaking", "")
 	input.ActionIntent = PracticeTurnIntentProposeCreate
-	input.ActionExcerpt = "雅思也可以"
+	input.ActionExcerpt = longMessage
 	result, err := port.PreviewPractice(context.Background(), call, input)
 	if err != nil || result.Status != PreviewOutcomeActionPending || plans.planCalls != 0 {
 		t.Fatalf("ambiguous result = %#v, error = %v, calls = %d", result, err, plans.planCalls)
@@ -1011,12 +1056,22 @@ type memoryPendingActionRepository struct {
 }
 
 func (repository *memoryPendingActionRepository) HasOpenForReply(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	int64,
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	messageID string,
+	sequence int64,
 ) (bool, error) {
-	return repository != nil && repository.item.State == preparation.PendingActionOpen, nil
+	if repository == nil {
+		return false, nil
+	}
+	if repository.item.State == preparation.PendingActionOpen {
+		return repository.item.SourceInputSequence+2 == sequence, nil
+	}
+	return repository.item.ResolutionInputMessageID == messageID &&
+		(repository.item.State == preparation.PendingActionConfirming ||
+			repository.item.State == preparation.PendingActionConfirmed ||
+			repository.item.State == preparation.PendingActionRejected), nil
 }
 
 func (repository *memoryPendingActionRepository) CreateOrReplay(
@@ -1077,6 +1132,7 @@ type noopPendingActionRepository struct{}
 func (noopPendingActionRepository) HasOpenForReply(
 	context.Context,
 	requestcontext.Actor,
+	string,
 	string,
 	int64,
 ) (bool, error) {

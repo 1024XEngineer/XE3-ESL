@@ -105,7 +105,7 @@ func (port *ServicePort) AuthorizePracticeTurn(
 	pendingAvailable := false
 	if message.Sequence >= 3 {
 		pendingAvailable, err = port.pendingActions.HasOpenForReply(
-			ctx, request.Actor, request.ThreadID, message.Sequence,
+			ctx, request.Actor, request.ThreadID, message.ID, message.Sequence,
 		)
 		if err != nil {
 			return "", mapPreparationToolError(err)
@@ -349,7 +349,8 @@ func decodePendingPracticeProposal(raw []byte) (pendingPracticeProposal, error) 
 		SceneIntent: proposal.SceneIntent, BackgroundSummary: proposal.BackgroundSummary,
 		IELTSPracticeMode: proposal.IELTSPracticeMode, IELTSTopicChoice: proposal.IELTSTopicChoice,
 	}
-	if !validInputText(proposal.SceneQuery, 500) || !validPreviewInputShape(input) {
+	if !agentconversation.ValidMessageContent(proposal.SceneQuery) ||
+		!validPreviewInputShape(input) {
 		return pendingPracticeProposal{}, capability.ErrInvalidInput
 	}
 	return proposal, nil
