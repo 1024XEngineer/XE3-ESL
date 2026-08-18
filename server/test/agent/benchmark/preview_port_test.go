@@ -26,7 +26,6 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 		{
 			name: "catalog",
 			input: json.RawMessage(`{
-  "scene_query": "明天入住酒店，海景房预订不见了",
   "resolution_kind": "CATALOG",
   "catalog_scene_ids": ["scn_travel_hotel_checkin"],
   "custom_scenario": "",
@@ -40,7 +39,6 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 		{
 			name: "needs clarification",
 			input: json.RawMessage(`{
-  "scene_query": "酒店入住还是机场值机",
   "resolution_kind": "NEEDS_CLARIFICATION",
   "catalog_scene_ids": [
     "scn_travel_hotel_checkin",
@@ -59,7 +57,6 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 		{
 			name: "custom",
 			input: json.RawMessage(`{
-  "scene_query": "我要在宠物店沟通鹦鹉寄养",
   "resolution_kind": "CUSTOM",
   "catalog_scene_ids": [],
   "custom_scenario": "在宠物店沟通鹦鹉寄养",
@@ -91,8 +88,7 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 				t.Fatalf("Execute() error = %v", err)
 			}
 			line := output.String()
-			if strings.Contains(line, "scene_query") ||
-				strings.Contains(line, test.privateTerm) {
+			if strings.Contains(line, test.privateTerm) {
 				t.Fatalf("benchmark log leaked raw scene text: %s", line)
 			}
 			var event struct {
@@ -129,7 +125,6 @@ func TestBenchmarkPreviewPortRejectsInvalidUnionBeforeRecording(t *testing.T) {
 		context.Background(),
 		benchmarkPreviewCallContext(),
 		json.RawMessage(`{
-  "scene_query": "酒店入住",
   "resolution_kind": "CATALOG",
   "catalog_scene_ids": [
     "scn_travel_hotel_checkin",
@@ -153,10 +148,11 @@ func benchmarkPreviewCallContext() capability.CallContext {
 			UserID:    "benchmark-user",
 			SessionID: "benchmark-session",
 		},
-		ThreadID:   "benchmark-thread",
-		RunID:      "benchmark-run",
-		ToolCallID: "benchmark-tool-call",
-		RequestID:  "benchmark-request",
+		ThreadID:      "benchmark-thread",
+		RunID:         "benchmark-run",
+		ToolCallID:    "benchmark-tool-call",
+		RequestID:     "benchmark-request",
+		Authorization: json.RawMessage(`{"intent":"REQUEST_CREATE"}`),
 	}
 }
 

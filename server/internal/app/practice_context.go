@@ -291,10 +291,14 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 	if base.productionTools != nil {
+		pendingActions := preparationpostgres.NewPostgresPendingActionRepository(database)
 		previewPort, err := preparationagentcapability.NewServicePort(
 			ctx,
 			planApplication,
 			catalog,
+			base.conversationData,
+			pendingActions,
+			modelProviders.PracticeTurnIntent,
 		)
 		if err != nil {
 			return nil, err

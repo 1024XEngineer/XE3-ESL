@@ -9,15 +9,31 @@ import (
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
 
 func testAgentModelProviders(run agentrun.TextGenerator) AgentModelProviders {
 	return AgentModelProviders{
-		Run:         run,
-		Summary:     testSummaryGenerator{run: run},
-		Translation: testTranslator{},
+		Run:                run,
+		Summary:            testSummaryGenerator{run: run},
+		Translation:        testTranslator{},
+		PracticeTurnIntent: testPracticeTurnIntentGenerator{run: run},
 	}
+}
+
+type testPracticeTurnIntentGenerator struct{ run agentrun.TextGenerator }
+
+func (generator testPracticeTurnIntentGenerator) GeneratePracticeTurnIntent(
+	ctx context.Context,
+	request preparationagentcapability.PracticeTurnIntentGenerationRequest,
+) (preparationagentcapability.PracticeTurnIntentGenerationResult, error) {
+	result, err := generateTestJSON(
+		ctx, generator.run, request.SystemInstruction, request.UserMaterial,
+	)
+	return preparationagentcapability.PracticeTurnIntentGenerationResult{
+		Content: result.Content,
+	}, err
 }
 
 type testTranslator struct{}

@@ -7,7 +7,7 @@ import (
 
 func TestProviderIncludesStructuredProfileWriteAndFailurePolicy(t *testing.T) {
 	instruction := (Provider{}).Render()
-	if instruction.Version != VersionV3 || !instruction.Valid() {
+	if instruction.Version != VersionV4 || !instruction.Valid() {
 		t.Fatalf("instruction = %#v", instruction)
 	}
 	for _, required := range []string{
@@ -17,6 +17,10 @@ func TestProviderIncludesStructuredProfileWriteAndFailurePolicy(t *testing.T) {
 		"Never save role-play",
 		"forget selected fields",
 		"never claim that a profile change succeeded",
+		"server exposes the practice preview capability only after authorizing",
+		"does not authorize creating a practice",
+		"Never inherit creation authorization",
+		"respond naturally to what the user shared",
 	} {
 		if !strings.Contains(instruction.Content, required) {
 			t.Fatalf("instruction missing %q", required)

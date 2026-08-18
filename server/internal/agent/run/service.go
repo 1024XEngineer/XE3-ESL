@@ -726,16 +726,56 @@ func (service *Service) generateObserved(
 	startedAt := time.Now()
 	service.logRunReceived(run, lastUserContent(request), request)
 
-	routing := buildModelToolRouting(
-		service.registry,
+	exposure, err := service.registry.ResolveExposure(
+		loopCtx,
+		capability.ExposureRequest{
+			Actor: actor, ThreadID: run.ThreadID, RunID: run.ID,
+			InputMessageID: run.InputMessageID,
+		},
+	)
+	if err != nil {
+		return TextResult{}, nil, err
+	}
+	choice := ToolChoice{Mode: ToolChoiceRequired}
+	directFinalAllowed := false
+	if exposure.RequiredTool != "" {
+		choice = ToolChoice{
+			Mode: ToolChoiceSpecific,
+			Name: exposure.RequiredTool,
+		}
+	} else {
+		for _, label := range exposure.AuditLabels {
+			if label == "CONVERSE" {
+				choice = ToolChoice{Mode: ToolChoiceAuto}
+				directFinalAllowed = true
+				break
+			}
+		}
+	}
+	for tool, label := range exposure.AuditLabels {
+		if service.logger != nil {
+			service.logger.Info(
+				"agent.tool.exposure_decided",
+				"run_id", run.ID,
+				"tool", tool,
+				"decision", label,
+				"exposed", len(exposure.Authorizations[tool]) != 0,
+				"required", exposure.RequiredTool == tool,
+			)
+		}
+	}
+	routing := buildModelToolRoutingDefinitions(
+		exposure.Definitions,
 		service.logger,
 		run.ID,
-		ToolChoice{Mode: ToolChoiceRequired},
+		choice,
 	)
-	routing.Definitions = append(
-		routing.Definitions,
-		finalResponseToolDefinition(),
-	)
+	if !directFinalAllowed {
+		routing.Definitions = append(
+			routing.Definitions,
+			finalResponseToolDefinition(),
+		)
+	}
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
@@ -767,6 +807,28 @@ func (service *Service) generateObserved(
 			return result, nil, nil
 		}
 		if len(result.ToolCalls) == 0 {
+			if directFinalAllowed {
+				service.logRoutingDecision(
+					run,
+					finalDecision,
+					nil,
+					reasonModelToolSelection,
+					reasonSummary(reasonModelToolSelection, finalDecision),
+					modelIterations,
+				)
+				finalResult, finalDeltas, finalErr := service.generateFinalOutput(
+					loopCtx, request, observer, output,
+				)
+				if finalErr != nil {
+					return TextResult{}, nil, finalErr
+				}
+				modelIterations++
+				service.logRunCompleted(
+					run, finalDecision, modelIterations, toolCalls,
+					startedAt, finalResult.Content,
+				)
+				return finalResult, finalDeltas, nil
+			}
 			service.logInvalidModelResult(run, result)
 			return TextResult{}, nil, NewGenerationError(
 				ErrorInvalidResponse,
@@ -896,6 +958,8 @@ func (service *Service) generateObserved(
 				actor,
 				run,
 				call,
+				exposure.Authorizations[call.Name],
+				exposure.InputSchemas[call.Name],
 			)
 			if err != nil {
 				if observer != nil {
@@ -1129,6 +1193,8 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
+	authorization json.RawMessage,
+	inputSchema map[string]any,
 ) (TextMessage, ToolCallStatus, capability.TurnOutcome, string, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
@@ -1155,6 +1221,8 @@ func (service *Service) executeToolCall(
 			InputMessageID: run.InputMessageID,
 			ToolCallID:     call.ID,
 			RequestID:      requestID,
+			Authorization:  append(json.RawMessage(nil), authorization...),
+			InputSchema:    inputSchema,
 		},
 		capability.Invocation{Name: call.Name, Input: call.Arguments},
 	)

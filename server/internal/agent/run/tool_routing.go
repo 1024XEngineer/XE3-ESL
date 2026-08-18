@@ -26,17 +26,29 @@ func buildModelToolRouting(
 	runID string,
 	choice ToolChoice,
 ) modelToolRouting {
+	var definitions []capability.Definition
+	if registry != nil {
+		definitions = registry.Definitions()
+	}
+	return buildModelToolRoutingDefinitions(definitions, logger, runID, choice)
+}
+
+func buildModelToolRoutingDefinitions(
+	definitions []capability.Definition,
+	logger *slog.Logger,
+	runID string,
+	choice ToolChoice,
+) modelToolRouting {
 	if choice.Mode == "" {
 		choice = ToolChoice{Mode: ToolChoiceAuto}
 	}
 	routing := modelToolRouting{ToolChoice: choice}
-	if registry == nil {
+	if len(definitions) == 0 {
 		return routing
 	}
-	registered := registry.Definitions()
-	routing.Definitions = make([]ToolDefinition, 0, len(registered))
-	names := make([]string, 0, len(registered))
-	for _, definition := range registered {
+	routing.Definitions = make([]ToolDefinition, 0, len(definitions))
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
 		routing.Definitions = append(routing.Definitions, ToolDefinition{
 			Name:        definition.Name,
 			Description: definition.Description,

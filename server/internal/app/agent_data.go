@@ -89,6 +89,7 @@ type identityAgentComposition struct {
 	identity         *identityComposition
 	agentModule      RouteRegistrar
 	agentService     *agentconversation.Service
+	conversationData *conversationpostgres.Repository
 	mediaReclaimer   MediaObjectReclaimer
 	mediaService     *sharedmedia.Service
 	productionTools  *capability.Registry
@@ -118,6 +119,7 @@ func buildIdentityAgentComposition(
 	if ctx == nil || database == nil || modelProviders.Run == nil ||
 		modelProviders.Summary == nil ||
 		modelProviders.Translation == nil ||
+		modelProviders.PracticeTurnIntent == nil ||
 		len(voiceConfigurations) > 1 {
 		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
@@ -502,6 +504,7 @@ func buildIdentityAgentComposition(
 		identity:         identityContext,
 		agentModule:      handler,
 		agentService:     agentService,
+		conversationData: conversationRepository,
 		mediaReclaimer:   mediaReclaimer,
 		mediaService:     agentMedia,
 		productionTools:  toolOptions.productionRegistry,

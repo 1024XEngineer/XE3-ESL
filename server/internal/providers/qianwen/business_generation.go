@@ -6,6 +6,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
@@ -55,6 +56,55 @@ func (generator *SummaryGenerator) GenerateJSON(
 
 type PreparationJobTargetGenerator struct {
 	generator *textClient
+}
+
+type PracticeTurnIntentGenerator struct{ generator *textClient }
+
+func NewPracticeTurnIntentGenerator(
+	configuration TextConfig,
+	apiKey string,
+) (*PracticeTurnIntentGenerator, error) {
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return &PracticeTurnIntentGenerator{generator: generator}, nil
+}
+
+func (generator *PracticeTurnIntentGenerator) GeneratePracticeTurnIntent(
+	ctx context.Context,
+	request preparationagentcapability.PracticeTurnIntentGenerationRequest,
+) (preparationagentcapability.PracticeTurnIntentGenerationResult, error) {
+	if generator == nil {
+		return preparationagentcapability.PracticeTurnIntentGenerationResult{},
+			missingBusinessGenerator()
+	}
+	intents := []any{"CONVERSE", "REQUEST_CREATE", "PROPOSE_CREATE"}
+	if request.PendingAvailable {
+		intents = append(intents, "CONFIRM_PENDING", "REJECT_PENDING")
+	}
+	result, err := generateBusinessText(
+		ctx,
+		generator.generator,
+		request.SystemInstruction,
+		request.UserMaterial,
+		&protocol.JSONSchemaDefinition{
+			Name:   "practice_turn_intent",
+			Strict: true,
+			Schema: strictObjectSchema(
+				[]any{"intent"},
+				map[string]any{
+					"intent": map[string]any{"type": "string", "enum": intents},
+				},
+			),
+		},
+	)
+	if err != nil {
+		return preparationagentcapability.PracticeTurnIntentGenerationResult{}, err
+	}
+	return preparationagentcapability.PracticeTurnIntentGenerationResult{
+		Content: result.Content,
+	}, nil
 }
 
 func NewPreparationJobTargetGenerator(

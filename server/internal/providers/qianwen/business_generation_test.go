@@ -11,6 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
@@ -79,6 +80,24 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 			},
 		},
 		{
+			name:           "Practice turn intent JSON",
+			systemPrompt:   "classify current behavior",
+			userPrompt:     "current user message",
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "practice_turn_intent",
+			generate: func(client *textClient) (string, string, string, error) {
+				result, err := (&PracticeTurnIntentGenerator{generator: client}).
+					GeneratePracticeTurnIntent(
+						context.Background(),
+						preparationagentcapability.PracticeTurnIntentGenerationRequest{
+							SystemInstruction: "classify current behavior",
+							UserMaterial:      "current user message",
+						},
+					)
+				return "", "", result.Content, err
+			},
+		},
+		{
 			name:           "Resume JSON",
 			systemPrompt:   "extract resume fields",
 			userPrompt:     "resume document payload",
@@ -123,6 +142,7 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 				t.Fatalf("content = %q", content)
 			}
 			if test.name != "Preparation text" &&
+				test.name != "Practice turn intent JSON" &&
 				(provider != providerName || model != "qwen3.5-flash") {
 				t.Fatalf("provider/model = %q/%q", provider, model)
 			}

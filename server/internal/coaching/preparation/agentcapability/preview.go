@@ -15,7 +15,7 @@ import (
 	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 )
 
-const PracticePreviewToolName = "practice.preview.v2"
+const PracticePreviewToolName = "practice.preview.v3"
 
 const ConfirmPracticePlanActionType = "practice.plan.confirm.v2"
 
@@ -31,6 +31,17 @@ const (
 	SceneResolutionKindCatalog            SceneResolutionKind = "CATALOG"
 	SceneResolutionKindCustom             SceneResolutionKind = "CUSTOM"
 	SceneResolutionKindNeedsClarification SceneResolutionKind = "NEEDS_CLARIFICATION"
+	SceneResolutionKindNone               SceneResolutionKind = "NONE"
+)
+
+type PracticeTurnIntent string
+
+const (
+	PracticeTurnIntentConverse       PracticeTurnIntent = "CONVERSE"
+	PracticeTurnIntentRequestCreate  PracticeTurnIntent = "REQUEST_CREATE"
+	PracticeTurnIntentProposeCreate  PracticeTurnIntent = "PROPOSE_CREATE"
+	PracticeTurnIntentConfirmPending PracticeTurnIntent = "CONFIRM_PENDING"
+	PracticeTurnIntentRejectPending  PracticeTurnIntent = "REJECT_PENDING"
 )
 
 // SceneResolutionInput is the model-authored decision. The server validates
@@ -45,7 +56,6 @@ type SceneResolutionInput struct {
 // flat. Providers do not need conditional JSON Schema support; the server
 // validates the closed-union relationships after decoding.
 type UnifiedPreviewToolInput struct {
-	SceneQuery           string              `json:"scene_query"`
 	ResolutionKind       SceneResolutionKind `json:"resolution_kind"`
 	CatalogSceneIDs      []string            `json:"catalog_scene_ids"`
 	CustomScenario       string              `json:"custom_scenario"`
@@ -59,7 +69,10 @@ type UnifiedPreviewToolInput struct {
 }
 
 type PreviewInput struct {
-	SceneQuery        string               `json:"scene_query"`
+	ActionIntent      PracticeTurnIntent   `json:"action_intent"`
+	ActionExcerpt     string               `json:"-"`
+	SceneQuery        string               `json:"-"`
+	InputSequence     int64                `json:"-"`
 	SceneResolution   SceneResolutionInput `json:"scene_resolution"`
 	SceneIntent       *SceneIntent         `json:"scene_intent,omitempty"`
 	BackgroundSummary string               `json:"background_summary,omitempty"`
@@ -124,6 +137,8 @@ const (
 	PreviewOutcomeNeedsDetails            PreviewOutcome = "needs_details"
 	PreviewOutcomeAmbiguous               PreviewOutcome = "ambiguous"
 	PreviewOutcomeRequiresSpecializedFlow PreviewOutcome = "requires_specialized_flow"
+	PreviewOutcomeActionPending           PreviewOutcome = "action_pending"
+	PreviewOutcomeActionDeclined          PreviewOutcome = "action_declined"
 )
 
 type ResolvedSceneStatus string
@@ -134,6 +149,7 @@ const (
 	SceneResolutionAmbiguous       ResolvedSceneStatus = "AMBIGUOUS"
 	SceneResolutionNeedsDetails    ResolvedSceneStatus = "NEEDS_DETAILS"
 	SceneResolutionRejected        ResolvedSceneStatus = "REJECTED"
+	SceneResolutionNotRequested    ResolvedSceneStatus = "NOT_REQUESTED"
 )
 
 type ResolutionReason string
@@ -163,6 +179,10 @@ type PreviewResult struct {
 }
 
 type PreviewPort interface {
+	AuthorizePracticeTurn(
+		context.Context,
+		capability.ExposureRequest,
+	) (PracticeTurnIntent, error)
 	PreviewPractice(
 		context.Context,
 		capability.CallContext,
@@ -176,6 +196,12 @@ type PreviewTool struct {
 	manifest   PreviewCatalogManifest
 	catalogIDs map[string]struct{}
 }
+
+type previewInputError struct{ code string }
+
+func (value previewInputError) Error() string          { return capability.ErrInvalidInput.Error() }
+func (value previewInputError) Unwrap() error          { return capability.ErrInvalidInput }
+func (value previewInputError) DiagnosticCode() string { return value.code }
 
 func NewPreviewTool(port PreviewPort) (PreviewTool, error) {
 	if port == nil {
@@ -191,6 +217,75 @@ func NewPreviewTool(port PreviewPort) (PreviewTool, error) {
 	}
 	return PreviewTool{port: port, manifest: manifest, catalogIDs: catalogIDs}, nil
 }
+
+func (value PreviewTool) AuthorizeExposure(
+	ctx context.Context,
+	request capability.ExposureRequest,
+) (capability.ExposureDecision, error) {
+	if value.port == nil {
+		return capability.ExposureDecision{}, capability.ErrExecutionRejected
+	}
+	intent, err := value.port.AuthorizePracticeTurn(ctx, request)
+	if err != nil {
+		return capability.ExposureDecision{}, err
+	}
+	if intent == PracticeTurnIntentConverse {
+		return capability.ExposureDecision{
+			Expose: false, AuditLabel: string(intent),
+		}, nil
+	}
+	if !validPracticeActionIntent(intent) {
+		return capability.ExposureDecision{}, capability.ErrExecutionRejected
+	}
+	authorization, err := json.Marshal(struct {
+		Intent PracticeTurnIntent `json:"intent"`
+	}{Intent: intent})
+	if err != nil {
+		return capability.ExposureDecision{}, capability.ErrExecutionRejected
+	}
+	return capability.ExposureDecision{
+		Expose: true, Require: true, Authorization: authorization,
+		AuditLabel:  string(intent),
+		Instruction: practiceTurnIntentInstruction(intent),
+		InputSchema: value.practiceTurnInputSchema(intent),
+	}, nil
+}
+
+func practiceTurnIntentInstruction(intent PracticeTurnIntent) string {
+	switch intent {
+	case PracticeTurnIntentRequestCreate:
+		return "The server authorized REQUEST_CREATE. Resolve the requested scene and create its preview now."
+	case PracticeTurnIntentProposeCreate:
+		return "The server authorized PROPOSE_CREATE. Identify exactly one proposed Catalog or Custom scene, so the server can ask once before creating. Do not use NONE or NEEDS_CLARIFICATION."
+	case PracticeTurnIntentConfirmPending:
+		return "The server authorized CONFIRM_PENDING. Use resolution_kind NONE, an empty catalog_scene_ids array, an empty custom_scenario, and custom_experience_hint NONE."
+	case PracticeTurnIntentRejectPending:
+		return "The server authorized REJECT_PENDING. Use resolution_kind NONE, an empty catalog_scene_ids array, an empty custom_scenario, and custom_experience_hint NONE."
+	default:
+		return ""
+	}
+}
+
+func (value PreviewTool) practiceTurnInputSchema(
+	intent PracticeTurnIntent,
+) map[string]any {
+	if intent == PracticeTurnIntentRequestCreate {
+		return value.Definition().InputSchema
+	}
+	if intent == PracticeTurnIntentProposeCreate {
+		schema := value.Definition().InputSchema
+		properties := schema["properties"].(map[string]any)
+		properties["resolution_kind"] = capability.StringEnumSchema(
+			"Propose exactly one Catalog or Custom scene; the server will ask for confirmation before writing.",
+			string(SceneResolutionKindCatalog),
+			string(SceneResolutionKindCustom),
+		)
+		return schema
+	}
+	// A pending reply is resolved exclusively from trusted authorization and
+	// the persisted pending action. The model contributes no business fields.
+	return capability.ObjectSchema(map[string]any{}, nil)
+}
 func (value PreviewTool) Definition() capability.Definition {
 	catalogIDs := make([]string, len(value.manifest.Scenes))
 	for index, item := range value.manifest.Scenes {
@@ -201,6 +296,7 @@ func (value PreviewTool) Definition() capability.Definition {
 		string(SceneResolutionKindCatalog),
 		string(SceneResolutionKindCustom),
 		string(SceneResolutionKindNeedsClarification),
+		string(SceneResolutionKindNone),
 	)
 	catalogSceneIDsSchema := map[string]any{
 		"type":        "array",
@@ -214,24 +310,19 @@ func (value PreviewTool) Definition() capability.Definition {
 	}
 	return capability.Definition{
 		Name: PracticePreviewToolName,
-		Description: "Resolve and preview exactly one scene through this single tool, using the frozen trusted Catalog manifest below. " +
+		Description: "Preview the server-authorized practice action for the current user message. The behavior intent was already decided by a blocking server gate and is not model input. Resolve the proposed scene using the frozen trusted Catalog manifest below. " +
 			catalogTemplateSelectionPolicy +
 			"Use CATALOG with exactly one catalog_scene_ids entry when one listed scene matches; personal details stay in background_summary and never change the Catalog identity. " +
 			"Use CUSTOM with an empty catalog_scene_ids array only when no listed interaction pattern can host the request; then provide custom_scenario and custom_experience_hint. " +
 			"Use NEEDS_CLARIFICATION with one to five catalog_scene_ids entries when the request cannot safely choose one listed scene. " +
-			"Always preserve the user's original wording in scene_query. The server validates the selected branch exactly and never guesses from scene_query. " +
-			"For an IELTS Catalog scene, use ielts_practice_mode and the required topic choice. " +
+			"When the authorized intent confirms or rejects a pending action, use resolution_kind NONE, an empty catalog_scene_ids array, empty custom_scenario, and custom_experience_hint NONE. The server resolves the immediately preceding pending action; never invent its scene. " +
+			"For an IELTS Catalog scene, FULL_MOCK means a complete/full/完整模考 request and requires no topic choice. Use PART_1, PART_2, or PART_3 only when the current message explicitly names that Part; never infer a specialty Part from a general IELTS request. A specialty Part requires its topic choice. " +
 			"All five discriminator fields are required; non-applicable fields must use [], \"\", or NONE exactly. Structural examples: " +
-			`CATALOG={"scene_query":"<original request>","resolution_kind":"CATALOG","catalog_scene_ids":["<one manifest scene id>"],"custom_scenario":"","custom_experience_hint":"NONE"}; ` +
-			`CUSTOM={"scene_query":"<original request>","resolution_kind":"CUSTOM","catalog_scene_ids":[],"custom_scenario":"<directory-external situation>","custom_experience_hint":"WORKPLACE"}; ` +
-			`NEEDS_CLARIFICATION={"scene_query":"<original request>","resolution_kind":"NEEDS_CLARIFICATION","catalog_scene_ids":["<plausible manifest scene id>"],"custom_scenario":"","custom_experience_hint":"NONE"}. ` +
+			`CATALOG={"resolution_kind":"CATALOG","catalog_scene_ids":["<one manifest scene id>"],"custom_scenario":"","custom_experience_hint":"NONE"}; ` +
+			`PENDING_REPLY={"resolution_kind":"NONE","catalog_scene_ids":[],"custom_scenario":"","custom_experience_hint":"NONE"}. ` +
 			"A successful tool result completes this turn; never call the tool repeatedly in the same turn.\n\nTrusted Catalog manifest:\n" +
 			formatPreviewCatalogManifest(value.manifest),
 		InputSchema: capability.ObjectSchema(map[string]any{
-			"scene_query": capability.TextSchema(
-				"The user's original natural-language scene request, unchanged.",
-				500,
-			),
 			"resolution_kind":   resolutionKindSchema,
 			"catalog_scene_ids": catalogSceneIDsSchema,
 			"custom_scenario": map[string]any{
@@ -261,15 +352,15 @@ func (value PreviewTool) Definition() capability.Definition {
 				6000,
 			),
 			"ielts_practice_mode": capability.StringEnumSchema(
-				"IELTS Speaking mode requested for the IELTS Catalog scene.",
+				"IELTS Speaking mode explicitly requested. Use FULL_MOCK for complete/full/完整模考 or a general IELTS full-practice request. Use a PART mode only when that Part is explicitly named.",
 				"FULL_MOCK", "PART_1", "PART_2", "PART_3",
 			),
 			"ielts_topic_choice": capability.StringEnumSchema(
-				"Topic choice for IELTS Part 1, Part 2, or Part 3.",
+				"Topic choice only for an explicitly requested IELTS Part 1, Part 2, or Part 3; omit for FULL_MOCK.",
 				"random", "person", "place", "thing", "experience",
 			),
 		}, []string{
-			"scene_query", "resolution_kind", "catalog_scene_ids",
+			"resolution_kind", "catalog_scene_ids",
 			"custom_scenario", "custom_experience_hint",
 		}),
 		ReadOnly: false,
@@ -301,11 +392,36 @@ func (value PreviewTool) Execute(
 	if value.port == nil {
 		return capability.Result{}, capability.ErrExecutionRejected
 	}
-	parsed, err := parseUnifiedPreviewToolInput(input)
-	if err != nil || !value.validCatalogIDs(parsed.CatalogSceneIDs) {
-		return capability.Result{}, capability.ErrInvalidInput
+	intent, err := decodePracticeTurnAuthorization(call.Authorization)
+	if err != nil {
+		return capability.Result{}, capability.ErrExecutionRejected
 	}
-	result, err := value.port.PreviewPractice(ctx, call, parsed.previewInput())
+	if intent == PracticeTurnIntentConfirmPending ||
+		intent == PracticeTurnIntentRejectPending {
+		previewInput := PreviewInput{
+			ActionIntent: intent,
+			SceneResolution: SceneResolutionInput{
+				Kind: SceneResolutionKindNone,
+			},
+		}
+		result, err := value.port.PreviewPractice(ctx, call, previewInput)
+		if err != nil {
+			return capability.Result{}, err
+		}
+		return previewToolResult(result)
+	}
+	parsed, err := parseUnifiedPreviewToolInput(input)
+	if err != nil {
+		return capability.Result{}, err
+	}
+	if !value.validCatalogIDs(parsed.CatalogSceneIDs) {
+		return capability.Result{}, previewInputError{code: "catalog_membership"}
+	}
+	previewInput := parsed.previewInput(intent)
+	if !validPreviewInputShape(previewInput) {
+		return capability.Result{}, previewInputError{code: "authorized_intent_shape"}
+	}
+	result, err := value.port.PreviewPractice(ctx, call, previewInput)
 	if err != nil {
 		return capability.Result{}, err
 	}
@@ -316,10 +432,14 @@ func parseUnifiedPreviewToolInput(
 	input json.RawMessage,
 ) (UnifiedPreviewToolInput, error) {
 	var parsed UnifiedPreviewToolInput
-	if err := decodePreviewToolInput(input, &parsed); err != nil ||
-		!hasRequiredUnifiedPreviewFields(input) ||
-		!validUnifiedPreviewToolInput(parsed) {
-		return UnifiedPreviewToolInput{}, capability.ErrInvalidInput
+	if err := decodePreviewToolInput(input, &parsed); err != nil {
+		return UnifiedPreviewToolInput{}, previewInputError{code: "decode"}
+	}
+	if !hasRequiredUnifiedPreviewFields(input) {
+		return UnifiedPreviewToolInput{}, previewInputError{code: "required_fields"}
+	}
+	if code := invalidUnifiedPreviewToolInput(parsed); code != "" {
+		return UnifiedPreviewToolInput{}, previewInputError{code: code}
 	}
 	return parsed, nil
 }
@@ -330,7 +450,6 @@ func hasRequiredUnifiedPreviewFields(input json.RawMessage) bool {
 		return false
 	}
 	for _, name := range []string{
-		"scene_query",
 		"resolution_kind",
 		"catalog_scene_ids",
 		"custom_scenario",
@@ -357,9 +476,8 @@ func decodePreviewToolInput(input json.RawMessage, target any) error {
 	return nil
 }
 
-func validUnifiedPreviewToolInput(input UnifiedPreviewToolInput) bool {
-	if !validInputText(input.SceneQuery, 500) ||
-		!validOptionalInputText(input.CustomScenario, 200) ||
+func invalidUnifiedPreviewToolInput(input UnifiedPreviewToolInput) string {
+	if !validOptionalInputText(input.CustomScenario, 200) ||
 		!validOptionalInputText(input.UserRole, 200) ||
 		!validOptionalInputText(input.AIRole, 200) ||
 		!validOptionalInputText(input.PracticeGoal, 500) ||
@@ -367,25 +485,43 @@ func validUnifiedPreviewToolInput(input UnifiedPreviewToolInput) bool {
 		!validOptionalIELTSPracticeMode(input.IELTSPracticeMode) ||
 		!validOptionalIELTSTopicChoice(input.IELTSTopicChoice) ||
 		!validToolCatalogSceneIDs(input.CatalogSceneIDs) {
-		return false
+		return "field_constraints"
 	}
 	customFieldsEmpty := input.CustomScenario == "" &&
 		input.CustomExperienceHint == noCustomExperienceHint &&
 		input.UserRole == "" && input.AIRole == "" && input.PracticeGoal == ""
+	if input.ResolutionKind == SceneResolutionKindNone {
+		if input.ResolutionKind == SceneResolutionKindNone &&
+			len(input.CatalogSceneIDs) == 0 && customFieldsEmpty &&
+			input.BackgroundSummary == "" && input.IELTSPracticeMode == "" &&
+			input.IELTSTopicChoice == "" {
+			return ""
+		}
+		return "none_branch"
+	}
 	switch input.ResolutionKind {
 	case SceneResolutionKindCatalog:
-		return len(input.CatalogSceneIDs) == 1 && customFieldsEmpty
+		if len(input.CatalogSceneIDs) == 1 && customFieldsEmpty {
+			return ""
+		}
+		return "catalog_branch"
 	case SceneResolutionKindCustom:
-		return len(input.CatalogSceneIDs) == 0 &&
+		if len(input.CatalogSceneIDs) == 0 &&
 			validInputText(input.CustomScenario, 200) &&
 			validCustomExperienceHint(input.CustomExperienceHint) &&
-			input.IELTSPracticeMode == "" && input.IELTSTopicChoice == ""
+			input.IELTSPracticeMode == "" && input.IELTSTopicChoice == "" {
+			return ""
+		}
+		return "custom_branch"
 	case SceneResolutionKindNeedsClarification:
-		return len(input.CatalogSceneIDs) >= 1 && customFieldsEmpty &&
+		if len(input.CatalogSceneIDs) >= 1 && customFieldsEmpty &&
 			input.BackgroundSummary == "" && input.IELTSPracticeMode == "" &&
-			input.IELTSTopicChoice == ""
+			input.IELTSTopicChoice == "" {
+			return ""
+		}
+		return "clarification_branch"
 	default:
-		return false
+		return "resolution_kind"
 	}
 }
 
@@ -415,7 +551,13 @@ func validToolCatalogSceneIDs(ids []string) bool {
 	return true
 }
 
-func (input UnifiedPreviewToolInput) previewInput() PreviewInput {
+func (input UnifiedPreviewToolInput) previewInput(
+	intents ...PracticeTurnIntent,
+) PreviewInput {
+	intent := PracticeTurnIntentRequestCreate
+	if len(intents) == 1 {
+		intent = intents[0]
+	}
 	resolution := SceneResolutionInput{Kind: input.ResolutionKind}
 	if input.ResolutionKind == SceneResolutionKindCatalog {
 		resolution.CatalogSceneID = input.CatalogSceneIDs[0]
@@ -426,7 +568,7 @@ func (input UnifiedPreviewToolInput) previewInput() PreviewInput {
 		)
 	}
 	result := PreviewInput{
-		SceneQuery:        input.SceneQuery,
+		ActionIntent:      intent,
 		SceneResolution:   resolution,
 		BackgroundSummary: input.BackgroundSummary,
 		IELTSPracticeMode: input.IELTSPracticeMode,
@@ -463,9 +605,20 @@ func validOptionalIELTSTopicChoice(value string) bool {
 }
 
 func validPreviewInputShape(input PreviewInput) bool {
-	if !validInputText(input.SceneQuery, 500) ||
-		!validOptionalInputText(input.BackgroundSummary, 6000) ||
+	if !validOptionalInputText(input.BackgroundSummary, 6000) ||
 		!validSceneIntentText(input.SceneIntent) {
+		return false
+	}
+	if input.ActionIntent == PracticeTurnIntentConfirmPending ||
+		input.ActionIntent == PracticeTurnIntentRejectPending {
+		return input.SceneResolution.Kind == SceneResolutionKindNone &&
+			input.SceneResolution.CatalogSceneID == "" &&
+			len(input.SceneResolution.CandidateSceneIDs) == 0 &&
+			input.SceneIntent == nil && input.BackgroundSummary == "" &&
+			input.IELTSPracticeMode == "" && input.IELTSTopicChoice == ""
+	}
+	if input.ActionIntent != PracticeTurnIntentRequestCreate &&
+		input.ActionIntent != PracticeTurnIntentProposeCreate {
 		return false
 	}
 	switch input.SceneResolution.Kind {
@@ -480,10 +633,34 @@ func validPreviewInputShape(input PreviewInput) bool {
 			validInputText(input.SceneIntent.Scenario, 200) &&
 			input.IELTSPracticeMode == "" && input.IELTSTopicChoice == ""
 	case SceneResolutionKindNeedsClarification:
-		return input.SceneResolution.CatalogSceneID == "" &&
+		return input.ActionIntent == PracticeTurnIntentRequestCreate &&
+			input.SceneResolution.CatalogSceneID == "" &&
 			validCandidateSceneIDs(input.SceneResolution.CandidateSceneIDs) &&
 			input.SceneIntent == nil && input.BackgroundSummary == "" &&
 			input.IELTSPracticeMode == "" && input.IELTSTopicChoice == ""
+	default:
+		return false
+	}
+}
+
+func decodePracticeTurnAuthorization(
+	raw json.RawMessage,
+) (PracticeTurnIntent, error) {
+	var authorization struct {
+		Intent PracticeTurnIntent `json:"intent"`
+	}
+	if err := decodePreviewToolInput(raw, &authorization); err != nil ||
+		!validPracticeActionIntent(authorization.Intent) {
+		return "", capability.ErrExecutionRejected
+	}
+	return authorization.Intent, nil
+}
+
+func validPracticeActionIntent(intent PracticeTurnIntent) bool {
+	switch intent {
+	case PracticeTurnIntentRequestCreate, PracticeTurnIntentProposeCreate,
+		PracticeTurnIntentConfirmPending, PracticeTurnIntentRejectPending:
+		return true
 	default:
 		return false
 	}
@@ -671,6 +848,8 @@ func previewToolResult(preview PreviewResult) (capability.Result, error) {
 		PreviewOutcomeRequiresSpecializedFlow:
 		content["required_missing_fields"] = preview.RequiredMissingFields
 		content["catalog_candidates"] = preview.Candidates
+	case PreviewOutcomeActionPending, PreviewOutcomeActionDeclined:
+		content["replayed"] = preview.Replayed
 	default:
 		return capability.Result{}, capability.ErrExecutionRejected
 	}
@@ -721,6 +900,8 @@ func validPreviewResolution(
 	case PreviewOutcomeRequiresSpecializedFlow:
 		return resolution == SceneResolutionRejected &&
 			reason == ResolutionReasonSpecializedFlowRequired
+	case PreviewOutcomeActionPending, PreviewOutcomeActionDeclined:
+		return reason == "" && resolution == SceneResolutionNotRequested
 	default:
 		return false
 	}

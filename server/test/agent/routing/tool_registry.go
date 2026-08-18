@@ -51,6 +51,13 @@ func (ports *routingPorts) PreviewCatalogManifest() preparationcapability.Previe
 	return ports.manifest
 }
 
+func (ports *routingPorts) AuthorizePracticeTurn(
+	context.Context,
+	capability.ExposureRequest,
+) (preparationcapability.PracticeTurnIntent, error) {
+	return preparationcapability.PracticeTurnIntentRequestCreate, nil
+}
+
 func (ports *routingPorts) PreviewPractice(
 	_ context.Context,
 	call capability.CallContext,

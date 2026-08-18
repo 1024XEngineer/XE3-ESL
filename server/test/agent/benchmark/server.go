@@ -37,12 +37,13 @@ func NewHandler(
 	database *pgxpool.Pool,
 	logger *slog.Logger,
 	generator agentrun.TextGenerator,
+	turnIntentGenerator preparationcapability.PracticeTurnIntentGenerator,
 	configuration agentrun.Configuration,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 ) (http.Handler, error) {
 	if ctx == nil || database == nil || logger == nil || generator == nil ||
-		!configuration.Valid() {
+		turnIntentGenerator == nil || !configuration.Valid() {
 		return nil, errors.New("agent benchmark: dependencies are required")
 	}
 
@@ -86,7 +87,9 @@ func NewHandler(
 		return nil, err
 	}
 	fixtureTools := capabilityfixture.Tools(capabilityfixture.NewStore())
-	previewPort, err := newBenchmarkPreviewPort(logger)
+	previewPort, err := newRuntimeBenchmarkPreviewPort(
+		logger, conversationRepository, turnIntentGenerator,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +144,11 @@ func NewHandler(
 }
 
 type benchmarkPreviewPort struct {
-	logger   *slog.Logger
-	manifest preparationcapability.PreviewCatalogManifest
+	logger           *slog.Logger
+	manifest         preparationcapability.PreviewCatalogManifest
+	messages         preparationcapability.TrustedMessageReader
+	turnIntents      *preparationcapability.PracticeTurnIntentResolver
+	authorizedIntent preparationcapability.PracticeTurnIntent
 }
 
 func newBenchmarkPreviewPort(
@@ -152,7 +158,58 @@ func newBenchmarkPreviewPort(
 	if err != nil {
 		return nil, err
 	}
-	return &benchmarkPreviewPort{logger: logger, manifest: manifest}, nil
+	return &benchmarkPreviewPort{
+		logger: logger, manifest: manifest,
+		authorizedIntent: preparationcapability.PracticeTurnIntentRequestCreate,
+	}, nil
+}
+
+func newRuntimeBenchmarkPreviewPort(
+	logger *slog.Logger,
+	messages preparationcapability.TrustedMessageReader,
+	generator preparationcapability.PracticeTurnIntentGenerator,
+) (*benchmarkPreviewPort, error) {
+	if messages == nil || generator == nil {
+		return nil, errors.New("agent benchmark: practice turn dependencies are required")
+	}
+	port, err := newBenchmarkPreviewPort(logger)
+	if err != nil {
+		return nil, err
+	}
+	resolver, err := preparationcapability.NewPracticeTurnIntentResolver(generator)
+	if err != nil {
+		return nil, err
+	}
+	port.messages = messages
+	port.turnIntents = resolver
+	port.authorizedIntent = ""
+	return port, nil
+}
+
+func (port *benchmarkPreviewPort) AuthorizePracticeTurn(
+	ctx context.Context,
+	request capability.ExposureRequest,
+) (preparationcapability.PracticeTurnIntent, error) {
+	if port == nil || ctx == nil || !request.Actor.Valid() ||
+		request.ThreadID == "" || request.RunID == "" ||
+		request.InputMessageID == "" {
+		return "", capability.ErrExecutionRejected
+	}
+	if port.authorizedIntent != "" {
+		return port.authorizedIntent, nil
+	}
+	if port.messages == nil || port.turnIntents == nil {
+		return "", capability.ErrExecutionRejected
+	}
+	message, err := port.messages.FindMessage(
+		ctx, request.Actor.UserID, request.ThreadID, request.InputMessageID,
+	)
+	if err != nil || message.Role != agentconversation.MessageRoleUser ||
+		message.ID != request.InputMessageID || message.ThreadID != request.ThreadID ||
+		message.OwnerID != request.Actor.UserID || message.Sequence < 1 {
+		return "", capability.ErrExecutionRejected
+	}
+	return port.turnIntents.Resolve(ctx, message.Content, false)
 }
 
 func (port *benchmarkPreviewPort) PreviewCatalogManifest() preparationcapability.PreviewCatalogManifest {

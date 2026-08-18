@@ -75,9 +75,7 @@ func BaselineCases() []RoutingCase {
 			ExpectedDecision:  DecisionToolCall,
 			ExpectedToolNames: []string{preparationcapability.PracticePreviewToolName},
 			ExpectedArgs: map[string]map[string]any{
-				preparationcapability.PracticePreviewToolName: {
-					"scene_query": "先预览一下面试英文自我介绍的练习方案",
-				},
+				preparationcapability.PracticePreviewToolName: {},
 			},
 			ExpectedPreviewInput: &PreviewInputRecord{
 				Kind:           preparationcapability.SceneResolutionKindCatalog,

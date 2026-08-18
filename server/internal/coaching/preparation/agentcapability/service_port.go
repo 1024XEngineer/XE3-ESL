@@ -2,8 +2,10 @@ package agentcapability
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -11,15 +13,23 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 type ServicePort struct {
-	plans    PlanApplication
-	catalog  scene.PreviewCatalog
-	manifest PreviewCatalogManifest
+	plans          PlanApplication
+	catalog        scene.PreviewCatalog
+	messages       TrustedMessageReader
+	pendingActions preparation.PendingActionRepository
+	turnIntents    *PracticeTurnIntentResolver
+	manifest       PreviewCatalogManifest
+}
+
+type TrustedMessageReader interface {
+	FindMessage(context.Context, string, string, string) (agentconversation.Message, error)
 }
 
 type PlanApplication interface {
@@ -41,10 +51,14 @@ func NewServicePort(
 	ctx context.Context,
 	plans PlanApplication,
 	catalog scene.PreviewCatalog,
+	messages TrustedMessageReader,
+	pendingActions preparation.PendingActionRepository,
+	turnIntentGenerator PracticeTurnIntentGenerator,
 ) (*ServicePort, error) {
-	if ctx == nil || plans == nil || catalog == nil {
+	if ctx == nil || plans == nil || catalog == nil || messages == nil ||
+		pendingActions == nil || turnIntentGenerator == nil {
 		return nil, errors.New(
-			"preparation agent capability: context, plans, and catalog are required",
+			"preparation agent capability: preview dependencies are required",
 		)
 	}
 	source, err := catalog.PreviewCatalogManifest(ctx)
@@ -55,7 +69,55 @@ func NewServicePort(
 	if err != nil {
 		return nil, err
 	}
-	return &ServicePort{plans: plans, catalog: catalog, manifest: manifest}, nil
+	turnIntents, err := NewPracticeTurnIntentResolver(turnIntentGenerator)
+	if err != nil {
+		return nil, err
+	}
+	return &ServicePort{
+		plans: plans, catalog: catalog, messages: messages,
+		pendingActions: pendingActions, turnIntents: turnIntents,
+		manifest: manifest,
+	}, nil
+}
+
+func (port *ServicePort) AuthorizePracticeTurn(
+	ctx context.Context,
+	request capability.ExposureRequest,
+) (PracticeTurnIntent, error) {
+	if port == nil || port.messages == nil || port.pendingActions == nil ||
+		port.turnIntents == nil || ctx == nil || !request.Actor.Valid() ||
+		request.ThreadID == "" || request.RunID == "" ||
+		request.InputMessageID == "" {
+		return "", capability.ErrExecutionRejected
+	}
+	message, err := port.messages.FindMessage(
+		ctx,
+		request.Actor.UserID,
+		request.ThreadID,
+		request.InputMessageID,
+	)
+	if err != nil || message.Role != agentconversation.MessageRoleUser ||
+		message.ID != request.InputMessageID ||
+		message.ThreadID != request.ThreadID ||
+		message.OwnerID != request.Actor.UserID || message.Sequence < 1 {
+		return "", capability.ErrExecutionRejected
+	}
+	pendingAvailable := false
+	if message.Sequence >= 3 {
+		pendingAvailable, err = port.pendingActions.HasOpenForReply(
+			ctx, request.Actor, request.ThreadID, message.Sequence,
+		)
+		if err != nil {
+			return "", mapPreparationToolError(err)
+		}
+	}
+	intent, err := port.turnIntents.Resolve(
+		ctx, message.Content, pendingAvailable,
+	)
+	if err != nil {
+		return "", err
+	}
+	return intent, nil
 }
 
 // NewPreviewCatalogManifest validates and freezes the trusted Scene manifest
@@ -123,13 +185,44 @@ func (port *ServicePort) PreviewPractice(
 	input PreviewInput,
 ) (PreviewResult, error) {
 	if port == nil || port.plans == nil || port.catalog == nil ||
+		port.messages == nil || port.pendingActions == nil || port.turnIntents == nil ||
 		ctx == nil || !call.Actor.Valid() ||
-		call.ThreadID == "" || call.RequestID == "" {
+		call.ThreadID == "" || call.RunID == "" || call.InputMessageID == "" ||
+		call.RequestID == "" {
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
 	if !validPreviewInputShape(input) {
 		return PreviewResult{}, capability.ErrInvalidInput
 	}
+	message, err := port.messages.FindMessage(
+		ctx, call.Actor.UserID, call.ThreadID, call.InputMessageID,
+	)
+	if err != nil || message.Role != agentconversation.MessageRoleUser ||
+		message.ID != call.InputMessageID || message.ThreadID != call.ThreadID ||
+		message.OwnerID != call.Actor.UserID || message.Sequence < 1 {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	input.SceneQuery = message.Content
+	input.InputSequence = message.Sequence
+	switch input.ActionIntent {
+	case PracticeTurnIntentProposeCreate:
+		return port.previewPendingAction(ctx, call, input)
+	case PracticeTurnIntentConfirmPending:
+		return port.resolvePendingAction(ctx, call, input, true)
+	case PracticeTurnIntentRejectPending:
+		return port.resolvePendingAction(ctx, call, input, false)
+	case PracticeTurnIntentRequestCreate:
+		return port.previewRequestedPractice(ctx, call, input)
+	default:
+		return PreviewResult{}, capability.ErrInvalidInput
+	}
+}
+
+func (port *ServicePort) previewRequestedPractice(
+	ctx context.Context,
+	call capability.CallContext,
+	input PreviewInput,
+) (PreviewResult, error) {
 	switch input.SceneResolution.Kind {
 	case SceneResolutionKindCatalog:
 		return port.previewCatalogPractice(ctx, call, input)
@@ -139,6 +232,163 @@ func (port *ServicePort) PreviewPractice(
 		return port.previewClarification(ctx, input.SceneResolution.CandidateSceneIDs)
 	default:
 		return PreviewResult{}, capability.ErrInvalidInput
+	}
+}
+
+type pendingPracticeProposal struct {
+	SceneQuery        string               `json:"scene_query"`
+	SceneResolution   SceneResolutionInput `json:"scene_resolution"`
+	SceneIntent       *SceneIntent         `json:"scene_intent,omitempty"`
+	BackgroundSummary string               `json:"background_summary,omitempty"`
+	IELTSPracticeMode string               `json:"ielts_practice_mode,omitempty"`
+	IELTSTopicChoice  string               `json:"ielts_topic_choice,omitempty"`
+}
+
+func (port *ServicePort) previewPendingAction(
+	ctx context.Context,
+	call capability.CallContext,
+	input PreviewInput,
+) (PreviewResult, error) {
+	name, blocking, err := port.validatePendingProposal(ctx, input)
+	if err != nil || blocking != nil {
+		if blocking != nil {
+			return *blocking, nil
+		}
+		return PreviewResult{}, err
+	}
+	proposal := pendingPracticeProposal{
+		SceneQuery: input.SceneQuery, SceneResolution: input.SceneResolution,
+		SceneIntent: input.SceneIntent, BackgroundSummary: input.BackgroundSummary,
+		IELTSPracticeMode: input.IELTSPracticeMode, IELTSTopicChoice: input.IELTSTopicChoice,
+	}
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	_, replayed, err := port.pendingActions.CreateOrReplay(
+		ctx, call.Actor, preparation.CreatePendingActionCommand{
+			ThreadID: call.ThreadID, SourceRunID: call.RunID,
+			SourceInputMessageID: call.InputMessageID,
+			SourceInputSequence:  input.InputSequence, Proposal: encoded,
+			ProposalFingerprint: sha256.Sum256(encoded),
+		},
+	)
+	if err != nil {
+		return PreviewResult{}, mapPreparationToolError(err)
+	}
+	return PreviewResult{
+		Status: PreviewOutcomeActionPending, SceneResolution: SceneResolutionNotRequested,
+		Replayed: replayed, AssistantText: "你是想现在创建“" + name + "”练习吗？",
+	}, nil
+}
+
+func (port *ServicePort) resolvePendingAction(
+	ctx context.Context,
+	call capability.CallContext,
+	input PreviewInput,
+	confirm bool,
+) (PreviewResult, error) {
+	pending, replayed, err := port.pendingActions.ClaimForReply(
+		ctx, call.Actor, preparation.ResolvePendingActionCommand{
+			ThreadID: call.ThreadID, ResolutionInputMessageID: call.InputMessageID,
+			ResolutionInputSequence: input.InputSequence, Confirm: confirm,
+		},
+	)
+	if err != nil {
+		return PreviewResult{}, mapPreparationToolError(err)
+	}
+	if !confirm {
+		return PreviewResult{
+			Status: PreviewOutcomeActionDeclined, SceneResolution: SceneResolutionNotRequested,
+			Replayed: replayed, AssistantText: "好的，这次先不创建练习。",
+		}, nil
+	}
+	proposal, err := decodePendingPracticeProposal(pending.Proposal)
+	if err != nil {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	request := PreviewInput{
+		ActionIntent: PracticeTurnIntentRequestCreate,
+		SceneQuery:   proposal.SceneQuery, InputSequence: pending.SourceInputSequence,
+		SceneResolution: proposal.SceneResolution, SceneIntent: proposal.SceneIntent,
+		BackgroundSummary: proposal.BackgroundSummary,
+		IELTSPracticeMode: proposal.IELTSPracticeMode, IELTSTopicChoice: proposal.IELTSTopicChoice,
+	}
+	resolvedCall := call
+	resolvedCall.RequestID = "pending:" + pending.ID
+	result, err := port.previewRequestedPractice(ctx, resolvedCall, request)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	if result.Status != PreviewOutcomeReady {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	if _, err = port.pendingActions.CompleteConfirmation(
+		ctx, call.Actor, pending.ID, call.InputMessageID, result.PlanID,
+	); err != nil {
+		return PreviewResult{}, mapPreparationToolError(err)
+	}
+	result.Replayed = result.Replayed || replayed
+	return result, nil
+}
+
+func decodePendingPracticeProposal(raw []byte) (pendingPracticeProposal, error) {
+	var proposal pendingPracticeProposal
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&proposal); err != nil {
+		return pendingPracticeProposal{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return pendingPracticeProposal{}, capability.ErrInvalidInput
+	}
+	input := PreviewInput{
+		ActionIntent: PracticeTurnIntentRequestCreate,
+		SceneQuery:   proposal.SceneQuery, SceneResolution: proposal.SceneResolution,
+		SceneIntent: proposal.SceneIntent, BackgroundSummary: proposal.BackgroundSummary,
+		IELTSPracticeMode: proposal.IELTSPracticeMode, IELTSTopicChoice: proposal.IELTSTopicChoice,
+	}
+	if !validInputText(proposal.SceneQuery, 500) || !validPreviewInputShape(input) {
+		return pendingPracticeProposal{}, capability.ErrInvalidInput
+	}
+	return proposal, nil
+}
+
+func (port *ServicePort) validatePendingProposal(
+	ctx context.Context,
+	input PreviewInput,
+) (string, *PreviewResult, error) {
+	switch input.SceneResolution.Kind {
+	case SceneResolutionKindCatalog:
+		selection, err := port.catalog.ResolvePreviewCatalogSelection(
+			ctx, input.SceneResolution.CatalogSceneID,
+		)
+		if err != nil {
+			return "", nil, mapPreparationToolError(err)
+		}
+		if !selection.Valid() || selection.Scene.ID != input.SceneResolution.CatalogSceneID {
+			return "", nil, capability.ErrExecutionRejected
+		}
+		candidate := previewCatalogCandidate(selection)
+		_, details := catalogPreviewOption(input, candidate)
+		if len(details) > 0 {
+			result := PreviewResult{
+				Status: PreviewOutcomeNeedsDetails, SceneResolution: SceneResolutionNeedsDetails,
+				CatalogCandidateCount: 1, RequiredMissingFields: details,
+				Candidates: []CatalogCandidate{candidate}, AssistantText: catalogDetailsQuestion(details),
+			}
+			return "", &result, nil
+		}
+		return candidate.Name, nil, nil
+	case SceneResolutionKindCustom:
+		result, err := validateCustomProposal(input)
+		if err != nil || result != nil {
+			return "", result, err
+		}
+		return strings.TrimSpace(input.SceneIntent.Scenario), nil, nil
+	default:
+		return "", nil, capability.ErrInvalidInput
 	}
 }
 
@@ -234,28 +484,14 @@ func (port *ServicePort) previewCustomPractice(
 	call capability.CallContext,
 	input PreviewInput,
 ) (PreviewResult, error) {
+	blocking, err := validateCustomProposal(input)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	if blocking != nil {
+		return *blocking, nil
+	}
 	experience := scene.PracticeExperience(input.SceneIntent.ExperienceHint)
-	if isRestrictedPracticeExperience(experience) {
-		return PreviewResult{
-			Status:           PreviewOutcomeRequiresSpecializedFlow,
-			SceneResolution:  SceneResolutionRejected,
-			ResolutionReason: ResolutionReasonSpecializedFlowRequired,
-			AssistantText: "面试和雅思练习使用各自的正式准备流程。" +
-				"请选择目录中的面试或雅思场景。",
-		}, nil
-	}
-	if experience == "" {
-		return PreviewResult{
-			Status:                PreviewOutcomeNeedsDetails,
-			SceneResolution:       SceneResolutionNeedsDetails,
-			RequiredMissingFields: []string{"experience_hint"},
-			AssistantText:         "这个目录外场景属于职场还是生活旅行英语？",
-		}, nil
-	}
-	if experience != scene.PracticeExperienceWorkplace &&
-		experience != scene.PracticeExperienceLifeAndTravel {
-		return PreviewResult{}, capability.ErrInvalidInput
-	}
 	intent := input.SceneIntent
 	spec, err := (scene.CustomSceneCompiler{}).Compile(scene.CustomSceneDraft{
 		Scenario:       strings.TrimSpace(intent.Scenario),
@@ -281,6 +517,39 @@ func (port *ServicePort) previewCustomPractice(
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
 	return readyPreviewResult(plan, replayed, PreviewPlanSourceCustom)
+}
+
+func validateCustomProposal(input PreviewInput) (*PreviewResult, error) {
+	experience := scene.PracticeExperience(input.SceneIntent.ExperienceHint)
+	if isRestrictedPracticeExperience(experience) {
+		return &PreviewResult{
+			Status:           PreviewOutcomeRequiresSpecializedFlow,
+			SceneResolution:  SceneResolutionRejected,
+			ResolutionReason: ResolutionReasonSpecializedFlowRequired,
+			AssistantText: "面试和雅思练习使用各自的正式准备流程。" +
+				"请选择目录中的面试或雅思场景。",
+		}, nil
+	}
+	if experience == "" {
+		return &PreviewResult{
+			Status: PreviewOutcomeNeedsDetails, SceneResolution: SceneResolutionNeedsDetails,
+			RequiredMissingFields: []string{"experience_hint"},
+			AssistantText:         "这个目录外场景属于职场还是生活旅行英语？",
+		}, nil
+	}
+	if experience != scene.PracticeExperienceWorkplace &&
+		experience != scene.PracticeExperienceLifeAndTravel {
+		return nil, capability.ErrInvalidInput
+	}
+	intent := input.SceneIntent
+	if _, err := (scene.CustomSceneCompiler{}).Compile(scene.CustomSceneDraft{
+		Scenario: strings.TrimSpace(intent.Scenario), UserRole: strings.TrimSpace(intent.UserRole),
+		AIRole: strings.TrimSpace(intent.AIRole), PracticeGoal: strings.TrimSpace(intent.PracticeGoal),
+		ExperienceHint: experience,
+	}); err != nil {
+		return nil, mapPreparationToolError(err)
+	}
+	return nil, nil
 }
 
 func (port *ServicePort) previewClarification(
@@ -600,11 +869,14 @@ func mapPreparationToolError(err error) error {
 	case errors.Is(err, scene.ErrSceneNotFound),
 		errors.Is(err, scene.ErrCatalogSelectionInvalid),
 		errors.Is(err, scene.ErrCustomSceneInvalid),
-		errors.Is(err, preparation.ErrPlanInvalid):
+		errors.Is(err, preparation.ErrPlanInvalid),
+		errors.Is(err, preparation.ErrPendingActionInvalid):
 		return capability.ErrInvalidInput
 	case errors.Is(err, preparation.ErrPlanNotFound),
 		errors.Is(err, preparation.ErrPlanConflict),
-		errors.Is(err, preparation.ErrPlanIdempotencyConflict):
+		errors.Is(err, preparation.ErrPlanIdempotencyConflict),
+		errors.Is(err, preparation.ErrPendingActionNotFound),
+		errors.Is(err, preparation.ErrPendingActionConflict):
 		return capability.ErrExecutionRejected
 	default:
 		return err

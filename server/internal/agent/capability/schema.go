@@ -53,6 +53,8 @@ type CallContext struct {
 	InputMessageID string
 	ToolCallID     string
 	RequestID      string
+	Authorization  json.RawMessage
+	InputSchema    map[string]any
 }
 
 type Invocation struct {
@@ -79,6 +81,13 @@ type InvocationEffectClassifier interface {
 	ClassifyInvocationEffect(
 		input json.RawMessage,
 	) (InvocationEffect, error)
+}
+
+// DiagnosticError exposes a stable, non-sensitive failure code to structured
+// logs. Implementations must never include user-authored values in the code.
+type DiagnosticError interface {
+	error
+	DiagnosticCode() string
 }
 
 // TurnOutcome tells the Agent loop whether a successful capability result has

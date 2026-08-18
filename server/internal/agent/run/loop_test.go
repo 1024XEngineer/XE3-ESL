@@ -60,6 +60,71 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 	}
 }
 
+func TestRunLoopConversationalGateSkipsFinalResponseTool(t *testing.T) {
+	generator := newScriptedGenerator(
+		finalLoopResult("planning"),
+		finalLoopResult("natural reply"),
+	)
+	guarded := &conversationalGuardedTool{}
+	registry, err := capability.NewRegistry(guarded)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	service := &Service{
+		repository: loopRepository{}, generator: generator,
+		configuration: Configuration{
+			Provider: "fake", Model: "configured-model",
+			MaxOutputTokens: 512, MaxInputCharacters: 12000,
+		},
+		registry: registry, executor: capability.NewExecutor(registry),
+		loopLimits: normalizeLoopLimits(LoopLimits{LoopTimeout: time.Second}),
+	}
+	run := loopRun()
+	run.InputMessageID = "message-1"
+	result, err := service.generate(
+		context.Background(), loopActor(), run,
+		agentcontext.Manifest{}, loopRequest("我最近在准备雅思"),
+	)
+	if err != nil || result.Content != "natural reply" {
+		t.Fatalf("generate() = %#v, %v", result, err)
+	}
+	requests := generator.Requests()
+	if len(requests) != 2 || requests[0].ToolChoice.Mode != ToolChoiceAuto ||
+		len(requests[0].Tools) != 0 ||
+		requests[1].ToolChoice.Mode != ToolChoiceNone {
+		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+type conversationalGuardedTool struct{}
+
+func (*conversationalGuardedTool) Definition() capability.Definition {
+	return capability.Definition{
+		Name: "practice.preview.v3", Description: "guarded practice preview",
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"query": capability.TextSchema("query", 100),
+		}, []string{"query"}),
+		ReadOnly: false, Risk: capability.RiskLowRiskWrite,
+	}
+}
+
+func (*conversationalGuardedTool) AuthorizeExposure(
+	context.Context,
+	capability.ExposureRequest,
+) (capability.ExposureDecision, error) {
+	return capability.ExposureDecision{
+		Expose: false, AuditLabel: "CONVERSE",
+	}, nil
+}
+
+func (*conversationalGuardedTool) Execute(
+	context.Context,
+	capability.CallContext,
+	json.RawMessage,
+) (capability.Result, error) {
+	panic("conversational guarded tool must not execute")
+}
+
 func TestFinalResponseControlRequiresExplicitDecision(t *testing.T) {
 	definition := finalResponseToolDefinition()
 	validArguments := json.RawMessage(`{"decision":"respond"}`)
