@@ -195,6 +195,13 @@ type ClaimQuestionTipCommand struct {
 	LeaseDuration  time.Duration
 }
 
+type RenewQuestionTipLeaseCommand struct {
+	TipID              string
+	FencingToken       int64
+	DeletionGeneration int64
+	LeaseDuration      time.Duration
+}
+
 type CompleteQuestionTipCommand struct {
 	TipID              string
 	FencingToken       int64
@@ -218,6 +225,11 @@ type QuestionTipStore interface {
 		Actor,
 		ClaimQuestionTipCommand,
 	) (QuestionTip, error)
+	RenewQuestionTipLease(
+		context.Context,
+		Actor,
+		RenewQuestionTipLeaseCommand,
+	) error
 	GetQuestionTip(
 		context.Context,
 		Actor,

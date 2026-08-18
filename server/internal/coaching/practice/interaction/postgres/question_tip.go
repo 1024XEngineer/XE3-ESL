@@ -158,6 +158,46 @@ func (r *Repository) GetQuestionTip(
 	return tip, nil
 }
 
+func (r *Repository) RenewQuestionTipLease(
+	ctx context.Context,
+	actor practiceinteraction.Actor,
+	command practiceinteraction.RenewQuestionTipLeaseCommand,
+) error {
+	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
+		strings.TrimSpace(command.TipID) == "" || command.FencingToken <= 0 ||
+		command.DeletionGeneration != 0 || command.LeaseDuration <= 0 {
+		return practiceinteraction.ErrPersistenceInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := ensureActorWritable(ctx, tx, actor.UserID); err != nil {
+		return err
+	}
+	now := databaseTime(r.now)
+	tag, err := tx.Exec(ctx, `
+		UPDATE practice_questions q
+		SET tip_lease_expires_at = $4, updated_at = $5
+		FROM practice_sessions s
+		WHERE s.session_id=q.session_id AND s.user_id = $1 AND q.tip_id = $2
+		  AND q.tip_status = 'processing' AND q.tip_fencing_token = $3
+		  AND q.tip_lease_expires_at > $5
+	`, actor.UserID, command.TipID, command.FencingToken,
+		now.Add(command.LeaseDuration), now)
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return practiceinteraction.ErrPersistenceConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return safeDatabaseError(err)
+	}
+	return nil
+}
+
 func (r *Repository) CompleteQuestionTip(
 	ctx context.Context,
 	actor practiceinteraction.Actor,

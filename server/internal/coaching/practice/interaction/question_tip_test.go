@@ -3,6 +3,7 @@ package interaction
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,19 +103,104 @@ func TestQuestionTipTranslationFailureDoesNotPersistPartialTip(t *testing.T) {
 	}
 }
 
+func TestQuestionTipRenewsLeaseAcrossGenerationAndTranslation(t *testing.T) {
+	store := &questionTipStoreStub{}
+	generator := &answerTipGeneratorStub{
+		delay: 35 * time.Millisecond,
+		result: AnswerTipGenerationResult{
+			RequestID: "tip-request-1", Provider: "qianwen", Model: "qwen-plus",
+			Content: "I would explain the result clearly.",
+		},
+	}
+	translator := &questionTipTranslatorStub{
+		delay:   35 * time.Millisecond,
+		content: "我会清楚地说明结果。",
+	}
+	service, err := NewQuestionTipService(store, generator, translator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.leaseDuration = 30 * time.Millisecond
+	service.leaseRenewInterval = 5 * time.Millisecond
+	service.leaseRenewTimeout = 20 * time.Millisecond
+
+	result, err := service.EnsureQuestionTip(
+		context.Background(),
+		requestcontext.Actor{UserID: "user-1", SessionID: "auth-session-1"},
+		Session{ID: "session-1", QuestionTipsAllowed: true},
+		practice.Question{ID: "question-1", SessionID: "session-1", Content: "What happened?"},
+		nil,
+		"tip-operation-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Translation != translator.content || store.renewCalls.Load() < 2 {
+		t.Fatalf("result=%#v renewals=%d", result, store.renewCalls.Load())
+	}
+	if store.completeCalls != 1 || store.failCalls != 0 {
+		t.Fatalf("complete=%d fail=%d", store.completeCalls, store.failCalls)
+	}
+}
+
+func TestQuestionTipLeaseRenewalFailureCancelsProviderAndRejectsResult(t *testing.T) {
+	store := &questionTipStoreStub{renewErr: ErrPersistenceConflict}
+	generator := &answerTipGeneratorStub{
+		delay: time.Second,
+		result: AnswerTipGenerationResult{
+			RequestID: "tip-request-1", Provider: "qianwen", Model: "qwen-plus",
+			Content: "This result must not be persisted.",
+		},
+	}
+	translator := &questionTipTranslatorStub{content: "不得保存此结果。"}
+	service, err := NewQuestionTipService(store, generator, translator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.leaseDuration = 30 * time.Millisecond
+	service.leaseRenewInterval = 5 * time.Millisecond
+	service.leaseRenewTimeout = 20 * time.Millisecond
+
+	_, err = service.EnsureQuestionTip(
+		context.Background(),
+		requestcontext.Actor{UserID: "user-1", SessionID: "auth-session-1"},
+		Session{ID: "session-1", QuestionTipsAllowed: true},
+		practice.Question{ID: "question-1", SessionID: "session-1", Content: "What happened?"},
+		nil,
+		"tip-operation-1",
+	)
+	if !errors.Is(err, ErrVoiceRoundConflict) {
+		t.Fatalf("error=%v", err)
+	}
+	if store.renewCalls.Load() != 1 || store.completeCalls != 0 || store.failCalls != 0 {
+		t.Fatalf(
+			"renew=%d complete=%d fail=%d",
+			store.renewCalls.Load(), store.completeCalls, store.failCalls,
+		)
+	}
+	if translator.calls != 0 {
+		t.Fatalf("translation calls=%d", translator.calls)
+	}
+}
+
 type questionTipStoreStub struct {
 	completed     CompleteQuestionTipCommand
 	completeCalls int
 	failCalls     int
+	renewCalls    atomic.Int32
+	leaseExpiry   atomic.Int64
+	renewErr      error
 }
 
-func (*questionTipStoreStub) ClaimQuestionTip(_ context.Context, _ Actor, command ClaimQuestionTipCommand) (QuestionTip, error) {
-	now := time.Date(2026, 8, 17, 8, 0, 0, 0, time.UTC)
+func (store *questionTipStoreStub) ClaimQuestionTip(_ context.Context, _ Actor, command ClaimQuestionTipCommand) (QuestionTip, error) {
+	now := time.Now().UTC()
+	leaseExpiresAt := now.Add(command.LeaseDuration)
+	store.leaseExpiry.Store(leaseExpiresAt.UnixNano())
 	return QuestionTip{
 		ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", SessionID: command.SessionID,
 		QuestionID: command.QuestionID, IdempotencyKey: command.IdempotencyKey,
 		Status: QuestionTipProcessing, FencingToken: 1, LeaseAcquired: true,
-		LeaseExpiresAt: now.Add(time.Minute), CreatedAt: now, UpdatedAt: now,
+		LeaseExpiresAt: leaseExpiresAt, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
@@ -122,7 +208,22 @@ func (*questionTipStoreStub) GetQuestionTip(context.Context, Actor, string, stri
 	return QuestionTip{}, ErrPersistenceNotFound
 }
 
+func (store *questionTipStoreStub) RenewQuestionTipLease(
+	_ context.Context,
+	_ Actor,
+	command RenewQuestionTipLeaseCommand,
+) error {
+	store.renewCalls.Add(1)
+	if store.renewErr == nil {
+		store.leaseExpiry.Store(time.Now().Add(command.LeaseDuration).UnixNano())
+	}
+	return store.renewErr
+}
+
 func (store *questionTipStoreStub) CompleteQuestionTip(_ context.Context, _ Actor, command CompleteQuestionTipCommand) (QuestionTip, error) {
+	if expiry := store.leaseExpiry.Load(); expiry > 0 && time.Now().UnixNano() >= expiry {
+		return QuestionTip{}, ErrPersistenceConflict
+	}
 	store.completeCalls++
 	store.completed = command
 	now := time.Date(2026, 8, 17, 8, 0, 0, 0, time.UTC)
@@ -143,10 +244,18 @@ type answerTipGeneratorStub struct {
 	result AnswerTipGenerationResult
 	err    error
 	calls  int
+	delay  time.Duration
 }
 
-func (generator *answerTipGeneratorStub) GenerateAnswerTip(context.Context, AnswerTipGenerationRequest) (AnswerTipGenerationResult, error) {
+func (generator *answerTipGeneratorStub) GenerateAnswerTip(ctx context.Context, _ AnswerTipGenerationRequest) (AnswerTipGenerationResult, error) {
 	generator.calls++
+	if generator.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return AnswerTipGenerationResult{}, ctx.Err()
+		case <-time.After(generator.delay):
+		}
+	}
 	return generator.result, generator.err
 }
 
@@ -155,10 +264,18 @@ type questionTipTranslatorStub struct {
 	err     error
 	request sharedtranslation.Request
 	calls   int
+	delay   time.Duration
 }
 
-func (translator *questionTipTranslatorStub) Translate(_ context.Context, request sharedtranslation.Request) (string, error) {
+func (translator *questionTipTranslatorStub) Translate(ctx context.Context, request sharedtranslation.Request) (string, error) {
 	translator.calls++
 	translator.request = request
+	if translator.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(translator.delay):
+		}
+	}
 	return translator.content, translator.err
 }
