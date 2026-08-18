@@ -130,15 +130,66 @@ func seedRetryFeedback(
 	store *evaluationpostgres.Store,
 ) []evaluation.FeedbackItem {
 	t.Helper()
+	return seedRetryFeedbackFor(
+		t,
+		store,
+		retryFeedbackFixture{
+			UserID:     retryUserID,
+			SessionID:  retrySessionID,
+			QuestionID: retryQuestionID,
+			TurnID:     retryTurnID,
+			Transcript: "I led the migration and explained the tradeoffs.",
+		},
+		[]evaluation.FeedbackItemDraft{
+			{
+				Category: "CORRECTION", Severity: "MEDIUM",
+				Evidence: evaluation.FeedbackEvidence{
+					EvidenceRefID: retryTurnID, StartUTF8Byte: 0,
+					EndUTF8Byte: 1, OriginalExcerpt: "I",
+				},
+				Recommendation: "Add a clearer result.",
+				Correction:     "I led the migration, reducing deployment time.",
+				RepracticeMode: "SAME_QUESTION",
+			},
+			{
+				Category: "RECOMMENDED_EXPRESSION", Severity: "LOW",
+				Evidence: evaluation.FeedbackEvidence{
+					EvidenceRefID: retryTurnID, StartUTF8Byte: 0,
+					EndUTF8Byte: 1, OriginalExcerpt: "I",
+				},
+				Recommendation: "Make the tradeoff explicit.",
+				Correction:     "The main tradeoff was speed versus migration risk.",
+				RepracticeMode: "SAME_QUESTION",
+			},
+		},
+	)
+}
+
+type retryFeedbackFixture struct {
+	UserID     string
+	SessionID  string
+	QuestionID string
+	TurnID     string
+	Transcript string
+}
+
+func seedRetryFeedbackFor(
+	t *testing.T,
+	store *evaluationpostgres.Store,
+	fixture retryFeedbackFixture,
+	items []evaluation.FeedbackItemDraft,
+) []evaluation.FeedbackItem {
+	t.Helper()
 	acoustic := evaluation.AcousticCheckpoint{
 		Status: evaluation.AcousticNotAssessed,
 		Reason: "ACOUSTIC_ASSESSMENT_NOT_CONFIGURED",
 	}
 	input, inputHash, err := evaluation.EncodeStrict(evaluation.SpeechInputSnapshot{
 		SchemaVersion: evaluation.SpeechInputSchemaVersion,
-		Transcript:    "I led the migration and explained the tradeoffs.",
-		EvidenceRefID: retryTurnID, QuestionID: retryQuestionID,
-		Acoustic: &acoustic,
+		Transcript:    fixture.Transcript,
+		EvidenceRefID: fixture.TurnID,
+		QuestionID:    fixture.QuestionID,
+		Acoustic:      &acoustic,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +204,8 @@ func seedRetryFeedback(
 		t.Fatal(err)
 	}
 	record, _, err := store.Queue(context.Background(), evaluation.QueueCommand{
-		UserID: retryUserID, Kind: evaluation.KindPracticeTurnFeedback,
-		SourceID: retryTurnID, ContextID: retrySessionID,
+		UserID: fixture.UserID, Kind: evaluation.KindPracticeTurnFeedback,
+		SourceID: fixture.TurnID, ContextID: fixture.SessionID,
 		InputSnapshot: input, InputHash: inputHash,
 		ConfigLineage: lineage, ConfigHash: lineageHash,
 		AvailableAt: time.Now().UTC().Add(-time.Second),
@@ -176,36 +227,14 @@ func seedRetryFeedback(
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := []evaluation.FeedbackItemDraft{
-		{
-			Category: "CORRECTION", Severity: "MEDIUM",
-			Evidence: evaluation.FeedbackEvidence{
-				EvidenceRefID: retryTurnID, StartUTF8Byte: 0,
-				EndUTF8Byte: 1, OriginalExcerpt: "I",
-			},
-			Recommendation: "Add a clearer result.",
-			Correction:     "I led the migration, reducing deployment time.",
-			RepracticeMode: "SAME_QUESTION",
-		},
-		{
-			Category: "RECOMMENDED_EXPRESSION", Severity: "LOW",
-			Evidence: evaluation.FeedbackEvidence{
-				EvidenceRefID: retryTurnID, StartUTF8Byte: 0,
-				EndUTF8Byte: 1, OriginalExcerpt: "I",
-			},
-			Recommendation: "Make the tradeoff explicit.",
-			Correction:     "The main tradeoff was speed versus migration risk.",
-			RepracticeMode: "SAME_QUESTION",
-		},
-	}
 	if err := store.CompleteClaim(context.Background(), evaluation.Completion{
-		UserID: retryUserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+		UserID: fixture.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
 		Result: result, Items: items,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := store.ListFeedbackItems(context.Background(), retryUserID, claim.ID)
-	if err != nil || len(stored) != 2 {
+	stored, err := store.ListFeedbackItems(context.Background(), fixture.UserID, claim.ID)
+	if err != nil || len(stored) != len(items) {
 		t.Fatalf("ListFeedbackItems = %#v, %v", stored, err)
 	}
 	return stored

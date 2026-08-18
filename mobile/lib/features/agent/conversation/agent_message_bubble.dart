@@ -11,7 +11,7 @@ import 'agent_models.dart';
 import 'agent_message_audio_controller.dart';
 
 typedef AgentClientActionBuilder =
-    Widget Function(BuildContext context, AgentClientAction action);
+    Widget? Function(BuildContext context, AgentClientAction action);
 
 final class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
@@ -110,6 +110,13 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   @override
   Widget build(BuildContext context) {
     final message = widget.message;
+    final actionBuilder = widget.clientActionBuilder;
+    final clientActionWidgets = actionBuilder == null
+        ? const <Widget>[]
+        : message.clientActions
+              .map((action) => actionBuilder(context, action))
+              .whereType<Widget>()
+              .toList(growable: false);
     final isUser = message.role == AgentMessageRole.user;
     final voiceNeedsBottomInset =
         isUser &&
@@ -127,7 +134,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final bubble = ConversationBubbleSurface(
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
-      margin: message.clientActions.isEmpty
+      margin: clientActionWidgets.isEmpty
           ? const EdgeInsets.only(bottom: 7)
           : EdgeInsets.zero,
       padding: isUser && message.modality == AgentMessageModality.voice
@@ -135,7 +142,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           : null,
       child: primaryContent,
     );
-    if (message.clientActions.isEmpty || widget.clientActionBuilder == null) {
+    if (clientActionWidgets.isEmpty) {
       return bubble;
     }
     return Padding(
@@ -146,8 +153,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         children: [
           bubble,
           const SizedBox(height: 10),
-          for (final action in message.clientActions)
-            widget.clientActionBuilder!(context, action),
+          for (final action in clientActionWidgets) action,
         ],
       ),
     );

@@ -353,9 +353,11 @@ bool _matchesPlan(ConfirmPracticePlanClientAction action, PracticePlan plan) {
       plan.sessionPolicy.maxEffectiveTurns != action.maxEffectiveTurns) {
     return false;
   }
-  final target = plan.sceneSelection.scene.prompt.practiceGoal;
-  final roles = plan.selectedRoles.map((role) => role.displayName).toList();
-  return target == action.target && listEquals(roles, action.roles);
+  final prompt = plan.sceneSelection.scene.prompt;
+  final aiRoles = plan.selectedRoles.map((role) => role.displayName).toList();
+  return prompt.practiceGoal == action.practiceGoal &&
+      listEquals(aiRoles, action.aiRoles) &&
+      (action.userRole == null || prompt.userRole == action.userRole);
 }
 
 bool _matchesConfirmedPlan(

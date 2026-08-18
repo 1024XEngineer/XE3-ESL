@@ -186,6 +186,15 @@ SceneDefinition decodeSceneDefinition(Object? value) {
 }
 
 SceneSelectionSnapshot decodeSceneSelectionSnapshot(Object? value) {
+  if (value is! Map<String, Object?>) {
+    throw const SceneWireFormatException();
+  }
+  return value.containsKey('source')
+      ? _decodeCurrentSceneSelectionSnapshot(value)
+      : _decodeLegacySceneSelectionSnapshot(value);
+}
+
+SceneSelectionSnapshot _decodeCurrentSceneSelectionSnapshot(Object? value) {
   final object = _object(
     value,
     required: const <String>{
@@ -204,18 +213,50 @@ SceneSelectionSnapshot decodeSceneSelectionSnapshot(Object? value) {
           (!scene.id.startsWith('custom:') || scene.version != 1))) {
     throw const SceneWireFormatException();
   }
-  final selectedRoleIds = _resourceIdList(object['selected_role_ids']);
-  final practiceOptionId = _resourceId(object['practice_option_id']);
+  return _validatedSceneSelectionSnapshot(
+    source: source,
+    scene: scene,
+    selectedRoleIds: object['selected_role_ids'],
+    practiceOptionId: object['practice_option_id'],
+  );
+}
+
+SceneSelectionSnapshot _decodeLegacySceneSelectionSnapshot(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'scene',
+      'selected_role_ids',
+      'practice_option_id',
+    },
+  );
+  final scene = decodeSceneDefinition(object['scene']);
+  return _validatedSceneSelectionSnapshot(
+    source: SceneSource.catalog(sceneId: scene.id, sceneVersion: scene.version),
+    scene: scene,
+    selectedRoleIds: object['selected_role_ids'],
+    practiceOptionId: object['practice_option_id'],
+  );
+}
+
+SceneSelectionSnapshot _validatedSceneSelectionSnapshot({
+  required SceneSource source,
+  required SceneDefinition scene,
+  required Object? selectedRoleIds,
+  required Object? practiceOptionId,
+}) {
+  final decodedRoleIds = _resourceIdList(selectedRoleIds);
+  final decodedOptionId = _resourceId(practiceOptionId);
   final roleIds = scene.roles.map((role) => role.id).toSet();
-  if (selectedRoleIds.any((id) => !roleIds.contains(id)) ||
-      !scene.practiceOptions.any((option) => option.id == practiceOptionId)) {
+  if (decodedRoleIds.any((id) => !roleIds.contains(id)) ||
+      !scene.practiceOptions.any((option) => option.id == decodedOptionId)) {
     throw const SceneWireFormatException();
   }
   return SceneSelectionSnapshot(
     source: source,
     scene: scene,
-    selectedRoleIds: selectedRoleIds,
-    practiceOptionId: practiceOptionId,
+    selectedRoleIds: decodedRoleIds,
+    practiceOptionId: decodedOptionId,
   );
 }
 

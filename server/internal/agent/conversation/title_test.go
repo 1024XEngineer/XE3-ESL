@@ -10,4 +10,7 @@ func TestDeriveThreadTitle(t *testing.T) {
 	if got := []rune(DeriveThreadTitle("一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三")); len(got) != MaxThreadTitleRunes {
 		t.Fatalf("title rune count = %d", len(got))
 	}
+	if got := DeriveThreadTitle("Create a custom life role-play: I am a community volunteer"); got != "Create a custom life role-play:" {
+		t.Fatalf("title with truncation boundary whitespace = %q", got)
+	}
 }

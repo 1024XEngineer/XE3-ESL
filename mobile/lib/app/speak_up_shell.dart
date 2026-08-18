@@ -256,11 +256,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   Future<void> _openPractice() => _openPracticeRoute();
 
-  Widget _buildAgentClientAction(
+  Widget? _buildAgentClientAction(
     BuildContext context,
     AgentClientAction action,
   ) {
-    final practiceAction = decodeConfirmPracticePlanClientAction(action);
+    final practiceAction = tryDecodeConfirmPracticePlanClientAction(action);
+    if (practiceAction == null) {
+      return null;
+    }
     return PracticePlanClientActionCard(
       action: practiceAction,
       onConfirm: () => unawaited(_confirmAgentClientAction(practiceAction)),

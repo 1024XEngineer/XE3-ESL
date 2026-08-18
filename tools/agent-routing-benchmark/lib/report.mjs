@@ -73,6 +73,48 @@ function responseContract(testCase, response) {
   };
 }
 
+function previewInputContract(testCase, runEvents) {
+  const expected = testCase.expected_preview_input;
+  if (!expected) {
+    return { checked: false, passed: true, expected: null, actual: null };
+  }
+  const inputs = runEvents.filter(
+    (event) => event.msg === "agent.benchmark.preview.input",
+  );
+  if (inputs.length !== 1) {
+    return {
+      checked: true,
+      passed: false,
+      expected,
+      actual: null,
+      eventCount: inputs.length,
+    };
+  }
+  const event = inputs[0];
+  const actual = {
+    kind: event.kind ?? "",
+    catalog_scene_id: event.catalog_scene_id ?? "",
+    candidate_scene_ids: Array.isArray(event.candidate_scene_ids)
+      ? event.candidate_scene_ids
+      : [],
+  };
+  const expectedCandidates = expected.candidate_scene_ids ?? [];
+  return {
+    checked: true,
+    passed:
+      actual.kind === expected.kind &&
+      actual.catalog_scene_id === (expected.catalog_scene_id ?? "") &&
+      sameSet(actual.candidate_scene_ids, expectedCandidates),
+    expected: {
+      kind: expected.kind,
+      catalog_scene_id: expected.catalog_scene_id ?? "",
+      candidate_scene_ids: expectedCandidates,
+    },
+    actual,
+    eventCount: 1,
+  };
+}
+
 export function parseJsonLog(content) {
   const events = [];
   for (const line of content.split(/\r?\n/)) {
@@ -120,6 +162,7 @@ export function evaluateCases(cases, executions, events) {
     const forbiddenTools = testCase.forbidden_tools ?? [];
     const assistantResponse = execution?.assistant_response ?? "";
     const response = responseContract(testCase, assistantResponse);
+    const previewInput = previewInputContract(testCase, runEvents);
     const duplicateTools = unique(startedTools).filter(
       (tool) => startedTools.filter((value) => value === tool).length > 1,
     );
@@ -145,6 +188,7 @@ export function evaluateCases(cases, executions, events) {
       forbiddenPassed &&
       executionPassed &&
       duplicatePassed &&
+      previewInput.passed &&
       response.passed;
 
     const reasons = [];
@@ -154,6 +198,15 @@ export function evaluateCases(cases, executions, events) {
     if (!forbiddenPassed) reasons.push("调用了禁用工具");
     if (!executionPassed) reasons.push("工具执行未全部成功");
     if (!duplicatePassed) reasons.push("存在重复工具调用");
+    if (!previewInput.passed) {
+      if (previewInput.eventCount !== 1) {
+        reasons.push(
+          `Preview 结构化输入记录数 ${previewInput.eventCount}，期望 1`,
+        );
+      } else {
+        reasons.push("Preview 场景决议输入不匹配");
+      }
+    }
     if (response.checked && !assistantResponse.trim()) {
       reasons.push("缺少目标 Assistant 回复");
     }
@@ -178,7 +231,6 @@ export function evaluateCases(cases, executions, events) {
 
     return {
       name: testCase.name,
-      message: testCase.messages.at(-1),
       run_id: runId ?? "",
       thread_id: execution?.thread_id ?? "",
       assistant_message_id: execution?.assistant_message_id ?? "",
@@ -195,6 +247,10 @@ export function evaluateCases(cases, executions, events) {
       forbidden_passed: forbiddenPassed,
       execution_passed: executionPassed,
       duplicate_passed: duplicatePassed,
+      preview_input_contract_checked: previewInput.checked,
+      preview_input_contract_passed: previewInput.passed,
+      expected_preview_input: previewInput.expected,
+      actual_preview_input: previewInput.actual,
       response_contract_checked: response.checked,
       response_contract_passed: response.passed,
       required_response_terms: response.requiredTerms,
@@ -235,6 +291,9 @@ export function calculateMetrics(results) {
   const responseCases = results.filter(
     (result) => result.response_contract_checked,
   );
+  const previewInputCases = results.filter(
+    (result) => result.preview_input_contract_checked,
+  );
 
   return {
     overall: ratio(results, (result) => result.passed),
@@ -251,6 +310,10 @@ export function calculateMetrics(results) {
     response_contract: ratio(
       responseCases,
       (result) => result.response_contract_passed,
+    ),
+    preview_input_contract: ratio(
+      previewInputCases,
+      (result) => result.preview_input_contract_passed,
     ),
     duplicate_rate: {
       passed: duplicateCount,
@@ -279,7 +342,7 @@ export function renderMarkdown(metadata, results, metrics) {
   const rows = results
     .map(
       (result) =>
-        `| ${result.passed ? "PASS" : "FAIL"} | ${markdownCell(result.name)} | ${markdownCell(result.message)} | ${markdownCell(result.assistant_response)} | ${markdownCell(result.expected_decision)} | ${markdownCell(result.actual_decision)} | ${toolList(result.expected_tools)} | ${toolList(result.actual_tools)} | ${markdownCell(result.reason)} |`,
+        `| ${result.passed ? "PASS" : "FAIL"} | ${markdownCell(result.name)} | ${markdownCell(result.assistant_response)} | ${markdownCell(result.expected_decision)} | ${markdownCell(result.actual_decision)} | ${toolList(result.expected_tools)} | ${toolList(result.actual_tools)} | ${markdownCell(result.reason)} |`,
     )
     .join("\n");
 
@@ -300,13 +363,14 @@ export function renderMarkdown(metadata, results, metrics) {
 | 工具选择准确率 | ${percent(metrics.tool_selection)} |
 | 禁用工具安全率 | ${percent(metrics.forbidden_safety)} |
 | 工具执行成功率 | ${percent(metrics.tool_execution)} |
+| Preview 输入契约通过率 | ${percent(metrics.preview_input_contract)} |
 | 回复契约通过率 | ${percent(metrics.response_contract)} |
 | 重复工具调用率 | ${percent(metrics.duplicate_rate)} |
 
 ## 明细
 
-| 结果 | Case | 用户消息（目标 turn） | Assistant 回复 | 期望决策 | 实际决策 | 期望工具 | 实际工具 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 结果 | Case | Assistant 回复 | 期望决策 | 实际决策 | 期望工具 | 实际工具 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows}
 
 ## 审计关联
@@ -336,6 +400,7 @@ export function renderHtml(metadata, results, metrics) {
     ["工具选择准确率", metrics.tool_selection],
     ["禁用工具安全率", metrics.forbidden_safety],
     ["工具执行成功率", metrics.tool_execution],
+    ["Preview 输入契约通过率", metrics.preview_input_contract],
     ["回复契约通过率", metrics.response_contract],
     ["重复调用率", metrics.duplicate_rate],
   ]
@@ -351,7 +416,6 @@ export function renderHtml(metadata, results, metrics) {
       (result) => `<tr>
         <td><span class="status ${result.passed ? "pass" : "fail"}">${result.passed ? "PASS" : "FAIL"}</span></td>
         <td><code>${escapeHtml(result.name)}</code></td>
-        <td>${escapeHtml(result.message)}</td>
         <td>${escapeHtml(result.assistant_response)}</td>
         <td>${escapeHtml(result.expected_decision)}</td>
         <td>${escapeHtml(result.actual_decision)}</td>
@@ -438,7 +502,7 @@ export function renderHtml(metadata, results, metrics) {
     </section>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>结果</th><th>Case</th><th>用户消息</th><th>Assistant 回复</th><th>期望决策</th><th>实际决策</th><th>期望工具</th><th>实际工具</th><th>说明</th></tr></thead>
+        <thead><tr><th>结果</th><th>Case</th><th>Assistant 回复</th><th>期望决策</th><th>实际决策</th><th>期望工具</th><th>实际工具</th><th>说明</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>

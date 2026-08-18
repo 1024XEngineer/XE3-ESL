@@ -86,10 +86,18 @@ func NewHandler(
 		return nil, err
 	}
 	fixtureTools := capabilityfixture.Tools(capabilityfixture.NewStore())
+	previewPort, err := newBenchmarkPreviewPort(logger)
+	if err != nil {
+		return nil, err
+	}
+	previewTool, err := preparationcapability.NewPreviewTool(previewPort)
+	if err != nil {
+		return nil, err
+	}
 	fixtureTools = append(
 		fixtureTools,
 		preparationcapability.NewIELTSWarmUpTool(),
-		preparationcapability.NewPreviewTool(benchmarkPreviewPort{}),
+		previewTool,
 	)
 	fixtureRegistry, err := capability.NewRegistry(fixtureTools...)
 	if err != nil {
@@ -132,28 +140,108 @@ func NewHandler(
 	), nil
 }
 
-type benchmarkPreviewPort struct{}
+type benchmarkPreviewPort struct {
+	logger   *slog.Logger
+	manifest preparationcapability.PreviewCatalogManifest
+}
 
-func (benchmarkPreviewPort) PreviewPractice(
+func newBenchmarkPreviewPort(
+	logger *slog.Logger,
+) (*benchmarkPreviewPort, error) {
+	manifest, err := previewCatalogManifestFixture()
+	if err != nil {
+		return nil, err
+	}
+	return &benchmarkPreviewPort{logger: logger, manifest: manifest}, nil
+}
+
+func (port *benchmarkPreviewPort) PreviewCatalogManifest() preparationcapability.PreviewCatalogManifest {
+	return port.manifest
+}
+
+func (port *benchmarkPreviewPort) PreviewPractice(
 	_ context.Context,
-	_ capability.CallContext,
+	call capability.CallContext,
 	input preparationcapability.PreviewInput,
 ) (preparationcapability.PreviewResult, error) {
-	mode := input.IELTSPracticeMode
-	if mode == "" {
-		mode = "FULL_SIMULATION"
+	port.logger.Info(
+		"agent.benchmark.preview.input",
+		"run_id", call.RunID,
+		"thread_id", call.ThreadID,
+		"tool_call_id", call.ToolCallID,
+		"kind", string(input.SceneResolution.Kind),
+		"catalog_scene_id", input.SceneResolution.CatalogSceneID,
+		"candidate_scene_ids", append(
+			[]string{},
+			input.SceneResolution.CandidateSceneIDs...,
+		),
+	)
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindNeedsClarification {
+		status := preparationcapability.PreviewOutcomeAmbiguous
+		resolution := preparationcapability.SceneResolutionAmbiguous
+		if len(input.SceneResolution.CandidateSceneIDs) == 1 {
+			status = preparationcapability.PreviewOutcomeNeedsDetails
+			resolution = preparationcapability.SceneResolutionNeedsDetails
+		}
+		candidates := make([]preparationcapability.CatalogCandidate, len(input.SceneResolution.CandidateSceneIDs))
+		for index, id := range input.SceneResolution.CandidateSceneIDs {
+			candidates[index] = preparationcapability.CatalogCandidate{SceneID: id}
+		}
+		return preparationcapability.PreviewResult{
+			Status:                status,
+			SceneResolution:       resolution,
+			CatalogCandidateCount: len(candidates),
+			Candidates:            candidates,
+			AssistantText:         "请选择一个具体场景后再继续。",
+		}, nil
+	}
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom &&
+		(input.SceneIntent.ExperienceHint == "INTERVIEW" ||
+			input.SceneIntent.ExperienceHint == "IELTS_SPEAKING") {
+		return preparationcapability.PreviewResult{
+			Status:           preparationcapability.PreviewOutcomeRequiresSpecializedFlow,
+			SceneResolution:  preparationcapability.SceneResolutionRejected,
+			ResolutionReason: preparationcapability.ResolutionReasonSpecializedFlowRequired,
+			AssistantText: "面试和雅思练习使用各自的正式准备流程。" +
+				"请选择目录中的面试或雅思场景。",
+		}, nil
 	}
 	action, err := agentclientaction.New(
 		preparationcapability.ConfirmPracticePlanActionType,
-		json.RawMessage(`{"practice_mode":"`+mode+`"}`),
+		json.RawMessage(`{
+  "label": "确认并开始练习",
+  "practice_plan_id": "00000000-0000-4000-8000-000000000001",
+  "plan_version": 1,
+  "scene_name": "Agent Routing Benchmark",
+  "user_role": "练习者",
+  "ai_roles": ["对话角色"],
+  "practice_goal": "验证 Agent 场景路由",
+  "practice_experience": "WORKPLACE",
+  "scene_category": "WORKPLACE_GENERAL",
+  "practice_mode": "FULL_SIMULATION",
+  "practice_scope": "完整模拟",
+  "suggested_duration_seconds": 480,
+  "min_effective_turns": 1,
+  "max_effective_turns": 5,
+  "confirmation_prompt": "确认后将创建练习会话；确认前不会开始练习。"
+}`),
 	)
 	if err != nil {
 		return preparationcapability.PreviewResult{}, err
 	}
+	resolution := preparationcapability.SceneResolutionCatalogResolved
+	source := preparationcapability.PreviewPlanSourceCatalog
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom {
+		resolution = preparationcapability.SceneResolutionCustomResolved
+		source = preparationcapability.PreviewPlanSourceCustom
+	}
 	return preparationcapability.PreviewResult{
-		Status:        "preview_ready",
-		ClientAction:  action,
-		AssistantText: "练习已准备好，请确认开始。",
+		Status:          preparationcapability.PreviewOutcomeReady,
+		SceneResolution: resolution,
+		PlanID:          "00000000-0000-4000-8000-000000000001",
+		PlanSource:      source,
+		ClientAction:    action,
+		AssistantText:   "练习已准备好，请确认开始。",
 	}, nil
 }
 

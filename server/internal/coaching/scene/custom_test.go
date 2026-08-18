@@ -2,6 +2,41 @@ package scene
 
 import "testing"
 
+func TestCustomSceneCompilerCompilesScenarioOnlyIntentExplicitly(t *testing.T) {
+	spec, err := (CustomSceneCompiler{}).Compile(CustomSceneDraft{
+		Scenario:       "在国外宠物店沟通鹦鹉寄养",
+		ExperienceHint: PracticeExperienceLifeAndTravel,
+	})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if spec.Scenario != "在国外宠物店沟通鹦鹉寄养" ||
+		spec.UserRole != "场景中的英语学习者" ||
+		spec.AIRole != "场景中的对话方" ||
+		spec.PracticeGoal !=
+			"用英语清晰、自然地完成“在国外宠物店沟通鹦鹉寄养”场景中的沟通" {
+		t.Fatalf("compiled spec = %#v", spec)
+	}
+}
+
+func TestCustomSceneCompilerPreservesUserAuthoredFacts(t *testing.T) {
+	draft := CustomSceneDraft{
+		Scenario:       "在展会上介绍机器人",
+		UserRole:       "销售",
+		AIRole:         "潜在客户",
+		PracticeGoal:   "说明产品价值",
+		ExperienceHint: PracticeExperienceWorkplace,
+	}
+	spec, err := (CustomSceneCompiler{}).Compile(draft)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if spec.UserRole != draft.UserRole || spec.AIRole != draft.AIRole ||
+		spec.PracticeGoal != draft.PracticeGoal {
+		t.Fatalf("compiled spec = %#v", spec)
+	}
+}
+
 func TestNewCustomSelectionBuildsPlanScopedExecutableSnapshot(t *testing.T) {
 	selection, err := NewCustomSelection("11111111-1111-4111-8111-111111111111", CustomSceneSpec{
 		Scenario:       "在国外展会上介绍工业机器人",

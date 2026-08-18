@@ -2,6 +2,7 @@ package scene
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -14,6 +15,59 @@ type CustomSceneSpec struct {
 	AIRole         string             `json:"ai_role"`
 	PracticeGoal   string             `json:"practice_goal"`
 	ExperienceHint PracticeExperience `json:"experience_hint"`
+}
+
+// CustomSceneDraft contains user-authored facts plus an experience resolved by
+// the application layer. Role and goal are optional user facts; they are not
+// required questions for creating a one-off scene.
+type CustomSceneDraft struct {
+	Scenario       string
+	UserRole       string
+	AIRole         string
+	PracticeGoal   string
+	ExperienceHint PracticeExperience
+}
+
+// CustomSceneCompiler is the explicit boundary between user-authored intent
+// and the complete executable CustomSceneSpec frozen into a Plan. Its neutral
+// role rules do not pretend to know scenario-specific facts the user did not
+// provide.
+type CustomSceneCompiler struct{}
+
+func (CustomSceneCompiler) Compile(
+	draft CustomSceneDraft,
+) (CustomSceneSpec, error) {
+	if !validCustomText(draft.Scenario, 200) ||
+		!validOptionalCustomText(draft.UserRole, 200) ||
+		!validOptionalCustomText(draft.AIRole, 200) ||
+		!validOptionalCustomText(draft.PracticeGoal, 500) ||
+		(draft.ExperienceHint != PracticeExperienceWorkplace &&
+			draft.ExperienceHint != PracticeExperienceLifeAndTravel) {
+		return CustomSceneSpec{}, ErrCustomSceneInvalid
+	}
+	spec := CustomSceneSpec{
+		Scenario:       draft.Scenario,
+		UserRole:       draft.UserRole,
+		AIRole:         draft.AIRole,
+		PracticeGoal:   draft.PracticeGoal,
+		ExperienceHint: draft.ExperienceHint,
+	}
+	if spec.UserRole == "" {
+		spec.UserRole = "场景中的英语学习者"
+	}
+	if spec.AIRole == "" {
+		spec.AIRole = "场景中的对话方"
+	}
+	if spec.PracticeGoal == "" {
+		spec.PracticeGoal = fmt.Sprintf(
+			"用英语清晰、自然地完成“%s”场景中的沟通",
+			spec.Scenario,
+		)
+	}
+	if !validCustomSceneSpec(spec) {
+		return CustomSceneSpec{}, ErrCustomSceneInvalid
+	}
+	return spec, nil
 }
 
 func NewCustomSelection(
@@ -85,6 +139,10 @@ func validCustomText(value string, maxRunes int) bool {
 	return value != "" && value == strings.TrimSpace(value) &&
 		utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes &&
 		!strings.ContainsRune(value, '\x00')
+}
+
+func validOptionalCustomText(value string, maxRunes int) bool {
+	return value == "" || validCustomText(value, maxRunes)
 }
 
 func customExecutionPolicy(

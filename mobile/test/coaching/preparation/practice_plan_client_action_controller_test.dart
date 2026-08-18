@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
@@ -55,56 +56,64 @@ void main() {
     expect(preview.parts.single.turnBlueprints, hasLength(3));
   });
 
-  test('Agent action confirms draft Plan before creating Session', () async {
-    final harness = await _Harness.create();
-    addTearDown(harness.dispose);
-    final draft = _planForThread(
-      harness.conversation.threadId!,
-      status: PracticePlanStatus.draft,
-      version: 1,
-    );
-    final ready = _planForThread(
-      harness.conversation.threadId!,
-      status: PracticePlanStatus.ready,
-      version: 2,
-    );
-    final calls = <String>[];
-    late CreatePreparationSessionInput sessionInput;
-    final controller = PracticePlanClientActionController(
-      conversationController: harness.conversation,
-      practiceController: harness.practice,
-      ieltsPreparationController: harness.ieltsPreparation,
-      workspaceController: harness.workspace,
-      readPlan: (_) async {
-        calls.add('read');
-        return draft;
-      },
-      confirmPlan:
-          ({
-            required planId,
-            required expectedVersion,
-            required idempotencyKey,
-          }) async {
-            calls.add('confirm:$expectedVersion');
-            return ready;
-          },
-      createSession:
-          ({required plan, required input, required idempotencyKey}) async {
-            calls.add('session:${plan.version}');
-            sessionInput = input;
-            return contractBootstrap(ready);
-          },
-      idFactory: (scope) => '$scope-contract-key',
-    );
-    addTearDown(controller.dispose);
+  test(
+    'historical v1 action confirms draft Plan before creating Session',
+    () async {
+      final harness = await _Harness.create();
+      addTearDown(harness.dispose);
+      final draft = _planForThread(
+        harness.conversation.threadId!,
+        status: PracticePlanStatus.draft,
+        version: 1,
+      );
+      final ready = _planForThread(
+        harness.conversation.threadId!,
+        status: PracticePlanStatus.ready,
+        version: 2,
+      );
+      final calls = <String>[];
+      late CreatePreparationSessionInput sessionInput;
+      final controller = PracticePlanClientActionController(
+        conversationController: harness.conversation,
+        practiceController: harness.practice,
+        ieltsPreparationController: harness.ieltsPreparation,
+        workspaceController: harness.workspace,
+        readPlan: (_) async {
+          calls.add('read');
+          return draft;
+        },
+        confirmPlan:
+            ({
+              required planId,
+              required expectedVersion,
+              required idempotencyKey,
+            }) async {
+              calls.add('confirm:$expectedVersion');
+              return ready;
+            },
+        createSession:
+            ({required plan, required input, required idempotencyKey}) async {
+              calls.add('session:${plan.version}');
+              sessionInput = input;
+              return contractBootstrap(ready);
+            },
+        idFactory: (scope) => '$scope-contract-key',
+      );
+      addTearDown(controller.dispose);
 
-    expect(await controller.confirm(_action(draft)), isTrue);
+      final historicalAction = decodeConfirmPracticePlanClientAction(
+        _legacyActionEnvelope(draft),
+      );
 
-    expect(calls, <String>['read', 'confirm:1', 'session:2']);
-    expect(sessionInput.expectedPlanVersion, 2);
-    expect(harness.practice.practiceSessionId, contractSessionId);
-    expect(harness.workspace.currentSessionId, contractSessionId);
-  });
+      expect(historicalAction.protocol, ConfirmPracticePlanProtocol.v1);
+      expect(await controller.confirm(historicalAction), isTrue);
+
+      expect(calls, <String>['read', 'confirm:1', 'session:2']);
+      expect(sessionInput.expectedPlanVersion, 2);
+      expect(harness.practice.practiceSessionId, contractSessionId);
+      expect(harness.workspace.currentSessionId, contractSessionId);
+    },
+  );
 
   test(
     'retry skips confirmation once Plan is ready and reuses Session identity',
@@ -458,12 +467,13 @@ ConfirmPracticePlanClientAction _action(PracticePlan plan) =>
       label: 'Confirm and start',
       practicePlanId: plan.id,
       planVersion: plan.version,
-      target: plan.sceneSelection.scene.prompt.practiceGoal,
       sceneName: plan.sceneSelection.scene.name,
+      userRole: plan.sceneSelection.scene.prompt.userRole,
+      practiceGoal: plan.sceneSelection.scene.prompt.practiceGoal,
       practiceExperience: plan.sceneSelection.scene.experience.wireValue,
       sceneCategory: plan.sceneSelection.scene.category.wireValue,
       practiceMode: plan.practiceOption.mode.wireValue,
-      roles: plan.selectedRoles.map((role) => role.displayName).toList(),
+      aiRoles: plan.selectedRoles.map((role) => role.displayName).toList(),
       practiceScope: plan.practiceOption.displayName,
       suggestedDuration: Duration(
         seconds: plan.sessionPolicy.suggestedDurationSeconds,
@@ -472,6 +482,26 @@ ConfirmPracticePlanClientAction _action(PracticePlan plan) =>
       maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
       confirmationPrompt: 'Confirm to create a Practice Session.',
     );
+
+AgentClientAction _legacyActionEnvelope(PracticePlan plan) => AgentClientAction(
+  type: practicePlanConfirmClientActionV1Type,
+  payload: <String, Object?>{
+    'label': 'Confirm and start',
+    'practice_plan_id': plan.id,
+    'plan_version': plan.version,
+    'target': plan.sceneSelection.scene.prompt.practiceGoal,
+    'scene_name': plan.sceneSelection.scene.name,
+    'practice_experience': plan.sceneSelection.scene.experience.wireValue,
+    'scene_category': plan.sceneSelection.scene.category.wireValue,
+    'practice_mode': plan.practiceOption.mode.wireValue,
+    'roles': plan.selectedRoles.map((role) => role.displayName).toList(),
+    'practice_scope': plan.practiceOption.displayName,
+    'suggested_duration_seconds': plan.sessionPolicy.suggestedDurationSeconds,
+    'min_effective_turns': plan.sessionPolicy.minEffectiveTurns,
+    'max_effective_turns': plan.sessionPolicy.maxEffectiveTurns,
+    'confirmation_prompt': 'Confirm to create a Practice Session.',
+  },
+);
 
 final class _UnusedIeltsQuestionBankClient implements IeltsQuestionBankClient {
   @override

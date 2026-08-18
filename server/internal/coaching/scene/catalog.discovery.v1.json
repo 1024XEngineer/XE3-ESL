@@ -3,56 +3,294 @@
   "experiences": [
     {
       "practice_experience": "INTERVIEW",
-      "aliases": ["面试", "英文面试", "interview", "job interview"],
+      "aliases": [
+        "面试",
+        "英文面试",
+        "interview",
+        "job interview"
+      ],
       "default_scene_id": "scn_interview_self_introduction",
       "default_practice_option_id": "option_interview_self_introduction_full"
     },
     {
       "practice_experience": "IELTS_SPEAKING",
-      "aliases": ["雅思", "雅思口语", "ielts", "ielts speaking"],
+      "aliases": [
+        "雅思",
+        "雅思口语",
+        "ielts",
+        "ielts speaking"
+      ],
       "default_scene_id": "scn_ielts_speaking",
       "default_practice_option_id": "option_ielts_speaking_full_mock"
     },
     {
       "practice_experience": "WORKPLACE",
-      "aliases": ["职场", "职场英语", "workplace", "workplace english"],
+      "aliases": [
+        "职场",
+        "职场英语",
+        "workplace",
+        "workplace english"
+      ],
       "default_scene_id": "scn_workplace_progress_risk_update",
       "default_practice_option_id": "option_workplace_full_simulation"
     },
     {
       "practice_experience": "LIFE_AND_TRAVEL",
-      "aliases": ["生活与旅行", "生活英语", "旅行英语", "life and travel", "daily english", "travel english"],
+      "aliases": [
+        "生活与旅行",
+        "生活英语",
+        "旅行英语",
+        "life and travel",
+        "daily english",
+        "travel english"
+      ],
       "default_scene_id": "scn_daily_small_talk",
       "default_practice_option_id": "option_daily_small_talk_full"
     }
   ],
   "scenes": [
-    {"scene_id":"scn_daily_small_talk","aliases":["自我介绍","寒暄","small talk","introductions"]},
-    {"scene_id":"scn_ielts_speaking","aliases":["雅思口语考试","雅思口语模考","ielts speaking test","ielts speaking mock"]},
-    {"scene_id":"scn_interview_self_introduction","aliases":["英文自我介绍","面试自我介绍","interview self introduction","tell me about yourself"]},
-    {"scene_id":"scn_workplace_progress_risk_update","aliases":["进度汇报","风险汇报","progress update","risk update"]},
-    {"scene_id":"scn_daily_restaurant_ordering","aliases":["餐厅点餐","餐馆点菜","restaurant ordering","order food"]},
-    {"scene_id":"scn_interview_recruiter_screening","aliases":["招聘初筛","招聘电话面试","recruiter screening","recruiter phone screen"]},
-    {"scene_id":"scn_workplace_meeting_disagreement","aliases":["会议发言","表达异议","会议意见分歧","meeting disagreement","disagree in a meeting"]},
-    {"scene_id":"scn_daily_product_shopping","aliases":["商品咨询","购物","product shopping","ask about a product"]},
-    {"scene_id":"scn_daily_return_refund","aliases":["换货","退款","return and refund","product return"]},
-    {"scene_id":"scn_programmer_interview","aliases":["项目经历深挖","项目面试","project deep dive","project experience interview"]},
-    {"scene_id":"scn_workplace_cross_team_alignment","aliases":["跨团队对齐","请求资源","cross-team alignment","request resources"]},
-    {"scene_id":"scn_travel_airport_checkin","aliases":["机场值机","航班信息","airport check-in","flight information"]},
-    {"scene_id":"scn_interview_behavioral","aliases":["行为面试","behavioral interview","behavioural interview"]},
-    {"scene_id":"scn_workplace_feedback_conflict","aliases":["提供反馈","同事反馈","give colleague feedback","workplace feedback"]},
-    {"scene_id":"scn_workplace_conflict_resolution","aliases":["职场冲突","处理职场冲突","workplace conflict","resolve workplace conflict"]},
-    {"scene_id":"scn_travel_hotel_checkin","aliases":["酒店入住","办理入住","hotel check-in","hotel check in"]},
-    {"scene_id":"scn_interview_system_design_spoken","aliases":["系统设计口述","系统设计面试","system design interview","explain system design"]},
-    {"scene_id":"scn_workplace_client_delay","aliases":["客户延期沟通","项目延期沟通","client delay","communicate a delay"]},
-    {"scene_id":"scn_workplace_requirement_clarification","aliases":["客户需求澄清","需求澄清","requirement clarification","clarify client requirements"]},
-    {"scene_id":"scn_daily_rental_viewing","aliases":["看房","租赁咨询","rental viewing","apartment viewing"]},
-    {"scene_id":"scn_daily_rental_maintenance","aliases":["租房报修","报修","房屋维修","rental maintenance","report a repair"]},
-    {"scene_id":"scn_interview_hiring_manager","aliases":["招聘经理面试","hiring manager 面试","hiring manager interview"]},
-    {"scene_id":"scn_workplace_solution_presentation","aliases":["方案介绍","方案问答","solution presentation","present a proposal"]},
-    {"scene_id":"scn_daily_medical_appointment","aliases":["医疗预约","预约医生","medical appointment","doctor appointment"]},
-    {"scene_id":"scn_workplace_negotiation","aliases":["条件协商","商务谈判","negotiation","negotiate terms"]},
-    {"scene_id":"scn_daily_phone_call","aliases":["电话沟通","打电话","phone call","telephone conversation"]},
-    {"scene_id":"scn_daily_complaint_help","aliases":["投诉","求助","complaint and help","ask for help"]}
+    {
+      "scene_id": "scn_daily_small_talk",
+      "aliases": [
+        "自我介绍",
+        "寒暄",
+        "small talk",
+        "introductions"
+      ]
+    },
+    {
+      "scene_id": "scn_ielts_speaking",
+      "aliases": [
+        "雅思口语考试",
+        "雅思口语模考",
+        "ielts speaking test",
+        "ielts speaking mock"
+      ]
+    },
+    {
+      "scene_id": "scn_interview_self_introduction",
+      "aliases": [
+        "英文自我介绍",
+        "面试自我介绍",
+        "interview self introduction",
+        "tell me about yourself"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_progress_risk_update",
+      "aliases": [
+        "进度汇报",
+        "风险汇报",
+        "progress update",
+        "risk update"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_restaurant_ordering",
+      "aliases": [
+        "餐厅点餐",
+        "英文点菜",
+        "restaurant ordering",
+        "order food"
+      ]
+    },
+    {
+      "scene_id": "scn_interview_recruiter_screening",
+      "aliases": [
+        "招聘初筛",
+        "招聘电话面试",
+        "recruiter screening",
+        "recruiter phone screen"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_meeting_disagreement",
+      "aliases": [
+        "会议发言",
+        "表达异议",
+        "会议意见分歧",
+        "meeting disagreement",
+        "disagree in a meeting"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_product_shopping",
+      "aliases": [
+        "商品咨询",
+        "购物",
+        "product shopping",
+        "ask about a product"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_return_refund",
+      "aliases": [
+        "换货",
+        "退款",
+        "return and refund",
+        "product return"
+      ]
+    },
+    {
+      "scene_id": "scn_programmer_interview",
+      "aliases": [
+        "项目经历深挖",
+        "项目面试",
+        "project deep dive",
+        "project experience interview"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_cross_team_alignment",
+      "aliases": [
+        "跨团队对齐",
+        "请求资源",
+        "cross-team alignment",
+        "request resources"
+      ]
+    },
+    {
+      "scene_id": "scn_travel_airport_checkin",
+      "aliases": [
+        "机场值机",
+        "航班信息",
+        "airport check-in",
+        "flight information"
+      ]
+    },
+    {
+      "scene_id": "scn_interview_behavioral",
+      "aliases": [
+        "行为面试",
+        "behavioral interview",
+        "behavioural interview"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_feedback_conflict",
+      "aliases": [
+        "提供反馈",
+        "同事反馈",
+        "give colleague feedback",
+        "workplace feedback"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_conflict_resolution",
+      "aliases": [
+        "职场冲突",
+        "处理职场冲突",
+        "workplace conflict",
+        "resolve workplace conflict"
+      ]
+    },
+    {
+      "scene_id": "scn_travel_hotel_checkin",
+      "aliases": [
+        "酒店入住",
+        "办理入住",
+        "hotel check-in",
+        "hotel front desk check in"
+      ]
+    },
+    {
+      "scene_id": "scn_interview_system_design_spoken",
+      "aliases": [
+        "系统设计口述",
+        "系统设计面试",
+        "system design interview",
+        "explain system design"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_client_delay",
+      "aliases": [
+        "客户延期沟通",
+        "项目延期沟通",
+        "client delay",
+        "communicate a delay"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_requirement_clarification",
+      "aliases": [
+        "客户需求澄清",
+        "需求澄清",
+        "requirement clarification",
+        "clarify client requirements"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_rental_viewing",
+      "aliases": [
+        "看房",
+        "租赁咨询",
+        "rental viewing",
+        "apartment viewing"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_rental_maintenance",
+      "aliases": [
+        "租房报修",
+        "报修",
+        "房屋维修",
+        "rental maintenance",
+        "report a repair"
+      ]
+    },
+    {
+      "scene_id": "scn_interview_hiring_manager",
+      "aliases": [
+        "招聘经理面试",
+        "hiring manager 面试",
+        "hiring manager interview"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_solution_presentation",
+      "aliases": [
+        "方案介绍",
+        "方案问答",
+        "solution presentation",
+        "present a proposal"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_medical_appointment",
+      "aliases": [
+        "医疗预约",
+        "预约医生",
+        "medical appointment",
+        "doctor appointment"
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_negotiation",
+      "aliases": [
+        "条件协商",
+        "商务谈判",
+        "negotiation",
+        "negotiate terms"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_phone_call",
+      "aliases": [
+        "电话沟通",
+        "打电话",
+        "phone call",
+        "telephone conversation"
+      ]
+    },
+    {
+      "scene_id": "scn_daily_complaint_help",
+      "aliases": [
+        "投诉",
+        "求助",
+        "complaint and help",
+        "ask for help"
+      ]
+    }
   ]
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
-const DatasetVersion = "agent-routing-eval-v6"
+const DatasetVersion = "agent-routing-eval-v7"
 
 type EvaluationResult struct {
 	DatasetVersion      string
@@ -33,6 +33,7 @@ type CaseResult struct {
 	Decision      string
 	ToolNames     []string
 	ToolInputs    map[string]map[string]any
+	PreviewInputs []PreviewInputRecord
 	AllowedTools  []string
 	ErrorCategory string
 	Failures      []string
@@ -42,10 +43,11 @@ type Evaluator struct {
 	registry *capability.Registry
 	executor *capability.Executor
 	router   DeterministicRouter
+	preview  *routingPorts
 }
 
 func NewEvaluator() (*Evaluator, error) {
-	registry, err := newEvaluationRegistry()
+	registry, preview, err := newEvaluationRegistry()
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +55,7 @@ func NewEvaluator() (*Evaluator, error) {
 		registry: registry,
 		executor: capability.NewExecutor(registry),
 		router:   DeterministicRouter{},
+		preview:  preview,
 	}, nil
 }
 
@@ -143,6 +146,7 @@ func (e *Evaluator) evaluateCase(
 			break
 		}
 	}
+	caseResult.PreviewInputs = e.preview.takeInputsForRun(runID)
 	caseResult.Failures = append(
 		caseResult.Failures,
 		validateCase(item, caseResult)...,
@@ -237,7 +241,11 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: preparationcapability.PracticePreviewToolName,
 					Input: mustRaw(map[string]any{
-						"scene_query": "英文产品经理面试",
+						"scene_query":            lastUserContent(item.Messages),
+						"resolution_kind":        preparationcapability.SceneResolutionKindCatalog,
+						"catalog_scene_ids":      []string{"scn_interview_self_introduction"},
+						"custom_scenario":        "",
+						"custom_experience_hint": "NONE",
 					}),
 				}},
 			}
@@ -307,7 +315,11 @@ func routeIELTSPractice(
 	if selection.mode == "FULL_MOCK" || afterWarmUp ||
 		asksToStartDirectly(normalize(lastUserContent(messages))) {
 		toolName = preparationcapability.PracticePreviewToolName
-		arguments["scene_query"] = "IELTS"
+		arguments["scene_query"] = latestIELTSRequest(messages)
+		arguments["resolution_kind"] = preparationcapability.SceneResolutionKindCatalog
+		arguments["catalog_scene_ids"] = []string{"scn_ielts_speaking"}
+		arguments["custom_scenario"] = ""
+		arguments["custom_experience_hint"] = "NONE"
 	}
 	if !containsString(allowed, toolName) {
 		return Route{Decision: DecisionDirect}
@@ -527,13 +539,52 @@ func validateCase(item RoutingCase, result CaseResult) []string {
 			}
 		}
 	}
+	if item.ExpectedPreviewInput != nil {
+		if len(result.PreviewInputs) != 1 {
+			failures = append(
+				failures,
+				fmt.Sprintf("preview inputs = %d, want 1", len(result.PreviewInputs)),
+			)
+		} else if !samePreviewInput(
+			result.PreviewInputs[0],
+			*item.ExpectedPreviewInput,
+		) {
+			failures = append(
+				failures,
+				fmt.Sprintf(
+					"preview input = %#v, want %#v",
+					result.PreviewInputs[0],
+					*item.ExpectedPreviewInput,
+				),
+			)
+		}
+	}
 	return failures
+}
+
+func samePreviewInput(left, right PreviewInputRecord) bool {
+	return left.Kind == right.Kind &&
+		left.CatalogSceneID == right.CatalogSceneID &&
+		sameStrings(left.CandidateSceneIDs, right.CandidateSceneIDs)
 }
 
 func lastUserContent(messages []EvalMessage) string {
 	for index := len(messages) - 1; index >= 0; index-- {
 		if messages[index].Role == "user" {
 			return messages[index].Content
+		}
+	}
+	return ""
+}
+
+func latestIELTSRequest(messages []EvalMessage) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role != "user" {
+			continue
+		}
+		content := messages[index].Content
+		if hasAny(normalize(content), "雅思", "ielts") {
+			return content
 		}
 	}
 	return ""

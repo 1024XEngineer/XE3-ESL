@@ -8,8 +8,6 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/authenticated_web_socket.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/platform/audio/realtime_voice_input.dart';
-import 'package:speakup/features/agent/client_action/agent_client_action.dart';
-import 'package:speakup/features/agent/client_action/agent_client_action_codec.dart';
 
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
@@ -17,6 +15,8 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+
+import 'agent_wire_codec.dart';
 
 final class AgentVoiceWireRequest {
   const AgentVoiceWireRequest({
@@ -667,8 +667,12 @@ final class WireAgentVoiceClient
         if (confirmation.draft.id != draftId ||
             confirmation.draft.version != draftVersion ||
             confirmation.message.text != confirmedText ||
+            confirmation.message.clientMessageId != clientMessageId ||
             confirmation.run.inputMessageId != confirmation.message.id ||
             confirmation.run.threadId != confirmation.draft.threadId ||
+            confirmation.run.attempt != 1 ||
+            confirmation.run.retryOfRunId != null ||
+            confirmation.run.clientRetryId != null ||
             (response.statusCode == HttpStatus.created &&
                 !confirmation.run.isTerminal) ||
             (response.statusCode == HttpStatus.accepted &&
@@ -725,6 +729,7 @@ final class WireAgentVoiceClient
       response,
       expectedDraftId: draftId,
       expectedDraftVersion: draftVersion,
+      expectedClientMessageId: clientMessageId,
       expectedText: confirmedText,
     );
   }
@@ -742,7 +747,7 @@ final class WireAgentVoiceClient
       );
       try {
         _requireStatus(response, const <int>{HttpStatus.ok});
-        final run = _decodeJson(response.body, _decodeRunObject);
+        final run = _decodeJson(response.body, decodeAgentWireRun);
         if (run.id != runId) {
           throw _invalidResponse();
         }
@@ -779,9 +784,12 @@ final class WireAgentVoiceClient
           HttpStatus.created,
           HttpStatus.accepted,
         });
-        final run = _decodeJson(response.body, _decodeRunObject);
+        final run = _decodeJson(response.body, decodeAgentWireRun);
         if ((response.statusCode == HttpStatus.created && !run.isTerminal) ||
-            (response.statusCode == HttpStatus.accepted && run.isTerminal)) {
+            (response.statusCode == HttpStatus.accepted && run.isTerminal) ||
+            run.retryOfRunId != runId ||
+            run.clientRetryId != clientRetryId ||
+            run.attempt < 2) {
           throw _invalidResponse();
         }
         return run;
@@ -809,11 +817,15 @@ final class WireAgentVoiceClient
       );
       try {
         _requireStatus(response, const <int>{HttpStatus.ok});
-        final messages = _decodeJson(
+        final page = _decodeJson(
           response.body,
-          (value) => _decodeMessagePage(value, expectedThreadId: threadId),
+          (value) =>
+              decodeAgentWireMessagePage(value, expectedThreadId: threadId),
         );
-        return messages.where((message) => message.id == messageId).firstOrNull;
+        return page.messages
+            .where((message) => message.id == messageId)
+            .map((message) => message.presentation)
+            .firstOrNull;
       } finally {
         _zero(response.body);
       }
@@ -1135,6 +1147,7 @@ final class WireAgentVoiceClient
     AgentVoiceWireStreamResponse response, {
     required String expectedDraftId,
     required int expectedDraftVersion,
+    required String expectedClientMessageId,
     required String expectedText,
   }) async* {
     var responseBytes = 0;
@@ -1142,6 +1155,7 @@ final class WireAgentVoiceClient
     var eventData = '';
     var phase = 0;
     String? runId;
+    AgentRun? committedRun;
     String? outputId;
     final activeToolSteps = <String, String>{};
     final outputText = StringBuffer();
@@ -1168,6 +1182,7 @@ final class WireAgentVoiceClient
             eventData,
             expectedDraftId: expectedDraftId,
             expectedDraftVersion: expectedDraftVersion,
+            expectedClientMessageId: expectedClientMessageId,
             expectedText: expectedText,
             expectedRunId: runId,
           );
@@ -1175,6 +1190,7 @@ final class WireAgentVoiceClient
             case AgentVoiceInputCommitted(:final confirmation) when phase == 0:
               phase = 1;
               runId = confirmation.run.id;
+              committedRun = confirmation.run;
             case AgentVoiceToolStepEvent(
                   :final stepId,
                   :final name,
@@ -1218,9 +1234,14 @@ final class WireAgentVoiceClient
                     text == outputText.toString():
               phase = 3;
             case AgentVoiceRunCompleted(:final run)
-                when phase == 3 && run.assistantMessageId == outputId:
+                when phase == 3 &&
+                    run.assistantMessageId == outputId &&
+                    sameAgentRunIdentity(run, committedRun!):
               phase = 4;
-            case AgentVoiceRunFailed() when phase >= 1 && phase <= 3:
+            case AgentVoiceRunFailed(:final run)
+                when phase >= 1 &&
+                    phase <= 3 &&
+                    (run == null || sameAgentRunIdentity(run, committedRun!)):
               phase = 4;
             default:
               throw const _InvalidVoiceResponse();
@@ -1256,6 +1277,7 @@ final class WireAgentVoiceClient
     String data, {
     required String expectedDraftId,
     required int expectedDraftVersion,
+    required String expectedClientMessageId,
     required String expectedText,
     required String? expectedRunId,
   }) {
@@ -1275,6 +1297,10 @@ final class WireAgentVoiceClient
         if (confirmation.draft.id != expectedDraftId ||
             confirmation.draft.version != expectedDraftVersion ||
             confirmation.message.text != expectedText ||
+            confirmation.message.clientMessageId != expectedClientMessageId ||
+            confirmation.run.attempt != 1 ||
+            confirmation.run.retryOfRunId != null ||
+            confirmation.run.clientRetryId != null ||
             confirmation.run.inputMessageId != confirmation.message.id) {
           throw const _InvalidVoiceResponse();
         }
@@ -1335,7 +1361,7 @@ final class WireAgentVoiceClient
           text: text,
         );
       case 'run.completed':
-        final run = _decodeRunObject(object['run']);
+        final run = decodeAgentWireRun(object['run']);
         if (object.length != 1 ||
             run.id != expectedRunId ||
             run.status != AgentVoiceRunStatus.completed) {
@@ -1343,19 +1369,29 @@ final class WireAgentVoiceClient
         }
         return AgentVoiceRunCompleted(run);
       case 'run.failed':
-        final run = object['run'];
-        final runId = run == null
-            ? _strictString(object['run_id'], min: 1, max: 128)
-            : _decodeRunObject(run).id;
+        final runValue = object['run'];
+        final run = runValue == null ? null : decodeAgentWireRun(runValue);
+        final runId =
+            run?.id ?? _strictString(object['run_id'], min: 1, max: 128);
         final kind = _strictString(object['kind'], min: 1, max: 64);
         final retryable = _strictBool(object['retryable']);
-        if (runId != expectedRunId) {
+        final expectedKeys = run == null
+            ? const <String>{'run_id', 'kind', 'retryable'}
+            : const <String>{'run', 'kind', 'retryable'};
+        if (object.keys.toSet().difference(expectedKeys).isNotEmpty ||
+            !object.keys.toSet().containsAll(expectedKeys) ||
+            runId != expectedRunId ||
+            (run != null &&
+                (run.status != AgentRunStatus.failed ||
+                    run.failureKind != kind ||
+                    run.failureRetryable != retryable))) {
           throw const _InvalidVoiceResponse();
         }
         return AgentVoiceRunFailed(
           runId: runId,
           kind: kind,
           retryable: retryable,
+          run: run,
         );
       default:
         throw const _InvalidVoiceResponse();
@@ -1951,341 +1987,20 @@ AgentVoiceConfirmation _decodeConfirmationObject(Object? value) {
     required: const <String>{'draft', 'message', 'run'},
   );
   final draft = _decodeDraftObject(object['draft']);
-  final message = _decodeMessageObject(
+  final message = decodeAgentWireMessage(
     object['message'],
     expectedThreadId: draft.threadId,
   );
+  final run = decodeAgentWireRun(object['run']);
+  if (message.role != AgentMessageRole.user ||
+      run.threadId != draft.threadId ||
+      run.inputMessageId != message.id) {
+    throw const _InvalidVoiceResponse();
+  }
   return AgentVoiceConfirmation(
     draft: draft,
-    message: message,
-    run: _decodeRunObject(object['run']),
-  );
-}
-
-AgentVoiceRun _decodeRunObject(Object? value) {
-  final object = _strictObject(
-    value,
-    allowed: const <String>{
-      'run_id',
-      'thread_id',
-      'input_message_id',
-      'attempt',
-      'retry_of_run_id',
-      'client_retry_id',
-      'status',
-      'requested_provider',
-      'requested_model',
-      'max_output_tokens',
-      'assistant_message_id',
-      'provider_completion_id',
-      'provider_model',
-      'finish_reason',
-      'usage',
-      'failure',
-      'created_at',
-      'started_at',
-      'completed_at',
-      'updated_at',
-    },
-    required: const <String>{
-      'run_id',
-      'thread_id',
-      'input_message_id',
-      'attempt',
-      'status',
-      'requested_provider',
-      'requested_model',
-      'max_output_tokens',
-      'created_at',
-      'updated_at',
-    },
-  );
-  _strictInt(object['attempt'], min: 1);
-  _strictPattern(object['requested_provider'], _providerPattern, 64);
-  _strictPattern(object['requested_model'], _clientIdentityPattern, 128);
-  _strictInt(object['max_output_tokens'], min: 1);
-  final createdAt = _strictDateTime(object['created_at']);
-  final updatedAt = _strictDateTime(object['updated_at']);
-  if (updatedAt.isBefore(createdAt)) {
-    throw const _InvalidVoiceResponse();
-  }
-  final retryOf = _optionalUuid(object, 'retry_of_run_id');
-  final retryId = _optionalPattern(
-    object,
-    'client_retry_id',
-    _clientIdentityPattern,
-    128,
-  );
-  if ((retryOf == null) != (retryId == null)) {
-    throw const _InvalidVoiceResponse();
-  }
-  final status = switch (_strictString(object['status'], min: 1, max: 16)) {
-    'pending' => AgentVoiceRunStatus.pending,
-    'running' => AgentVoiceRunStatus.running,
-    'completed' => AgentVoiceRunStatus.completed,
-    'failed' => AgentVoiceRunStatus.failed,
-    _ => throw const _InvalidVoiceResponse(),
-  };
-  final assistantId = _optionalUuid(object, 'assistant_message_id');
-  final failureObject = _optionalObject(object, 'failure');
-  final failureKind = failureObject == null
-      ? null
-      : _strictPattern(failureObject['kind'], _failurePattern, 64);
-  final failureRetryable = failureObject == null
-      ? false
-      : _strictBool(failureObject['retryable']);
-  if (failureObject != null) {
-    _requireOnly(
-      failureObject,
-      allowed: const <String>{'kind', 'retryable'},
-      required: const <String>{'kind', 'retryable'},
-    );
-  }
-  final startedAt = _optionalDateTime(object, 'started_at');
-  final completedAt = _optionalDateTime(object, 'completed_at');
-  switch (status) {
-    case AgentVoiceRunStatus.pending:
-      if (assistantId != null ||
-          failureObject != null ||
-          startedAt != null ||
-          completedAt != null) {
-        throw const _InvalidVoiceResponse();
-      }
-    case AgentVoiceRunStatus.running:
-      if (assistantId != null ||
-          failureObject != null ||
-          startedAt == null ||
-          completedAt != null) {
-        throw const _InvalidVoiceResponse();
-      }
-    case AgentVoiceRunStatus.completed:
-      if (assistantId == null ||
-          failureObject != null ||
-          startedAt == null ||
-          completedAt == null ||
-          !object.containsKey('provider_completion_id') ||
-          !object.containsKey('provider_model') ||
-          !object.containsKey('finish_reason') ||
-          !object.containsKey('usage')) {
-        throw const _InvalidVoiceResponse();
-      }
-      _strictPattern(
-        object['provider_completion_id'],
-        _clientIdentityPattern,
-        128,
-      );
-      _strictPattern(object['provider_model'], _clientIdentityPattern, 128);
-      final finishReason = _strictString(
-        object['finish_reason'],
-        min: 1,
-        max: 16,
-      );
-      if (finishReason != 'stop' && finishReason != 'length') {
-        throw const _InvalidVoiceResponse();
-      }
-      final usage = _strictObject(
-        object['usage'],
-        allowed: const <String>{
-          'input_tokens',
-          'output_tokens',
-          'total_tokens',
-        },
-        required: const <String>{
-          'input_tokens',
-          'output_tokens',
-          'total_tokens',
-        },
-      );
-      _strictInt(usage['input_tokens'], min: 0);
-      _strictInt(usage['output_tokens'], min: 0);
-      _strictInt(usage['total_tokens'], min: 0);
-    case AgentVoiceRunStatus.failed:
-      if (assistantId != null ||
-          failureObject == null ||
-          startedAt == null ||
-          completedAt == null ||
-          object.containsKey('usage')) {
-        throw const _InvalidVoiceResponse();
-      }
-  }
-  if (startedAt != null && startedAt.isBefore(createdAt) ||
-      completedAt != null && completedAt.isBefore(startedAt!)) {
-    throw const _InvalidVoiceResponse();
-  }
-  return AgentVoiceRun(
-    id: _strictUuid(object['run_id']),
-    threadId: _strictUuid(object['thread_id']),
-    inputMessageId: _strictUuid(object['input_message_id']),
-    status: status,
-    assistantMessageId: assistantId,
-    failureKind: failureKind,
-    failureRetryable: failureRetryable,
-  );
-}
-
-List<AgentMessage> _decodeMessagePage(
-  Object? value, {
-  required String expectedThreadId,
-}) {
-  final object = _strictObject(
-    value,
-    allowed: const <String>{'messages', 'next_cursor'},
-    required: const <String>{'messages'},
-  );
-  final values = _strictList(object['messages'], max: 100);
-  final messages = <AgentMessage>[];
-  final ids = <String>{};
-  var previousSequence = 0;
-  for (final value in values) {
-    final message = _decodeMessageObject(
-      value,
-      expectedThreadId: expectedThreadId,
-    );
-    final sequence = message.sequence!;
-    if (!ids.add(message.id) || sequence <= previousSequence) {
-      throw const _InvalidVoiceResponse();
-    }
-    previousSequence = sequence;
-    messages.add(message);
-  }
-  _optionalString(object, 'next_cursor', max: 1024);
-  return messages;
-}
-
-AgentMessage _decodeMessageObject(
-  Object? value, {
-  required String expectedThreadId,
-}) {
-  final object = _strictObject(
-    value,
-    allowed: const <String>{
-      'message_id',
-      'thread_id',
-      'sequence',
-      'role',
-      'client_message_id',
-      'produced_by_run_id',
-      'modality',
-      'content',
-      'audio',
-      'client_actions',
-      'speech_feedback_status_url',
-      'created_at',
-    },
-    required: const <String>{
-      'message_id',
-      'thread_id',
-      'sequence',
-      'role',
-      'content',
-      'created_at',
-    },
-  );
-  if (_strictUuid(object['thread_id']) != expectedThreadId) {
-    throw const _InvalidVoiceResponse();
-  }
-  final role = switch (_strictString(object['role'], min: 1, max: 16)) {
-    'user' => AgentMessageRole.user,
-    'assistant' => AgentMessageRole.assistant,
-    _ => throw const _InvalidVoiceResponse(),
-  };
-  final clientId = _optionalPattern(
-    object,
-    'client_message_id',
-    _clientIdentityPattern,
-    128,
-  );
-  final producedBy = _optionalUuid(object, 'produced_by_run_id');
-  final modalityValue = _optionalString(object, 'modality', max: 16);
-  final modality = switch (modalityValue) {
-    null => AgentMessageModality.text,
-    'voice' => AgentMessageModality.voice,
-    _ => throw const _InvalidVoiceResponse(),
-  };
-  final audioObject = _optionalObject(object, 'audio');
-  final audio = audioObject == null ? null : _decodeMessageAudio(audioObject);
-  final speechFeedbackStatusUrl = _optionalString(
-    object,
-    'speech_feedback_status_url',
-    max: 160,
-  );
-  final clientActions = object['client_actions'] == null
-      ? const <AgentClientAction>[]
-      : decodeAgentClientActions(object['client_actions']);
-  if ((role == AgentMessageRole.user &&
-          (clientId == null ||
-              producedBy != null ||
-              clientActions.isNotEmpty)) ||
-      (role == AgentMessageRole.assistant &&
-          (clientId != null || producedBy == null)) ||
-      (modality == AgentMessageModality.voice &&
-          role != AgentMessageRole.user) ||
-      (modality != AgentMessageModality.voice && audio != null) ||
-      (speechFeedbackStatusUrl != null &&
-          (role != AgentMessageRole.user ||
-              modality != AgentMessageModality.voice ||
-              audio == null ||
-              !validAgentSpeechFeedbackStatusUrl(speechFeedbackStatusUrl)))) {
-    throw const _InvalidVoiceResponse();
-  }
-  return AgentMessage(
-    id: _strictUuid(object['message_id']),
-    role: role,
-    text: _strictContent(object['content']),
-    sequence: _strictInt(object['sequence'], min: 1),
-    createdAt: _strictDateTime(object['created_at']),
-    modality: modality,
-    audio: audio,
-    clientActions: clientActions,
-    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
-  );
-}
-
-AgentMessageAudio _decodeMessageAudio(Map<String, Object?> object) {
-  _requireOnly(
-    object,
-    allowed: const <String>{
-      'audio_id',
-      'status',
-      'content_type',
-      'size_bytes',
-      'duration_ms',
-      'playback_path',
-    },
-    required: const <String>{
-      'audio_id',
-      'status',
-      'content_type',
-      'size_bytes',
-      'duration_ms',
-      'playback_path',
-    },
-  );
-  if (_strictString(object['content_type'], min: 1, max: 32) != 'audio/wav') {
-    throw const _InvalidVoiceResponse();
-  }
-  final id = _strictUuid(object['audio_id']);
-  if (_strictString(object['status'], min: 1, max: 16) != 'readable') {
-    throw const _InvalidVoiceResponse();
-  }
-  final playback = _optionalPattern(
-    object,
-    'playback_path',
-    _playbackPathPattern,
-    256,
-  );
-  if (playback != '/v1/agent-message-audios/$id/playback') {
-    throw const _InvalidVoiceResponse();
-  }
-  return AgentMessageAudio(
-    id: id,
-    status: AgentMessageAudioStatus.readable,
-    contentType: 'audio/wav',
-    sizeBytes: _strictInt(object['size_bytes'], min: 1, max: 7400000),
-    duration: Duration(
-      milliseconds: _strictInt(object['duration_ms'], min: 1, max: 60000),
-    ),
-    playbackPath: playback,
+    message: message.presentation,
+    run: run,
   );
 }
 
@@ -2373,13 +2088,6 @@ void _requireOnly(
   }
 }
 
-List<Object?> _strictList(Object? value, {required int max}) {
-  if (value is! List || value.length > max) {
-    throw const _InvalidVoiceResponse();
-  }
-  return List<Object?>.of(value);
-}
-
 String _strictString(Object? value, {required int min, required int max}) {
   if (value is! String ||
       value.runes.length < min ||
@@ -2451,18 +2159,6 @@ String? _optionalString(
     return null;
   }
   return _strictString(object[key], min: 1, max: max);
-}
-
-String? _optionalPattern(
-  Map<String, Object?> object,
-  String key,
-  RegExp pattern,
-  int max,
-) {
-  if (!object.containsKey(key)) {
-    return null;
-  }
-  return _strictPattern(object[key], pattern, max);
 }
 
 String? _optionalUuid(Map<String, Object?> object, String key) {
@@ -2649,9 +2345,6 @@ final RegExp _clientIdentityPattern = RegExp(
 );
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failurePattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
-final RegExp _playbackPathPattern = RegExp(
-  r'^/v1/agent-message-audios/[0-9a-f-]+/playback$',
-);
 
 final class _InvalidVoiceResponse implements Exception {
   const _InvalidVoiceResponse();

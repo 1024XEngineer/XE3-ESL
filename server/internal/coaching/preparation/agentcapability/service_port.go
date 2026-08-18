@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -16,8 +17,9 @@ import (
 )
 
 type ServicePort struct {
-	plans   PlanApplication
-	catalog scene.PreviewCatalogResolver
+	plans    PlanApplication
+	catalog  scene.PreviewCatalog
+	manifest PreviewCatalogManifest
 }
 
 type PlanApplication interface {
@@ -36,15 +38,83 @@ type PlanApplication interface {
 }
 
 func NewServicePort(
+	ctx context.Context,
 	plans PlanApplication,
-	catalog scene.PreviewCatalogResolver,
+	catalog scene.PreviewCatalog,
 ) (*ServicePort, error) {
-	if plans == nil || catalog == nil {
+	if ctx == nil || plans == nil || catalog == nil {
 		return nil, errors.New(
-			"preparation agent capability: plans and catalog are required",
+			"preparation agent capability: context, plans, and catalog are required",
 		)
 	}
-	return &ServicePort{plans: plans, catalog: catalog}, nil
+	source, err := catalog.PreviewCatalogManifest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := NewPreviewCatalogManifest(source)
+	if err != nil {
+		return nil, err
+	}
+	return &ServicePort{plans: plans, catalog: catalog, manifest: manifest}, nil
+}
+
+// NewPreviewCatalogManifest validates and freezes the trusted Scene manifest
+// into the exact model-facing subset used by production and test composition.
+func NewPreviewCatalogManifest(
+	source scene.CatalogManifest,
+) (PreviewCatalogManifest, error) {
+	if !source.Valid() {
+		return PreviewCatalogManifest{}, errors.New(
+			"preparation agent capability: preview catalog manifest is invalid",
+		)
+	}
+	experiences := make(
+		[]PreviewCatalogManifestExperience,
+		len(source.Experiences),
+	)
+	for index, item := range source.Experiences {
+		experiences[index] = PreviewCatalogManifestExperience{
+			PracticeExperience:      string(item.Experience),
+			Aliases:                 append([]string(nil), item.Aliases...),
+			DefaultSceneID:          item.DefaultSceneID,
+			DefaultPracticeOptionID: item.DefaultPracticeOptionID,
+		}
+	}
+	sort.Slice(experiences, func(left, right int) bool {
+		return experiences[left].PracticeExperience <
+			experiences[right].PracticeExperience
+	})
+	items := make([]PreviewCatalogManifestScene, len(source.Scenes))
+	for index, item := range source.Scenes {
+		items[index] = PreviewCatalogManifestScene{
+			SceneID:            item.SceneID,
+			Name:               item.Name,
+			PracticeExperience: string(item.PracticeExperience),
+			Aliases:            append([]string(nil), item.Aliases...),
+			PublicSceneBrief:   item.PublicSceneBrief,
+			PracticeGoal:       item.PracticeGoal,
+		}
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return items[left].SceneID < items[right].SceneID
+	})
+	manifest := PreviewCatalogManifest{
+		Experiences: experiences,
+		Scenes:      items,
+	}
+	if !validPreviewCatalogManifest(manifest) {
+		return PreviewCatalogManifest{}, errors.New(
+			"preparation agent capability: preview catalog manifest is invalid",
+		)
+	}
+	return manifest, nil
+}
+
+func (port *ServicePort) PreviewCatalogManifest() PreviewCatalogManifest {
+	if port == nil {
+		return PreviewCatalogManifest{}
+	}
+	return clonePreviewCatalogManifest(port.manifest)
 }
 
 func (port *ServicePort) PreviewPractice(
@@ -57,90 +127,96 @@ func (port *ServicePort) PreviewPractice(
 		call.ThreadID == "" || call.RequestID == "" {
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
-	input.BackgroundSummary = strings.TrimSpace(input.BackgroundSummary)
-	if input.IELTSPracticeMode != "" {
-		input.BackgroundSummary = previewIELTSBackgroundSummary(input)
+	if !validPreviewInputShape(input) {
+		return PreviewResult{}, capability.ErrInvalidInput
 	}
+	switch input.SceneResolution.Kind {
+	case SceneResolutionKindCatalog:
+		return port.previewCatalogPractice(ctx, call, input)
+	case SceneResolutionKindCustom:
+		return port.previewCustomPractice(ctx, call, input)
+	case SceneResolutionKindNeedsClarification:
+		return port.previewClarification(ctx, input.SceneResolution.CandidateSceneIDs)
+	default:
+		return PreviewResult{}, capability.ErrInvalidInput
+	}
+}
 
-	candidateQuery := input.SceneQuery
-	if input.IELTSPracticeMode != "" && input.SceneID == "" {
-		candidateQuery = "IELTS"
-	}
-	if strings.TrimSpace(candidateQuery) == "" && input.SceneID != "" {
-		candidateQuery = input.SceneID
-	}
-	candidates, err := port.resolveCandidates(ctx, candidateQuery)
+func (port *ServicePort) previewCatalogPractice(
+	ctx context.Context,
+	call capability.CallContext,
+	input PreviewInput,
+) (PreviewResult, error) {
+	selection, err := port.catalog.ResolvePreviewCatalogSelection(
+		ctx,
+		input.SceneResolution.CatalogSceneID,
+	)
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
-	if len(candidates) > 1 {
+	if !selection.Valid() ||
+		selection.Scene.ID != input.SceneResolution.CatalogSceneID {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
+	candidate := previewCatalogCandidate(selection)
+	optionID, details := catalogPreviewOption(input, candidate)
+	if len(details) > 0 {
 		return PreviewResult{
-			Status:        "ambiguous",
-			Candidates:    candidates,
-			AssistantText: ambiguousSceneQuestion(candidates),
+			Status:                PreviewOutcomeNeedsDetails,
+			SceneResolution:       SceneResolutionNeedsDetails,
+			CatalogCandidateCount: 1,
+			RequiredMissingFields: details,
+			Candidates:            []CatalogCandidate{candidate},
+			AssistantText:         catalogDetailsQuestion(details),
 		}, nil
 	}
-	if len(candidates) == 0 {
-		return port.previewCustomPractice(ctx, call, input)
-	}
-	if input.BackgroundSummary == "" && input.IELTSPracticeMode == "" &&
-		input.SceneID == "" && len(candidates) == 1 &&
-		input.SceneQuery != candidates[0].SceneID {
-		input.BackgroundSummary = "User requested practice for: " +
-			strings.TrimSpace(input.SceneQuery)
-	}
-	input = enrichPreviewInput(input, candidates)
-	validationCandidates := candidates
-	if input.SceneID != "" &&
-		!containsPreviewScene(validationCandidates, input.SceneID) {
-		exact, exactErr := port.resolveCandidates(ctx, input.SceneID)
-		if exactErr != nil {
-			return PreviewResult{}, mapPreparationToolError(exactErr)
-		}
-		validationCandidates = append(validationCandidates, exact...)
-	}
-	missing := previewMissingFields(input, validationCandidates)
-	if len(missing) > 0 {
-		return PreviewResult{
-			Status:                "needs_details",
-			RequiredMissingFields: missing,
-			Candidates:            candidates,
-			AssistantText:         catalogDetailsQuestion(missing),
-		}, nil
-	}
-
 	plan, replayed, err := port.plans.PreviewPlan(
 		ctx,
 		call.Actor,
 		call.RequestID,
 		preparation.CreatePlanRequest{
 			SourceThreadID:    call.ThreadID,
-			BackgroundSummary: input.BackgroundSummary,
-			SceneID:           input.SceneID,
-			SceneVersion:      input.SceneVersion,
-			SelectedRoleIDs:   append([]string(nil), input.SelectedRoleIDs...),
-			PracticeOptionID:  input.PracticeOptionID,
-			MaxEffectiveTurns: input.MaxEffectiveTurns,
+			BackgroundSummary: previewBackgroundSummary(input),
+			SceneID:           selection.Scene.ID,
+			SceneVersion:      selection.Scene.Version,
+			SelectedRoleIDs:   append([]string(nil), selection.DefaultRoleIDs...),
+			PracticeOptionID:  optionID,
+			// The referenced Scene session policy owns completion and turn limits.
+			MaxEffectiveTurns: 0,
 			IELTSSelection:    previewIELTSQuestionSelection(input),
 		},
 	)
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
-	clientAction, err := practicePlanClientAction(plan)
-	if err != nil {
-		return PreviewResult{}, capability.ErrExecutionRejected
+	result, err := readyPreviewResult(plan, replayed, PreviewPlanSourceCatalog)
+	result.CatalogCandidateCount = 1
+	return result, err
+}
+
+func catalogPreviewOption(
+	input PreviewInput,
+	candidate CatalogCandidate,
+) (string, []string) {
+	if candidate.PracticeExperience !=
+		string(scene.PracticeExperienceIELTSSpeaking) {
+		if input.IELTSPracticeMode != "" || input.IELTSTopicChoice != "" {
+			return "", []string{"ielts_practice_mode"}
+		}
+		return candidate.DefaultPracticeOptionID, nil
 	}
-	return PreviewResult{
-		Status:       "preview_ready",
-		Replayed:     replayed,
-		ClientAction: clientAction,
-		AssistantText: "已为您准备好“" + plan.SceneSelection.Scene.Name +
-			"”练习，请确认开始。",
-		SourceRefs: []capability.SourceRef{
-			{Type: "practice_plan", ID: plan.ID},
-		},
-	}, nil
+	mode := scene.PracticeMode(input.IELTSPracticeMode)
+	if mode == "" {
+		mode = scene.PracticeModeFullMock
+	}
+	optionID, found := previewOptionForMode(candidate, mode)
+	if !found {
+		return "", []string{"ielts_practice_mode"}
+	}
+	if !validPreviewIELTSTopicChoice(mode, input.IELTSTopicChoice) {
+		return "", []string{"ielts_topic_choice"}
+	}
+	return optionID, nil
 }
 
 func catalogDetailsQuestion(missing []string) string {
@@ -158,26 +234,38 @@ func (port *ServicePort) previewCustomPractice(
 	call capability.CallContext,
 	input PreviewInput,
 ) (PreviewResult, error) {
-	missing := missingCustomSceneFields(input.SceneIntent)
-	if len(missing) > 0 {
+	experience := scene.PracticeExperience(input.SceneIntent.ExperienceHint)
+	if isRestrictedPracticeExperience(experience) {
 		return PreviewResult{
-			Status:                "needs_details",
-			RequiredMissingFields: missing,
-			AssistantText:         customSceneDetailsQuestion(missing),
+			Status:           PreviewOutcomeRequiresSpecializedFlow,
+			SceneResolution:  SceneResolutionRejected,
+			ResolutionReason: ResolutionReasonSpecializedFlowRequired,
+			AssistantText: "面试和雅思练习使用各自的正式准备流程。" +
+				"请选择目录中的面试或雅思场景。",
 		}, nil
 	}
-	experience := scene.PracticeExperience(input.SceneIntent.ExperienceHint)
+	if experience == "" {
+		return PreviewResult{
+			Status:                PreviewOutcomeNeedsDetails,
+			SceneResolution:       SceneResolutionNeedsDetails,
+			RequiredMissingFields: []string{"experience_hint"},
+			AssistantText:         "这个目录外场景属于职场还是生活旅行英语？",
+		}, nil
+	}
 	if experience != scene.PracticeExperienceWorkplace &&
 		experience != scene.PracticeExperienceLifeAndTravel {
-		return PreviewResult{
-			Status:        "rejected",
-			AssistantText: "面试和雅思练习需要使用对应的正式准备流程。请告诉我面试岗位，或选择雅思口语练习模式。",
-		}, nil
+		return PreviewResult{}, capability.ErrInvalidInput
 	}
-	background := input.BackgroundSummary
-	if background == "" {
-		background = "User requested a custom practice scene: " +
-			strings.TrimSpace(input.SceneQuery)
+	intent := input.SceneIntent
+	spec, err := (scene.CustomSceneCompiler{}).Compile(scene.CustomSceneDraft{
+		Scenario:       strings.TrimSpace(intent.Scenario),
+		UserRole:       strings.TrimSpace(intent.UserRole),
+		AIRole:         strings.TrimSpace(intent.AIRole),
+		PracticeGoal:   strings.TrimSpace(intent.PracticeGoal),
+		ExperienceHint: experience,
+	})
+	if err != nil {
+		return PreviewResult{}, mapPreparationToolError(err)
 	}
 	plan, replayed, err := port.plans.PreviewCustomPlan(
 		ctx,
@@ -185,54 +273,78 @@ func (port *ServicePort) previewCustomPractice(
 		call.RequestID,
 		preparation.CreateCustomPlanRequest{
 			SourceThreadID:    call.ThreadID,
-			BackgroundSummary: background,
-			SceneSpec: scene.CustomSceneSpec{
-				Scenario:       strings.TrimSpace(input.SceneIntent.Scenario),
-				UserRole:       strings.TrimSpace(input.SceneIntent.UserRole),
-				AIRole:         strings.TrimSpace(input.SceneIntent.AIRole),
-				PracticeGoal:   strings.TrimSpace(input.SceneIntent.PracticeGoal),
-				ExperienceHint: experience,
-			},
+			BackgroundSummary: previewBackgroundSummary(input),
+			SceneSpec:         spec,
 		},
 	)
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
-	return readyPreviewResult(plan, replayed)
+	return readyPreviewResult(plan, replayed, PreviewPlanSourceCustom)
 }
 
-func missingCustomSceneFields(intent *SceneIntent) []string {
-	if intent == nil {
-		return []string{"scenario", "user_role", "ai_role", "practice_goal", "experience_hint"}
+func (port *ServicePort) previewClarification(
+	ctx context.Context,
+	ids []string,
+) (PreviewResult, error) {
+	candidates := make([]CatalogCandidate, len(ids))
+	for index, id := range ids {
+		selection, err := port.catalog.ResolvePreviewCatalogSelection(ctx, id)
+		if err != nil {
+			return PreviewResult{}, mapPreparationToolError(err)
+		}
+		if !selection.Valid() || selection.Scene.ID != id {
+			return PreviewResult{}, capability.ErrExecutionRejected
+		}
+		candidates[index] = previewCatalogCandidate(selection)
 	}
-	fields := make([]string, 0, 5)
-	if strings.TrimSpace(intent.Scenario) == "" {
-		fields = append(fields, "scenario")
+	if len(candidates) == 1 {
+		return PreviewResult{
+			Status:                PreviewOutcomeNeedsDetails,
+			SceneResolution:       SceneResolutionNeedsDetails,
+			CatalogCandidateCount: 1,
+			Candidates:            candidates,
+			AssistantText: "你指的是“" + candidates[0].Name +
+				"”吗？请确认，或补充具体情境。",
+		}, nil
 	}
-	if strings.TrimSpace(intent.UserRole) == "" {
-		fields = append(fields, "user_role")
-	}
-	if strings.TrimSpace(intent.AIRole) == "" {
-		fields = append(fields, "ai_role")
-	}
-	if strings.TrimSpace(intent.PracticeGoal) == "" {
-		fields = append(fields, "practice_goal")
-	}
-	if strings.TrimSpace(intent.ExperienceHint) == "" {
-		fields = append(fields, "experience_hint")
-	}
-	return fields
+	return PreviewResult{
+		Status:                PreviewOutcomeAmbiguous,
+		SceneResolution:       SceneResolutionAmbiguous,
+		CatalogCandidateCount: len(candidates),
+		Candidates:            candidates,
+		AssistantText:         ambiguousSceneQuestion(candidates),
+	}, nil
 }
 
-func customSceneDetailsQuestion(missing []string) string {
-	labels := map[string]string{
-		"scenario":        "具体情境",
-		"user_role":       "你扮演的角色",
-		"ai_role":         "对方角色",
-		"practice_goal":   "练习目标",
-		"experience_hint": "属于职场还是生活旅行",
+func previewCatalogCandidate(
+	selection scene.PreviewCatalogSelection,
+) CatalogCandidate {
+	options := make([]CatalogPracticeOption, len(selection.Scene.PracticeOptions))
+	for index, option := range selection.Scene.PracticeOptions {
+		options[index] = CatalogPracticeOption{
+			ID:          option.ID,
+			DisplayName: option.DisplayName,
+			Mode:        string(option.Mode),
+		}
 	}
-	return "这个场景不在现有目录里，可以为你定制。请补充" + labels[missing[0]] + "。"
+	return CatalogCandidate{
+		SceneID:                 selection.Scene.ID,
+		SceneVersion:            selection.Scene.Version,
+		Name:                    selection.Scene.Name,
+		PracticeExperience:      string(selection.Scene.Experience),
+		SceneCategory:           string(selection.Scene.Category),
+		DefaultRoleIDs:          append([]string(nil), selection.DefaultRoleIDs...),
+		DefaultPracticeOptionID: selection.DefaultOption.ID,
+		PracticeOptions:         options,
+	}
+}
+
+func previewBackgroundSummary(input PreviewInput) string {
+	if summary := strings.TrimSpace(input.BackgroundSummary); summary != "" {
+		return summary
+	}
+	return "User requested practice for: " + strings.TrimSpace(input.SceneQuery)
 }
 
 func ambiguousSceneQuestion(candidates []CatalogCandidate) string {
@@ -246,15 +358,25 @@ func ambiguousSceneQuestion(candidates []CatalogCandidate) string {
 func readyPreviewResult(
 	plan preparation.PracticePlan,
 	replayed bool,
+	source PreviewPlanSource,
 ) (PreviewResult, error) {
 	clientAction, err := practicePlanClientAction(plan)
 	if err != nil {
 		return PreviewResult{}, capability.ErrExecutionRejected
 	}
+	resolution := SceneResolutionCustomResolved
+	if source == PreviewPlanSourceCatalog {
+		resolution = SceneResolutionCatalogResolved
+	} else if source != PreviewPlanSourceCustom {
+		return PreviewResult{}, capability.ErrExecutionRejected
+	}
 	return PreviewResult{
-		Status:       "preview_ready",
-		Replayed:     replayed,
-		ClientAction: clientAction,
+		Status:          PreviewOutcomeReady,
+		SceneResolution: resolution,
+		PlanID:          plan.ID,
+		PlanSource:      source,
+		Replayed:        replayed,
+		ClientAction:    clientAction,
 		AssistantText: "已为您准备好“" + plan.SceneSelection.Scene.Name +
 			"”练习，请确认开始。",
 		SourceRefs: []capability.SourceRef{{
@@ -273,21 +395,36 @@ func containsMissingField(fields []string, expected string) bool {
 	return false
 }
 
+func isRestrictedPracticeExperience(experience scene.PracticeExperience) bool {
+	return experience == scene.PracticeExperienceInterview ||
+		experience == scene.PracticeExperienceIELTSSpeaking
+}
+
 type confirmPracticePlanActionPayload struct {
 	Label                    string   `json:"label"`
 	PracticePlanID           string   `json:"practice_plan_id"`
 	PlanVersion              int      `json:"plan_version"`
-	Target                   string   `json:"target"`
 	SceneName                string   `json:"scene_name"`
+	UserRole                 string   `json:"user_role"`
+	AIRoles                  []string `json:"ai_roles"`
+	PracticeGoal             string   `json:"practice_goal"`
 	PracticeExperience       string   `json:"practice_experience"`
 	SceneCategory            string   `json:"scene_category"`
 	PracticeMode             string   `json:"practice_mode"`
-	Roles                    []string `json:"roles"`
 	PracticeScope            string   `json:"practice_scope"`
 	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
 	MinEffectiveTurns        int      `json:"min_effective_turns"`
 	MaxEffectiveTurns        int      `json:"max_effective_turns"`
 	ConfirmationPrompt       string   `json:"confirmation_prompt"`
+}
+
+var confirmPracticePlanActionFields = map[string]struct{}{
+	"label": {}, "practice_plan_id": {}, "plan_version": {},
+	"scene_name": {}, "user_role": {}, "ai_roles": {},
+	"practice_goal": {}, "practice_experience": {},
+	"scene_category": {}, "practice_mode": {}, "practice_scope": {},
+	"suggested_duration_seconds": {}, "min_effective_turns": {},
+	"max_effective_turns": {}, "confirmation_prompt": {},
 }
 
 var practicePlanUUIDPattern = regexp.MustCompile(
@@ -309,17 +446,18 @@ func practicePlanClientAction(
 	for index, role := range roles {
 		roleNames[index] = role.DisplayName
 	}
-	target := strings.TrimSpace(plan.SceneSelection.Scene.Prompt.PracticeGoal)
+	prompt := plan.SceneSelection.Scene.Prompt
 	payload := confirmPracticePlanActionPayload{
 		Label:                    "确认并开始练习",
 		PracticePlanID:           plan.ID,
 		PlanVersion:              plan.Version,
-		Target:                   target,
 		SceneName:                plan.SceneSelection.Scene.Name,
+		UserRole:                 strings.TrimSpace(prompt.UserRole),
+		AIRoles:                  roleNames,
+		PracticeGoal:             strings.TrimSpace(prompt.PracticeGoal),
 		PracticeExperience:       string(plan.SceneSelection.Scene.Experience),
 		SceneCategory:            string(plan.SceneSelection.Scene.Category),
 		PracticeMode:             string(option.Mode),
-		Roles:                    roleNames,
 		PracticeScope:            option.DisplayName,
 		SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
 		MinEffectiveTurns:        plan.SessionPolicy.MinEffectiveTurns,
@@ -346,8 +484,9 @@ func validConfirmPracticePlanActionPayload(
 	if !validActionText(payload.Label, 100) ||
 		!practicePlanUUIDPattern.MatchString(payload.PracticePlanID) ||
 		payload.PlanVersion < 1 ||
-		!validActionText(payload.Target, 500) ||
 		!validActionText(payload.SceneName, 200) ||
+		!validActionText(payload.UserRole, 200) ||
+		!validActionText(payload.PracticeGoal, 500) ||
 		!validActionText(payload.PracticeExperience, 100) ||
 		!validActionText(payload.SceneCategory, 200) ||
 		!validActionText(payload.PracticeMode, 100) ||
@@ -358,11 +497,11 @@ func validConfirmPracticePlanActionPayload(
 			payload.MaxEffectiveTurns < payload.MinEffectiveTurns) ||
 		payload.MaxEffectiveTurns > 100 ||
 		!validActionText(payload.ConfirmationPrompt, 300) ||
-		len(payload.Roles) < 1 || len(payload.Roles) > 8 {
+		len(payload.AIRoles) < 1 || len(payload.AIRoles) > 8 {
 		return false
 	}
-	seen := make(map[string]struct{}, len(payload.Roles))
-	for _, role := range payload.Roles {
+	seen := make(map[string]struct{}, len(payload.AIRoles))
+	for _, role := range payload.AIRoles {
 		if !validActionText(role, 200) {
 			return false
 		}
@@ -374,147 +513,34 @@ func validConfirmPracticePlanActionPayload(
 	return true
 }
 
+func decodeConfirmPracticePlanClientAction(
+	action agentclientaction.Action,
+) (confirmPracticePlanActionPayload, bool) {
+	if action.Type != ConfirmPracticePlanActionType ||
+		agentclientaction.Validate(action) != nil {
+		return confirmPracticePlanActionPayload{}, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(action.Payload, &fields) != nil ||
+		len(fields) != len(confirmPracticePlanActionFields) {
+		return confirmPracticePlanActionPayload{}, false
+	}
+	for field := range confirmPracticePlanActionFields {
+		if _, found := fields[field]; !found {
+			return confirmPracticePlanActionPayload{}, false
+		}
+	}
+	var payload confirmPracticePlanActionPayload
+	if json.Unmarshal(action.Payload, &payload) != nil ||
+		!validConfirmPracticePlanActionPayload(payload) {
+		return confirmPracticePlanActionPayload{}, false
+	}
+	return payload, true
+}
+
 func validActionText(value string, maxRunes int) bool {
 	return value == strings.TrimSpace(value) && value != "" &&
 		utf8.RuneCountInString(value) <= maxRunes
-}
-
-func (port *ServicePort) resolveCandidates(
-	ctx context.Context,
-	query string,
-) ([]CatalogCandidate, error) {
-	if strings.TrimSpace(query) == "" {
-		return nil, nil
-	}
-	items, err := port.catalog.ResolvePreviewCatalog(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]CatalogCandidate, len(items))
-	for index, item := range items {
-		options := make([]CatalogPracticeOption, len(item.Scene.PracticeOptions))
-		for optionIndex, option := range item.Scene.PracticeOptions {
-			options[optionIndex] = CatalogPracticeOption{
-				ID:          option.ID,
-				DisplayName: option.DisplayName,
-				Mode:        string(option.Mode),
-			}
-		}
-		result[index] = CatalogCandidate{
-			SceneID:            item.Scene.ID,
-			SceneVersion:       item.Scene.Version,
-			Name:               item.Scene.Name,
-			PracticeExperience: string(item.Scene.Experience),
-			SceneCategory:      string(item.Scene.Category),
-			DefaultRoleIDs: append(
-				[]string(nil),
-				item.DefaultRoleIDs...,
-			),
-			DefaultPracticeOptionID: item.DefaultOption.ID,
-			PracticeOptions:         options,
-		}
-	}
-	return result, nil
-}
-
-func enrichPreviewInput(
-	input PreviewInput,
-	candidates []CatalogCandidate,
-) PreviewInput {
-	if len(candidates) != 1 {
-		return input
-	}
-	candidate := candidates[0]
-	if input.SceneID == "" {
-		input.SceneID = candidate.SceneID
-	}
-	if input.SceneID == candidate.SceneID && input.SceneVersion < 1 {
-		input.SceneVersion = candidate.SceneVersion
-	}
-	if len(input.SelectedRoleIDs) == 0 {
-		input.SelectedRoleIDs = append([]string(nil), candidate.DefaultRoleIDs...)
-	}
-	if candidate.PracticeExperience ==
-		string(scene.PracticeExperienceIELTSSpeaking) {
-		if optionID, found := previewOptionForMode(
-			candidate,
-			scene.PracticeMode(input.IELTSPracticeMode),
-		); found {
-			input.PracticeOptionID = optionID
-		}
-		input.MaxEffectiveTurns = 0
-	} else {
-		if input.PracticeOptionID == "" {
-			input.PracticeOptionID = preferredPreviewOption(input, candidate)
-		}
-		if input.MaxEffectiveTurns < 1 {
-			input.MaxEffectiveTurns = 5
-		}
-	}
-	return input
-}
-
-func preferredPreviewOption(
-	input PreviewInput,
-	candidate CatalogCandidate,
-) string {
-	summary := strings.ToLower(input.BackgroundSummary)
-	if strings.Contains(summary, "重点练习") ||
-		strings.Contains(summary, "focus") {
-		if optionID, found := previewOptionForMode(
-			candidate,
-			scene.PracticeModeFocus,
-		); found {
-			return optionID
-		}
-	}
-	return candidate.DefaultPracticeOptionID
-}
-
-func previewMissingFields(
-	input PreviewInput,
-	candidates []CatalogCandidate,
-) []string {
-	missing := make([]string, 0, 6)
-	if input.BackgroundSummary == "" {
-		missing = append(missing, "background_summary")
-	}
-	if input.SceneID == "" || input.SceneVersion < 1 ||
-		!containsPreviewSceneVersion(
-			candidates,
-			input.SceneID,
-			input.SceneVersion,
-		) {
-		missing = append(missing, "scene_selection")
-	}
-	if len(input.SelectedRoleIDs) == 0 {
-		missing = append(missing, "role_selection")
-	}
-	if input.PracticeOptionID == "" {
-		missing = append(missing, "practice_option")
-	}
-	mode, isIELTS := previewIELTSMode(
-		input.SceneID,
-		input.PracticeOptionID,
-		candidates,
-	)
-	if isIELTS {
-		requestedMode := scene.PracticeMode(input.IELTSPracticeMode)
-		if !validPreviewIELTSMode(requestedMode) || requestedMode != mode {
-			missing = append(missing, "ielts_practice_mode")
-		}
-		if !validPreviewIELTSTopicChoice(requestedMode, input.IELTSTopicChoice) {
-			missing = append(missing, "ielts_topic_choice")
-		}
-	} else {
-		if input.MaxEffectiveTurns < 1 {
-			missing = append(missing, "max_effective_turns")
-		}
-		if input.IELTSPracticeMode != "" || input.IELTSTopicChoice != "" {
-			missing = append(missing, "ielts_practice_mode")
-		}
-	}
-	return missing
 }
 
 func previewOptionForMode(
@@ -527,62 +553,6 @@ func previewOptionForMode(
 		}
 	}
 	return "", false
-}
-
-func containsPreviewScene(candidates []CatalogCandidate, sceneID string) bool {
-	for _, candidate := range candidates {
-		if candidate.SceneID == sceneID {
-			return true
-		}
-	}
-	return false
-}
-
-func containsPreviewSceneVersion(
-	candidates []CatalogCandidate,
-	sceneID string,
-	sceneVersion int,
-) bool {
-	for _, candidate := range candidates {
-		if candidate.SceneID == sceneID &&
-			candidate.SceneVersion == sceneVersion {
-			return true
-		}
-	}
-	return false
-}
-
-func previewIELTSMode(
-	sceneID string,
-	practiceOptionID string,
-	candidates []CatalogCandidate,
-) (scene.PracticeMode, bool) {
-	for _, candidate := range candidates {
-		if candidate.SceneID != sceneID ||
-			candidate.PracticeExperience !=
-				string(scene.PracticeExperienceIELTSSpeaking) {
-			continue
-		}
-		for _, option := range candidate.PracticeOptions {
-			if option.ID == practiceOptionID {
-				return scene.PracticeMode(option.Mode), true
-			}
-		}
-		return "", true
-	}
-	return "", false
-}
-
-func validPreviewIELTSMode(mode scene.PracticeMode) bool {
-	switch mode {
-	case scene.PracticeModeFullMock,
-		scene.PracticeModePart1,
-		scene.PracticeModePart2,
-		scene.PracticeModePart3:
-		return true
-	default:
-		return false
-	}
 }
 
 func validPreviewIELTSTopicChoice(
@@ -616,34 +586,12 @@ func previewIELTSQuestionSelection(
 	}
 }
 
-func previewIELTSBackgroundSummary(input PreviewInput) string {
-	mode := scene.PracticeMode(input.IELTSPracticeMode)
-	if !validPreviewIELTSMode(mode) {
-		return ""
-	}
-	if mode == scene.PracticeModeFullMock {
-		return "User requested an IELTS Speaking full mock."
-	}
-	if input.IELTSTopicChoice == "" {
-		return "User requested IELTS Speaking " + string(mode) + "."
-	}
-	if !validPreviewIELTSTopicChoice(mode, input.IELTSTopicChoice) {
-		return ""
-	}
-	choice := input.IELTSTopicChoice
-	if choice == "random" {
-		choice = "a random published topic"
-	} else {
-		choice += " topic"
-	}
-	return "User requested IELTS Speaking " + string(mode) + " with " + choice + "."
-}
-
 func mapPreparationToolError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, scene.ErrCatalogSelectionInvalid),
+	case errors.Is(err, scene.ErrSceneNotFound),
+		errors.Is(err, scene.ErrCatalogSelectionInvalid),
 		errors.Is(err, scene.ErrCustomSceneInvalid),
 		errors.Is(err, preparation.ErrPlanInvalid):
 		return capability.ErrInvalidInput

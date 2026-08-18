@@ -20,5 +20,5 @@ func DeriveThreadTitle(content string) string {
 	if len(runes) > MaxThreadTitleRunes {
 		runes = runes[:MaxThreadTitleRunes]
 	}
-	return string(runes)
+	return strings.TrimSpace(string(runes))
 }

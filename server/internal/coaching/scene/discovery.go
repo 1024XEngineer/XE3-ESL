@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode"
 )
 
 const builtinDiscoverySchemaVersion = 1
@@ -63,7 +64,7 @@ func loadDiscovery(reader io.Reader, catalog *Catalog) error {
 	for _, profile := range document.Scenes {
 		definition, found := catalog.scene(profile.SceneID)
 		if !found || definition.Status != SceneStatusActive ||
-			!validDiscoveryAliases(profile.Aliases) {
+			!validDiscoveryPhrases(profile.Aliases) {
 			return invalidDefinition("invalid discovery profile for scene %q", profile.SceneID)
 		}
 		if _, duplicate := scenes[profile.SceneID]; duplicate {
@@ -89,7 +90,7 @@ func loadDiscovery(reader io.Reader, catalog *Catalog) error {
 		definition, found := catalog.scene(profile.DefaultSceneID)
 		if !found || definition.Status != SceneStatusActive ||
 			definition.Experience != profile.Experience ||
-			!validDiscoveryAliases(profile.Aliases) {
+			!validDiscoveryPhrases(profile.Aliases) {
 			return invalidDefinition("invalid discovery profile for experience %q", profile.Experience)
 		}
 		option, found := findPracticeOption(definition.PracticeOptions, profile.DefaultPracticeOptionID)
@@ -124,7 +125,7 @@ func loadDiscovery(reader io.Reader, catalog *Catalog) error {
 	return nil
 }
 
-func validDiscoveryAliases(values []string) bool {
+func validDiscoveryPhrases(values []string) bool {
 	if len(values) == 0 {
 		return false
 	}
@@ -143,5 +144,11 @@ func validDiscoveryAliases(values []string) bool {
 }
 
 func normalizeDiscoveryText(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	normalized := strings.Map(func(current rune) rune {
+		if unicode.IsLetter(current) || unicode.IsDigit(current) {
+			return unicode.ToLower(current)
+		}
+		return ' '
+	}, value)
+	return strings.Join(strings.Fields(normalized), " ")
 }

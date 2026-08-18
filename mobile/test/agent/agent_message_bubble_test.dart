@@ -310,12 +310,13 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000001',
       planVersion: 2,
-      target: 'Java Interview Practice',
       sceneName: '项目经历深挖',
+      userRole: '候选人',
+      practiceGoal: 'Java Interview Practice',
       practiceExperience: 'INTERVIEW',
       sceneCategory: 'INTERVIEW_PROFESSIONAL',
       practiceMode: 'FULL_SIMULATION',
-      roles: <String>['面试官', '候选人'],
+      aiRoles: <String>['面试官'],
       practiceScope: '围绕项目难点完成三轮追问',
       suggestedDuration: Duration(minutes: 12),
       minEffectiveTurns: 3,
@@ -344,9 +345,9 @@ void main() {
     );
 
     expect(find.text('项目经历深挖'), findsOneWidget);
-    expect(find.text('Java Interview Practice'), findsNothing);
+    expect(find.text('Java Interview Practice'), findsOneWidget);
     expect(find.text('已为你准备好'), findsOneWidget);
-    expect(find.text('面试官、候选人 · Interviewer'), findsOneWidget);
+    expect(find.text('你：候选人 · AI：面试官'), findsOneWidget);
     expect(find.text('约 12 分钟'), findsOneWidget);
     expect(find.text('围绕项目难点完成三轮追问'), findsOneWidget);
     expect(find.bySemanticsLabel('面试官场景图'), findsOneWidget);
@@ -376,12 +377,13 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000006',
       planVersion: 1,
-      target: '说清背景、优势和岗位匹配，并自然回应一到两个追问。',
       sceneName: '英文自我介绍',
+      userRole: '候选人',
+      practiceGoal: '说清背景、优势和岗位匹配，并自然回应一到两个追问。',
       practiceExperience: 'INTERVIEW',
       sceneCategory: 'INTERVIEW_RECRUITER',
       practiceMode: 'FOCUS',
-      roles: <String>['招聘方'],
+      aiRoles: <String>['招聘方'],
       practiceScope: '重点练习',
       suggestedDuration: Duration(minutes: 8),
       minEffectiveTurns: 3,
@@ -401,7 +403,7 @@ void main() {
     );
 
     expect(find.text('英文自我介绍'), findsOneWidget);
-    expect(find.text('招聘方 · Interviewer'), findsOneWidget);
+    expect(find.text('你：候选人 · AI：招聘方'), findsOneWidget);
     expect(find.text('约 8 分钟'), findsOneWidget);
     expect(find.text('重点练习'), findsOneWidget);
     expect(find.bySemanticsLabel('面试官场景图'), findsOneWidget);
@@ -443,12 +445,13 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000003',
       planVersion: 1,
-      target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       sceneName: 'IELTS 口语',
+      userRole: '考生',
+      practiceGoal: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       practiceExperience: 'IELTS_SPEAKING',
       sceneCategory: 'IELTS_SPEAKING',
       practiceMode: 'PART_1',
-      roles: <String>['IELTS 口语考官'],
+      aiRoles: <String>['IELTS 口语考官'],
       practiceScope: 'Part 1',
       suggestedDuration: Duration(minutes: 5),
       minEffectiveTurns: 3,
@@ -480,8 +483,8 @@ void main() {
     expect(markdown, isNot(contains('Part 1')));
     expect(markdown, isNot(contains('练前跟练')));
     expect(find.text('IELTS Speaking · Part 1'), findsOneWidget);
-    expect(find.text(action.target), findsNothing);
-    expect(find.text('IELTS 口语考官 · IELTS Examiner'), findsOneWidget);
+    expect(find.text(action.practiceGoal), findsOneWidget);
+    expect(find.text('你：考生 · AI：IELTS 口语考官'), findsOneWidget);
     expect(find.text('约 5 分钟'), findsOneWidget);
     expect(find.text('3 个问题'), findsOneWidget);
     expect(find.bySemanticsLabel('IELTS 考官头像'), findsOneWidget);
@@ -521,12 +524,13 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000004',
       planVersion: 1,
-      target: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       sceneName: 'IELTS 口语',
+      userRole: '考生',
+      practiceGoal: '按所选 IELTS 口语模式完成真实节奏的连续表达。',
       practiceExperience: 'IELTS_SPEAKING',
       sceneCategory: 'IELTS_SPEAKING',
       practiceMode: 'FULL_MOCK',
-      roles: <String>['IELTS 口语考官'],
+      aiRoles: <String>['IELTS 口语考官'],
       practiceScope: '完整模考',
       suggestedDuration: Duration(minutes: 14),
       minEffectiveTurns: 14,
@@ -596,12 +600,13 @@ void main() {
       label: '确认并开始练习',
       practicePlanId: '10000000-0000-4000-8000-000000000002',
       planVersion: 1,
-      target: 'Travel English Practice',
       sceneName: '酒店入住',
+      userRole: '住客',
+      practiceGoal: 'Travel English Practice',
       practiceExperience: 'LIFE_AND_TRAVEL',
       sceneCategory: 'LIFE_TRAVEL',
       practiceMode: 'FULL_SIMULATION',
-      roles: <String>['前台'],
+      aiRoles: <String>['前台'],
       practiceScope: '开放对话',
       suggestedDuration: Duration(minutes: 10),
       minEffectiveTurns: 1,
@@ -629,6 +634,179 @@ void main() {
     expect(find.text('约 10 分钟'), findsOneWidget);
     expect(find.textContaining('轮'), findsNothing);
   });
+
+  testWidgets(
+    'unknown and malformed actions do not hide the Message or add card spacing',
+    (tester) async {
+      const baseMessage = AgentMessage(
+        id: 'assistant-forward-compatible',
+        role: AgentMessageRole.assistant,
+        text: 'The answer remains visible.',
+      );
+      await _pumpMessage(tester, baseMessage);
+      final baseSize = tester.getSize(
+        find.byKey(const Key('agent-message-assistant-forward-compatible')),
+      );
+
+      await _pumpMessage(
+        tester,
+        const AgentMessage(
+          id: 'assistant-forward-compatible',
+          role: AgentMessageRole.assistant,
+          text: 'The answer remains visible.',
+          clientActions: <AgentClientAction>[
+            AgentClientAction(
+              type: 'future.client.action.v1',
+              payload: <String, Object?>{'future': true},
+            ),
+            AgentClientAction(
+              type: practicePlanConfirmClientActionType,
+              payload: <String, Object?>{'practice_plan_id': 'malformed'},
+            ),
+          ],
+        ),
+      );
+
+      expect(find.text('The answer remains visible.'), findsOneWidget);
+      expect(
+        find.byKey(const Key('agent-message-assistant-forward-compatible')),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSize(
+          find.byKey(const Key('agent-message-assistant-forward-compatible')),
+        ),
+        baseSize,
+      );
+      expect(find.byType(PracticePlanClientActionCard), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('renders a supported action beside an unknown future action', (
+    tester,
+  ) async {
+    const action = ConfirmPracticePlanClientAction(
+      label: '确认并开始练习',
+      practicePlanId: '10000000-0000-4000-8000-000000000007',
+      planVersion: 1,
+      sceneName: '餐厅点餐',
+      userRole: '顾客',
+      aiRoles: <String>['服务员'],
+      practiceGoal: '完成点餐并确认忌口信息',
+      practiceExperience: 'LIFE_AND_TRAVEL',
+      sceneCategory: 'LIFE_DAILY',
+      practiceMode: 'FULL_SIMULATION',
+      practiceScope: '开放对话',
+      suggestedDuration: Duration(minutes: 8),
+      minEffectiveTurns: 1,
+      maxEffectiveTurns: 0,
+      confirmationPrompt: '确认后开始练习。',
+    );
+    await _pumpMessage(
+      tester,
+      AgentMessage(
+        id: 'assistant-known-and-unknown',
+        role: AgentMessageRole.assistant,
+        text: '餐厅场景已创建。',
+        clientActions: <AgentClientAction>[
+          const AgentClientAction(
+            type: 'future.client.action.v1',
+            payload: <String, Object?>{'future': true},
+          ),
+          encodeConfirmPracticePlanClientAction(action),
+        ],
+      ),
+    );
+
+    expect(find.text('餐厅场景已创建。'), findsOneWidget);
+    expect(find.byType(PracticePlanClientActionCard), findsOneWidget);
+    expect(find.text('餐厅点餐'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in <double>[320, 390]) {
+    for (final textScale in <double>[2, 3]) {
+      testWidgets('keeps a long custom action usable at ${width.toInt()}px '
+          'and ${textScale.toInt()}x text', (tester) async {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = textScale;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final semantics = tester.ensureSemantics();
+        var confirmed = false;
+        final action = ConfirmPracticePlanClientAction(
+          label: '确认并开始练习',
+          practicePlanId: '10000000-0000-4000-8000-000000000008',
+          planVersion: 1,
+          sceneName: List<String>.filled(100, '场景').join(),
+          userRole: List<String>.filled(100, '用户').join(),
+          aiRoles: List<String>.generate(
+            8,
+            (index) => 'ROLE$index${List<String>.filled(190, 'X').join()}',
+          ),
+          practiceGoal: List<String>.filled(500, 'G').join(),
+          practiceExperience: 'WORKPLACE',
+          sceneCategory: 'WORKPLACE_GENERAL',
+          practiceMode: 'FULL_SIMULATION',
+          practiceScope: '开放对话',
+          suggestedDuration: const Duration(minutes: 8),
+          minEffectiveTurns: 1,
+          maxEffectiveTurns: 0,
+          confirmationPrompt: '确认后开始练习。',
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: AgentMessageBubble(
+                  message: AgentMessage(
+                    id: 'assistant-long-custom-${width.toInt()}',
+                    role: AgentMessageRole.assistant,
+                    text: '定制场景已创建。',
+                    clientActions: <AgentClientAction>[
+                      encodeConfirmPracticePlanClientAction(action),
+                    ],
+                  ),
+                  clientActionBuilder: _practiceActionBuilder(
+                    (_) => confirmed = true,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final button = find.byKey(
+          const Key(
+            'confirm-practice-plan-'
+            '10000000-0000-4000-8000-000000000008-1',
+          ),
+        );
+        expect(tester.takeException(), isNull);
+        expect(
+          find.bySemanticsLabel(
+            '已为你准备好。练习场景：${action.sceneName}。'
+            '练习目标：${action.practiceGoal}。角色：'
+            '你：${action.userRole} · AI：${action.aiRoles.join('、')}。',
+          ),
+          findsOneWidget,
+        );
+        expect(find.bySemanticsLabel('开始练习'), findsOneWidget);
+        semantics.dispose();
+        await tester.ensureVisible(button);
+        await tester.pump();
+        expect(button.hitTestable(), findsOneWidget);
+        await tester.tap(button);
+        expect(confirmed, isTrue);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
 
   testWidgets('loads, caches, and toggles an assistant translation', (
     tester,
@@ -737,7 +915,10 @@ AgentClientActionBuilder _practiceActionBuilder(
   ValueChanged<ConfirmPracticePlanClientAction>? onAction,
 ) {
   return (context, envelope) {
-    final action = decodeConfirmPracticePlanClientAction(envelope);
+    final action = tryDecodeConfirmPracticePlanClientAction(envelope);
+    if (action == null) {
+      return null;
+    }
     return PracticePlanClientActionCard(
       action: action,
       onConfirm: onAction == null ? null : () => onAction(action),
