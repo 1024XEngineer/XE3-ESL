@@ -66,3 +66,6 @@ require (
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 )
+
+// GO-2026-6115: use upstream PR #78 until ledongthuc/pdf publishes a fixed version.
+replace github.com/ledongthuc/pdf => github.com/gage-marshall/pdf v0.0.0-20260724223906-84256728aa1a
