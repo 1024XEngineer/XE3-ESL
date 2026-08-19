@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -91,16 +92,16 @@ func TestPreviewFixtureRejectsInvalidClosedUnionBeforePort(t *testing.T) {
 	_, err = evaluator.executor.Execute(
 		context.Background(),
 		capability.CallContext{
-			Actor:      requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"},
-			ThreadID:   "eval-thread",
-			RunID:      "invalid-preview-run",
-			ToolCallID: "invalid-preview-call",
-			RequestID:  "invalid-preview-request",
+			Actor:         requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"},
+			ThreadID:      "eval-thread",
+			RunID:         "invalid-preview-run",
+			ToolCallID:    "invalid-preview-call",
+			RequestID:     "invalid-preview-request",
+			Authorization: json.RawMessage(`{"intent":"REQUEST_CREATE"}`),
 		},
 		capability.Invocation{
 			Name: preparationcapability.PracticePreviewToolName,
 			Input: mustRaw(map[string]any{
-				"scene_query":            "酒店入住",
 				"resolution_kind":        preparationcapability.SceneResolutionKindCatalog,
 				"catalog_scene_ids":      []string{"scn_travel_hotel_checkin", "scn_travel_airport_checkin"},
 				"custom_scenario":        "",
@@ -124,16 +125,16 @@ func TestPreviewFixtureRequiresCustomScenarioBeforePort(t *testing.T) {
 	_, err = evaluator.executor.Execute(
 		context.Background(),
 		capability.CallContext{
-			Actor:      requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"},
-			ThreadID:   "eval-thread",
-			RunID:      "invalid-custom-preview-run",
-			ToolCallID: "invalid-custom-preview-call",
-			RequestID:  "invalid-custom-preview-request",
+			Actor:         requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"},
+			ThreadID:      "eval-thread",
+			RunID:         "invalid-custom-preview-run",
+			ToolCallID:    "invalid-custom-preview-call",
+			RequestID:     "invalid-custom-preview-request",
+			Authorization: json.RawMessage(`{"intent":"REQUEST_CREATE"}`),
 		},
 		capability.Invocation{
 			Name: preparationcapability.PracticePreviewToolName,
 			Input: mustRaw(map[string]any{
-				"scene_query":            "在宠物店沟通鹦鹉寄养",
 				"resolution_kind":        preparationcapability.SceneResolutionKindCustom,
 				"catalog_scene_ids":      []string{},
 				"custom_scenario":        "",

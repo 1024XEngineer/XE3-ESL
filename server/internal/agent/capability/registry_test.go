@@ -24,6 +24,18 @@ type conditionalStubTool struct {
 	effectInput json.RawMessage
 }
 
+type guardedStubTool struct {
+	*stubTool
+	decision ExposureDecision
+}
+
+func (tool *guardedStubTool) AuthorizeExposure(
+	context.Context,
+	ExposureRequest,
+) (ExposureDecision, error) {
+	return tool.decision, nil
+}
+
 func (tool *conditionalStubTool) ClassifyInvocationEffect(
 	input json.RawMessage,
 ) (InvocationEffect, error) {
@@ -53,6 +65,43 @@ func TestRegistryRejectsDuplicateTools(t *testing.T) {
 	}
 	if err := registry.Register(tool); !errors.Is(err, ErrDuplicateTool) {
 		t.Fatalf("Register duplicate error = %v, want %v", err, ErrDuplicateTool)
+	}
+}
+
+func TestRegistryExposureExcludesConversationalToolAndRequiresAuthorizedTool(
+	t *testing.T,
+) {
+	guarded := &guardedStubTool{
+		stubTool: &stubTool{definition: readToolDefinition("practice.preview.v3")},
+		decision: ExposureDecision{Expose: false, AuditLabel: "CONVERSE"},
+	}
+	registry, err := NewRegistry(guarded)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	request := ExposureRequest{
+		Actor:    requestcontext.Actor{UserID: "user-1", SessionID: "session-1"},
+		ThreadID: "thread-1", RunID: "run-1", InputMessageID: "message-1",
+	}
+	plan, err := registry.ResolveExposure(context.Background(), request)
+	if err != nil || len(plan.Definitions) != 0 || plan.RequiredTool != "" {
+		t.Fatalf("converse plan = %#v, %v", plan, err)
+	}
+	guarded.decision = ExposureDecision{
+		Expose: true, Require: true,
+		Authorization: json.RawMessage(`{"intent":"REQUEST_CREATE"}`),
+		AuditLabel:    "REQUEST_CREATE",
+		InputSchema: ObjectSchema(map[string]any{
+			"decision": StringEnumSchema("Authorized decision", "CREATE"),
+		}, []string{"decision"}),
+	}
+	plan, err = registry.ResolveExposure(context.Background(), request)
+	if err != nil || len(plan.Definitions) != 1 ||
+		plan.RequiredTool != "practice.preview.v3" ||
+		string(plan.Authorizations[plan.RequiredTool]) != `{"intent":"REQUEST_CREATE"}` ||
+		plan.Definitions[0].InputSchema["properties"] == nil ||
+		plan.InputSchemas[plan.RequiredTool]["properties"] == nil {
+		t.Fatalf("authorized plan = %#v, %v", plan, err)
 	}
 }
 

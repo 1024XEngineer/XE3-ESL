@@ -55,7 +55,7 @@ Thread 和工具数据。
   "messages": ["看看我上次面试评价"],
   "expected_decision": "tool_call",
   "expected_tools": ["review.search.v2"],
-  "forbidden_tools": ["practice.preview.v2"],
+  "forbidden_tools": ["practice.preview.v3"],
   "required_response_terms": ["评价"],
   "forbidden_response_terms": ["report_id"],
   "max_non_empty_paragraphs": 2,
@@ -63,7 +63,7 @@ Thread 和工具数据。
 }
 ```
 
-调用 `practice.preview.v2` 的用例还应声明服务端真正收到的场景决议，例如：
+调用 `practice.preview.v3` 的用例还应声明服务端真正收到的场景决议，例如：
 
 ```json
 "expected_preview_input": {

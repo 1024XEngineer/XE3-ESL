@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/ielts"
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
@@ -19,9 +20,10 @@ import (
 // AgentModelProviders makes each Agent-owned model boundary explicit at the
 // composition root. No business module receives a provider's generic client.
 type AgentModelProviders struct {
-	Run         agentrun.TextGenerator
-	Summary     agentsummary.Generator
-	Translation sharedtranslation.Translator
+	Run                agentrun.TextGenerator
+	Summary            agentsummary.Generator
+	Translation        sharedtranslation.Translator
+	PracticeTurnIntent preparationagentcapability.PracticeTurnIntentGenerator
 }
 
 func NewAgentModelProviders(
@@ -43,10 +45,18 @@ func NewAgentModelProviders(
 	if err != nil {
 		return AgentModelProviders{}, err
 	}
+	practiceTurnIntent, err := qianwen.NewPracticeTurnIntentGenerator(
+		providerConfig,
+		apiKey,
+	)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
 	return AgentModelProviders{
-		Run:         runGenerator,
-		Summary:     summaryGenerator,
-		Translation: translator,
+		Run:                runGenerator,
+		Summary:            summaryGenerator,
+		Translation:        translator,
+		PracticeTurnIntent: practiceTurnIntent,
 	}, nil
 }
 

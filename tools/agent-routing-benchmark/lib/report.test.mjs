@@ -160,7 +160,7 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
       name: "leaky_preview",
       messages: ["直接开始"],
       expected_decision: "tool_call",
-      expected_tools: ["practice.preview.v2"],
+      expected_tools: ["practice.preview.v3"],
       required_response_terms: ["好。"],
       forbidden_response_terms: ["PART_1", "5 分钟", "准备好", "卡片"],
       max_non_empty_paragraphs: 1,
@@ -191,7 +191,7 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
   ];
   const events = [
     ...successfulToolEvents("run-warmup", "ielts.warmup.v1"),
-    ...successfulToolEvents("run-preview", "practice.preview.v2"),
+    ...successfulToolEvents("run-preview", "practice.preview.v3"),
   ];
 
   const results = evaluateCases(cases, executions, events);
@@ -224,7 +224,7 @@ test("evaluates the structured preview resolution without raw scene text", () =>
       name: "catalog_preview",
       messages: ["自然语言场景请求"],
       expected_decision: "tool_call",
-      expected_tools: ["practice.preview.v2"],
+      expected_tools: ["practice.preview.v3"],
       expected_preview_input: {
         kind: "CATALOG",
         catalog_scene_id: "scn_travel_hotel_checkin",
@@ -234,7 +234,7 @@ test("evaluates the structured preview resolution without raw scene text", () =>
       name: "wrong_custom_preview",
       messages: ["另一个自然语言场景请求"],
       expected_decision: "tool_call",
-      expected_tools: ["practice.preview.v2"],
+      expected_tools: ["practice.preview.v3"],
       expected_preview_input: {
         kind: "CUSTOM",
       },
@@ -247,14 +247,14 @@ test("evaluates the structured preview resolution without raw scene text", () =>
     status: "completed",
   }));
   const events = [
-    ...successfulToolEvents("run-1", "practice.preview.v2"),
+    ...successfulToolEvents("run-1", "practice.preview.v3"),
     {
       msg: "agent.benchmark.preview.input",
       run_id: "run-1",
       kind: "CATALOG",
       catalog_scene_id: "scn_travel_hotel_checkin",
     },
-    ...successfulToolEvents("run-2", "practice.preview.v2"),
+    ...successfulToolEvents("run-2", "practice.preview.v3"),
     {
       msg: "agent.benchmark.preview.input",
       run_id: "run-2",

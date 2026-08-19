@@ -124,15 +124,19 @@ func (e *Evaluator) evaluateCase(
 		AllowedTools: append([]string{}, allowedTools...),
 	}
 	for callIndex, call := range route.ToolCalls {
+		callContext := capability.CallContext{
+			Actor:      actor,
+			ThreadID:   "eval-thread",
+			RunID:      runID,
+			ToolCallID: fmt.Sprintf("eval-call-%d", callIndex+1),
+			RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
+		}
+		if call.Name == preparationcapability.PracticePreviewToolName {
+			callContext.Authorization = json.RawMessage(`{"intent":"REQUEST_CREATE"}`)
+		}
 		_, err := e.executor.Execute(
 			ctx,
-			capability.CallContext{
-				Actor:      actor,
-				ThreadID:   "eval-thread",
-				RunID:      runID,
-				ToolCallID: fmt.Sprintf("eval-call-%d", callIndex+1),
-				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
-			},
+			callContext,
 			capability.Invocation{Name: call.Name, Input: call.Input},
 		)
 		if err != nil {
@@ -241,7 +245,6 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: preparationcapability.PracticePreviewToolName,
 					Input: mustRaw(map[string]any{
-						"scene_query":            lastUserContent(item.Messages),
 						"resolution_kind":        preparationcapability.SceneResolutionKindCatalog,
 						"catalog_scene_ids":      []string{"scn_interview_self_introduction"},
 						"custom_scenario":        "",
@@ -315,7 +318,6 @@ func routeIELTSPractice(
 	if selection.mode == "FULL_MOCK" || afterWarmUp ||
 		asksToStartDirectly(normalize(lastUserContent(messages))) {
 		toolName = preparationcapability.PracticePreviewToolName
-		arguments["scene_query"] = latestIELTSRequest(messages)
 		arguments["resolution_kind"] = preparationcapability.SceneResolutionKindCatalog
 		arguments["catalog_scene_ids"] = []string{"scn_ielts_speaking"}
 		arguments["custom_scenario"] = ""

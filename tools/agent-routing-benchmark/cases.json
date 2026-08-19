@@ -42,7 +42,7 @@
     "expected_tools": [],
     "forbidden_tools": [
       "ielts.warmup.v1",
-      "practice.preview.v2"
+      "practice.preview.v3"
     ],
     "required_response_terms": ["Part 1", "Part 2", "Part 3", "完整模考"],
     "forbidden_response_terms": [
@@ -63,7 +63,7 @@
     "expected_tools": [],
     "forbidden_tools": [
       "ielts.warmup.v1",
-      "practice.preview.v2"
+      "practice.preview.v3"
     ],
     "required_response_terms": ["Part 1", "随机", "人物", "地点", "事物", "经历"],
     "forbidden_response_terms": [
@@ -85,7 +85,7 @@
     "expected_decision": "tool_call",
     "expected_tools": ["ielts.warmup.v1"],
     "forbidden_tools": [
-      "practice.preview.v2"
+      "practice.preview.v3"
     ],
     "required_response_terms": [
       "最近",
@@ -132,7 +132,7 @@
     "expected_decision": "tool_call",
     "expected_tools": ["ielts.warmup.v1"],
     "forbidden_tools": [
-      "practice.preview.v2"
+      "practice.preview.v3"
     ],
     "required_response_terms": [
       "最近有没有谁",
@@ -179,7 +179,7 @@
     "expected_decision": "tool_call",
     "expected_tools": ["ielts.warmup.v1"],
     "forbidden_tools": [
-      "practice.preview.v2"
+      "practice.preview.v3"
     ],
     "required_response_terms": [
       "最近有没有哪个地方",
@@ -224,7 +224,7 @@
     "name": "ielts_part1_direct_start_preview",
     "messages": ["创建 IELTS Part 1 随机专项，直接开始"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -257,7 +257,7 @@
       "I'd like to talk about my high school teacher."
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -292,7 +292,7 @@
       "直接开始"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -322,7 +322,7 @@
     "name": "ielts_full_mock_preview",
     "messages": ["帮我创建一场雅思口语完整模考"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -361,7 +361,7 @@
     "name": "default_interview_catalog_preview",
     "messages": ["帮我创建一个面试练习"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -375,7 +375,7 @@
     "name": "default_ielts_catalog_preview",
     "messages": ["帮我创建一个雅思口语练习"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -389,7 +389,7 @@
     "name": "default_workplace_catalog_preview",
     "messages": ["帮我创建一个职场英语练习"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -403,7 +403,7 @@
     "name": "default_life_travel_catalog_preview",
     "messages": ["帮我创建一个生活与旅行英语练习"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -419,7 +419,7 @@
       "我要面试 Java 后端岗位，重点讲支付系统重构，直接帮我创建自我介绍练习。"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -435,7 +435,7 @@
       "明天入住英文酒店，我没有找到海景房预订，直接帮我创建练习。"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -449,7 +449,7 @@
     "name": "personalized_meeting_stays_catalog",
     "messages": ["我要在会议上礼貌反对发布日期，直接帮我创建练习。"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -463,7 +463,7 @@
     "name": "zh_catalog_hotel_preview_v2",
     "messages": ["明天去酒店办理入住，想练习跟英文前台核对预订和房型，直接创建。"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -485,7 +485,7 @@
       "Create a practice for checking in at an English-speaking hotel. I need to confirm my reservation and room type."
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -507,7 +507,7 @@
       "帮我定制一个职场练习：我是项目负责人，你扮演不愿放人的部门主管，我要在跨部门会议上争取借调一名数据分析师两周，直接创建。"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
@@ -529,7 +529,7 @@
       "Create a custom life role-play: I am a community volunteer, you are the venue manager, and I need to negotiate a room for a weekend English club."
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CUSTOM"
@@ -550,7 +550,7 @@
       "我要练习在仓库里用英语排查巡检机器人误报火警的问题，直接帮我创建。"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CUSTOM"
@@ -563,7 +563,7 @@
     "name": "unknown_parrot_creates_custom_preview",
     "messages": ["我要在宠物店用英语沟通鹦鹉寄养，直接帮我创建练习。"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CUSTOM"
@@ -576,7 +576,7 @@
     "name": "explicit_two_catalog_scenes_need_clarification",
     "messages": ["酒店入住和机场值机我都想练，但还没决定选哪个。"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "NEEDS_CLARIFICATION",
@@ -595,7 +595,7 @@
       "帮我定制一场量化研究员面试，我是候选人，你扮演面试官，重点追问策略回测，直接创建。"
     ],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CUSTOM"
@@ -606,7 +606,7 @@
     "name": "restricted_ielts_custom_requires_formal_choice",
     "messages": ["给我定制一场雅思口语，题目就聊火星旅游，直接创建。"],
     "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v2"],
+    "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CUSTOM"
@@ -666,7 +666,7 @@
     "expected_decision": "tool_call",
     "expected_tools": ["review.search.v2"],
     "forbidden_tools": [
-      "practice.preview.v2"
+      "practice.preview.v3"
     ]
   },
   {
@@ -687,7 +687,7 @@
     "expected_decision": "refuse_or_degrade",
     "expected_tools": [],
     "forbidden_tools": [
-      "practice.preview.v2",
+      "practice.preview.v3",
       "review.search.v2",
       "review.get.v2",
       "material.search.v1",

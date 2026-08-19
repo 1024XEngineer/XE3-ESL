@@ -59,6 +59,7 @@ func run() int {
 		databasePool.Native(),
 		logger,
 		providers.Run,
+		providers.PracticeTurnIntent,
 		agentrun.Configuration{
 			Provider:           textConfiguration.Provider,
 			Model:              textConfiguration.Model,

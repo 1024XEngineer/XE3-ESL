@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -34,7 +37,7 @@ func TestPreviewToolDefinitionsPublishRequiredProviderCompatibleSchemas(
 	resolutionKind := properties["resolution_kind"].(map[string]any)
 	if !reflect.DeepEqual(
 		resolutionKind["enum"],
-		[]string{"CATALOG", "CUSTOM", "NEEDS_CLARIFICATION"},
+		[]string{"CATALOG", "CUSTOM", "NEEDS_CLARIFICATION", "NONE"},
 	) {
 		t.Fatalf("resolution_kind enum = %#v", resolutionKind["enum"])
 	}
@@ -45,7 +48,6 @@ func TestPreviewToolDefinitionsPublishRequiredProviderCompatibleSchemas(
 	if !reflect.DeepEqual(
 		definition.InputSchema["required"],
 		[]string{
-			"scene_query",
 			"resolution_kind",
 			"catalog_scene_ids",
 			"custom_scenario",
@@ -80,9 +82,144 @@ func TestPreviewToolDefinitionsPublishRequiredProviderCompatibleSchemas(
 	}
 }
 
+func TestPreviewExposureBlocksConversationalTurn(t *testing.T) {
+	catalog := newTestCatalog(t)
+	port, err := NewServicePort(
+		context.Background(),
+		&readyPlanApplication{catalog: catalog},
+		catalog,
+		staticTrustedMessageReader{content: "你好，我最近在准备雅思。"},
+		noopPendingActionRepository{},
+		staticPracticeTurnIntentGenerator{content: `{"intent":"CONVERSE"}`},
+	)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	tool, err := NewPreviewTool(port)
+	if err != nil {
+		t.Fatalf("NewPreviewTool() error = %v", err)
+	}
+	decision, err := tool.AuthorizeExposure(
+		context.Background(),
+		capability.ExposureRequest{
+			Actor:          validPreviewCallContext().Actor,
+			ThreadID:       validPreviewCallContext().ThreadID,
+			RunID:          validPreviewCallContext().RunID,
+			InputMessageID: validPreviewCallContext().InputMessageID,
+		},
+	)
+	if err != nil || decision.Expose || decision.Require ||
+		decision.AuditLabel != "CONVERSE" {
+		t.Fatalf("AuthorizeExposure() = %#v, %v", decision, err)
+	}
+}
+
+func TestPreviewExposureNarrowsSchemaToAuthorizedBehaviorIntent(t *testing.T) {
+	tests := []struct {
+		intent       string
+		wantProperty string
+		wantEnum     string
+		wantNoFields bool
+	}{
+		{intent: "PROPOSE_CREATE", wantProperty: "resolution_kind", wantEnum: "CATALOG"},
+		{intent: "CONFIRM_PENDING", wantNoFields: true},
+		{intent: "REJECT_PENDING", wantNoFields: true},
+	}
+	for _, test := range tests {
+		t.Run(test.intent, func(t *testing.T) {
+			catalog := newTestCatalog(t)
+			messageReader := staticTrustedMessageReader{content: "current message"}
+			var pendingActions preparation.PendingActionRepository = noopPendingActionRepository{}
+			if test.wantNoFields {
+				messageReader.sequence = 3
+				pendingActions = &memoryPendingActionRepository{
+					item: preparation.PendingPracticeAction{
+						State: preparation.PendingActionOpen, SourceInputSequence: 1,
+					},
+				}
+			}
+			port, err := NewServicePort(
+				context.Background(), &readyPlanApplication{catalog: catalog}, catalog,
+				messageReader, pendingActions,
+				staticPracticeTurnIntentGenerator{content: `{"intent":"` + test.intent + `"}`},
+			)
+			if err != nil {
+				t.Fatalf("NewServicePort() error = %v", err)
+			}
+			tool, err := NewPreviewTool(port)
+			if err != nil {
+				t.Fatalf("NewPreviewTool() error = %v", err)
+			}
+			decision, err := tool.AuthorizeExposure(
+				context.Background(), capability.ExposureRequest{
+					Actor: validPreviewCallContext().Actor, ThreadID: validPreviewCallContext().ThreadID,
+					RunID: validPreviewCallContext().RunID, InputMessageID: validPreviewCallContext().InputMessageID,
+				},
+			)
+			if err != nil || !decision.Expose || !decision.Require {
+				t.Fatalf("AuthorizeExposure() = %#v, %v", decision, err)
+			}
+			properties, _ := decision.InputSchema["properties"].(map[string]any)
+			if test.wantNoFields {
+				if len(properties) != 0 {
+					t.Fatalf("pending properties = %#v", properties)
+				}
+				return
+			}
+			property, _ := properties[test.wantProperty].(map[string]any)
+			enums, _ := property["enum"].([]string)
+			if !slices.Contains(enums, test.wantEnum) ||
+				slices.Contains(enums, string(SceneResolutionKindNeedsClarification)) {
+				t.Fatalf("authorized enum = %#v", enums)
+			}
+		})
+	}
+}
+
+func TestPreviewExposureAllowsPendingResolutionRetry(t *testing.T) {
+	tests := []struct {
+		state  preparation.PendingActionState
+		intent PracticeTurnIntent
+	}{
+		{preparation.PendingActionConfirming, PracticeTurnIntentConfirmPending},
+		{preparation.PendingActionConfirmed, PracticeTurnIntentConfirmPending},
+		{preparation.PendingActionRejected, PracticeTurnIntentRejectPending},
+	}
+	for _, test := range tests {
+		t.Run(string(test.state), func(t *testing.T) {
+			catalog := newTestCatalog(t)
+			call := validPreviewCallContext()
+			pending := &memoryPendingActionRepository{item: preparation.PendingPracticeAction{
+				State: test.state, ResolutionInputMessageID: call.InputMessageID,
+			}}
+			port, err := NewServicePort(
+				context.Background(), &readyPlanApplication{catalog: catalog}, catalog,
+				staticTrustedMessageReader{content: "对的", sequence: 3}, pending,
+				staticPracticeTurnIntentGenerator{content: `{"intent":"` + string(test.intent) + `"}`},
+			)
+			if err != nil {
+				t.Fatalf("NewServicePort() error = %v", err)
+			}
+			tool, err := NewPreviewTool(port)
+			if err != nil {
+				t.Fatalf("NewPreviewTool() error = %v", err)
+			}
+			decision, err := tool.AuthorizeExposure(
+				context.Background(), capability.ExposureRequest{
+					Actor: call.Actor, ThreadID: call.ThreadID, RunID: call.RunID,
+					InputMessageID: call.InputMessageID,
+				},
+			)
+			if err != nil || !decision.Expose || !decision.Require ||
+				decision.AuditLabel != string(test.intent) {
+				t.Fatalf("AuthorizeExposure() = %#v, %v", decision, err)
+			}
+		})
+	}
+}
+
 func TestParsePreviewToolInputsAcceptRequiredShapes(t *testing.T) {
 	tests := []string{`{
-  "scene_query":"明天入住英文酒店",
   "resolution_kind":"CATALOG",
   "catalog_scene_ids":["scn_travel_hotel_checkin"],
   "custom_scenario":"",
@@ -90,14 +227,12 @@ func TestParsePreviewToolInputsAcceptRequiredShapes(t *testing.T) {
   "background_summary":"明天入住，没有找到海景房预订"
 }`,
 		`{
-  "scene_query":"在展会上介绍仓储机器人",
   "resolution_kind":"CUSTOM",
   "catalog_scene_ids":[],
   "custom_scenario":"在展会上介绍仓储机器人",
   "custom_experience_hint":"WORKPLACE"
 }`,
 		`{
-  "scene_query":"我想练会议英语",
   "resolution_kind":"NEEDS_CLARIFICATION",
   "catalog_scene_ids":["scene_a","scene_b"],
   "custom_scenario":"",
@@ -144,17 +279,17 @@ func TestPreviewToolInvocationEffectsFollowToolBoundary(t *testing.T) {
 	}{
 		{
 			name: "catalog may write",
-			raw:  `{"scene_query":"酒店入住","resolution_kind":"CATALOG","catalog_scene_ids":["scn_travel_hotel_checkin"],"custom_scenario":"","custom_experience_hint":"NONE"}`,
+			raw:  `{"resolution_kind":"CATALOG","catalog_scene_ids":["scn_travel_hotel_checkin"],"custom_scenario":"","custom_experience_hint":"NONE"}`,
 			want: capability.InvocationEffectMayWrite,
 		},
 		{
 			name: "custom may write",
-			raw:  `{"scene_query":"展会介绍机器人","resolution_kind":"CUSTOM","catalog_scene_ids":[],"custom_scenario":"展会介绍机器人","custom_experience_hint":"WORKPLACE"}`,
+			raw:  `{"resolution_kind":"CUSTOM","catalog_scene_ids":[],"custom_scenario":"展会介绍机器人","custom_experience_hint":"WORKPLACE"}`,
 			want: capability.InvocationEffectMayWrite,
 		},
 		{
 			name: "clarification is read only",
-			raw:  `{"scene_query":"会议","resolution_kind":"NEEDS_CLARIFICATION","catalog_scene_ids":["scn_workplace_meeting_disagreement"],"custom_scenario":"","custom_experience_hint":"NONE"}`,
+			raw:  `{"resolution_kind":"NEEDS_CLARIFICATION","catalog_scene_ids":["scn_workplace_meeting_disagreement"],"custom_scenario":"","custom_experience_hint":"NONE"}`,
 			want: capability.InvocationEffectReadOnly,
 		},
 	}
@@ -243,18 +378,72 @@ func TestSceneQueryIsEvidenceOnlyAndCannotOverrideExplicitCatalogID(t *testing.T
 func TestCatalogResolutionPreservesOriginalQueryWhenSummaryIsAbsent(t *testing.T) {
 	catalog := newTestCatalog(t)
 	plans := &readyPlanApplication{catalog: catalog}
-	port := newTestServicePort(t, plans, catalog)
 	const query = "明天入住英文酒店，我没有找到海景房预订。"
-	_, err := port.PreviewPractice(
+	port, err := NewServicePort(
+		context.Background(), plans, catalog,
+		staticTrustedMessageReader{content: query}, noopPendingActionRepository{},
+		staticPracticeTurnIntentGenerator{},
+	)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	input := catalogPreviewInput(query, "scn_travel_hotel_checkin", "")
+	input.ActionExcerpt = query
+	_, err = port.PreviewPractice(
 		context.Background(),
 		validPreviewCallContext(),
-		catalogPreviewInput(query, "scn_travel_hotel_checkin", ""),
+		input,
 	)
 	if err != nil {
 		t.Fatalf("PreviewPractice() error = %v", err)
 	}
 	if !strings.Contains(plans.request.BackgroundSummary, query) {
 		t.Fatalf("background = %q", plans.request.BackgroundSummary)
+	}
+}
+
+func TestAmbiguousThenImmediateConfirmationCreatesOnePlan(t *testing.T) {
+	catalog := newTestCatalog(t)
+	plans := &readyPlanApplication{catalog: catalog}
+	pending := &memoryPendingActionRepository{}
+	longMessage := strings.Repeat("雅", agentconversation.MaxMessageContentRunes)
+	messages := mapTrustedMessageReader{messages: map[string]agentconversation.Message{
+		"50000000-0000-4000-8000-000000000001": {
+			ID: "50000000-0000-4000-8000-000000000001", OwnerID: "10000000-0000-4000-8000-000000000001",
+			ThreadID: "30000000-0000-4000-8000-000000000001", Sequence: 1,
+			Role: agentconversation.MessageRoleUser, Content: longMessage,
+		},
+		"50000000-0000-4000-8000-000000000003": {
+			ID: "50000000-0000-4000-8000-000000000003", OwnerID: "10000000-0000-4000-8000-000000000001",
+			ThreadID: "30000000-0000-4000-8000-000000000001", Sequence: 3,
+			Role: agentconversation.MessageRoleUser, Content: "对的",
+		},
+	}}
+	port, err := NewServicePort(
+		context.Background(), plans, catalog, messages, pending,
+		staticPracticeTurnIntentGenerator{},
+	)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	call := validPreviewCallContext()
+	input := catalogPreviewInput("", "scn_ielts_speaking", "")
+	input.ActionIntent = PracticeTurnIntentProposeCreate
+	input.ActionExcerpt = longMessage
+	result, err := port.PreviewPractice(context.Background(), call, input)
+	if err != nil || result.Status != PreviewOutcomeActionPending || plans.planCalls != 0 {
+		t.Fatalf("ambiguous result = %#v, error = %v, calls = %d", result, err, plans.planCalls)
+	}
+	call.RunID = "40000000-0000-4000-8000-000000000003"
+	call.InputMessageID = "50000000-0000-4000-8000-000000000003"
+	call.RequestID = "request-confirm"
+	result, err = port.PreviewPractice(context.Background(), call, PreviewInput{
+		ActionIntent: PracticeTurnIntentConfirmPending, ActionExcerpt: "对的",
+		SceneResolution: SceneResolutionInput{Kind: SceneResolutionKindNone},
+	})
+	if err != nil || result.Status != PreviewOutcomeReady || plans.planCalls != 1 ||
+		pending.item.State != preparation.PendingActionConfirmed {
+		t.Fatalf("confirm result = %#v, error = %v, calls = %d, pending = %#v", result, err, plans.planCalls, pending.item)
 	}
 }
 
@@ -293,7 +482,8 @@ func TestCustomResolutionCompilesScenarioIntoFormalCustomPlan(t *testing.T) {
 		context.Background(),
 		validPreviewCallContext(),
 		PreviewInput{
-			SceneQuery: "在展会上介绍仓储机器人",
+			ActionIntent:  PracticeTurnIntentRequestCreate,
+			ActionExcerpt: "test",
 			SceneResolution: SceneResolutionInput{
 				Kind: SceneResolutionKindCustom,
 			},
@@ -328,7 +518,8 @@ func TestCustomRestrictedExperiencesNeverWrite(t *testing.T) {
 				context.Background(),
 				validPreviewCallContext(),
 				PreviewInput{
-					SceneQuery: "目录外的专项练习",
+					ActionIntent:  PracticeTurnIntentRequestCreate,
+					ActionExcerpt: "test",
 					SceneResolution: SceneResolutionInput{
 						Kind: SceneResolutionKindCustom,
 					},
@@ -358,7 +549,8 @@ func TestCustomMissingExperienceRequestsDetailsWithoutWriting(t *testing.T) {
 		context.Background(),
 		validPreviewCallContext(),
 		PreviewInput{
-			SceneQuery:      "和鹦鹉寄养店沟通",
+			ActionIntent:    PracticeTurnIntentRequestCreate,
+			ActionExcerpt:   "test",
 			SceneResolution: SceneResolutionInput{Kind: SceneResolutionKindCustom},
 			SceneIntent:     &SceneIntent{Scenario: "和鹦鹉寄养店沟通"},
 		},
@@ -402,7 +594,8 @@ func TestClarificationResolutionReturnsTrustedCandidatesWithoutWriting(t *testin
 				context.Background(),
 				validPreviewCallContext(),
 				PreviewInput{
-					SceneQuery: "我想练习，但还不能确定小场景",
+					ActionIntent:  PracticeTurnIntentRequestCreate,
+					ActionExcerpt: "test",
 					SceneResolution: SceneResolutionInput{
 						Kind:              SceneResolutionKindNeedsClarification,
 						CandidateSceneIDs: test.ids,
@@ -493,6 +686,9 @@ func TestManifestDependencyFailureStopsServiceConstruction(t *testing.T) {
 		context.Background(),
 		&readyPlanApplication{},
 		exactFailureCatalog{err: dependencyErr},
+		staticTrustedMessageReader{},
+		noopPendingActionRepository{},
+		staticPracticeTurnIntentGenerator{},
 	)
 	if !errors.Is(err, dependencyErr) {
 		t.Fatalf("NewServicePort() error = %v", err)
@@ -731,6 +927,13 @@ type countingPreviewPort struct {
 	calls    int
 }
 
+func (port *countingPreviewPort) AuthorizePracticeTurn(
+	context.Context,
+	capability.ExposureRequest,
+) (PracticeTurnIntent, error) {
+	return PracticeTurnIntentRequestCreate, nil
+}
+
 func (port *countingPreviewPort) PreviewPractice(
 	context.Context,
 	capability.CallContext,
@@ -761,7 +964,11 @@ func newTestServicePort(
 	catalog scene.PreviewCatalog,
 ) *ServicePort {
 	t.Helper()
-	port, err := NewServicePort(context.Background(), plans, catalog)
+	port, err := NewServicePort(
+		context.Background(), plans, catalog,
+		staticTrustedMessageReader{}, noopPendingActionRepository{},
+		staticPracticeTurnIntentGenerator{},
+	)
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}
@@ -785,20 +992,184 @@ func validPreviewCallContext() capability.CallContext {
 			UserID:    "10000000-0000-4000-8000-000000000001",
 			SessionID: "20000000-0000-4000-8000-000000000001",
 		},
-		ThreadID:  "30000000-0000-4000-8000-000000000001",
-		RequestID: "request-preview",
+		ThreadID:       "30000000-0000-4000-8000-000000000001",
+		RunID:          "40000000-0000-4000-8000-000000000001",
+		InputMessageID: "50000000-0000-4000-8000-000000000001",
+		RequestID:      "request-preview",
+		Authorization:  json.RawMessage(`{"intent":"REQUEST_CREATE"}`),
 	}
 }
 
 func catalogPreviewInput(query, sceneID, background string) PreviewInput {
 	return PreviewInput{
-		SceneQuery: query,
+		ActionIntent:  PracticeTurnIntentRequestCreate,
+		ActionExcerpt: "test",
 		SceneResolution: SceneResolutionInput{
 			Kind:           SceneResolutionKindCatalog,
 			CatalogSceneID: sceneID,
 		},
 		BackgroundSummary: background,
 	}
+}
+
+type staticTrustedMessageReader struct {
+	content  string
+	sequence int64
+}
+
+func (reader staticTrustedMessageReader) FindMessage(
+	_ context.Context,
+	ownerID string,
+	threadID string,
+	messageID string,
+) (agentconversation.Message, error) {
+	content := "test"
+	if reader.content != "" {
+		content = reader.content
+	}
+	sequence := reader.sequence
+	if sequence == 0 {
+		sequence = 1
+	}
+	return agentconversation.Message{
+		ID: messageID, OwnerID: ownerID, ThreadID: threadID, Sequence: sequence,
+		Role: agentconversation.MessageRoleUser, Content: content, CreatedAt: time.Now(),
+	}, nil
+}
+
+type mapTrustedMessageReader struct {
+	messages map[string]agentconversation.Message
+}
+
+func (reader mapTrustedMessageReader) FindMessage(
+	_ context.Context, _ string, _ string, messageID string,
+) (agentconversation.Message, error) {
+	message, found := reader.messages[messageID]
+	if !found {
+		return agentconversation.Message{}, errors.New("message not found")
+	}
+	return message, nil
+}
+
+type memoryPendingActionRepository struct {
+	item preparation.PendingPracticeAction
+}
+
+func (repository *memoryPendingActionRepository) HasOpenForReply(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	messageID string,
+	sequence int64,
+) (bool, error) {
+	if repository == nil {
+		return false, nil
+	}
+	if repository.item.State == preparation.PendingActionOpen {
+		return repository.item.SourceInputSequence+2 == sequence, nil
+	}
+	return repository.item.ResolutionInputMessageID == messageID &&
+		(repository.item.State == preparation.PendingActionConfirming ||
+			repository.item.State == preparation.PendingActionConfirmed ||
+			repository.item.State == preparation.PendingActionRejected), nil
+}
+
+func (repository *memoryPendingActionRepository) CreateOrReplay(
+	_ context.Context,
+	actor requestcontext.Actor,
+	command preparation.CreatePendingActionCommand,
+) (preparation.PendingPracticeAction, bool, error) {
+	if repository.item.ID != "" {
+		return repository.item, true, nil
+	}
+	repository.item = preparation.PendingPracticeAction{
+		ID: "60000000-0000-4000-8000-000000000001", OwnerID: actor.UserID,
+		ThreadID: command.ThreadID, SourceRunID: command.SourceRunID,
+		SourceInputMessageID: command.SourceInputMessageID,
+		SourceInputSequence:  command.SourceInputSequence, Proposal: command.Proposal,
+		ProposalFingerprint: command.ProposalFingerprint, State: preparation.PendingActionOpen,
+		CreatedAt: time.Now(),
+	}
+	return repository.item, false, nil
+}
+
+func (repository *memoryPendingActionRepository) ClaimForReply(
+	_ context.Context,
+	_ requestcontext.Actor,
+	command preparation.ResolvePendingActionCommand,
+) (preparation.PendingPracticeAction, bool, error) {
+	if repository.item.State != preparation.PendingActionOpen ||
+		repository.item.SourceInputSequence+2 != command.ResolutionInputSequence {
+		return preparation.PendingPracticeAction{}, false, preparation.ErrPendingActionNotFound
+	}
+	repository.item.ResolutionInputMessageID = command.ResolutionInputMessageID
+	if command.Confirm {
+		repository.item.State = preparation.PendingActionConfirming
+	} else {
+		repository.item.State = preparation.PendingActionRejected
+		now := time.Now()
+		repository.item.ResolvedAt = &now
+	}
+	return repository.item, false, nil
+}
+
+func (repository *memoryPendingActionRepository) CompleteConfirmation(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	_ string,
+	planID string,
+) (preparation.PendingPracticeAction, error) {
+	repository.item.State = preparation.PendingActionConfirmed
+	repository.item.ResolvedPlanID = planID
+	now := time.Now()
+	repository.item.ResolvedAt = &now
+	return repository.item, nil
+}
+
+type noopPendingActionRepository struct{}
+
+func (noopPendingActionRepository) HasOpenForReply(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	int64,
+) (bool, error) {
+	return false, nil
+}
+
+type staticPracticeTurnIntentGenerator struct{ content string }
+
+func (generator staticPracticeTurnIntentGenerator) GeneratePracticeTurnIntent(
+	context.Context,
+	PracticeTurnIntentGenerationRequest,
+) (PracticeTurnIntentGenerationResult, error) {
+	content := generator.content
+	if content == "" {
+		content = `{"intent":"CONVERSE"}`
+	}
+	return PracticeTurnIntentGenerationResult{
+		Content: content,
+	}, nil
+}
+
+func (noopPendingActionRepository) CreateOrReplay(
+	context.Context, requestcontext.Actor, preparation.CreatePendingActionCommand,
+) (preparation.PendingPracticeAction, bool, error) {
+	return preparation.PendingPracticeAction{}, false, preparation.ErrPendingActionRepository
+}
+
+func (noopPendingActionRepository) ClaimForReply(
+	context.Context, requestcontext.Actor, preparation.ResolvePendingActionCommand,
+) (preparation.PendingPracticeAction, bool, error) {
+	return preparation.PendingPracticeAction{}, false, preparation.ErrPendingActionRepository
+}
+
+func (noopPendingActionRepository) CompleteConfirmation(
+	context.Context, requestcontext.Actor, string, string, string,
+) (preparation.PendingPracticeAction, error) {
+	return preparation.PendingPracticeAction{}, preparation.ErrPendingActionRepository
 }
 
 func assertReadyPreview(
