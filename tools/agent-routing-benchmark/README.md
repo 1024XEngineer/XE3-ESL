@@ -74,7 +74,9 @@ Thread 和工具数据。
 
 Benchmark 只记录并比对 `kind`、`catalog_scene_id` 和
 `candidate_scene_ids`；不会把 `scene_query`、用户消息或用户背景写入验收日志和
-生成的 JSON、Markdown、HTML 报告。报告通过 case 名、`thread_id` 与 `run_id`
+生成的 JSON、Markdown、HTML 报告。默认情况下候选 ID 按集合精确比对；大类澄清用例
+可设置 `candidate_scene_ids_mode: "subset"`，表示实际候选必须是允许集合的非空子集，
+用于避免把模型合理的有限选项顺序或取舍误判为产品错误。报告通过 case 名、`thread_id` 与 `run_id`
 关联结果。
 
 `messages` 可以包含多条用户消息。它们会在同一 Thread 中顺序发送，最后一条

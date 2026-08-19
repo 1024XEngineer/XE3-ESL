@@ -99,16 +99,23 @@ function previewInputContract(testCase, runEvents) {
       : [],
   };
   const expectedCandidates = expected.candidate_scene_ids ?? [];
+  const candidateMode = expected.candidate_scene_ids_mode ?? "exact";
+  const candidateIDsPassed =
+    candidateMode === "subset"
+      ? actual.candidate_scene_ids.length > 0 &&
+        actual.candidate_scene_ids.every((id) => expectedCandidates.includes(id))
+      : sameSet(actual.candidate_scene_ids, expectedCandidates);
   return {
     checked: true,
     passed:
       actual.kind === expected.kind &&
       actual.catalog_scene_id === (expected.catalog_scene_id ?? "") &&
-      sameSet(actual.candidate_scene_ids, expectedCandidates),
+      candidateIDsPassed,
     expected: {
       kind: expected.kind,
       catalog_scene_id: expected.catalog_scene_id ?? "",
       candidate_scene_ids: expectedCandidates,
+      candidate_scene_ids_mode: candidateMode,
     },
     actual,
     eventCount: 1,

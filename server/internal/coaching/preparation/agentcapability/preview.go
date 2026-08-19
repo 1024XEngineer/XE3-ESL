@@ -22,7 +22,9 @@ const ConfirmPracticePlanActionType = "practice.plan.confirm.v2"
 const noCustomExperienceHint = "NONE"
 
 const catalogTemplateSelectionPolicy = "Treat every Catalog scene as a parameterizable interaction template, not a literal script. " +
-	"Choose a Catalog scene whenever its participant roles and core communication task can host the request. " +
+	"The four broad experiences are categories, not scenes. A broad category alone, or a message that says the user has not decided what to practise, is insufficient to choose one scene. " +
+	"When multiple listed scenes could fit, use NEEDS_CLARIFICATION with at most three representative candidates, not the entire catalog, and let the assistant ask a natural question. Do not silently select an experience default. " +
+	"Choose a Catalog scene when the user's concrete participant roles and core communication task clearly match it. " +
 	"A company, product, date, room type, incident, constraint, counterpart attitude, or the words custom/定制 are background details and never by themselves make a scene directory-external. "
 
 type SceneResolutionKind string
@@ -254,7 +256,7 @@ func (value PreviewTool) AuthorizeExposure(
 func practiceTurnIntentInstruction(intent PracticeTurnIntent) string {
 	switch intent {
 	case PracticeTurnIntentRequestCreate:
-		return "The server authorized REQUEST_CREATE. Resolve the requested scene and create its preview now."
+		return "The server authorized REQUEST_CREATE. Resolve the scene, but separate creation authorization from scene specificity: if the user has not provided enough detail to choose one scene, use NEEDS_CLARIFICATION; do not silently choose an experience default. Use CUSTOM only for a concrete unmatched scenario in a supported generic experience."
 	case PracticeTurnIntentProposeCreate:
 		return "The server authorized PROPOSE_CREATE. Identify exactly one proposed Catalog or Custom scene, so the server can ask once before creating. Do not use NONE or NEEDS_CLARIFICATION."
 	case PracticeTurnIntentConfirmPending:
@@ -292,7 +294,7 @@ func (value PreviewTool) Definition() capability.Definition {
 		catalogIDs[index] = item.SceneID
 	}
 	resolutionKindSchema := capability.StringEnumSchema(
-		"Use CATALOG for one trusted manifest scene, CUSTOM only when no listed interaction pattern can host the request, or NEEDS_CLARIFICATION for one to five plausible listed scenes.",
+		"Use CATALOG for one trusted manifest scene, CUSTOM only when no listed interaction pattern can host the request, or NEEDS_CLARIFICATION for one to three plausible listed scenes.",
 		string(SceneResolutionKindCatalog),
 		string(SceneResolutionKindCustom),
 		string(SceneResolutionKindNeedsClarification),
@@ -300,21 +302,22 @@ func (value PreviewTool) Definition() capability.Definition {
 	)
 	catalogSceneIDsSchema := map[string]any{
 		"type":        "array",
-		"description": "For CATALOG include exactly one trusted scene id; for NEEDS_CLARIFICATION include one to five; for CUSTOM use an empty array.",
+		"description": "For CATALOG include exactly one trusted scene id; for NEEDS_CLARIFICATION include one to three; for CUSTOM use an empty array.",
 		"items": capability.StringEnumSchema(
 			"A trusted Catalog scene id.",
 			catalogIDs...,
 		),
 		"minItems": 0,
-		"maxItems": 5,
+		"maxItems": 3,
 	}
 	return capability.Definition{
 		Name: PracticePreviewToolName,
 		Description: "Preview the server-authorized practice action for the current user message. The behavior intent was already decided by a blocking server gate and is not model input. Resolve the proposed scene using the frozen trusted Catalog manifest below. " +
 			catalogTemplateSelectionPolicy +
 			"Use CATALOG with exactly one catalog_scene_ids entry when one listed scene matches; personal details stay in background_summary and never change the Catalog identity. " +
-			"Use CUSTOM with an empty catalog_scene_ids array only when no listed interaction pattern can host the request; then provide custom_scenario and custom_experience_hint. " +
-			"Use NEEDS_CLARIFICATION with one to five catalog_scene_ids entries when the request cannot safely choose one listed scene. " +
+			"Use CUSTOM with an empty catalog_scene_ids array only when no listed interaction pattern can host the concrete request; this generic custom branch currently supports WORKPLACE and LIFE_AND_TRAVEL. " +
+			"For INTERVIEW and IELTS_SPEAKING, use their listed or specialized preparation flow instead of inventing a generic custom scene. " +
+			"Use NEEDS_CLARIFICATION with one to three catalog_scene_ids entries when the request cannot safely choose one listed scene. " +
 			"When the authorized intent confirms or rejects a pending action, use resolution_kind NONE, an empty catalog_scene_ids array, empty custom_scenario, and custom_experience_hint NONE. The server resolves the immediately preceding pending action; never invent its scene. " +
 			"For an IELTS Catalog scene, FULL_MOCK means a complete/full/完整模考 request and requires no topic choice. Use PART_1, PART_2, or PART_3 only when the current message explicitly names that Part; never infer a specialty Part from a general IELTS request. A specialty Part requires its topic choice. " +
 			"All five discriminator fields are required; non-applicable fields must use [], \"\", or NONE exactly. Structural examples: " +
@@ -535,7 +538,7 @@ func validCustomExperienceHint(value string) bool {
 }
 
 func validToolCatalogSceneIDs(ids []string) bool {
-	if len(ids) > 5 {
+	if len(ids) > 3 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(ids))
@@ -685,7 +688,7 @@ func validSceneIntentText(intent *SceneIntent) bool {
 }
 
 func validCandidateSceneIDs(ids []string) bool {
-	if len(ids) < 1 || len(ids) > 5 {
+	if len(ids) < 1 || len(ids) > 3 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(ids))
@@ -793,16 +796,14 @@ func clonePreviewCatalogManifest(source PreviewCatalogManifest) PreviewCatalogMa
 
 func formatPreviewCatalogManifest(manifest PreviewCatalogManifest) string {
 	lines := make([]string, 0, len(manifest.Experiences)+len(manifest.Scenes)+2)
-	lines = append(lines, "Broad experience defaults:")
+	lines = append(lines, "Broad experience categories (not selectable scenes):")
 	for _, item := range manifest.Experiences {
 		aliases := append([]string(nil), item.Aliases...)
 		sort.Strings(aliases)
 		lines = append(lines, fmt.Sprintf(
-			"- %s | aliases: %s | default_scene_id: %s | default_practice_option_id: %s",
+			"- %s | aliases: %s | choose a concrete scene below; do not auto-select from this category alone",
 			item.PracticeExperience,
 			strings.Join(aliases, ", "),
-			item.DefaultSceneID,
-			item.DefaultPracticeOptionID,
 		))
 	}
 	lines = append(lines, "Scenes:")

@@ -239,6 +239,17 @@ test("evaluates the structured preview resolution without raw scene text", () =>
         kind: "CUSTOM",
       },
     },
+    {
+      name: "clarification_subset",
+      messages: ["大类请求"],
+      expected_decision: "tool_call",
+      expected_tools: ["practice.preview.v3"],
+      expected_preview_input: {
+        kind: "NEEDS_CLARIFICATION",
+        candidate_scene_ids: ["scene_a", "scene_b", "scene_c"],
+        candidate_scene_ids_mode: "subset",
+      },
+    },
   ];
   const executions = cases.map((testCase, index) => ({
     name: testCase.name,
@@ -246,6 +257,12 @@ test("evaluates the structured preview resolution without raw scene text", () =>
     http_ok: true,
     status: "completed",
   }));
+  executions.push({
+    name: "clarification_subset",
+    target_run_id: "run-3",
+    http_ok: true,
+    status: "completed",
+  });
   const events = [
     ...successfulToolEvents("run-1", "practice.preview.v3"),
     {
@@ -261,6 +278,14 @@ test("evaluates the structured preview resolution without raw scene text", () =>
       kind: "CATALOG",
       catalog_scene_id: "scn_daily_small_talk",
     },
+    ...successfulToolEvents("run-3", "practice.preview.v3"),
+    {
+      msg: "agent.benchmark.preview.input",
+      run_id: "run-3",
+      kind: "NEEDS_CLARIFICATION",
+      catalog_scene_id: "",
+      candidate_scene_ids: ["scene_b", "scene_c"],
+    },
   ];
 
   const results = evaluateCases(cases, executions, events);
@@ -273,10 +298,12 @@ test("evaluates the structured preview resolution without raw scene text", () =>
   assert.equal(results[1].passed, false);
   assert.equal(results[1].preview_input_contract_passed, false);
   assert.match(results[1].reason, /Preview 场景决议输入不匹配/);
+  assert.equal(results[2].passed, true);
+  assert.equal(results[2].preview_input_contract_passed, true);
   assert.deepEqual(calculateMetrics(results).preview_input_contract, {
-    passed: 1,
-    total: 2,
-    percentage: 50,
+    passed: 2,
+    total: 3,
+    percentage: (2 / 3) * 100,
   });
 });
 

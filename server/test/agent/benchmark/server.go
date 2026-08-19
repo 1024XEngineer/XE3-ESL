@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
@@ -216,6 +217,39 @@ func (port *benchmarkPreviewPort) PreviewCatalogManifest() preparationcapability
 	return port.manifest
 }
 
+func (port *benchmarkPreviewPort) catalogCandidates(
+	ids []string,
+) []preparationcapability.CatalogCandidate {
+	candidates := make([]preparationcapability.CatalogCandidate, 0, len(ids))
+	for _, id := range ids {
+		for _, scene := range port.manifest.Scenes {
+			if scene.SceneID != id {
+				continue
+			}
+			candidates = append(candidates, preparationcapability.CatalogCandidate{
+				SceneID:            scene.SceneID,
+				Name:               scene.Name,
+				PracticeExperience: scene.PracticeExperience,
+			})
+			break
+		}
+	}
+	return candidates
+}
+
+func benchmarkClarificationText(
+	candidates []preparationcapability.CatalogCandidate,
+) string {
+	if len(candidates) == 1 && candidates[0].PracticeExperience == "IELTS_SPEAKING" {
+		return "你想练 IELTS 口语的哪种形式：Part 1、Part 2、Part 3，还是完整模考？"
+	}
+	names := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		names[index] = "“" + candidate.Name + "”"
+	}
+	return "你最近更想练哪种情况：" + strings.Join(names, "、") + "？"
+}
+
 func (port *benchmarkPreviewPort) PreviewPractice(
 	_ context.Context,
 	call capability.CallContext,
@@ -233,23 +267,27 @@ func (port *benchmarkPreviewPort) PreviewPractice(
 			input.SceneResolution.CandidateSceneIDs...,
 		),
 	)
+	if input.ActionIntent == preparationcapability.PracticeTurnIntentProposeCreate {
+		return preparationcapability.PreviewResult{
+			Status:          preparationcapability.PreviewOutcomeActionPending,
+			SceneResolution: preparationcapability.SceneResolutionNotRequested,
+			AssistantText:   "你是想现在创建这个练习吗？",
+		}, nil
+	}
 	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindNeedsClarification {
 		status := preparationcapability.PreviewOutcomeAmbiguous
 		resolution := preparationcapability.SceneResolutionAmbiguous
-		if len(input.SceneResolution.CandidateSceneIDs) == 1 {
+		candidates := port.catalogCandidates(input.SceneResolution.CandidateSceneIDs)
+		if len(candidates) == 1 {
 			status = preparationcapability.PreviewOutcomeNeedsDetails
 			resolution = preparationcapability.SceneResolutionNeedsDetails
-		}
-		candidates := make([]preparationcapability.CatalogCandidate, len(input.SceneResolution.CandidateSceneIDs))
-		for index, id := range input.SceneResolution.CandidateSceneIDs {
-			candidates[index] = preparationcapability.CatalogCandidate{SceneID: id}
 		}
 		return preparationcapability.PreviewResult{
 			Status:                status,
 			SceneResolution:       resolution,
 			CatalogCandidateCount: len(candidates),
 			Candidates:            candidates,
-			AssistantText:         "请选择一个具体场景后再继续。",
+			AssistantText:         benchmarkClarificationText(candidates),
 		}, nil
 	}
 	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom &&
