@@ -228,7 +228,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_1",
+      "ielts_topic_choice": "random"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -261,7 +263,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_2",
+      "ielts_topic_choice": "person"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -296,7 +300,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_3",
+      "ielts_topic_choice": "experience"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -326,7 +332,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "FULL_MOCK",
+      "ielts_topic_choice": ""
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -358,36 +366,145 @@
     "max_sentences": 1
   },
   {
-    "name": "default_interview_catalog_preview",
+    "name": "broad_interview_needs_clarification",
     "messages": ["帮我创建一个面试练习"],
     "expected_decision": "tool_call",
     "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
-      "kind": "CATALOG",
-      "catalog_scene_id": "scn_interview_self_introduction"
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": [
+        "scn_interview_self_introduction",
+        "scn_interview_recruiter_screening",
+        "scn_interview_behavioral",
+        "scn_programmer_interview",
+        "scn_interview_hiring_manager"
+      ],
+      "candidate_scene_ids_mode": "subset"
     },
-    "required_response_terms": ["练习已准备好", "确认开始"],
+    "required_response_terms": ["你最近更想练"],
     "max_non_empty_paragraphs": 1,
     "max_sentences": 1
   },
   {
-    "name": "default_ielts_catalog_preview",
+    "name": "broad_ielts_needs_clarification",
     "messages": ["帮我创建一个雅思口语练习"],
     "expected_decision": "tool_call",
     "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
-      "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": ["scn_ielts_speaking"]
     },
-    "required_response_terms": ["练习已准备好", "确认开始"],
+    "required_response_terms": ["Part 1", "完整模考"],
     "max_non_empty_paragraphs": 1,
     "max_sentences": 1
   },
   {
-    "name": "default_workplace_catalog_preview",
+    "name": "broad_workplace_needs_clarification",
     "messages": ["帮我创建一个职场英语练习"],
+    "expected_decision": "tool_call",
+    "expected_tools": ["practice.preview.v3"],
+    "forbidden_tools": ["ielts.warmup.v1"],
+    "expected_preview_input": {
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": [
+        "scn_workplace_progress_risk_update",
+        "scn_workplace_meeting_disagreement",
+        "scn_workplace_cross_team_alignment",
+        "scn_workplace_feedback_conflict",
+        "scn_workplace_conflict_resolution",
+        "scn_workplace_client_delay",
+        "scn_workplace_requirement_clarification",
+        "scn_workplace_solution_presentation",
+        "scn_workplace_negotiation"
+      ],
+      "candidate_scene_ids_mode": "subset"
+    },
+    "required_response_terms": ["你最近更想练"],
+    "max_non_empty_paragraphs": 1,
+    "max_sentences": 1
+  },
+  {
+    "name": "broad_life_travel_needs_clarification",
+    "messages": ["帮我创建一个生活与旅行英语练习"],
+    "expected_decision": "tool_call",
+    "expected_tools": ["practice.preview.v3"],
+    "forbidden_tools": ["ielts.warmup.v1"],
+    "expected_preview_input": {
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": [
+        "scn_daily_small_talk",
+        "scn_daily_restaurant_ordering",
+        "scn_daily_product_shopping",
+        "scn_daily_return_refund",
+        "scn_travel_airport_checkin",
+        "scn_travel_hotel_checkin",
+        "scn_daily_rental_viewing",
+        "scn_daily_rental_maintenance",
+        "scn_daily_medical_appointment",
+        "scn_daily_phone_call",
+        "scn_daily_complaint_help"
+      ],
+      "candidate_scene_ids_mode": "subset"
+    },
+    "required_response_terms": ["你最近更想练"],
+    "max_non_empty_paragraphs": 1,
+    "max_sentences": 1
+  },
+  {
+    "name": "explicit_ielts_create_with_undecided_part",
+    "messages": [
+      "帮我创建一个雅思口语练习，但我还没想好练哪一部分。"
+    ],
+    "expected_decision": "tool_call",
+    "expected_tools": ["practice.preview.v3"],
+    "forbidden_tools": ["ielts.warmup.v1"],
+    "expected_preview_input": {
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": ["scn_ielts_speaking"]
+    },
+    "required_response_terms": ["Part 1", "完整模考"],
+    "max_non_empty_paragraphs": 1,
+    "max_sentences": 1
+  },
+  {
+    "name": "explicit_workplace_create_with_undecided_scene",
+    "messages": [
+      "我想创建一个职场英语练习，但不知道练什么。"
+    ],
+    "expected_decision": "tool_call",
+    "expected_tools": ["practice.preview.v3"],
+    "forbidden_tools": ["ielts.warmup.v1"],
+    "expected_preview_input": {
+      "kind": "NEEDS_CLARIFICATION",
+      "candidate_scene_ids": [
+        "scn_workplace_progress_risk_update",
+        "scn_workplace_meeting_disagreement",
+        "scn_workplace_cross_team_alignment",
+        "scn_workplace_feedback_conflict",
+        "scn_workplace_conflict_resolution",
+        "scn_workplace_client_delay",
+        "scn_workplace_requirement_clarification",
+        "scn_workplace_solution_presentation",
+        "scn_workplace_negotiation"
+      ],
+      "candidate_scene_ids_mode": "subset"
+    },
+    "required_response_terms": ["你最近更想练"],
+    "max_non_empty_paragraphs": 1,
+    "max_sentences": 1
+  },
+  {
+    "name": "future_interview_intent_stays_conversational",
+    "messages": ["我以后想练面试英语。"],
+    "expected_decision": "direct_response",
+    "expected_tools": [],
+    "forbidden_tools": ["practice.preview.v3", "ielts.warmup.v1"]
+  },
+  {
+    "name": "tentative_workplace_intent_creates_pending_proposal",
+    "messages": ["我可能想练一下职场英语。"],
     "expected_decision": "tool_call",
     "expected_tools": ["practice.preview.v3"],
     "forbidden_tools": ["ielts.warmup.v1"],
@@ -395,21 +512,7 @@
       "kind": "CATALOG",
       "catalog_scene_id": "scn_workplace_progress_risk_update"
     },
-    "required_response_terms": ["练习已准备好", "确认开始"],
-    "max_non_empty_paragraphs": 1,
-    "max_sentences": 1
-  },
-  {
-    "name": "default_life_travel_catalog_preview",
-    "messages": ["帮我创建一个生活与旅行英语练习"],
-    "expected_decision": "tool_call",
-    "expected_tools": ["practice.preview.v3"],
-    "forbidden_tools": ["ielts.warmup.v1"],
-    "expected_preview_input": {
-      "kind": "CATALOG",
-      "catalog_scene_id": "scn_daily_small_talk"
-    },
-    "required_response_terms": ["练习已准备好", "确认开始"],
+    "required_response_terms": ["想现在创建"],
     "max_non_empty_paragraphs": 1,
     "max_sentences": 1
   },
@@ -585,7 +688,7 @@
         "scn_travel_airport_checkin"
       ]
     },
-    "required_response_terms": ["请选择"],
+    "required_response_terms": ["你最近更想练"],
     "max_non_empty_paragraphs": 1,
     "max_sentences": 1
   },

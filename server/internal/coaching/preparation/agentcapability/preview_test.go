@@ -63,9 +63,9 @@ func TestPreviewToolDefinitionsPublishRequiredProviderCompatibleSchemas(
 	}
 	for _, value := range []string{
 		"CATALOG", "CUSTOM", "NEEDS_CLARIFICATION",
-		"Broad experience defaults",
-		"INTERVIEW | aliases: interview, job interview, 英文面试, 面试 | default_scene_id: scn_interview_self_introduction",
-		"WORKPLACE | aliases: workplace, workplace english, 职场, 职场英语 | default_scene_id: scn_workplace_progress_risk_update",
+		"Broad experience categories (not selectable scenes)",
+		"INTERVIEW | aliases: interview, job interview, 英文面试, 面试 | choose a concrete scene below; do not auto-select from this category alone",
+		"WORKPLACE | aliases: workplace, workplace english, 职场, 职场英语 | choose a concrete scene below; do not auto-select from this category alone",
 		"scn_interview_self_introduction",
 		"scn_travel_hotel_checkin",
 		"Trusted Catalog manifest",
@@ -428,6 +428,7 @@ func TestAmbiguousThenImmediateConfirmationCreatesOnePlan(t *testing.T) {
 	}
 	call := validPreviewCallContext()
 	input := catalogPreviewInput("", "scn_ielts_speaking", "")
+	input.IELTSPracticeMode = "FULL_MOCK"
 	input.ActionIntent = PracticeTurnIntentProposeCreate
 	input.ActionExcerpt = longMessage
 	result, err := port.PreviewPractice(context.Background(), call, input)
@@ -458,6 +459,9 @@ func TestEveryManifestSceneCreatesOneFormalCatalogPlan(t *testing.T) {
 			plans := &readyPlanApplication{catalog: catalog}
 			port := newTestServicePort(t, plans, catalog)
 			input := catalogPreviewInput(item.Name, item.SceneID, item.Name)
+			if item.PracticeExperience == scene.PracticeExperienceIELTSSpeaking {
+				input.IELTSPracticeMode = "FULL_MOCK"
+			}
 			result, previewErr := port.PreviewPractice(
 				context.Background(),
 				validPreviewCallContext(),
@@ -609,12 +613,44 @@ func TestClarificationResolutionReturnsTrustedCandidatesWithoutWriting(t *testin
 				plans.planCalls != 0 || plans.customPlanCalls != 0 || result.AssistantText == "" {
 				t.Fatalf("result = %#v, plan calls = %d/%d", result, plans.planCalls, plans.customPlanCalls)
 			}
+			if len(test.ids) == 1 && strings.Contains(result.AssistantText, "使用默认") {
+				t.Fatalf("assistant text exposed an internal default: %q", result.AssistantText)
+			}
+			if len(test.ids) > 1 && !strings.Contains(result.AssistantText, "最近更想练") {
+				t.Fatalf("assistant text is not conversational: %q", result.AssistantText)
+			}
 			for index, id := range test.ids {
 				if result.Candidates[index].SceneID != id {
 					t.Fatalf("candidates = %#v", result.Candidates)
 				}
 			}
 		})
+	}
+}
+
+func TestClarificationForIELTSListsPracticeModes(t *testing.T) {
+	catalog := newTestCatalog(t)
+	plans := &readyPlanApplication{catalog: catalog}
+	port := newTestServicePort(t, plans, catalog)
+	result, err := port.PreviewPractice(
+		context.Background(),
+		validPreviewCallContext(),
+		PreviewInput{
+			ActionIntent: PracticeTurnIntentRequestCreate,
+			SceneResolution: SceneResolutionInput{
+				Kind:              SceneResolutionKindNeedsClarification,
+				CandidateSceneIDs: []string{"scn_ielts_speaking"},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("PreviewPractice() error = %v", err)
+	}
+	if result.Status != PreviewOutcomeNeedsDetails ||
+		!strings.Contains(result.AssistantText, "Part 1") ||
+		!strings.Contains(result.AssistantText, "完整模考") ||
+		plans.planCalls != 0 || plans.customPlanCalls != 0 {
+		t.Fatalf("result = %#v, plan calls = %d/%d", result, plans.planCalls, plans.customPlanCalls)
 	}
 }
 
@@ -705,7 +741,12 @@ func TestIELTSCatalogModeIsServerValidatedAndBackgroundIsPreserved(t *testing.T)
 		wantStatus PreviewOutcome
 	}{
 		{
-			name:       "full mock default",
+			name:       "missing mode requests details",
+			wantStatus: PreviewOutcomeNeedsDetails,
+		},
+		{
+			name:       "explicit full mock",
+			mode:       "FULL_MOCK",
 			wantOption: "option_ielts_speaking_full_mock",
 			wantStatus: PreviewOutcomeReady,
 		},

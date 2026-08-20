@@ -228,6 +228,8 @@ test("evaluates the structured preview resolution without raw scene text", () =>
       expected_preview_input: {
         kind: "CATALOG",
         catalog_scene_id: "scn_travel_hotel_checkin",
+        ielts_practice_mode: "",
+        ielts_topic_choice: "",
       },
     },
     {
@@ -239,6 +241,29 @@ test("evaluates the structured preview resolution without raw scene text", () =>
         kind: "CUSTOM",
       },
     },
+    {
+      name: "clarification_subset",
+      messages: ["大类请求"],
+      expected_decision: "tool_call",
+      expected_tools: ["practice.preview.v3"],
+      expected_preview_input: {
+        kind: "NEEDS_CLARIFICATION",
+        candidate_scene_ids: ["scene_a", "scene_b", "scene_c"],
+        candidate_scene_ids_mode: "subset",
+      },
+    },
+    {
+      name: "ielts_preview_missing_mode",
+      messages: ["IELTS 预览缺少模式"],
+      expected_decision: "tool_call",
+      expected_tools: ["practice.preview.v3"],
+      expected_preview_input: {
+        kind: "CATALOG",
+        catalog_scene_id: "scn_ielts_speaking",
+        ielts_practice_mode: "PART_1",
+        ielts_topic_choice: "random",
+      },
+    },
   ];
   const executions = cases.map((testCase, index) => ({
     name: testCase.name,
@@ -246,6 +271,12 @@ test("evaluates the structured preview resolution without raw scene text", () =>
     http_ok: true,
     status: "completed",
   }));
+  executions.push({
+    name: "clarification_subset",
+    target_run_id: "run-3",
+    http_ok: true,
+    status: "completed",
+  });
   const events = [
     ...successfulToolEvents("run-1", "practice.preview.v3"),
     {
@@ -261,6 +292,21 @@ test("evaluates the structured preview resolution without raw scene text", () =>
       kind: "CATALOG",
       catalog_scene_id: "scn_daily_small_talk",
     },
+    ...successfulToolEvents("run-3", "practice.preview.v3"),
+    {
+      msg: "agent.benchmark.preview.input",
+      run_id: "run-3",
+      kind: "NEEDS_CLARIFICATION",
+      catalog_scene_id: "",
+      candidate_scene_ids: ["scene_b", "scene_c"],
+    },
+    ...successfulToolEvents("run-4", "practice.preview.v3"),
+    {
+      msg: "agent.benchmark.preview.input",
+      run_id: "run-4",
+      kind: "CATALOG",
+      catalog_scene_id: "scn_ielts_speaking",
+    },
   ];
 
   const results = evaluateCases(cases, executions, events);
@@ -269,13 +315,19 @@ test("evaluates the structured preview resolution without raw scene text", () =>
     kind: "CATALOG",
     catalog_scene_id: "scn_travel_hotel_checkin",
     candidate_scene_ids: [],
+    ielts_practice_mode: "",
+    ielts_topic_choice: "",
   });
   assert.equal(results[1].passed, false);
   assert.equal(results[1].preview_input_contract_passed, false);
   assert.match(results[1].reason, /Preview 场景决议输入不匹配/);
+  assert.equal(results[2].passed, true);
+  assert.equal(results[2].preview_input_contract_passed, true);
+  assert.equal(results[3].passed, false);
+  assert.equal(results[3].preview_input_contract_passed, false);
   assert.deepEqual(calculateMetrics(results).preview_input_contract, {
-    passed: 1,
-    total: 2,
+    passed: 2,
+    total: 4,
     percentage: 50,
   });
 });

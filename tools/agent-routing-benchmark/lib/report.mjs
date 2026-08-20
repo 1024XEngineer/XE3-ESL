@@ -97,18 +97,31 @@ function previewInputContract(testCase, runEvents) {
     candidate_scene_ids: Array.isArray(event.candidate_scene_ids)
       ? event.candidate_scene_ids
       : [],
+    ielts_practice_mode: event.ielts_practice_mode ?? "",
+    ielts_topic_choice: event.ielts_topic_choice ?? "",
   };
   const expectedCandidates = expected.candidate_scene_ids ?? [];
+  const candidateMode = expected.candidate_scene_ids_mode ?? "exact";
+  const candidateIDsPassed =
+    candidateMode === "subset"
+      ? actual.candidate_scene_ids.length > 0 &&
+        actual.candidate_scene_ids.every((id) => expectedCandidates.includes(id))
+      : sameSet(actual.candidate_scene_ids, expectedCandidates);
   return {
     checked: true,
     passed:
       actual.kind === expected.kind &&
       actual.catalog_scene_id === (expected.catalog_scene_id ?? "") &&
-      sameSet(actual.candidate_scene_ids, expectedCandidates),
+      candidateIDsPassed &&
+      actual.ielts_practice_mode === (expected.ielts_practice_mode ?? "") &&
+      actual.ielts_topic_choice === (expected.ielts_topic_choice ?? ""),
     expected: {
       kind: expected.kind,
       catalog_scene_id: expected.catalog_scene_id ?? "",
       candidate_scene_ids: expectedCandidates,
+      candidate_scene_ids_mode: candidateMode,
+      ielts_practice_mode: expected.ielts_practice_mode ?? "",
+      ielts_topic_choice: expected.ielts_topic_choice ?? "",
     },
     actual,
     eventCount: 1,

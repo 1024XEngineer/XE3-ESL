@@ -449,25 +449,52 @@ func catalogPreviewOption(
 	input PreviewInput,
 	candidate CatalogCandidate,
 ) (string, []string) {
-	if candidate.PracticeExperience !=
-		string(scene.PracticeExperienceIELTSSpeaking) {
-		if input.IELTSPracticeMode != "" || input.IELTSTopicChoice != "" {
-			return "", []string{"ielts_practice_mode"}
-		}
+	if missing := MissingIELTSPreviewFields(
+		candidate.PracticeExperience,
+		input.IELTSPracticeMode,
+		input.IELTSTopicChoice,
+	); len(missing) > 0 {
+		return "", missing
+	}
+	if candidate.PracticeExperience != string(scene.PracticeExperienceIELTSSpeaking) {
 		return candidate.DefaultPracticeOptionID, nil
 	}
 	mode := scene.PracticeMode(input.IELTSPracticeMode)
-	if mode == "" {
-		mode = scene.PracticeModeFullMock
-	}
 	optionID, found := previewOptionForMode(candidate, mode)
 	if !found {
 		return "", []string{"ielts_practice_mode"}
 	}
-	if !validPreviewIELTSTopicChoice(mode, input.IELTSTopicChoice) {
-		return "", []string{"ielts_topic_choice"}
-	}
 	return optionID, nil
+}
+
+// MissingIELTSPreviewFields is shared by production and benchmark preview
+// ports so the benchmark cannot accept an IELTS catalog preview that
+// production would turn into a details question.
+func MissingIELTSPreviewFields(
+	practiceExperience string,
+	practiceMode string,
+	topicChoice string,
+) []string {
+	if practiceExperience != string(scene.PracticeExperienceIELTSSpeaking) {
+		if practiceMode != "" || topicChoice != "" {
+			return []string{"ielts_practice_mode"}
+		}
+		return nil
+	}
+	mode := scene.PracticeMode(practiceMode)
+	if mode == "" {
+		return []string{"ielts_practice_mode"}
+	}
+	if mode != scene.PracticeModeFullMock &&
+		mode != scene.PracticeModePart1 &&
+		mode != scene.PracticeModePart2 &&
+		mode != scene.PracticeModePart3 {
+		return []string{"ielts_practice_mode"}
+	}
+	if !validPreviewIELTSTopicChoice(mode, topicChoice) {
+		return []string{"ielts_topic_choice"}
+	}
+	return nil
 }
 
 func catalogDetailsQuestion(missing []string) string {
@@ -574,8 +601,7 @@ func (port *ServicePort) previewClarification(
 			SceneResolution:       SceneResolutionNeedsDetails,
 			CatalogCandidateCount: 1,
 			Candidates:            candidates,
-			AssistantText: "你指的是“" + candidates[0].Name +
-				"”吗？请确认，或补充具体情境。",
+			AssistantText:         ambiguousSceneQuestion(candidates),
 		}, nil
 	}
 	return PreviewResult{
@@ -618,11 +644,32 @@ func previewBackgroundSummary(input PreviewInput) string {
 }
 
 func ambiguousSceneQuestion(candidates []CatalogCandidate) string {
+	if len(candidates) == 1 {
+		candidate := candidates[0]
+		optionNames := make([]string, 0, len(candidate.PracticeOptions))
+		seen := make(map[string]struct{}, len(candidate.PracticeOptions))
+		for _, option := range candidate.PracticeOptions {
+			name := strings.TrimSpace(option.DisplayName)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			optionNames = append(optionNames, name)
+		}
+		if len(optionNames) > 1 {
+			return "你想练“" + candidate.Name + "”的哪种形式：" +
+				strings.Join(optionNames, "、") + "？"
+		}
+		return "你想练“" + candidate.Name + "”吗？如果想练别的情况，也可以直接告诉我。"
+	}
 	names := make([]string, len(candidates))
 	for index, candidate := range candidates {
 		names[index] = "“" + candidate.Name + "”"
 	}
-	return "我找到了多个可能的场景：" + strings.Join(names, "、") + "。你想练习哪一个？"
+	return "你最近更想练哪种情况：" + strings.Join(names, "、") + "？"
 }
 
 func readyPreviewResult(
