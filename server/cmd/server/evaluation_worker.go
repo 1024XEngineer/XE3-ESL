@@ -75,11 +75,9 @@ func (worker *evaluationLaneWorker) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		processed, err := worker.process(ctx)
 		if err != nil {
-			worker.logger.WarnContext(
-				ctx,
-				"evaluation processing failed",
-				slog.String("lane", worker.name),
-				slog.String("error_kind", evaluationErrorKind(err)),
+			worker.logger.LogAttrs(
+				ctx, slog.LevelWarn, "evaluation processing failed",
+				evaluationErrorAttributes(worker.name, err)...,
 			)
 		}
 		if processed {
@@ -89,6 +87,32 @@ func (worker *evaluationLaneWorker) Run(ctx context.Context) {
 			return
 		}
 	}
+}
+
+type evaluationFailureMetadata interface {
+	EvaluationID() string
+	EvaluationKind() evaluation.Kind
+	EvaluationAttemptCount() int
+	EvaluationJobError() evaluation.JobError
+}
+
+func evaluationErrorAttributes(lane string, err error) []slog.Attr {
+	attributes := []slog.Attr{
+		slog.String("lane", lane),
+		slog.String("error_kind", evaluationErrorKind(err)),
+	}
+	var metadata evaluationFailureMetadata
+	if errors.As(err, &metadata) {
+		failure := metadata.EvaluationJobError()
+		attributes = append(attributes,
+			slog.String("evaluation_id", metadata.EvaluationID()),
+			slog.String("evaluation_kind", string(metadata.EvaluationKind())),
+			slog.Int("attempt_count", metadata.EvaluationAttemptCount()),
+			slog.String("failure_code", failure.Code),
+			slog.Bool("retryable", failure.Retryable),
+		)
+	}
+	return attributes
 }
 
 func evaluationErrorKind(err error) string {

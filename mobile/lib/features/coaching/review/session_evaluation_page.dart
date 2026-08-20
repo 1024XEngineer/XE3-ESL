@@ -89,7 +89,7 @@ class _SessionEvaluationPageState extends State<SessionEvaluationPage> {
                             FilledButton(
                               onPressed: () =>
                                   unawaited(widget.controller.retry()),
-                              child: const Text('重新加载'),
+                              child: const Text('重新生成报告'),
                             ),
                           ],
                         ],

@@ -10,6 +10,7 @@ import (
 
 type store interface {
 	GetRecordBySource(context.Context, string, evaluation.Kind, string) (evaluation.Record, error)
+	RetryFailedSessionReport(context.Context, string, string) (evaluation.Record, bool, error)
 	ListFeedbackItems(context.Context, string, string) ([]evaluation.FeedbackItem, error)
 	GetFormalReport(context.Context, string, string) (report.StoredFormalReport, error)
 	ListFormalReports(context.Context, string, report.HistoryQuery) (report.HistoryPage, error)
@@ -45,6 +46,24 @@ func (application *Application) GetBySource(
 		return Resource{}, err
 	}
 	return application.resource(ctx, userID, record)
+}
+
+func (application *Application) RetrySessionReport(
+	ctx context.Context,
+	userID string,
+	sessionID string,
+) (Resource, bool, error) {
+	if application == nil || application.store == nil || ctx == nil {
+		return Resource{}, false, evaluation.ErrInvalidRequest
+	}
+	record, replayed, err := application.store.RetryFailedSessionReport(
+		ctx, userID, sessionID,
+	)
+	if err != nil {
+		return Resource{}, false, err
+	}
+	resource, err := application.resource(ctx, userID, record)
+	return resource, replayed, err
 }
 
 func (application *Application) resource(

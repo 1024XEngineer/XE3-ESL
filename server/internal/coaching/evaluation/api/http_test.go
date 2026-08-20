@@ -1,14 +1,18 @@
 package evaluationapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +23,90 @@ func TestEvaluationRoutesShareCanonicalResourceParameterNames(t *testing.T) {
 	router.GET("/v1/agent-messages/:message_id/translation", noop)
 
 	(&HTTPHandler{}).RegisterRoutes(router)
+}
+
+func TestRetrySessionEvaluationReturnsAcceptedThenReplaysCurrentResource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name     string
+		replayed bool
+		status   int
+	}{
+		{name: "reset failed report", status: http.StatusAccepted},
+		{name: "replay current report", replayed: true, status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &apiStoreStub{replayed: test.replayed}
+			application, err := NewApplication(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler, err := NewHTTPHandler(application)
+			if err != nil {
+				t.Fatal(err)
+			}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(requestcontext.WithActor(
+					c.Request.Context(),
+					requestcontext.Actor{UserID: testAPIUserID, SessionID: "session-token"},
+				))
+				c.Next()
+			})
+			handler.RegisterRoutes(router)
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/practice-sessions/"+testAPISessionID+"/evaluation/retry",
+				nil,
+			)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.status || store.retryCalls != 1 ||
+				store.userID != testAPIUserID || store.sessionID != testAPISessionID {
+				t.Fatalf(
+					"status=%d body=%s store=%#v", response.Code,
+					response.Body.String(), store,
+				)
+			}
+			var payload map[string]any
+			if json.Unmarshal(response.Body.Bytes(), &payload) != nil ||
+				payload["status"] != string(evaluation.JobQueued) {
+				t.Fatalf("payload=%s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestRetrySessionEvaluationRejectsNonRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	application, err := NewApplication(&apiStoreStub{err: evaluation.ErrRetryNotAllowed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHTTPHandler(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(requestcontext.WithActor(
+			c.Request.Context(),
+			requestcontext.Actor{UserID: testAPIUserID, SessionID: "session-token"},
+		))
+		c.Next()
+	})
+	handler.RegisterRoutes(router)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/practice-sessions/"+testAPISessionID+"/evaluation/retry",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"code":"resource_conflict"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func TestPublicSpeechResultDoesNotExposeProviderLineage(t *testing.T) {
@@ -84,3 +172,58 @@ func TestDecodeCursorRejectsTrailingJSON(t *testing.T) {
 		t.Fatal("decodeCursor accepted trailing JSON")
 	}
 }
+
+type apiStoreStub struct {
+	replayed   bool
+	err        error
+	retryCalls int
+	userID     string
+	sessionID  string
+}
+
+func (store *apiStoreStub) GetRecordBySource(
+	context.Context, string, evaluation.Kind, string,
+) (evaluation.Record, error) {
+	return evaluation.Record{}, evaluation.ErrNotFound
+}
+
+func (store *apiStoreStub) RetryFailedSessionReport(
+	_ context.Context, userID string, sessionID string,
+) (evaluation.Record, bool, error) {
+	store.retryCalls++
+	store.userID = userID
+	store.sessionID = sessionID
+	if store.err != nil {
+		return evaluation.Record{}, false, store.err
+	}
+	now := time.Date(2026, 8, 21, 1, 2, 3, 0, time.UTC)
+	return evaluation.Record{
+		ID: testAPIEvaluationID, UserID: userID,
+		Kind: evaluation.KindSessionReport, SourceID: sessionID, ContextID: sessionID,
+		Status: evaluation.JobQueued, CreatedAt: now, UpdatedAt: now,
+	}, store.replayed, nil
+}
+
+func (*apiStoreStub) ListFeedbackItems(
+	context.Context, string, string,
+) ([]evaluation.FeedbackItem, error) {
+	return []evaluation.FeedbackItem{}, nil
+}
+
+func (*apiStoreStub) GetFormalReport(
+	context.Context, string, string,
+) (report.StoredFormalReport, error) {
+	return report.StoredFormalReport{}, evaluation.ErrNotFound
+}
+
+func (*apiStoreStub) ListFormalReports(
+	context.Context, string, report.HistoryQuery,
+) (report.HistoryPage, error) {
+	return report.HistoryPage{}, evaluation.ErrNotFound
+}
+
+const (
+	testAPIUserID       = "10000000-0000-4000-8000-000000000001"
+	testAPISessionID    = "20000000-0000-4000-8000-000000000001"
+	testAPIEvaluationID = "70000000-0000-4000-8000-000000000001"
+)
