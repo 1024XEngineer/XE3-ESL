@@ -158,6 +158,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
             SpeechFeedbackScoreabilityStatus.insufficient) {
           return _InsufficientDetails(feedback: feedback);
         }
+        final presentationItems = feedback.items.presentationItems;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -170,10 +171,10 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
               ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
             ),
             const SizedBox(height: SpeakUpDesign.space12),
-            for (var index = 0; index < feedback.items.length; index++) ...[
+            for (var index = 0; index < presentationItems.length; index++) ...[
               if (index > 0) const SizedBox(height: SpeakUpDesign.space12),
               _FeedbackItemDetails(
-                item: feedback.items[index],
+                item: presentationItems[index],
                 onRepractice: widget.onRepractice,
               ),
             ],

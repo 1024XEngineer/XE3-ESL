@@ -151,6 +151,9 @@ components:
     EvaluationStatus:
       type: string
       enum: [QUEUED, RUNNING, READY, FAILED]
+    FeedbackItemCategory:
+      type: string
+      enum: [CORRECTION, STRENGTH, RECOMMENDED_EXPRESSION]
     EvaluationResource:
       type: object
       additionalProperties: false
@@ -175,6 +178,13 @@ components:
           type: array
           maxItems: 32
           items: {$ref: '#/components/schemas/FeedbackItem'}
+          allOf:
+            - if:
+                contains:
+                  type: object
+                  required: [category]
+                  properties: {category: {const: STRENGTH}}
+              then: {maxItems: 1}
         result:
           oneOf:
             - $ref: '#/components/schemas/FormalReport'
@@ -229,7 +239,7 @@ components:
         feedback_item_id: {$ref: '#/components/schemas/UUID'}
         evaluation_id: {$ref: '#/components/schemas/UUID'}
         position: {type: integer, minimum: 1}
-        category: {$ref: '#/components/schemas/Identifier'}
+        category: {$ref: '#/components/schemas/FeedbackItemCategory'}
         severity: {$ref: '#/components/schemas/Identifier'}
         evidence: {$ref: '#/components/schemas/FeedbackEvidence'}
         recommendation:
@@ -243,6 +253,18 @@ components:
           type: string
           enum: [NONE, SAME_QUESTION]
         created_at: {type: string, format: date-time}
+      allOf:
+        - if:
+            properties: {category: {const: STRENGTH}}
+            required: [category]
+          then:
+            properties: {repractice_mode: {const: NONE}}
+            not: {required: [correction]}
+        - if:
+            properties:
+              category: {enum: [CORRECTION, RECOMMENDED_EXPRESSION]}
+            required: [category]
+          then: {required: [correction]}
     FeedbackEvidence:
       type: object
       additionalProperties: false

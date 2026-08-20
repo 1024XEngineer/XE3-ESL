@@ -78,10 +78,13 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
 
   @override
   Widget build(BuildContext context) {
+    final feedbackNotice = widget.correction == null && widget.polish == null
+        ? widget.feedbackNotice
+        : null;
     final hasFeedback =
         widget.correction != null ||
         widget.polish != null ||
-        widget.feedbackNotice != null;
+        feedbackNotice != null;
     final spokenSuggestion = widget.polish ?? widget.correction;
     final actions = <Widget>[
       if (widget.leading != null) widget.leading!,
@@ -121,7 +124,7 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
         ),
         if (_expanded && hasFeedback) ...[
           const SizedBox(height: SpeakUpDesign.space8),
-          if (widget.feedbackNotice case final notice?)
+          if (feedbackNotice case final notice?)
             Text(
               notice,
               key: const Key('inline-language-feedback-notice'),

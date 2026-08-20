@@ -59,3 +59,21 @@ func TestSpeechFeedbackOralReferenceText(t *testing.T) {
 		})
 	}
 }
+
+func TestSpeechFeedbackOralReferencePreservesOriginalRange(t *testing.T) {
+	t.Parallel()
+	const transcript = "I called the lender. Because the air conditioner is leaking."
+	projection := projectSpeechFeedbackOralReference(
+		projectSpeechFeedbackEnglishText(transcript),
+	)
+	start, end, ok := projection.excerptRange("lender because", 1)
+	if !ok || transcript[start:end] != "lender. Because" {
+		t.Fatalf(
+			"excerptRange() = (%d, %d, %t) %q",
+			start,
+			end,
+			ok,
+			transcript[start:end],
+		)
+	}
+}
