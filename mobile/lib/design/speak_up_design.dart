@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// The single visual source of truth for SpeakUp's mobile surfaces.
 abstract final class SpeakUpDesign {
-  static const canvas = Color(0xFFF7F5F1);
+  static const canvas = Color(0xFFF8F4EA);
   static const surface = Color(0xFFFFFDFC);
   static const surfaceMuted = Color(0xFFEFEEE9);
   static const ink = Color(0xFF171A11);
