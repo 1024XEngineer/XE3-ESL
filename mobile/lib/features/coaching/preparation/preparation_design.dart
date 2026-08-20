@@ -18,19 +18,23 @@ abstract final class PreparationDesign {
   static const error = SpeakUpDesign.error;
   static const errorMuted = SpeakUpDesign.errorMuted;
 
-  static const interview = SpeakUpDesign.ink;
-  static const interviewTint = SpeakUpDesign.primaryMuted;
-  static const ielts = SpeakUpDesign.ink;
-  static const ieltsDeep = SpeakUpDesign.ink;
-  static const ieltsTint = SpeakUpDesign.primaryMuted;
-  static const ieltsBorder = SpeakUpDesign.border;
-  static const scenario = SpeakUpDesign.ink;
-  static const scenarioTint = SpeakUpDesign.primaryMuted;
+  static const interview = SpeakUpDesign.strongAction;
+  static const interviewTint = SpeakUpDesign.successMuted;
+  static const ielts = SpeakUpDesign.accentLavenderStrong;
+  static const ieltsDeep = SpeakUpDesign.accentLavenderStrong;
+  static const ieltsTint = SpeakUpDesign.accentPeriwinkle;
+  static const ieltsBorder = SpeakUpDesign.accentLavender;
+  static const scenario = SpeakUpDesign.accentSageStrong;
+  static const scenarioTint = SpeakUpDesign.accentSage;
 
   static const radiusControl = SpeakUpDesign.radiusControl;
   static const radiusCard = SpeakUpDesign.radiusCard;
   static const radiusMedia = SpeakUpDesign.radiusMedia;
   static const radiusHero = SpeakUpDesign.radiusSheet;
+
+  static const primary = SpeakUpDesign.primary;
+  static const motionState = SpeakUpDesign.motionState;
+  static const motionEaseOut = SpeakUpDesign.motionEaseOut;
 
   static const pageTitle = SpeakUpDesign.pageTitle;
   static const sectionTitle = SpeakUpDesign.sectionTitle;

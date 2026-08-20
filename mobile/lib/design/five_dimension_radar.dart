@@ -44,14 +44,14 @@ class _FiveDimensionRadarPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
     final fill = Paint()
-      ..color = SpeakUpDesign.ink.withValues(alpha: 0.10)
+      ..color = SpeakUpDesign.success.withValues(alpha: 0.16)
       ..style = PaintingStyle.fill;
     final stroke = Paint()
-      ..color = SpeakUpDesign.ink.withValues(alpha: 0.72)
+      ..color = SpeakUpDesign.strongAction.withValues(alpha: 0.82)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     final pointPaint = Paint()
-      ..color = SpeakUpDesign.ink
+      ..color = SpeakUpDesign.primary
       ..style = PaintingStyle.fill;
 
     Offset point(int index, double scale) {

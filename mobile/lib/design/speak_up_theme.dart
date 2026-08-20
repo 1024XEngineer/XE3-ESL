@@ -160,7 +160,7 @@ abstract final class SpeakUpTheme {
         contentTextStyle: SpeakUpDesign.body,
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: SpeakUpDesign.ink,
+        backgroundColor: SpeakUpDesign.strongAction,
         contentTextStyle: SpeakUpDesign.body.copyWith(color: Colors.white),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(

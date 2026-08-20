@@ -419,12 +419,12 @@ class _ReviewFilters extends StatelessWidget {
               selected: selected == options[index].$2,
               showCheckmark: false,
               backgroundColor: SpeakUpDesign.primaryMuted,
-              selectedColor: SpeakUpDesign.ink,
+              selectedColor: SpeakUpDesign.primary,
               side: BorderSide.none,
               shape: const StadiumBorder(),
               labelStyle: SpeakUpDesign.label.copyWith(
                 color: selected == options[index].$2
-                    ? Colors.white
+                    ? SpeakUpDesign.ink
                     : SpeakUpDesign.ink,
               ),
               onSelected: (_) => onSelected(options[index].$2),

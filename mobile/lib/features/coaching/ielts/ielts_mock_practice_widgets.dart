@@ -507,7 +507,7 @@ class _CompletionStep extends StatelessWidget {
                 onPressed: onPressed,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
-                  backgroundColor: SpeakUpDesign.ink,
+                  backgroundColor: SpeakUpDesign.strongAction,
                   foregroundColor: Colors.white,
                 ),
                 child: Row(
@@ -580,7 +580,7 @@ class _SectionCompletionSheet extends StatelessWidget {
                     height: 52,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: SpeakUpDesign.ink, width: 2),
+                      border: Border.all(color: SpeakUpDesign.strongAction, width: 2),
                     ),
                     child: const Icon(
                       Icons.check_rounded,
@@ -609,7 +609,7 @@ class _SectionCompletionSheet extends StatelessWidget {
                   onPressed: onPrimary,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
+                    backgroundColor: SpeakUpDesign.strongAction,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -681,7 +681,7 @@ class _MockExitSheet extends StatelessWidget {
                   onPressed: onSaveAndExit,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
+                    backgroundColor: SpeakUpDesign.strongAction,
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('保存并退出'),
@@ -876,7 +876,7 @@ class _Part2Transition extends StatelessWidget {
                       onPressed: onRetry,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(54),
-                        backgroundColor: SpeakUpDesign.ink,
+                        backgroundColor: SpeakUpDesign.strongAction,
                         foregroundColor: Colors.white,
                       ),
                       child: Text(retryingConfirmation ? '重试提交' : '重试识别'),
@@ -898,7 +898,7 @@ class _Part2Transition extends StatelessWidget {
                   onPressed: onContinue,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
+                    backgroundColor: SpeakUpDesign.strongAction,
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('继续 Part 3 →'),
@@ -996,7 +996,7 @@ class _Part2Intro extends StatelessWidget {
                   onPressed: narrationReady ? onPressed : null,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(58),
-                    backgroundColor: SpeakUpDesign.ink,
+                    backgroundColor: SpeakUpDesign.strongAction,
                     foregroundColor: Colors.white,
                   ),
                   child: Text(
@@ -1165,7 +1165,7 @@ class _Part2LongTurn extends StatelessWidget {
                       onPressed: busy ? null : onPressed,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
-                        backgroundColor: SpeakUpDesign.ink,
+                        backgroundColor: SpeakUpDesign.strongAction,
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('结束作答 →'),
@@ -1203,7 +1203,7 @@ class _Part2LongTurn extends StatelessWidget {
                           : onRerecord,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
-                        backgroundColor: SpeakUpDesign.ink,
+                        backgroundColor: SpeakUpDesign.strongAction,
                         foregroundColor: Colors.white,
                       ),
                       child: Text(
@@ -1270,7 +1270,7 @@ class _Part2LongTurn extends StatelessWidget {
                     onPressed: busy ? null : onPressed,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
-                      backgroundColor: SpeakUpDesign.ink,
+                      backgroundColor: SpeakUpDesign.strongAction,
                       foregroundColor: Colors.white,
                     ),
                     child: const Text('提前开始作答 →'),
@@ -1309,7 +1309,7 @@ class _Part2RecordingStatus extends StatelessWidget {
       PracticeRecordingState.submitting => '正在进入下一环节…',
       _ => '等待录音',
     };
-    final color = recording ? SpeakUpDesign.ink : SpeakUpDesign.secondary;
+    final color = recording ? SpeakUpDesign.strongAction : SpeakUpDesign.secondary;
 
     return Row(
       key: const Key('ielts-part2-recording-status'),
@@ -1348,7 +1348,7 @@ class _CueCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: SpeakUpDesign.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: SpeakUpDesign.ink, width: 2),
+        border: Border.all(color: SpeakUpDesign.strongAction, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1450,7 +1450,7 @@ class _MockComplete extends StatelessWidget {
             onPressed: onPressed,
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(58),
-              backgroundColor: SpeakUpDesign.ink,
+              backgroundColor: SpeakUpDesign.strongAction,
               foregroundColor: Colors.white,
             ),
             child: const Text('返回训练'),

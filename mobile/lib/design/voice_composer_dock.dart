@@ -73,7 +73,7 @@ class VoiceComposerDock extends StatelessWidget {
         : capture.convertArmed
         ? SpeakUpDesign.primary
         : capturing
-        ? SpeakUpDesign.ink
+        ? SpeakUpDesign.strongAction
         : SpeakUpDesign.secondary;
     final visibleTranscript = capturing ? liveTranscript?.trim() ?? '' : '';
     final targetContent = ConstrainedBox(

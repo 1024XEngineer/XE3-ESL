@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 
 class PreparationFeaturedScene extends StatelessWidget {
@@ -31,24 +32,26 @@ class PreparationFeaturedScene extends StatelessWidget {
   Widget build(BuildContext context) {
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final cardHeight = 184 + (textScale - 1).clamp(0, 2).toDouble() * 190;
-    return Material(
-      color: color,
-      clipBehavior: Clip.antiAlias,
-      borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
-      child: Semantics(
-        button: onPressed != null,
-        enabled: onPressed != null,
-        label: '$title。$description$actionLabel',
-        onTap: onPressed,
-        excludeSemantics: true,
-        child: InkWell(
-          key: actionKey,
+    return SpeakUpPressable(
+      enabled: onPressed != null,
+      child: Material(
+        color: color,
+        clipBehavior: Clip.antiAlias,
+        borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
+        child: Semantics(
+          button: onPressed != null,
+          enabled: onPressed != null,
+          label: '$title。$description$actionLabel',
           onTap: onPressed,
-          child: SizedBox(
-            height: cardHeight,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
+          excludeSemantics: true,
+          child: InkWell(
+            key: actionKey,
+            onTap: onPressed,
+            child: SizedBox(
+              height: cardHeight,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
                 Image.asset(
                   assetPath,
                   fit: BoxFit.cover,
@@ -137,7 +140,8 @@ class PreparationFeaturedScene extends StatelessWidget {
                     ],
                   ),
                 ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

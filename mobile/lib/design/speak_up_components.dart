@@ -299,57 +299,60 @@ class SpeakUpTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: onTap != null,
-      label: semanticLabel,
-      child: Material(
-        color: SpeakUpDesign.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-          side: const BorderSide(color: SpeakUpDesign.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ?media,
-              Padding(
-                padding: const EdgeInsets.all(SpeakUpDesign.space16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          if (subtitle != null) ...[
-                            const SizedBox(height: SpeakUpDesign.space4),
+    return SpeakUpPressable(
+      enabled: onTap != null,
+      child: Semantics(
+        button: onTap != null,
+        label: semanticLabel,
+        child: Material(
+          color: SpeakUpDesign.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+            side: const BorderSide(color: SpeakUpDesign.border),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ?media,
+                Padding(
+                  padding: const EdgeInsets.all(SpeakUpDesign.space16),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              subtitle!,
-                              style: Theme.of(context).textTheme.bodyMedium,
+                              title,
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
+                            if (subtitle != null) ...[
+                              const SizedBox(height: SpeakUpDesign.space4),
+                              Text(
+                                subtitle!,
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
+                            if (meta != null) ...[
+                              const SizedBox(height: SpeakUpDesign.space12),
+                              meta!,
+                            ],
                           ],
-                          if (meta != null) ...[
-                            const SizedBox(height: SpeakUpDesign.space12),
-                            meta!,
-                          ],
-                        ],
+                        ),
                       ),
-                    ),
-                    if (trailing != null) ...[
-                      const SizedBox(width: SpeakUpDesign.space12),
-                      trailing!,
+                      if (trailing != null) ...[
+                        const SizedBox(width: SpeakUpDesign.space12),
+                        trailing!,
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -390,7 +393,9 @@ class SpeakUpStepRow extends StatelessWidget {
           backgroundColor: selected
               ? SpeakUpDesign.primary
               : SpeakUpDesign.surfaceMuted,
-          foregroundColor: selected ? Colors.white : SpeakUpDesign.secondary,
+          foregroundColor: selected
+              ? SpeakUpDesign.ink
+              : SpeakUpDesign.secondary,
           child: completed
               ? const Icon(Icons.check_rounded, size: 18)
               : Text('$index', style: SpeakUpDesign.label),
@@ -452,6 +457,61 @@ class SpeakUpEmptyState extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class SpeakUpPressable extends StatefulWidget {
+  const SpeakUpPressable({
+    required this.child,
+    this.enabled = true,
+    this.pressedScale = 0.975,
+    super.key,
+  });
+
+  final Widget child;
+  final bool enabled;
+  final double pressedScale;
+
+  @override
+  State<SpeakUpPressable> createState() => _SpeakUpPressableState();
+}
+
+class _SpeakUpPressableState extends State<SpeakUpPressable> {
+  bool _pressed = false;
+
+  @override
+  void didUpdateWidget(covariant SpeakUpPressable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.enabled && _pressed) {
+      _pressed = false;
+    }
+  }
+
+  void _setPressed(bool value) {
+    if (!widget.enabled || value == _pressed) {
+      return;
+    }
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    return Listener(
+      onPointerDown: (_) => _setPressed(true),
+      onPointerUp: (_) => _setPressed(false),
+      onPointerCancel: (_) => _setPressed(false),
+      child: AnimatedScale(
+        scale: _pressed ? widget.pressedScale : 1,
+        duration: reduceMotion
+            ? Duration.zero
+            : _pressed
+            ? SpeakUpDesign.motionPress
+            : SpeakUpDesign.motionRelease,
+        curve: SpeakUpDesign.motionEaseOut,
+        child: widget.child,
       ),
     );
   }

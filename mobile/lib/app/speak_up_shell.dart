@@ -694,7 +694,7 @@ class _IeltsPlanPreviewSheet extends StatelessWidget {
             label: const Text('开始练习'),
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(52),
-              backgroundColor: SpeakUpDesign.ink,
+              backgroundColor: SpeakUpDesign.strongAction,
               foregroundColor: Colors.white,
             ),
           ),

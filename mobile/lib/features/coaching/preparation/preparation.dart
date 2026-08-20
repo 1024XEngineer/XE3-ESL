@@ -1048,17 +1048,22 @@ class _PracticeHubCarouselState extends State<_PracticeHubCarousel> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 for (var index = 0; index < widget.items.length; index++)
-                  AnimatedContainer(
+                  SizedBox(
                     key: Key('practice-hub-page-dot-$index'),
-                    duration: const Duration(milliseconds: 180),
-                    width: index == _currentPage ? 18 : 6,
+                    width: 18,
                     height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: index == _currentPage
-                          ? PreparationDesign.ink
-                          : PreparationDesign.border,
-                      borderRadius: BorderRadius.circular(3),
+                    child: AnimatedScale(
+                      scale: index == _currentPage ? 1 : 0.34,
+                      duration: PreparationDesign.motionState,
+                      curve: PreparationDesign.motionEaseOut,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: index == _currentPage
+                              ? PreparationDesign.primary
+                              : PreparationDesign.border,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
                     ),
                   ),
               ],

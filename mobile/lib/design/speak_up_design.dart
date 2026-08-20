@@ -11,14 +11,18 @@ abstract final class SpeakUpDesign {
   static const border = Color(0xFFE3E0D9);
   static const primary = Color(0xFFC8DC45);
   static const primaryMuted = Color(0xFFEEF4C9);
+  static const strongAction = Color(0xFF285F52);
   static const success = Color(0xFF3A9B85);
   static const successMuted = Color(0xFFDDEEE8);
   static const error = Color(0xFFCC421A);
   static const errorMuted = Color(0xFFFBE4DC);
   static const accentBlue = Color(0xFFD8E9ED);
+  static const accentBlueStrong = Color(0xFF4E7E89);
   static const accentLavender = Color(0xFFEADDF1);
+  static const accentLavenderStrong = Color(0xFF7466A8);
   static const accentPeriwinkle = Color(0xFFDEE3F3);
   static const accentSage = Color(0xFFE4E9CB);
+  static const accentSageStrong = Color(0xFF71813D);
 
   static const space4 = 4.0;
   static const space8 = 8.0;
@@ -35,6 +39,11 @@ abstract final class SpeakUpDesign {
 
   static const minTapTarget = 44.0;
   static const maxContentWidth = 680.0;
+
+  static const motionPress = Duration(milliseconds: 120);
+  static const motionRelease = Duration(milliseconds: 160);
+  static const motionState = Duration(milliseconds: 180);
+  static const motionEaseOut = Cubic(0.23, 1, 0.32, 1);
 
   static const pageTitle = TextStyle(
     color: ink,
