@@ -58,6 +58,7 @@ Thread 和工具数据。
   "forbidden_tools": ["practice.preview.v3"],
   "required_response_terms": ["评价"],
   "forbidden_response_terms": ["report_id"],
+  "expected_response_language": "zh-CN",
   "max_non_empty_paragraphs": 2,
   "max_sentences": 2
 }
@@ -92,6 +93,8 @@ Run 持久化的 Assistant 回复。评分要求：
   且场景决议类型及 Catalog 场景 ID 完全匹配；
 - 回复包含全部 `required_response_terms`，且不包含任何
   `forbidden_response_terms`（均按不区分大小写的子串匹配）；
+- 配置 `expected_response_language` 为 `zh-CN` 或 `en` 时，回复通过对应的
+  Han / Latin 脚本契约；中文允许必要的英文产品名或术语，英文回复不得夹带中文；
 - 回复不超过可选的 `max_non_empty_paragraphs` 和 `max_sentences`。
 
 段落按空行分隔；句数按中英文句末标点统计，连续英文省略号不会被算作多个

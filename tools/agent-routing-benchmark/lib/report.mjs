@@ -29,16 +29,35 @@ function sentenceCount(content) {
     .filter((value) => value.trim()).length;
 }
 
+function responseLanguageContract(testCase, response) {
+  const expected = testCase.expected_response_language ?? "";
+  if (!expected) {
+    return { checked: false, passed: true, expected, hanCount: 0, latinCount: 0 };
+  }
+  const content = String(response ?? "");
+  const hanCount = [...content.matchAll(/\p{Script=Han}/gu)].length;
+  const latinCount = [...content.matchAll(/\p{Script=Latin}/gu)].length;
+  const passed =
+    expected === "zh-CN"
+      ? hanCount >= 2 && hanCount * 2 >= latinCount
+      : expected === "en"
+        ? latinCount >= 4 && hanCount === 0
+        : false;
+  return { checked: true, passed, expected, hanCount, latinCount };
+}
+
 function responseContract(testCase, response) {
   const requiredTerms = testCase.required_response_terms ?? [];
   const forbiddenTerms = testCase.forbidden_response_terms ?? [];
   const maxParagraphs = testCase.max_non_empty_paragraphs;
   const maxSentences = testCase.max_sentences;
+  const language = responseLanguageContract(testCase, response);
   const checked =
     requiredTerms.length > 0 ||
     forbiddenTerms.length > 0 ||
     Number.isInteger(maxParagraphs) ||
-    Number.isInteger(maxSentences);
+    Number.isInteger(maxSentences) ||
+    language.checked;
   const normalized = String(response ?? "").toLocaleLowerCase();
   const missingTerms = requiredTerms.filter(
     (term) => !normalized.includes(String(term).toLocaleLowerCase()),
@@ -59,7 +78,8 @@ function responseContract(testCase, response) {
       missingTerms.length === 0 &&
       presentForbiddenTerms.length === 0 &&
       paragraphsPassed &&
-      sentencesPassed,
+      sentencesPassed &&
+      language.passed,
     requiredTerms,
     forbiddenTerms,
     missingTerms,
@@ -70,6 +90,7 @@ function responseContract(testCase, response) {
     maxSentences,
     paragraphsPassed,
     sentencesPassed,
+    language,
   };
 }
 
@@ -241,6 +262,11 @@ export function evaluateCases(cases, executions, events) {
         `回复句数 ${response.sentenceCount} > ${response.maxSentences}`,
       );
     }
+    if (!response.language.passed) {
+      reasons.push(
+        `回复语言不匹配：期望 ${response.language.expected}，Han ${response.language.hanCount}，Latin ${response.language.latinCount}`,
+      );
+    }
 
     return {
       name: testCase.name,
@@ -274,6 +300,10 @@ export function evaluateCases(cases, executions, events) {
       response_sentence_count: response.sentenceCount,
       max_non_empty_paragraphs: response.maxParagraphs,
       max_sentences: response.maxSentences,
+      expected_response_language: response.language.expected,
+      response_language_passed: response.language.passed,
+      response_han_characters: response.language.hanCount,
+      response_latin_characters: response.language.latinCount,
       passed,
       reason: reasons.join("；") || "符合预期",
       provider: execution?.provider ?? "",

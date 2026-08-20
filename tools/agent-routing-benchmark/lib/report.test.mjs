@@ -218,6 +218,57 @@ test("evaluates required, forbidden, paragraph, and sentence response rules", ()
   });
 });
 
+test("evaluates Chinese and English response language contracts", () => {
+  const cases = [
+    {
+      name: "zh_greeting",
+      messages: ["你好"],
+      expected_decision: "direct_response",
+      expected_tools: [],
+      expected_response_language: "zh-CN",
+    },
+    {
+      name: "en_greeting",
+      messages: ["Hello"],
+      expected_decision: "direct_response",
+      expected_tools: [],
+      expected_response_language: "en",
+    },
+    {
+      name: "wrong_zh_greeting",
+      messages: ["你好"],
+      expected_decision: "direct_response",
+      expected_tools: [],
+      expected_response_language: "zh-CN",
+    },
+  ];
+  const executions = [
+    ["zh_greeting", "run-zh", "你好！我是 SpeakUp，有什么想聊的吗？"],
+    ["en_greeting", "run-en", "Hello! How can I help?"],
+    ["wrong_zh_greeting", "run-wrong", "Hello! Ready to practice some English?"],
+  ].map(([name, target_run_id, assistant_response]) => ({
+    name,
+    target_run_id,
+    assistant_response,
+    http_ok: true,
+    status: "completed",
+  }));
+  const events = executions.flatMap((execution) => [
+    {
+      msg: "agent.routing.decision",
+      run_id: execution.target_run_id,
+      decision: "direct_response",
+    },
+    { msg: "agent.run.completed", run_id: execution.target_run_id },
+  ]);
+
+  const results = evaluateCases(cases, executions, events);
+  assert.equal(results[0].response_language_passed, true);
+  assert.equal(results[1].response_language_passed, true);
+  assert.equal(results[2].response_language_passed, false);
+  assert.match(results[2].reason, /回复语言不匹配/);
+});
+
 test("evaluates the structured preview resolution without raw scene text", () => {
   const cases = [
     {

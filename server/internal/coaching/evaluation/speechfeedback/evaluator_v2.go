@@ -19,7 +19,7 @@ func Lineage(provider string, model string) (evaluation.ConfigLineage, error) {
 	lineage := evaluation.ConfigLineage{
 		SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 		StrategyRef:     "speech-feedback/v1",
-		PipelineVersion: "speech-evaluation/v1",
+		PipelineVersion: "speech-evaluation/v2",
 		PromptVersion:   "speech-feedback/v2",
 		ResultSchema:    SpeechFeedbackSchemaVersion,
 		Provider:        provider,
@@ -87,7 +87,11 @@ func (evaluator *CompactEvaluator) evaluate(
 		}
 		return encodeCompactSpeechResult(result, nil)
 	}
-	englishText := speechFeedbackEnglishReferenceText(snapshot.Transcript)
+	projection := projectSpeechFeedbackEnglishText(snapshot.Transcript)
+	if kind == evaluation.KindAgentMessageFeedback {
+		projection = projectSpeechFeedbackOralReference(projection)
+	}
+	englishText := projection.text
 	payload, err := json.Marshal(struct {
 		Kind        evaluation.Kind `json:"kind"`
 		EnglishText string          `json:"english_text"`
@@ -102,10 +106,11 @@ func (evaluator *CompactEvaluator) evaluate(
 	if err != nil {
 		return nil, nil, err
 	}
-	items, err := compactFeedbackItems(
+	items, err := compactFeedbackItemsWithProjection(
 		generated,
 		snapshot,
 		englishText,
+		projection,
 		repracticeMode,
 	)
 	if err != nil {
@@ -137,6 +142,22 @@ func compactFeedbackItems(
 	generated TextGenerationResult,
 	snapshot evaluation.SpeechInputSnapshot,
 	englishText string,
+	repracticeMode string,
+) ([]evaluation.FeedbackItemDraft, error) {
+	return compactFeedbackItemsWithProjection(
+		generated,
+		snapshot,
+		englishText,
+		projectSpeechFeedbackEnglishText(snapshot.Transcript),
+		repracticeMode,
+	)
+}
+
+func compactFeedbackItemsWithProjection(
+	generated TextGenerationResult,
+	snapshot evaluation.SpeechInputSnapshot,
+	englishText string,
+	projection speechFeedbackEnglishProjection,
 	repracticeMode string,
 ) ([]evaluation.FeedbackItemDraft, error) {
 	if !validSpeechFeedbackIdentifier(generated.Provider) ||
@@ -199,7 +220,6 @@ func compactFeedbackItems(
 
 	items := make([]evaluation.FeedbackItemDraft, 0, len(envelope.Items))
 	seen := make(map[string]struct{}, len(envelope.Items))
-	projection := projectSpeechFeedbackEnglishText(snapshot.Transcript)
 	for _, generatedItem := range envelope.Items {
 		sourceTextValue, sourcePresent := compactProviderNullableText(
 			generatedItem.SourceText,

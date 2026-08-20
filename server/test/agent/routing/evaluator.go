@@ -15,7 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
-const DatasetVersion = "agent-routing-eval-v7"
+const DatasetVersion = "agent-routing-eval-v8"
 
 type EvaluationResult struct {
 	DatasetVersion      string
