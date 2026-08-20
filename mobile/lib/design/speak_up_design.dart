@@ -2,21 +2,23 @@ import 'package:flutter/material.dart';
 
 /// The single visual source of truth for SpeakUp's mobile surfaces.
 abstract final class SpeakUpDesign {
-  static const canvas = Color(0xFFFFFFFF);
-  static const surface = Color(0xFFFFFFFF);
-  static const surfaceMuted = Color(0xFFF5F5F5);
-  static const ink = Color(0xFF000000);
-  static const secondary = Color(0xFF6E6E73);
-  static const tertiary = Color(0xFFA1A1A6);
-  static const border = Color(0xFFE5E5E5);
-  static const primary = ink;
-  static const primaryMuted = Color(0xFFF0F0F0);
-  static const success = Color(0xFF285443);
-  static const successMuted = Color(0xFFEAF3EF);
-  static const warning = Color(0xFFC58000);
-  static const error = Color(0xFF8A2D21);
-  static const errorMuted = Color(0xFFFFEDE8);
-  static const darkSurface = Color(0xFF1A1A1A);
+  static const canvas = Color(0xFFF7F5F1);
+  static const surface = Color(0xFFFFFDFC);
+  static const surfaceMuted = Color(0xFFEFEEE9);
+  static const ink = Color(0xFF171A11);
+  static const secondary = Color(0xFF686B61);
+  static const tertiary = Color(0xFF92978C);
+  static const border = Color(0xFFE3E0D9);
+  static const primary = Color(0xFFC8DC45);
+  static const primaryMuted = Color(0xFFEEF4C9);
+  static const success = Color(0xFF3A9B85);
+  static const successMuted = Color(0xFFDDEEE8);
+  static const error = Color(0xFFCC421A);
+  static const errorMuted = Color(0xFFFBE4DC);
+  static const accentBlue = Color(0xFFD8E9ED);
+  static const accentLavender = Color(0xFFEADDF1);
+  static const accentPeriwinkle = Color(0xFFDEE3F3);
+  static const accentSage = Color(0xFFE4E9CB);
 
   static const space4 = 4.0;
   static const space8 = 8.0;

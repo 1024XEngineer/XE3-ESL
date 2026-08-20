@@ -5,9 +5,9 @@ abstract final class SpeakUpTheme {
   static ThemeData get light {
     const scheme = ColorScheme.light(
       primary: SpeakUpDesign.primary,
-      onPrimary: Colors.white,
+      onPrimary: SpeakUpDesign.ink,
       primaryContainer: SpeakUpDesign.primaryMuted,
-      onPrimaryContainer: SpeakUpDesign.primary,
+      onPrimaryContainer: SpeakUpDesign.ink,
       secondary: SpeakUpDesign.secondary,
       onSecondary: Colors.white,
       error: SpeakUpDesign.error,
@@ -61,7 +61,7 @@ abstract final class SpeakUpTheme {
         style: FilledButton.styleFrom(
           minimumSize: const Size.fromHeight(SpeakUpDesign.minTapTarget),
           backgroundColor: SpeakUpDesign.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: SpeakUpDesign.ink,
           disabledBackgroundColor: SpeakUpDesign.surfaceMuted,
           disabledForegroundColor: SpeakUpDesign.tertiary,
           padding: const EdgeInsets.symmetric(
