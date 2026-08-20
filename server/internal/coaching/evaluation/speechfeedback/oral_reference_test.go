@@ -34,6 +34,21 @@ func TestSpeechFeedbackOralReferenceText(t *testing.T) {
 			transcript: "I called the landlord. Because the air conditioner.",
 			want:       "I called the landlord. Because the air conditioner.",
 		},
+		{
+			name:       "finite copula without complement is not hidden",
+			transcript: "I called the lender. Because the air conditioner is.",
+			want:       "I called the lender. Because the air conditioner is.",
+		},
+		{
+			name:       "personal subject copula without complement is not hidden",
+			transcript: "I called the lender. Because it is.",
+			want:       "I called the lender. Because it is.",
+		},
+		{
+			name:       "personal subject predicate without complement is not hidden",
+			transcript: "The air conditioner is leaking. And I need.",
+			want:       "The air conditioner is leaking. And I need.",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

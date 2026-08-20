@@ -140,11 +140,13 @@ func looksLikeSpokenClause(text string) bool {
 		return false
 	}
 	if isPersonalSubject(words[0]) {
-		return len(words) >= 2
+		// discipline: reject valid two-word clauses rather than hide an
+		// incomplete predicate such as "it is" or "I need".
+		return len(words) >= 3
 	}
-	for _, word := range words[1:] {
+	for index, word := range words[1:] {
 		if isFiniteAuxiliary(word) {
-			return true
+			return index+2 < len(words)
 		}
 	}
 	return false
