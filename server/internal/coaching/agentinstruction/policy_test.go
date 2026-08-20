@@ -7,7 +7,7 @@ import (
 
 func TestProviderIncludesStructuredProfileWriteAndFailurePolicy(t *testing.T) {
 	instruction := (Provider{}).Render()
-	if instruction.Version != VersionV4 || !instruction.Valid() {
+	if instruction.Version != VersionV5 || !instruction.Valid() {
 		t.Fatalf("instruction = %#v", instruction)
 	}
 	for _, required := range []string{
@@ -21,6 +21,10 @@ func TestProviderIncludesStructuredProfileWriteAndFailurePolicy(t *testing.T) {
 		"does not authorize creating a practice",
 		"Never inherit creation authorization",
 		"respond naturally to what the user shared",
+		"current-turn application state is supplied",
+		"For a NO_CHANGE conclusion",
+		"each alternative wording is optional",
+		"Never invent or carry over a counterpart role",
 	} {
 		if !strings.Contains(instruction.Content, required) {
 			t.Fatalf("instruction missing %q", required)

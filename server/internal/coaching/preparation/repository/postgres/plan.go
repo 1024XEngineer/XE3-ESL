@@ -114,6 +114,29 @@ func (r *PostgresPlanRepository) ReadCurrentPlan(ctx context.Context, actor requ
 	return readPlan(ctx, r.pool, actor.UserID, planID, "")
 }
 
+func (r *PostgresPlanRepository) ReadLatestThreadPlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) (preparation.PracticePlan, error) {
+	if r == nil || r.pool == nil || ctx == nil || !actor.Valid() ||
+		!validAggregateID(threadID) {
+		return preparation.PracticePlan{}, preparation.ErrPlanNotFound
+	}
+	plan, err := scanPlan(r.pool.QueryRow(ctx, `SELECT `+planColumns+`
+FROM practice_plans
+WHERE user_id=$1 AND source_thread_id=$2 AND status<>'archived'
+ORDER BY created_at DESC, plan_id DESC
+LIMIT 1`, actor.UserID, threadID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return preparation.PracticePlan{}, preparation.ErrPlanNotFound
+	}
+	if err != nil {
+		return preparation.PracticePlan{}, planDB(err)
+	}
+	return plan, nil
+}
+
 func (r *PostgresPlanRepository) ListCurrentPlans(ctx context.Context, actor requestcontext.Actor, experience scene.PracticeExperience) ([]preparation.PracticePlan, error) {
 	if r == nil || r.pool == nil || ctx == nil || !actor.Valid() {
 		return nil, preparation.ErrPlanInvalid
