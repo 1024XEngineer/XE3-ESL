@@ -31,6 +31,7 @@ type Assembler struct {
 	repository  Repository
 	instruction InstructionProvider
 	profiles    CoachingProfileContributor
+	turnContext TurnContextContributor
 	images      agentimage.ContextReader
 }
 
@@ -44,6 +45,16 @@ func WithImageReader(
 			return errors.New("agent: image context reader is required")
 		}
 		assembler.images = reader
+		return nil
+	}
+}
+
+func WithTurnContextContributor(contributor TurnContextContributor) Option {
+	return func(assembler *Assembler) error {
+		if contributor == nil {
+			return errors.New("agent: turn context contributor is required")
+		}
+		assembler.turnContext = contributor
 		return nil
 	}
 }
@@ -128,6 +139,23 @@ func (assembler *Assembler) Assemble(
 	systemContent := instruction.Content
 	manifest.InstructionVersion = instruction.Version
 	inputCharacters := utf8.RuneCountInString(input.Content)
+	if assembler.turnContext != nil {
+		contribution, contributionErr := assembler.turnContext.Contribute(
+			ctx,
+			actor,
+			TurnContextRequest{ThreadID: command.ThreadID, InputMessage: input},
+		)
+		if contributionErr != nil {
+			return Manifest{}, ModelInput{}, contributionErr
+		}
+		if len(contribution.Payload) > 0 {
+			if !contribution.Valid() {
+				return Manifest{}, ModelInput{}, ErrInvalidContext
+			}
+			systemContent += turnContextPrefix +
+				string(contribution.Payload) + turnContextSuffix
+		}
+	}
 	if utf8.RuneCountInString(systemContent)+inputCharacters >
 		command.MaxInputCharacters {
 		return Manifest{}, ModelInput{}, ErrInvalidContext

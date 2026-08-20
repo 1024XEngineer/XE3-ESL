@@ -26,11 +26,13 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
+	coachingagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/agentcontext"
 	coachingagentinstruction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/agentinstruction"
 	evaluationagentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentvoice"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
 	practiceinteractionhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction/http"
+	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	coachingprofile "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile"
 	profileagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile/agentcapability"
 	profileagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile/agentcontext"
@@ -213,6 +215,21 @@ func buildIdentityAgentComposition(
 	}
 	// 3. 装配结构化 Profile 与 Thread Context。
 	var contextOptions []agentcontext.Option
+	var turnFeedbackStore *evaluationpostgres.Store
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AgentVoice.MessageFeedback != nil {
+		turnFeedbackStore = evaluationStore
+	}
+	turnContext, err := coachingagentcontext.New(
+		preparationpostgres.NewPostgresPlanRepository(database), turnFeedbackStore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	contextOptions = append(
+		contextOptions,
+		agentcontext.WithTurnContextContributor(turnContext),
+	)
 	if agentImages != nil {
 		contextOptions = append(
 			contextOptions,
