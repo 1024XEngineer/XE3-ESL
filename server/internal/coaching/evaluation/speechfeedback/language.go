@@ -3,6 +3,7 @@ package speechfeedback
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type speechFeedbackLanguage string
@@ -53,26 +54,78 @@ func speechFeedbackHasAssessableEnglish(text string) bool {
 // of a confirmed mixed-language transcript. The original transcript remains
 // the immutable text evidence; this projection is used only as the ISE paper.
 func speechFeedbackEnglishReferenceText(text string) string {
+	return projectSpeechFeedbackEnglishText(text).text
+}
+
+type speechFeedbackEnglishProjection struct {
+	text           string
+	originalStarts []int
+	originalEnds   []int
+}
+
+func projectSpeechFeedbackEnglishText(text string) speechFeedbackEnglishProjection {
 	var output strings.Builder
+	originalStarts := make([]int, 0, len(text))
+	originalEnds := make([]int, 0, len(text))
 	needsSpace := false
-	for _, character := range strings.TrimSpace(text) {
+	spaceStart := 0
+	appendRune := func(character rune, originalStart int, originalEnd int) {
+		output.WriteRune(character)
+		for range utf8.RuneLen(character) {
+			originalStarts = append(originalStarts, originalStart)
+			originalEnds = append(originalEnds, originalEnd)
+		}
+	}
+	for originalStart, character := range text {
+		originalEnd := originalStart + utf8.RuneLen(character)
 		allowed := unicode.Is(unicode.Latin, character) &&
 			unicode.IsLetter(character)
 		allowed = allowed || unicode.IsNumber(character) ||
 			(character <= unicode.MaxASCII &&
 				(unicode.IsPunct(character) || unicode.IsSpace(character)))
-		if !allowed {
+		if !allowed || unicode.IsSpace(character) {
+			if output.Len() > 0 && !needsSpace {
+				spaceStart = originalStart
+			}
 			needsSpace = output.Len() > 0
 			continue
 		}
-		if needsSpace && !unicode.IsSpace(character) {
-			output.WriteByte(' ')
+		if needsSpace {
+			appendRune(' ', spaceStart, originalStart)
 		}
-		output.WriteRune(character)
+		appendRune(character, originalStart, originalEnd)
 		needsSpace = false
 	}
-	projected := strings.Join(strings.Fields(output.String()), " ")
-	return strings.Trim(projected, " \t\r\n,;:!?-.")
+	projected := output.String()
+	trimmed := strings.Trim(projected, " \t\r\n,;:!?-.")
+	if trimmed == "" {
+		return speechFeedbackEnglishProjection{}
+	}
+	start := strings.Index(projected, trimmed)
+	end := start + len(trimmed)
+	return speechFeedbackEnglishProjection{
+		text:           trimmed,
+		originalStarts: originalStarts[start:end],
+		originalEnds:   originalEnds[start:end],
+	}
+}
+
+func (projection speechFeedbackEnglishProjection) excerptRange(
+	excerpt string,
+	occurrence int,
+) (int, int, bool) {
+	projectedStart := speechFeedbackExcerptStart(
+		projection.text,
+		excerpt,
+		occurrence,
+	)
+	projectedEnd := projectedStart + len(excerpt)
+	if projectedStart < 0 || projectedEnd > len(projection.originalStarts) ||
+		projectedStart >= projectedEnd {
+		return 0, 0, false
+	}
+	return projection.originalStarts[projectedStart],
+		projection.originalEnds[projectedEnd-1], true
 }
 
 func speechFeedbackAcousticCategory(

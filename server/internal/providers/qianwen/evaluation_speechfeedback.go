@@ -58,7 +58,9 @@ func (generator *EvaluationSpeechFeedbackGenerator) Generate(
 
 func speechFeedbackSchema() map[string]any {
 	item := strictObjectSchema(
-		[]any{"kind", "explanation", "suggested_text"},
+		[]any{
+			"kind", "explanation", "source_text", "source_occurrence", "suggested_text",
+		},
 		map[string]any{
 			"kind": map[string]any{
 				"type": "string",
@@ -67,6 +69,15 @@ func speechFeedbackSchema() map[string]any {
 				},
 			},
 			"explanation": stringSchema(),
+			"source_text": map[string]any{
+				"anyOf": []any{stringSchema(), map[string]any{"type": "null"}},
+			},
+			"source_occurrence": map[string]any{
+				"anyOf": []any{
+					map[string]any{"type": "integer", "minimum": 1},
+					map[string]any{"type": "null"},
+				},
+			},
 			"suggested_text": map[string]any{
 				"anyOf": []any{stringSchema(), map[string]any{"type": "null"}},
 			},

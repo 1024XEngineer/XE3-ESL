@@ -21,7 +21,7 @@ func TestEvaluationSpeechFeedbackUsesStrictSchema(t *testing.T) {
 		return jsonResponse(http.StatusOK, `{
 			"id":"chatcmpl-feedback-1",
 			"model":"qwen3.5-flash",
-			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"items\":[{\"kind\":\"STRENGTH\",\"explanation\":\"Clear answer.\",\"suggested_text\":null}]}"}}],
+			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"items\":[{\"kind\":\"STRENGTH\",\"explanation\":\"表达清晰。\",\"source_text\":null,\"source_occurrence\":null,\"suggested_text\":null}]}"}}],
 			"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12}
 		}`), nil
 	}))
@@ -44,6 +44,14 @@ func TestEvaluationSpeechFeedbackUsesStrictSchema(t *testing.T) {
 	items := properties["items"].(map[string]any)
 	item := items["items"].(map[string]any)
 	itemProperties := item["properties"].(map[string]any)
+	source := itemProperties["source_text"].(map[string]any)
+	if _, ok := source["anyOf"].([]any); !ok {
+		t.Fatalf("source_text schema = %#v", source)
+	}
+	occurrence := itemProperties["source_occurrence"].(map[string]any)
+	if _, ok := occurrence["anyOf"].([]any); !ok {
+		t.Fatalf("source_occurrence schema = %#v", occurrence)
+	}
 	suggested := itemProperties["suggested_text"].(map[string]any)
 	if _, ok := suggested["anyOf"].([]any); !ok {
 		t.Fatalf("suggested_text schema = %#v", suggested)
