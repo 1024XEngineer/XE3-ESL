@@ -131,6 +131,105 @@ func TestContributorWaitsForCurrentVoiceFeedback(t *testing.T) {
 	}
 }
 
+func TestContributorAllowsChineseVoiceSceneCreationWithoutEnglishFeedback(t *testing.T) {
+	feedback := &feedbackReaderFake{
+		records: []evaluation.Record{{
+			ID:     testEvalID,
+			Status: evaluation.JobReady,
+			Result: textNotAssessableResult(),
+		}},
+		items: []evaluation.FeedbackItem{},
+	}
+	contributor, err := New(
+		&planReaderFake{err: preparation.ErrPlanNotFound},
+		feedback,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := voiceRequest()
+	request.InputMessage.Content = "帮我准备一个和房东沟通空调漏水的英语练习。我想练怎么描述问题和约上门维修。"
+
+	contribution, err := contributor.Contribute(
+		context.Background(), testActor(), request,
+	)
+	if err != nil {
+		t.Fatalf("Contribute() error = %v", err)
+	}
+	var payload turnPayload
+	if err := json.Unmarshal(contribution.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Practice != nil || payload.SpeechFeedback == nil ||
+		payload.SpeechFeedback.Conclusion != "NOT_APPLICABLE" ||
+		len(payload.SpeechFeedback.Kinds) != 0 ||
+		len(payload.SpeechFeedback.Items) != 0 {
+		t.Fatalf("turn payload = %#v", payload)
+	}
+}
+
+func TestContributorRetryKeepsNotApplicableVoiceFeedbackAvailable(t *testing.T) {
+	feedback := &feedbackReaderFake{
+		records: []evaluation.Record{{
+			ID:     testEvalID,
+			Status: evaluation.JobReady,
+			Result: textNotAssessableResult(),
+		}},
+		items: []evaluation.FeedbackItem{},
+	}
+	contributor, err := New(
+		&planReaderFake{err: preparation.ErrPlanNotFound},
+		feedback,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		contribution, contributionErr := contributor.Contribute(
+			context.Background(), testActor(), voiceRequest(),
+		)
+		if contributionErr != nil {
+			t.Fatalf("attempt %d: Contribute() error = %v", attempt, contributionErr)
+		}
+		if !strings.Contains(string(contribution.Payload), `"conclusion":"NOT_APPLICABLE"`) {
+			t.Fatalf("attempt %d: payload = %s", attempt, contribution.Payload)
+		}
+	}
+	if feedback.calls != 2 {
+		t.Fatalf("feedback calls = %d, want 2", feedback.calls)
+	}
+}
+
+func TestContributorDoesNotTreatMissingEnglishFeedbackAsNotApplicable(t *testing.T) {
+	contributor, err := New(
+		&planReaderFake{err: preparation.ErrPlanNotFound},
+		&feedbackReaderFake{
+			records: []evaluation.Record{{
+				ID:     testEvalID,
+				Status: evaluation.JobReady,
+				Result: json.RawMessage(`{
+					"schema_version":"speech-feedback/v1",
+					"scoreability_status":"PROVISIONAL",
+					"summary":"English feedback is available.",
+					"reason_codes":[],
+					"acoustic":{"status":"NOT_ASSESSED","reason":"AGENT_MESSAGE_ACOUSTICS_NOT_ASSESSED"}
+				}`),
+			}},
+			items: []evaluation.FeedbackItem{},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = contributor.Contribute(
+		context.Background(), testActor(), voiceRequest(),
+	)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Contribute() error = %v, want ErrUnavailable", err)
+	}
+}
+
 func TestContributorDoesNotGenerateWithoutFailedVoiceFeedback(t *testing.T) {
 	contributor, err := New(
 		&planReaderFake{plan: rentalRepairPlan()},
@@ -147,6 +246,16 @@ func TestContributorDoesNotGenerateWithoutFailedVoiceFeedback(t *testing.T) {
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Contribute() error = %v, want ErrUnavailable", err)
 	}
+}
+
+func textNotAssessableResult() json.RawMessage {
+	return json.RawMessage(`{
+		"schema_version":"speech-feedback/v1",
+		"scoreability_status":"INSUFFICIENT",
+		"summary":"The confirmed transcript does not contain enough assessable English.",
+		"reason_codes":["TEXT_NOT_ASSESSABLE"],
+		"acoustic":{"status":"NOT_ASSESSED","reason":"AGENT_MESSAGE_ACOUSTICS_NOT_ASSESSED"}
+	}`)
 }
 
 func testActor() requestcontext.Actor {

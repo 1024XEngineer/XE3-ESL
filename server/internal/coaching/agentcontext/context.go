@@ -129,7 +129,7 @@ func (contributor *Contributor) awaitFeedback(
 				if itemErr != nil {
 					return speechFeedbackPayload{}, itemErr
 				}
-				return feedbackPayloadFrom(items)
+				return feedbackPayloadFrom(record, items)
 			case evaluation.JobFailed:
 				return speechFeedbackPayload{}, ErrUnavailable
 			}
@@ -160,8 +160,18 @@ type speechFeedbackItem struct {
 	Correction     string `json:"correction,omitempty"`
 }
 
-func feedbackPayloadFrom(items []evaluation.FeedbackItem) (speechFeedbackPayload, error) {
+func feedbackPayloadFrom(
+	record evaluation.Record,
+	items []evaluation.FeedbackItem,
+) (speechFeedbackPayload, error) {
 	if len(items) == 0 {
+		if feedbackNotApplicable(record.Result) {
+			return speechFeedbackPayload{
+				Kinds:      []string{},
+				Conclusion: "NOT_APPLICABLE",
+				Items:      []speechFeedbackItem{},
+			}, nil
+		}
 		return speechFeedbackPayload{}, ErrUnavailable
 	}
 	payload := speechFeedbackPayload{
@@ -203,6 +213,17 @@ func feedbackPayloadFrom(items []evaluation.FeedbackItem) (speechFeedbackPayload
 		return speechFeedbackPayload{}, ErrUnavailable
 	}
 	return payload, nil
+}
+
+func feedbackNotApplicable(encoded json.RawMessage) bool {
+	var result evaluation.SpeechResult
+	if err := evaluation.DecodeStrict(encoded, &result); err != nil {
+		return false
+	}
+	return result.SchemaVersion == speechfeedback.SpeechFeedbackSchemaVersion &&
+		result.ScoreabilityStatus == "INSUFFICIENT" &&
+		len(result.ReasonCodes) == 1 &&
+		result.ReasonCodes[0] == "TEXT_NOT_ASSESSABLE"
 }
 
 type practicePayload struct {
