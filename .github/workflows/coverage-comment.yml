@@ -1,0 +1,330 @@
+name: Coverage Comment
+
+on:
+  workflow_run:
+    workflows:
+      - Quality
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Update PR coverage comment
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Resolve PR and coverage baseline
+        id: context
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const currentArtifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                per_page: 100,
+              },
+            );
+            if (!currentArtifacts.some(
+              (artifact) => artifact.name === "go-coverage-server",
+            )) {
+              core.warning("PR run has no Go coverage artifact; comment skipped");
+              core.setOutput("available", "false");
+              core.setOutput("reason", "current Go coverage artifact is unavailable");
+              return;
+            }
+
+            let pullRequest = null;
+            const linkedPullRequest = run.pull_requests?.[0];
+            if (linkedPullRequest?.number) {
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: linkedPullRequest.number,
+              });
+              pullRequest = response.data;
+            }
+
+            if (!pullRequest) {
+              const headOwner = run.head_repository?.owner?.login;
+              if (headOwner && run.head_branch) {
+                const candidates = await github.paginate(
+                  github.rest.pulls.list,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    state: "open",
+                    head: `${headOwner}:${run.head_branch}`,
+                    per_page: 100,
+                  },
+                );
+                pullRequest = candidates.find(
+                  (candidate) => candidate.head.sha === run.head_sha,
+                ) ?? null;
+              }
+            }
+
+            if (!pullRequest?.base?.ref) {
+              core.warning("Unable to resolve the pull request; comment skipped");
+              core.setOutput("available", "false");
+              core.setOutput("reason", "pull request context is unavailable");
+              return;
+            }
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: run.workflow_id,
+                branch: pullRequest.base.ref,
+                event: "push",
+                status: "completed",
+                per_page: 100,
+              },
+            );
+
+            let baseline = null;
+            for (const candidate of runs.filter(
+              (item) => item.conclusion === "success",
+            )) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: candidate.id,
+                  per_page: 100,
+                },
+              );
+              if (artifacts.some(
+                (artifact) => artifact.name === "go-coverage-server",
+              )) {
+                baseline = candidate;
+                break;
+              }
+            }
+
+            if (!baseline) {
+              core.warning(
+                "Base branch has no successful Go coverage artifact; comment skipped",
+              );
+              core.setOutput("available", "false");
+              core.setOutput("reason", "base branch coverage baseline is unavailable");
+              return;
+            }
+
+            core.setOutput("available", "true");
+            core.setOutput("baseline_run_id", String(baseline.id));
+            core.setOutput("base_branch", pullRequest.base.ref);
+            core.setOutput("pull_request_number", String(pullRequest.number));
+
+      - name: Explain why coverage comment is unavailable
+        if: steps.context.outputs.available != 'true'
+        env:
+          SKIP_REASON: ${{ steps.context.outputs.reason }}
+        run: echo "Coverage comment skipped because ${SKIP_REASON}."
+
+      - name: Download current Go coverage
+        if: steps.context.outputs.available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage-server
+          path: coverage/current
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download baseline Go coverage
+        if: steps.context.outputs.available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage-server
+          path: coverage/baseline
+          run-id: ${{ steps.context.outputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Create or update PR coverage comment
+        if: steps.context.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BASE_BRANCH: ${{ steps.context.outputs.base_branch }}
+          PULL_REQUEST_NUMBER: ${{ steps.context.outputs.pull_request_number }}
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+            const marker = "<!-- go-native-coverage -->";
+            const modulePrefix =
+              "github.com/1024XEngineer/XE3-ESL/server/";
+            const maxFiles = 5;
+
+            function displayPath(source) {
+              if (source.startsWith(modulePrefix)) {
+                return `server/${source.slice(modulePrefix.length)}`;
+              }
+              return `server/${source}`;
+            }
+
+            function readCoverage(profilePath) {
+              const files = new Map();
+              let totalStatements = 0;
+              let coveredStatements = 0;
+              const content = fs.readFileSync(profilePath, "utf8");
+
+              for (const line of content.split(/\r?\n/)) {
+                if (!line || line.startsWith("mode:")) continue;
+
+                const match = line.match(
+                  /^(.*):\d+\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$/,
+                );
+                if (!match) continue;
+
+                const file = displayPath(match[1]);
+                const statements = Number(match[2]);
+                const hits = Number(match[3]);
+                const covered = hits > 0 ? statements : 0;
+                totalStatements += statements;
+                coveredStatements += covered;
+
+                const current = files.get(file) ?? {
+                  totalStatements: 0,
+                  coveredStatements: 0,
+                };
+                current.totalStatements += statements;
+                current.coveredStatements += covered;
+                files.set(file, current);
+              }
+
+              return { files, totalStatements, coveredStatements };
+            }
+
+            function percent(stats) {
+              return stats.totalStatements === 0
+                ? 0
+                : (stats.coveredStatements / stats.totalStatements) * 100;
+            }
+
+            function formatPercent(value) {
+              return `${value.toFixed(1)}%`;
+            }
+
+            function formatDelta(value) {
+              const rounded = Number(value.toFixed(1));
+              return `${rounded >= 0 ? "+" : ""}${rounded.toFixed(1)}%`;
+            }
+
+            const current = readCoverage(
+              path.join("coverage", "current", "coverage.out"),
+            );
+            const baseline = readCoverage(
+              path.join("coverage", "baseline", "coverage.out"),
+            );
+            const currentTotal = percent(current);
+            const baselineTotal = percent(baseline);
+            const totalDelta = currentTotal - baselineTotal;
+
+            const bodyLines = [
+              marker,
+              "## Go coverage",
+              "",
+              "| Scope | Current | Baseline | Delta |",
+              "| --- | ---: | ---: | ---: |",
+              `| server | ${formatPercent(currentTotal)} | ` +
+                `${formatPercent(baselineTotal)} | ${formatDelta(totalDelta)} |`,
+              `| **Total** | **${formatPercent(currentTotal)}** | ` +
+                `**${formatPercent(baselineTotal)}** | ` +
+                `**${formatDelta(totalDelta)}** |`,
+            ];
+
+            const lowFiles = [];
+            for (const [file, currentFile] of current.files) {
+              const baselineFile = baseline.files.get(file);
+              if (!baselineFile) continue;
+
+              const currentFilePercent = percent(currentFile);
+              const baselineFilePercent = percent(baselineFile);
+              const delta = currentFilePercent - baselineFilePercent;
+              if (Number(delta.toFixed(1)) < 0) {
+                lowFiles.push({
+                  file,
+                  current: currentFilePercent,
+                  baseline: baselineFilePercent,
+                  delta,
+                });
+              }
+            }
+            lowFiles.sort(
+              (left, right) =>
+                left.delta - right.delta || left.file.localeCompare(right.file),
+            );
+
+            if (lowFiles.length > 0) {
+              bodyLines.push(
+                "",
+                "### Files below baseline",
+                "",
+                `Showing up to ${maxFiles} largest file-level regressions.`,
+                "",
+                "| File | Current | Baseline | Delta |",
+                "| --- | ---: | ---: | ---: |",
+              );
+              for (const file of lowFiles.slice(0, maxFiles)) {
+                bodyLines.push(
+                  `| ${file.file} | ${formatPercent(file.current)} | ` +
+                    `${formatPercent(file.baseline)} | ` +
+                    `${formatDelta(file.delta)} |`,
+                );
+              }
+            }
+
+            const run = context.payload.workflow_run;
+            bodyLines.push(
+              "",
+              `Base branch: ${process.env.BASE_BRANCH} · ` +
+                `Commit: ${run.head_sha.slice(0, 7)} · ` +
+                `[Quality workflow run](${run.html_url})`,
+            );
+            const body = bodyLines.join("\n");
+            const pullRequestNumber = Number(
+              process.env.PULL_REQUEST_NUMBER,
+            );
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequestNumber,
+                per_page: 100,
+              },
+            );
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === "github-actions[bot]" &&
+                comment.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequestNumber,
+                body,
+              });
+            }

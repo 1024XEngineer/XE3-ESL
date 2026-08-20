@@ -20,7 +20,7 @@ func Lineage(provider string, model string) (evaluation.ConfigLineage, error) {
 		SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 		StrategyRef:     "speech-feedback/v1",
 		PipelineVersion: "speech-evaluation/v1",
-		PromptVersion:   "speech-feedback/v1",
+		PromptVersion:   "speech-feedback/v2",
 		ResultSchema:    SpeechFeedbackSchemaVersion,
 		Provider:        provider,
 		Model:           model,
@@ -122,9 +122,11 @@ func (evaluator *CompactEvaluator) evaluate(
 }
 
 type compactProviderItem struct {
-	Kind          SpeechFeedbackItemKind `json:"kind"`
-	Explanation   string                 `json:"explanation"`
-	SuggestedText *string                `json:"suggested_text,omitempty"`
+	Kind             SpeechFeedbackItemKind `json:"kind"`
+	Explanation      string                 `json:"explanation"`
+	SourceText       json.RawMessage        `json:"source_text"`
+	SourceOccurrence json.RawMessage        `json:"source_occurrence"`
+	SuggestedText    json.RawMessage        `json:"suggested_text"`
 }
 
 type compactProviderEnvelope struct {
@@ -157,44 +159,114 @@ func compactFeedbackItems(
 	if len(envelope.Items) == 0 || len(envelope.Items) > maxSpeechFeedbackProviderItems {
 		return nil, compactProviderError("provider item count is invalid")
 	}
-	items := make([]evaluation.FeedbackItemDraft, len(envelope.Items))
+	for _, generatedItem := range envelope.Items {
+		if generatedItem.Kind == SpeechFeedbackItemStrength {
+			sourceText, sourcePresent := compactProviderNullableText(
+				generatedItem.SourceText,
+			)
+			sourceOccurrence, occurrencePresent := compactProviderNullableInteger(
+				generatedItem.SourceOccurrence,
+			)
+			suggestedText, suggestedPresent := compactProviderNullableText(
+				generatedItem.SuggestedText,
+			)
+			if len(envelope.Items) != 1 || !sourcePresent || sourceText != nil ||
+				!occurrencePresent || sourceOccurrence != nil ||
+				!suggestedPresent || suggestedText != nil {
+				return nil, compactProviderError("STRENGTH must be the only item")
+			}
+			item := evaluation.FeedbackItemDraft{
+				Category: string(SpeechFeedbackItemStrength),
+				Evidence: evaluation.FeedbackEvidence{
+					EvidenceRefID:   snapshot.EvidenceRefID,
+					StartUTF8Byte:   0,
+					EndUTF8Byte:     len(snapshot.Transcript),
+					OriginalExcerpt: snapshot.Transcript,
+				},
+				Recommendation: safeSpeechFeedbackExplanation(
+					generatedItem.Kind,
+					generatedItem.Explanation,
+					englishText,
+				),
+				RepracticeMode: "NONE",
+			}
+			if !item.Valid() {
+				return nil, compactProviderError("normalized feedback item is invalid")
+			}
+			return []evaluation.FeedbackItemDraft{item}, nil
+		}
+	}
+
+	items := make([]evaluation.FeedbackItemDraft, 0, len(envelope.Items))
 	seen := make(map[string]struct{}, len(envelope.Items))
-	for index, generatedItem := range envelope.Items {
-		if !validSpeechFeedbackAdviceText(generatedItem.Explanation) {
-			return nil, compactProviderError("provider explanation is invalid")
+	projection := projectSpeechFeedbackEnglishText(snapshot.Transcript)
+	for _, generatedItem := range envelope.Items {
+		sourceTextValue, sourcePresent := compactProviderNullableText(
+			generatedItem.SourceText,
+		)
+		sourceOccurrence, occurrencePresent := compactProviderNullableInteger(
+			generatedItem.SourceOccurrence,
+		)
+		suggestedTextValue, suggestedPresent := compactProviderNullableText(
+			generatedItem.SuggestedText,
+		)
+		if !sourcePresent || sourceTextValue == nil ||
+			!validSpeechFeedbackAdviceText(*sourceTextValue) ||
+			!occurrencePresent || sourceOccurrence == nil ||
+			*sourceOccurrence < 1 ||
+			!suggestedPresent || suggestedTextValue == nil ||
+			!validSpeechFeedbackAdviceText(*suggestedTextValue) {
+			return nil, compactProviderError("provider suggestion is invalid")
+		}
+		sourceText := strings.TrimSpace(*sourceTextValue)
+		suggestedText := strings.TrimSpace(*suggestedTextValue)
+		if !speechFeedbackEnglishWordPattern.MatchString(sourceText) ||
+			!speechFeedbackEnglishWordPattern.MatchString(suggestedText) {
+			return nil, compactProviderError("provider suggestion has no language evidence")
+		}
+		start, end, located := projection.excerptRange(
+			sourceText,
+			*sourceOccurrence,
+		)
+		if !located {
+			return nil, compactProviderError("provider source text is not evidence")
+		}
+		if sameSpeechFeedbackLexicalContent(sourceText, suggestedText) {
+			continue
 		}
 		item := evaluation.FeedbackItemDraft{
 			Category: string(generatedItem.Kind),
 			Evidence: evaluation.FeedbackEvidence{
 				EvidenceRefID:   snapshot.EvidenceRefID,
-				StartUTF8Byte:   0,
-				EndUTF8Byte:     len(snapshot.Transcript),
-				OriginalExcerpt: snapshot.Transcript,
+				StartUTF8Byte:   start,
+				EndUTF8Byte:     end,
+				OriginalExcerpt: snapshot.Transcript[start:end],
 			},
-			Recommendation: generatedItem.Explanation,
+			Recommendation: safeSpeechFeedbackExplanation(
+				generatedItem.Kind,
+				generatedItem.Explanation,
+				englishText,
+			),
+			Correction:     suggestedText,
+			RepracticeMode: repracticeMode,
 		}
 		switch generatedItem.Kind {
 		case SpeechFeedbackItemCorrection:
-			item.Severity = "MEDIUM"
-			item.RepracticeMode = repracticeMode
+			if optionalSpeechFeedbackConnectorSwap(sourceText, suggestedText) {
+				item.Category = string(SpeechFeedbackItemRecommendedExpression)
+				item.Severity = "LOW"
+				item.Evidence.StartUTF8Byte = 0
+				item.Evidence.EndUTF8Byte = len(snapshot.Transcript)
+				item.Evidence.OriginalExcerpt = snapshot.Transcript
+				item.Correction = snapshot.Transcript[:start] + suggestedText +
+					snapshot.Transcript[end:]
+			} else {
+				item.Severity = "MEDIUM"
+			}
 		case SpeechFeedbackItemRecommendedExpression:
 			item.Severity = "LOW"
-			item.RepracticeMode = repracticeMode
-		case SpeechFeedbackItemStrength:
-			if len(envelope.Items) != 1 || generatedItem.SuggestedText != nil {
-				return nil, compactProviderError("STRENGTH must be the only item")
-			}
-			item.RepracticeMode = "NONE"
 		default:
 			return nil, compactProviderError("provider item kind is invalid")
-		}
-		if generatedItem.Kind != SpeechFeedbackItemStrength {
-			if generatedItem.SuggestedText == nil ||
-				!validSpeechFeedbackAdviceText(*generatedItem.SuggestedText) ||
-				equalSpeechFeedbackText(*generatedItem.SuggestedText, englishText) {
-				return nil, compactProviderError("provider correction is invalid")
-			}
-			item.Correction = strings.TrimSpace(*generatedItem.SuggestedText)
 		}
 		if !item.Valid() {
 			return nil, compactProviderError("normalized feedback item is invalid")
@@ -204,9 +276,74 @@ func compactFeedbackItems(
 			return nil, compactProviderError("provider returned duplicate items")
 		}
 		seen[key] = struct{}{}
-		items[index] = item
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		item := evaluation.FeedbackItemDraft{
+			Category: string(SpeechFeedbackItemStrength),
+			Evidence: evaluation.FeedbackEvidence{
+				EvidenceRefID:   snapshot.EvidenceRefID,
+				StartUTF8Byte:   0,
+				EndUTF8Byte:     len(snapshot.Transcript),
+				OriginalExcerpt: snapshot.Transcript,
+			},
+			Recommendation: "原表达没有可定位的语言错误，无需修改。",
+			RepracticeMode: "NONE",
+		}
+		if !item.Valid() {
+			return nil, compactProviderError("normalized feedback item is invalid")
+		}
+		items = append(items, item)
 	}
 	return items, nil
+}
+
+func compactProviderNullableText(value json.RawMessage) (*string, bool) {
+	if len(value) == 0 {
+		return nil, false
+	}
+	if bytes.Equal(value, []byte("null")) {
+		return nil, true
+	}
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return nil, false
+	}
+	return &decoded, true
+}
+
+func compactProviderNullableInteger(value json.RawMessage) (*int, bool) {
+	if len(value) == 0 {
+		return nil, false
+	}
+	if bytes.Equal(value, []byte("null")) {
+		return nil, true
+	}
+	var decoded int
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return nil, false
+	}
+	return &decoded, true
+}
+
+func speechFeedbackExcerptStart(
+	transcript string,
+	excerpt string,
+	occurrence int,
+) int {
+	searchStart := 0
+	for current := 1; current <= occurrence; current++ {
+		relative := strings.Index(transcript[searchStart:], excerpt)
+		if relative < 0 {
+			return -1
+		}
+		absolute := searchStart + relative
+		if current == occurrence {
+			return absolute
+		}
+		searchStart = absolute + len(excerpt)
+	}
+	return -1
 }
 
 func encodeCompactSpeechResult(
