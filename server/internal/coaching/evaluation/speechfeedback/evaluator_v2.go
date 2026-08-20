@@ -19,8 +19,8 @@ func Lineage(provider string, model string) (evaluation.ConfigLineage, error) {
 	lineage := evaluation.ConfigLineage{
 		SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 		StrategyRef:     "speech-feedback/v1",
-		PipelineVersion: "speech-evaluation/v1",
-		PromptVersion:   "speech-feedback/v1",
+		PipelineVersion: "speech-evaluation/v2",
+		PromptVersion:   "speech-feedback/v2",
 		ResultSchema:    SpeechFeedbackSchemaVersion,
 		Provider:        provider,
 		Model:           model,
@@ -88,6 +88,9 @@ func (evaluator *CompactEvaluator) evaluate(
 		return encodeCompactSpeechResult(result, nil)
 	}
 	englishText := speechFeedbackEnglishReferenceText(snapshot.Transcript)
+	if kind == evaluation.KindAgentMessageFeedback {
+		englishText = speechFeedbackOralReferenceText(englishText)
+	}
 	payload, err := json.Marshal(struct {
 		Kind        evaluation.Kind `json:"kind"`
 		EnglishText string          `json:"english_text"`

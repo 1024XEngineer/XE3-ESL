@@ -1,9 +1,12 @@
 package speechfeedback
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
+
+var asrPauseBoundaryPattern = regexp.MustCompile(`(?i)\.\s+(because|and)\s+`)
 
 type speechFeedbackLanguage string
 
@@ -73,6 +76,97 @@ func speechFeedbackEnglishReferenceText(text string) string {
 	}
 	projected := strings.Join(strings.Fields(output.String()), " ")
 	return strings.Trim(projected, " \t\r\n,;:!?-.")
+}
+
+// speechFeedbackOralReferenceText keeps the confirmed transcript immutable and
+// only changes the language-assessment projection when ASR punctuation split
+// two complete spoken clauses at a natural pause.
+func speechFeedbackOralReferenceText(text string) string {
+	matches := asrPauseBoundaryPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var normalized strings.Builder
+	consumed := 0
+	for _, match := range matches {
+		boundaryStart, boundaryEnd := match[0], match[1]
+		conjunctionStart, conjunctionEnd := match[2], match[3]
+		if !looksLikeSpokenClause(clauseBefore(text, boundaryStart)) ||
+			!looksLikeSpokenClause(clauseAfter(text, boundaryEnd)) {
+			continue
+		}
+		normalized.WriteString(text[consumed:boundaryStart])
+		conjunction := strings.ToLower(text[conjunctionStart:conjunctionEnd])
+		if conjunction == "and" {
+			normalized.WriteString(", ")
+		} else {
+			normalized.WriteByte(' ')
+		}
+		normalized.WriteString(conjunction)
+		normalized.WriteByte(' ')
+		consumed = boundaryEnd
+	}
+	if consumed == 0 {
+		return text
+	}
+	normalized.WriteString(text[consumed:])
+	return normalized.String()
+}
+
+func clauseBefore(text string, boundary int) string {
+	start := strings.LastIndexAny(text[:boundary], ".!?") + 1
+	return strings.TrimSpace(text[start:boundary])
+}
+
+func clauseAfter(text string, boundary int) string {
+	end := strings.IndexAny(text[boundary:], ".!?")
+	if end < 0 {
+		end = len(text)
+	} else {
+		end += boundary
+	}
+	return strings.TrimSpace(text[boundary:end])
+}
+
+func looksLikeSpokenClause(text string) bool {
+	// discipline: stay conservative; add new clause shapes only with ASR fixtures.
+	words := strings.FieldsFunc(strings.ToLower(text), func(character rune) bool {
+		return !unicode.IsLetter(character) && character != '\''
+	})
+	for len(words) > 0 && (words[0] == "because" || words[0] == "and") {
+		words = words[1:]
+	}
+	if len(words) < 2 {
+		return false
+	}
+	if isPersonalSubject(words[0]) {
+		return len(words) >= 2
+	}
+	for _, word := range words[1:] {
+		if isFiniteAuxiliary(word) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPersonalSubject(word string) bool {
+	switch word {
+	case "i", "you", "he", "she", "it", "we", "they", "there":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFiniteAuxiliary(word string) bool {
+	switch word {
+	case "am", "is", "are", "was", "were", "have", "has", "had", "do", "does", "did",
+		"can", "could", "will", "would", "shall", "should", "may", "might", "must":
+		return true
+	default:
+		return false
+	}
 }
 
 func speechFeedbackAcousticCategory(
