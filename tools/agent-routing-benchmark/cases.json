@@ -228,7 +228,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_1",
+      "ielts_topic_choice": "random"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -261,7 +263,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_2",
+      "ielts_topic_choice": "person"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -296,7 +300,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "PART_3",
+      "ielts_topic_choice": "experience"
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -326,7 +332,9 @@
     "forbidden_tools": ["ielts.warmup.v1"],
     "expected_preview_input": {
       "kind": "CATALOG",
-      "catalog_scene_id": "scn_ielts_speaking"
+      "catalog_scene_id": "scn_ielts_speaking",
+      "ielts_practice_mode": "FULL_MOCK",
+      "ielts_topic_choice": ""
     },
     "required_response_terms": ["练习已准备好", "确认开始"],
     "forbidden_response_terms": [
@@ -495,11 +503,18 @@
     "forbidden_tools": ["practice.preview.v3", "ielts.warmup.v1"]
   },
   {
-    "name": "tentative_workplace_intent_stays_conversational",
+    "name": "tentative_workplace_intent_creates_pending_proposal",
     "messages": ["我可能想练一下职场英语。"],
-    "expected_decision": "direct_response",
-    "expected_tools": [],
-    "forbidden_tools": ["practice.preview.v3", "ielts.warmup.v1"]
+    "expected_decision": "tool_call",
+    "expected_tools": ["practice.preview.v3"],
+    "forbidden_tools": ["ielts.warmup.v1"],
+    "expected_preview_input": {
+      "kind": "CATALOG",
+      "catalog_scene_id": "scn_workplace_progress_risk_update"
+    },
+    "required_response_terms": ["想现在创建"],
+    "max_non_empty_paragraphs": 1,
+    "max_sentences": 1
   },
   {
     "name": "personalized_java_interview_stays_catalog",

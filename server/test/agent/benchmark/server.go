@@ -266,14 +266,9 @@ func (port *benchmarkPreviewPort) PreviewPractice(
 			[]string{},
 			input.SceneResolution.CandidateSceneIDs...,
 		),
+		"ielts_practice_mode", input.IELTSPracticeMode,
+		"ielts_topic_choice", input.IELTSTopicChoice,
 	)
-	if input.ActionIntent == preparationcapability.PracticeTurnIntentProposeCreate {
-		return preparationcapability.PreviewResult{
-			Status:          preparationcapability.PreviewOutcomeActionPending,
-			SceneResolution: preparationcapability.SceneResolutionNotRequested,
-			AssistantText:   "你是想现在创建这个练习吗？",
-		}, nil
-	}
 	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindNeedsClarification {
 		status := preparationcapability.PreviewOutcomeAmbiguous
 		resolution := preparationcapability.SceneResolutionAmbiguous
@@ -288,6 +283,35 @@ func (port *benchmarkPreviewPort) PreviewPractice(
 			CatalogCandidateCount: len(candidates),
 			Candidates:            candidates,
 			AssistantText:         benchmarkClarificationText(candidates),
+		}, nil
+	}
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCatalog {
+		candidates := port.catalogCandidates(
+			[]string{input.SceneResolution.CatalogSceneID},
+		)
+		if len(candidates) == 1 {
+			missing := preparationcapability.MissingIELTSPreviewFields(
+				candidates[0].PracticeExperience,
+				input.IELTSPracticeMode,
+				input.IELTSTopicChoice,
+			)
+			if len(missing) > 0 {
+				return preparationcapability.PreviewResult{
+					Status:                preparationcapability.PreviewOutcomeNeedsDetails,
+					SceneResolution:       preparationcapability.SceneResolutionNeedsDetails,
+					CatalogCandidateCount: 1,
+					RequiredMissingFields: missing,
+					Candidates:            candidates,
+					AssistantText:         benchmarkCatalogDetailsQuestion(missing),
+				}, nil
+			}
+		}
+	}
+	if input.ActionIntent == preparationcapability.PracticeTurnIntentProposeCreate {
+		return preparationcapability.PreviewResult{
+			Status:          preparationcapability.PreviewOutcomeActionPending,
+			SceneResolution: preparationcapability.SceneResolutionNotRequested,
+			AssistantText:   "你是想现在创建这个练习吗？",
 		}, nil
 	}
 	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom &&
@@ -339,6 +363,18 @@ func (port *benchmarkPreviewPort) PreviewPractice(
 		ClientAction:    action,
 		AssistantText:   "练习已准备好，请确认开始。",
 	}, nil
+}
+
+func benchmarkCatalogDetailsQuestion(missing []string) string {
+	for _, field := range missing {
+		switch field {
+		case "ielts_practice_mode":
+			return "你想练 IELTS 口语的哪种形式：Part 1、Part 2、Part 3，还是完整模考？"
+		case "ielts_topic_choice":
+			return "请选择一个话题类型：随机、人物、地点、事物或经历。"
+		}
+	}
+	return "请补充这个练习所需的具体信息。"
 }
 
 func newIdentityHandler(

@@ -45,7 +45,7 @@ func TestPracticeTurnIntentResolverDocumentsExplicitCreateBoundary(t *testing.T)
 		},
 		{
 			message: "我可能想练一下职场英语。",
-			intent:  PracticeTurnIntentConverse,
+			intent:  PracticeTurnIntentProposeCreate,
 		},
 		{
 			message: "你建议我先练哪种面试？",

@@ -21,6 +21,8 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 		wantKind       string
 		wantCatalogID  string
 		wantCandidates []string
+		practiceMode   string
+		topicChoice    string
 		privateTerm    string
 	}{
 		{
@@ -35,6 +37,22 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 			wantKind:      "CATALOG",
 			wantCatalogID: "scn_travel_hotel_checkin",
 			privateTerm:   "海景房",
+		},
+		{
+			name: "ielts catalog",
+			input: json.RawMessage(`{
+  "resolution_kind": "CATALOG",
+  "catalog_scene_ids": ["scn_ielts_speaking"],
+  "custom_scenario": "",
+  "custom_experience_hint": "NONE",
+  "ielts_practice_mode": "PART_1",
+  "ielts_topic_choice": "random"
+}`),
+			wantKind:      "CATALOG",
+			wantCatalogID: "scn_ielts_speaking",
+			practiceMode:  "PART_1",
+			topicChoice:   "random",
+			privateTerm:   "private IELTS topic",
 		},
 		{
 			name: "needs clarification",
@@ -96,6 +114,8 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 				Kind              string   `json:"kind"`
 				CatalogSceneID    string   `json:"catalog_scene_id"`
 				CandidateSceneIDs []string `json:"candidate_scene_ids"`
+				PracticeMode      string   `json:"ielts_practice_mode"`
+				TopicChoice       string   `json:"ielts_topic_choice"`
 			}
 			if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
 				t.Fatalf("decode benchmark event: %v", err)
@@ -103,7 +123,9 @@ func TestBenchmarkPreviewPortRecordsOnlyStructuredResolution(t *testing.T) {
 			if event.Message != "agent.benchmark.preview.input" ||
 				event.Kind != test.wantKind ||
 				event.CatalogSceneID != test.wantCatalogID ||
-				!sameCandidateIDs(event.CandidateSceneIDs, test.wantCandidates) {
+				!sameCandidateIDs(event.CandidateSceneIDs, test.wantCandidates) ||
+				event.PracticeMode != test.practiceMode ||
+				event.TopicChoice != test.topicChoice {
 				t.Fatalf("event = %#v", event)
 			}
 		})
@@ -139,6 +161,39 @@ func TestBenchmarkPreviewPortRejectsInvalidUnionBeforeRecording(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatalf("invalid input reached benchmark port: %s", output.String())
+	}
+}
+
+func TestBenchmarkPreviewPortRequiresIELTSSelection(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	port, err := newBenchmarkPreviewPort(logger)
+	if err != nil {
+		t.Fatalf("newBenchmarkPreviewPort() error = %v", err)
+	}
+	tool, err := preparationcapability.NewPreviewTool(port)
+	if err != nil {
+		t.Fatalf("NewPreviewTool() error = %v", err)
+	}
+	result, err := tool.Execute(
+		context.Background(),
+		benchmarkPreviewCallContext(),
+		json.RawMessage(`{
+  "resolution_kind": "CATALOG",
+  "catalog_scene_ids": ["scn_ielts_speaking"],
+  "custom_scenario": "",
+  "custom_experience_hint": "NONE"
+}`),
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Content["status"] != preparationcapability.PreviewOutcomeNeedsDetails {
+		t.Fatalf("status = %#v, want %q", result.Content["status"], preparationcapability.PreviewOutcomeNeedsDetails)
+	}
+	missing, ok := result.Content["required_missing_fields"].([]string)
+	if !ok || len(missing) != 1 || missing[0] != "ielts_practice_mode" {
+		t.Fatalf("required_missing_fields = %#v", result.Content["required_missing_fields"])
 	}
 }
 

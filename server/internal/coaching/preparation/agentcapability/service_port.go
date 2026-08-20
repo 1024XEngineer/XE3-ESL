@@ -449,25 +449,52 @@ func catalogPreviewOption(
 	input PreviewInput,
 	candidate CatalogCandidate,
 ) (string, []string) {
-	if candidate.PracticeExperience !=
-		string(scene.PracticeExperienceIELTSSpeaking) {
-		if input.IELTSPracticeMode != "" || input.IELTSTopicChoice != "" {
-			return "", []string{"ielts_practice_mode"}
-		}
+	if missing := MissingIELTSPreviewFields(
+		candidate.PracticeExperience,
+		input.IELTSPracticeMode,
+		input.IELTSTopicChoice,
+	); len(missing) > 0 {
+		return "", missing
+	}
+	if candidate.PracticeExperience != string(scene.PracticeExperienceIELTSSpeaking) {
 		return candidate.DefaultPracticeOptionID, nil
 	}
 	mode := scene.PracticeMode(input.IELTSPracticeMode)
-	if mode == "" {
-		return "", []string{"ielts_practice_mode"}
-	}
 	optionID, found := previewOptionForMode(candidate, mode)
 	if !found {
 		return "", []string{"ielts_practice_mode"}
 	}
-	if !validPreviewIELTSTopicChoice(mode, input.IELTSTopicChoice) {
-		return "", []string{"ielts_topic_choice"}
-	}
 	return optionID, nil
+}
+
+// MissingIELTSPreviewFields is shared by production and benchmark preview
+// ports so the benchmark cannot accept an IELTS catalog preview that
+// production would turn into a details question.
+func MissingIELTSPreviewFields(
+	practiceExperience string,
+	practiceMode string,
+	topicChoice string,
+) []string {
+	if practiceExperience != string(scene.PracticeExperienceIELTSSpeaking) {
+		if practiceMode != "" || topicChoice != "" {
+			return []string{"ielts_practice_mode"}
+		}
+		return nil
+	}
+	mode := scene.PracticeMode(practiceMode)
+	if mode == "" {
+		return []string{"ielts_practice_mode"}
+	}
+	if mode != scene.PracticeModeFullMock &&
+		mode != scene.PracticeModePart1 &&
+		mode != scene.PracticeModePart2 &&
+		mode != scene.PracticeModePart3 {
+		return []string{"ielts_practice_mode"}
+	}
+	if !validPreviewIELTSTopicChoice(mode, topicChoice) {
+		return []string{"ielts_topic_choice"}
+	}
+	return nil
 }
 
 func catalogDetailsQuestion(missing []string) string {
