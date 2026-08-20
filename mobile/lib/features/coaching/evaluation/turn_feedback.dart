@@ -94,18 +94,21 @@ final class SpeechFeedbackItem {
 
 extension SpeechFeedbackItemsPresentation on Iterable<SpeechFeedbackItem> {
   SpeechFeedbackItem? get strength {
-    for (final item in this) {
-      if (item.kind == SpeechFeedbackItemKind.strength) {
-        return item;
-      }
+    final values = toList(growable: false);
+    if (values.length == 1 &&
+        values.single.kind == SpeechFeedbackItemKind.strength) {
+      return values.single;
     }
     return null;
   }
 
   SpeechFeedbackItem? get correction {
+    if (strength != null) {
+      return null;
+    }
     for (final item in this) {
       if (item.kind == SpeechFeedbackItemKind.correction &&
-          item.suggestedText != null) {
+          item.hasLocatableLanguageCorrection) {
         return item;
       }
     }
@@ -113,6 +116,9 @@ extension SpeechFeedbackItemsPresentation on Iterable<SpeechFeedbackItem> {
   }
 
   SpeechFeedbackItem? get polish {
+    if (strength != null) {
+      return null;
+    }
     for (final item in this) {
       if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
           item.suggestedText != null) {
@@ -121,6 +127,61 @@ extension SpeechFeedbackItemsPresentation on Iterable<SpeechFeedbackItem> {
     }
     return null;
   }
+
+  List<SpeechFeedbackItem> get presentationItems {
+    final noChange = strength;
+    if (noChange != null) {
+      return List<SpeechFeedbackItem>.unmodifiable([noChange]);
+    }
+    return List<SpeechFeedbackItem>.unmodifiable(
+      where(
+        (item) =>
+            item.kind != SpeechFeedbackItemKind.strength &&
+            (item.kind != SpeechFeedbackItemKind.correction ||
+                item.hasLocatableLanguageCorrection),
+      ),
+    );
+  }
+}
+
+extension SpeechFeedbackItemContract on SpeechFeedbackItem {
+  bool get hasLocatableLanguageCorrection {
+    final suggested = suggestedText;
+    if (kind != SpeechFeedbackItemKind.correction || suggested == null) {
+      return false;
+    }
+    final before = _speechFeedbackWords(anchor.originalExcerpt);
+    final after = _speechFeedbackWords(suggested);
+    if (before.isEmpty || _sameSpeechFeedbackWords(before, after)) {
+      return false;
+    }
+    if (before.length == 1 && after.length == 1) {
+      final source = before.single;
+      final replacement = after.single;
+      if (source != replacement &&
+          (source == 'and' || source == 'so') &&
+          (replacement == 'and' || replacement == 'so')) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+List<String> _speechFeedbackWords(String value) => RegExp(
+  r"[A-Za-z]+(?:['’][A-Za-z]+)*",
+).allMatches(value).map((match) => match.group(0)!.toLowerCase()).toList();
+
+bool _sameSpeechFeedbackWords(List<String> left, List<String> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 final class SpeechFeedbackAcousticAssessment {

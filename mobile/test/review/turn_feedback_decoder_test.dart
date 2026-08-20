@@ -112,6 +112,7 @@ void main() {
 
   test('validates exact UTF-8 evidence byte ranges', () {
     final valid = readyPracticeFeedbackFixture();
+    _item(valid)['category'] = 'RECOMMENDED_EXPRESSION';
     final evidence = _item(valid)['evidence']! as Map<String, Object?>;
     evidence
       ..['start_utf8_byte'] = 4
@@ -129,6 +130,48 @@ void main() {
     (_item(invalid)['evidence']! as Map<String, Object?>)['end_utf8_byte'] = 9;
     expect(
       () => decodeSpeechFeedback(invalid, statusUrl: practiceStatusUrl),
+      throwsA(isA<SpeechFeedbackDecodeException>()),
+    );
+  });
+
+  test('rejects corrections without a lexical language change', () {
+    final punctuationAndCase = readyPracticeFeedbackFixture();
+    _item(punctuationAndCase)['correction'] = 'i manage!';
+
+    final optionalConnector = readyPracticeFeedbackFixture();
+    final evidence =
+        _item(optionalConnector)['evidence']! as Map<String, Object?>;
+    evidence
+      ..['start_utf8_byte'] = 0
+      ..['end_utf8_byte'] = 3
+      ..['original_excerpt'] = 'and';
+    _item(optionalConnector)['correction'] = 'so';
+
+    for (final value in [punctuationAndCase, optionalConnector]) {
+      expect(
+        () => decodeSpeechFeedback(value, statusUrl: practiceStatusUrl),
+        throwsA(isA<SpeechFeedbackDecodeException>()),
+      );
+    }
+  });
+
+  test('rejects no-change feedback mixed with a recommendation', () {
+    final conflict = readyPracticeFeedbackFixture();
+    final recommendation = cloneFeedbackFixture(_item(conflict));
+    final strength = _item(conflict)
+      ..['category'] = 'STRENGTH'
+      ..remove('severity')
+      ..remove('correction')
+      ..['repractice_mode'] = 'NONE';
+    recommendation
+      ..['feedback_item_id'] = '40000000-0000-4000-8000-000000000002'
+      ..['position'] = 2
+      ..['category'] = 'RECOMMENDED_EXPRESSION'
+      ..['correction'] = 'I handled the project.';
+    conflict['feedback_items'] = <Object?>[strength, recommendation];
+
+    expect(
+      () => decodeSpeechFeedback(conflict, statusUrl: practiceStatusUrl),
       throwsA(isA<SpeechFeedbackDecodeException>()),
     );
   });

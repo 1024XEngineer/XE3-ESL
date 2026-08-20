@@ -171,22 +171,30 @@ List<SpeechFeedbackItem> _feedbackItems(
     if (anchor.evidenceRefId != sourceId) {
       throw const SpeechFeedbackDecodeException();
     }
-    items.add(
-      SpeechFeedbackItem(
-        feedbackItemId: itemId,
-        evaluationId: evaluationId,
-        position: index + 1,
-        kind: kind,
-        severity: root.containsKey('severity')
-            ? _identifier(root['severity'])
-            : null,
-        anchor: anchor,
-        explanation: _text(root['recommendation'], maximumBytes: 4096),
-        suggestedText: correction,
-        repracticeMode: mode,
-        createdAt: _dateTime(root['created_at']),
-      ),
+    final item = SpeechFeedbackItem(
+      feedbackItemId: itemId,
+      evaluationId: evaluationId,
+      position: index + 1,
+      kind: kind,
+      severity: root.containsKey('severity')
+          ? _identifier(root['severity'])
+          : null,
+      anchor: anchor,
+      explanation: _text(root['recommendation'], maximumBytes: 4096),
+      suggestedText: correction,
+      repracticeMode: mode,
+      createdAt: _dateTime(root['created_at']),
     );
+    if (kind == SpeechFeedbackItemKind.correction &&
+        !item.hasLocatableLanguageCorrection) {
+      throw const SpeechFeedbackDecodeException();
+    }
+    items.add(item);
+  }
+  if (items.any((item) => item.kind == SpeechFeedbackItemKind.strength) &&
+      (items.length != 1 ||
+          items.single.kind != SpeechFeedbackItemKind.strength)) {
+    throw const SpeechFeedbackDecodeException();
   }
   return List<SpeechFeedbackItem>.unmodifiable(items);
 }

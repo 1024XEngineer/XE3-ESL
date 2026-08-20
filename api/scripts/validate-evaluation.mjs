@@ -41,6 +41,10 @@ try {
       `${schema}: ${ajv.errorsText(validator.errors, {separator: '\n'})}`,
     );
   };
+  const reject = (schema, value) => {
+    const validator = ajv.compile({$ref: `contract#/components/schemas/${schema}`});
+    assert.equal(validator(value), false, `${schema} unexpectedly accepted value`);
+  };
 
   const evaluationId = '10000000-0000-4000-8000-000000000001';
   const sessionId = '20000000-0000-4000-8000-000000000001';
@@ -158,6 +162,66 @@ try {
     },
   });
 
+  const feedbackEvidence = {
+    evidence_ref_id: turnId,
+    start_utf8_byte: 0,
+    end_utf8_byte: 3,
+    original_excerpt: 'and',
+  };
+  reject('FeedbackItem', {
+    feedback_item_id: '40000000-0000-4000-8000-000000000001',
+    evaluation_id: evaluationId,
+    position: 1,
+    category: 'STYLE_CORRECTION',
+    evidence: feedbackEvidence,
+    recommendation: 'Optional wording.',
+    correction: 'so',
+    repractice_mode: 'SAME_QUESTION',
+    created_at: createdAt,
+  });
+  reject('EvaluationResource', {
+    evaluation_id: '10000000-0000-4000-8000-000000000003',
+    kind: 'PRACTICE_TURN_FEEDBACK',
+    source_id: turnId,
+    context_id: sessionId,
+    status: 'READY',
+    created_at: createdAt,
+    updated_at: createdAt,
+    feedback_items: [
+      {
+        feedback_item_id: '40000000-0000-4000-8000-000000000001',
+        evaluation_id: '10000000-0000-4000-8000-000000000003',
+        position: 1,
+        category: 'STRENGTH',
+        evidence: feedbackEvidence,
+        recommendation: 'No change is needed.',
+        repractice_mode: 'NONE',
+        created_at: createdAt,
+      },
+      {
+        feedback_item_id: '40000000-0000-4000-8000-000000000002',
+        evaluation_id: '10000000-0000-4000-8000-000000000003',
+        position: 2,
+        category: 'RECOMMENDED_EXPRESSION',
+        evidence: feedbackEvidence,
+        recommendation: 'Optional wording.',
+        correction: 'so',
+        repractice_mode: 'SAME_QUESTION',
+        created_at: createdAt,
+      },
+    ],
+    result: {
+      schema_version: 'speech-feedback/v1',
+      scoreability_status: 'PROVISIONAL',
+      summary: 'Feedback is ready.',
+      reason_codes: [],
+      acoustic: {
+        status: 'NOT_ASSESSED',
+        reason: 'ACOUSTIC_ASSESSMENT_NOT_CONFIGURED',
+      },
+    },
+  });
+
   const operations = new Set();
   for (const [path, item] of Object.entries(contract.paths)) {
     for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
@@ -198,6 +262,11 @@ try {
     contract.components.schemas.FeedbackItem.properties.repractice_mode.enum,
     ['NONE', 'SAME_QUESTION'],
   );
+  assert.deepEqual(contract.components.schemas.FeedbackItemCategory.enum, [
+    'CORRECTION',
+    'STRENGTH',
+    'RECOMMENDED_EXPRESSION',
+  ]);
   assert.deepEqual(
     contract.components.schemas.RetryTurnResource.properties.status.enum,
     ['answering', 'transcribing', 'transcribed', 'confirmed', 'failed'],
