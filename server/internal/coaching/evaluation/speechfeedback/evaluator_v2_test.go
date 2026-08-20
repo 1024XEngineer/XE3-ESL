@@ -218,6 +218,44 @@ func TestCompactFeedbackItemsEnforcesClassificationContract(t *testing.T) {
 		}
 	})
 
+	t.Run("projected source maps back to mixed transcript bytes", func(t *testing.T) {
+		current := snapshot
+		current.Transcript = "中文 I  has a plan."
+		items, err := compactFeedbackItems(
+			compactResult(`{"items":[{"kind":"CORRECTION","explanation":"主语后动词形式不正确。","source_text":"has","source_occurrence":1,"suggested_text":"have"}]}`),
+			current,
+			speechFeedbackEnglishReferenceText(current.Transcript),
+			"SAME_QUESTION",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 || items[0].Evidence.StartUTF8Byte != 10 ||
+			items[0].Evidence.EndUTF8Byte != 13 ||
+			items[0].Evidence.OriginalExcerpt != "has" {
+			t.Fatalf("items = %#v", items)
+		}
+	})
+
+	t.Run("projected source spans collapsed original whitespace", func(t *testing.T) {
+		current := snapshot
+		current.Transcript = "I  has a plan."
+		items, err := compactFeedbackItems(
+			compactResult(`{"items":[{"kind":"CORRECTION","explanation":"主语后动词形式不正确。","source_text":"I has","source_occurrence":1,"suggested_text":"I have"}]}`),
+			current,
+			speechFeedbackEnglishReferenceText(current.Transcript),
+			"SAME_QUESTION",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 || items[0].Evidence.StartUTF8Byte != 0 ||
+			items[0].Evidence.EndUTF8Byte != 6 ||
+			items[0].Evidence.OriginalExcerpt != "I  has" {
+			t.Fatalf("items = %#v", items)
+		}
+	})
+
 	t.Run("missing required structured field is rejected", func(t *testing.T) {
 		_, err := compactFeedbackItems(
 			compactResult(`{"items":[{"kind":"CORRECTION","explanation":"动词形式需要修改。","source_text":"have","suggested_text":"had"}]}`),

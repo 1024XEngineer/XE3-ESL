@@ -199,6 +199,7 @@ func compactFeedbackItems(
 
 	items := make([]evaluation.FeedbackItemDraft, 0, len(envelope.Items))
 	seen := make(map[string]struct{}, len(envelope.Items))
+	projection := projectSpeechFeedbackEnglishText(snapshot.Transcript)
 	for _, generatedItem := range envelope.Items {
 		sourceTextValue, sourcePresent := compactProviderNullableText(
 			generatedItem.SourceText,
@@ -223,12 +224,11 @@ func compactFeedbackItems(
 			!speechFeedbackEnglishWordPattern.MatchString(suggestedText) {
 			return nil, compactProviderError("provider suggestion has no language evidence")
 		}
-		start := speechFeedbackExcerptStart(
-			snapshot.Transcript,
+		start, end, located := projection.excerptRange(
 			sourceText,
 			*sourceOccurrence,
 		)
-		if start < 0 {
+		if !located {
 			return nil, compactProviderError("provider source text is not evidence")
 		}
 		if sameSpeechFeedbackLexicalContent(sourceText, suggestedText) {
@@ -239,8 +239,8 @@ func compactFeedbackItems(
 			Evidence: evaluation.FeedbackEvidence{
 				EvidenceRefID:   snapshot.EvidenceRefID,
 				StartUTF8Byte:   start,
-				EndUTF8Byte:     start + len(sourceText),
-				OriginalExcerpt: sourceText,
+				EndUTF8Byte:     end,
+				OriginalExcerpt: snapshot.Transcript[start:end],
 			},
 			Recommendation: safeSpeechFeedbackExplanation(
 				generatedItem.Kind,
@@ -259,7 +259,7 @@ func compactFeedbackItems(
 				item.Evidence.EndUTF8Byte = len(snapshot.Transcript)
 				item.Evidence.OriginalExcerpt = snapshot.Transcript
 				item.Correction = snapshot.Transcript[:start] + suggestedText +
-					snapshot.Transcript[start+len(sourceText):]
+					snapshot.Transcript[end:]
 			} else {
 				item.Severity = "MEDIUM"
 			}
