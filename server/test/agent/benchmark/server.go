@@ -21,6 +21,7 @@ import (
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
+	coachingagentinstruction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/agentinstruction"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -74,10 +75,7 @@ func NewHandler(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		agentcontext.Instruction{
-			Version: "benchmark-agent-v1",
-			Content: "You are the Agent routing benchmark.",
-		},
+		coachingagentinstruction.Provider{},
 		emptyCoachingProfileContributor{},
 	)
 	if err != nil {

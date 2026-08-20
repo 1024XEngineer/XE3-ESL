@@ -46,6 +46,30 @@ type PreviewInputRecord struct {
 func BaselineCases() []RoutingCase {
 	return []RoutingCase{
 		{
+			Name:             "zh_greeting_uses_no_tools",
+			Messages:         userOnly("你好"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
+			Name:             "en_greeting_uses_no_tools",
+			Messages:         userOnly("Hello"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
+			Name:             "mixed_zh_explanation_uses_no_tools",
+			Messages:         userOnly("Can you 用中文解释一下 idiom?"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
+			Name:             "explicit_english_reply_uses_no_tools",
+			Messages:         userOnly("请用英文回答：你能做什么？"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   allToolNames(),
+		},
+		{
 			Name:             "zh_direct_politeness",
 			Messages:         userOnly("帮我把这句话说得委婉一点"),
 			ExpectedDecision: DecisionDirect,
