@@ -11,6 +11,7 @@ SHELL := /bin/bash
 	check-flutter-analyze \
 	check-flutter-test \
 	check-go \
+	check-go-coverage \
 	check-go-format \
 	check-go-vet \
 	check-go-test \
@@ -30,6 +31,7 @@ help:
 		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
+		'  make check-go-coverage  Run Go checks and write server/coverage.out' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-kodo-live Run the real Kodo lifecycle test with exported QINIU_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
@@ -70,6 +72,10 @@ check-go-vet: check-go-format
 
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
+
+check-go-coverage: check-go-vet
+	cd server && go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+	cd server && go tool cover -func=coverage.out > coverage.txt && tail -n 1 coverage.txt
 
 check-oss-live:
 	@set -euo pipefail; \
