@@ -1,5 +1,72 @@
 [
   {
+    "name": "zh_greeting_language_consistency",
+    "messages": ["你好"],
+    "expected_decision": "direct_response",
+    "expected_tools": [],
+    "forbidden_tools": [
+      "ielts.warmup.v1",
+      "practice.preview.v3",
+      "review.search.v2",
+      "review.get.v2",
+      "material.search.v1",
+      "mistake.search.v1"
+    ],
+    "expected_response_language": "zh-CN",
+    "forbidden_response_terms": [
+      "IELTS",
+      "雅思",
+      "练习已准备好",
+      "确认开始"
+    ]
+  },
+  {
+    "name": "en_greeting_language_consistency",
+    "messages": ["Hello"],
+    "expected_decision": "direct_response",
+    "expected_tools": [],
+    "forbidden_tools": [
+      "ielts.warmup.v1",
+      "practice.preview.v3",
+      "review.search.v2",
+      "review.get.v2",
+      "material.search.v1",
+      "mistake.search.v1"
+    ],
+    "expected_response_language": "en",
+    "forbidden_response_terms": ["IELTS", "雅思"]
+  },
+  {
+    "name": "mixed_zh_matrix_language",
+    "messages": ["这个 idiom 是什么意思？"],
+    "expected_decision": "direct_response",
+    "expected_tools": [],
+    "forbidden_tools": [
+      "ielts.warmup.v1",
+      "practice.preview.v3",
+      "review.search.v2",
+      "review.get.v2",
+      "material.search.v1",
+      "mistake.search.v1"
+    ],
+    "expected_response_language": "zh-CN"
+  },
+  {
+    "name": "explicit_english_response_switch",
+    "messages": ["请用英文回答：你能做什么？"],
+    "expected_decision": "direct_response",
+    "expected_tools": [],
+    "forbidden_tools": [
+      "ielts.warmup.v1",
+      "practice.preview.v3",
+      "review.search.v2",
+      "review.get.v2",
+      "material.search.v1",
+      "mistake.search.v1"
+    ],
+    "expected_response_language": "en"
+  },
+  {
     "name": "zh_direct_politeness",
     "messages": ["帮我把这句话说得委婉一点"],
     "expected_decision": "direct_response",
