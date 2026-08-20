@@ -1552,7 +1552,7 @@ class _SessionEvaluationStatusCard extends StatelessWidget {
                   const SizedBox(height: 12),
                   OutlinedButton(
                     onPressed: () => unawaited(current.retry()),
-                    child: const Text('重新加载'),
+                    child: const Text('重新生成报告'),
                   ),
                 ] else ...[
                   const SizedBox(height: 12),
