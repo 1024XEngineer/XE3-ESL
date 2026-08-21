@@ -29,6 +29,12 @@ type Application interface {
 		agentvoice.UploadRequest,
 		agentvoice.TranscriptionObserver,
 	) (agentvoice.Draft, error)
+	UploadRecognized(
+		context.Context,
+		requestcontext.Actor,
+		agentvoice.UploadRequest,
+		agentvoice.TranscriptionResult,
+	) (agentvoice.Draft, error)
 	GetDraft(
 		context.Context,
 		requestcontext.Actor,
@@ -64,6 +70,7 @@ type ThreadReader interface {
 type Handler struct {
 	application Application
 	threads     ThreadReader
+	recognizer  agentvoice.PCMStreamingSpeechRecognizer
 	readTimeout time.Duration
 	errors      *httpresponse.Renderer
 }
@@ -71,6 +78,7 @@ type Handler struct {
 func NewHandler(
 	application Application,
 	threads ThreadReader,
+	recognizer agentvoice.PCMStreamingSpeechRecognizer,
 	readTimeout time.Duration,
 	errorRenderer *httpresponse.Renderer,
 ) (*Handler, error) {
@@ -86,6 +94,7 @@ func NewHandler(
 	return &Handler{
 		application: application,
 		threads:     threads,
+		recognizer:  recognizer,
 		readTimeout: readTimeout,
 		errors:      errorRenderer,
 	}, nil
