@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.wrangler/
+.DS_Store
+*.log
+.env
+.env.local
+
+# This directory contains the Sites Vite plugin source. Keep it tracked even
+# though the repository root ignores Flutter build output via **/build/.
+!build/
+!build/**
