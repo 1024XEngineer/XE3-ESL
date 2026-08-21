@@ -35,10 +35,37 @@ func NewHTTPHandler(application *Application) (*HTTPHandler, error) {
 
 func (handler *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/practice-sessions/:practice_session_id/evaluation", handler.getSession)
+	routes.POST("/v1/practice-sessions/:practice_session_id/evaluation/retry", handler.retrySession)
 	routes.GET("/v1/practice-turns/:turn_id/evaluation", handler.getTurn)
 	routes.GET("/v1/agent-messages/:message_id/evaluation", handler.getAgentMessage)
 	routes.GET("/v1/evaluation-reports", handler.listReports)
 	routes.GET("/v1/evaluation-reports/:report_id", handler.getReport)
+}
+
+func (handler *HTTPHandler) retrySession(c *gin.Context) {
+	privateHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok || !actor.Valid() {
+		handler.writeError(c, authenticationRequired())
+		return
+	}
+	resource, replayed, err := handler.application.RetrySessionReport(
+		c.Request.Context(), actor.UserID, c.Param("practice_session_id"),
+	)
+	if err != nil {
+		handler.writeError(c, err)
+		return
+	}
+	response, err := resourceResponse(resource)
+	if err != nil {
+		handler.writeError(c, err)
+		return
+	}
+	status := http.StatusAccepted
+	if replayed {
+		status = http.StatusOK
+	}
+	c.JSON(status, response)
 }
 
 func (handler *HTTPHandler) getSession(c *gin.Context) {
@@ -313,6 +340,10 @@ func (handler *HTTPHandler) writeError(c *gin.Context, err error) {
 	case errors.Is(err, evaluation.ErrAccountUnavailable):
 		handler.errors.Write(c, apperror.New(
 			apperror.PermissionDenied, "account_unavailable", "The account is unavailable.",
+		))
+	case errors.Is(err, evaluation.ErrRetryNotAllowed):
+		handler.errors.Write(c, apperror.New(
+			apperror.Conflict, "resource_conflict", "The Evaluation cannot be retried.",
 		))
 	default:
 		handler.errors.Write(c, err)

@@ -277,6 +277,77 @@ func TestStoreRetryableFinalAndExpiredClaimsConverge(t *testing.T) {
 	}
 }
 
+func TestStoreRetriesFailedSessionReportOnceAndReplaysCurrentState(t *testing.T) {
+	pool := evaluationTestDatabase(t)
+	insertEvaluationTestUser(t, pool, testUserA, "evaluation-session-retry@example.com")
+	insertEvaluationTestUser(t, pool, testUserB, "evaluation-session-other@example.com")
+	store := mustStore(t, pool)
+	command := sessionQueueCommand(t, testUserA, testSessionA)
+	if _, _, err := store.Queue(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimNext(context.Background(), sessionLane(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailClaim(context.Background(), evaluation.Failure{
+		UserID: testUserA, ID: claim.ID, LeaseToken: claim.LeaseToken,
+		Error: evaluation.JobError{
+			Code: "PROVIDER_RESPONSE_INVALID", Retryable: true,
+			Message: "Evaluation processing failed.",
+		},
+		RetryAt: time.Now().UTC(), MaxAttempts: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RetryFailedSessionReport(
+		context.Background(), testUserB, testSessionA,
+	); !errors.Is(err, evaluation.ErrNotFound) {
+		t.Fatalf("other owner retry = %v", err)
+	}
+	retried, replayed, err := store.RetryFailedSessionReport(
+		context.Background(), testUserA, testSessionA,
+	)
+	if err != nil || replayed || retried.Status != evaluation.JobQueued ||
+		retried.AttemptCount != 0 || retried.Error != nil ||
+		retried.StartedAt != nil || retried.FinishedAt != nil {
+		t.Fatalf("retried = %#v, replayed=%t, err=%v", retried, replayed, err)
+	}
+	replay, replayed, err := store.RetryFailedSessionReport(
+		context.Background(), testUserA, testSessionA,
+	)
+	if err != nil || !replayed || replay.Status != evaluation.JobQueued ||
+		replay.AttemptCount != 0 || replay.ID != retried.ID {
+		t.Fatalf("queued replay = %#v, replayed=%t, err=%v", replay, replayed, err)
+	}
+	reclaimed, err := store.ClaimNext(context.Background(), sessionLane(1))
+	if err != nil || reclaimed.ID != retried.ID || reclaimed.AttemptCount != 1 {
+		t.Fatalf("reclaimed = %#v, err=%v", reclaimed, err)
+	}
+	running, replayed, err := store.RetryFailedSessionReport(
+		context.Background(), testUserA, testSessionA,
+	)
+	if err != nil || !replayed || running.Status != evaluation.JobRunning ||
+		running.AttemptCount != 1 || running.LeaseToken != reclaimed.LeaseToken {
+		t.Fatalf("running replay = %#v, replayed=%t, err=%v", running, replayed, err)
+	}
+	if err := store.FailClaim(context.Background(), evaluation.Failure{
+		UserID: testUserA, ID: reclaimed.ID, LeaseToken: reclaimed.LeaseToken,
+		Error: evaluation.JobError{
+			Code: "INVALID_EVALUATION_INPUT", Retryable: false,
+			Message: "Evaluation processing failed.",
+		},
+		RetryAt: time.Now().UTC(), MaxAttempts: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RetryFailedSessionReport(
+		context.Background(), testUserA, testSessionA,
+	); !errors.Is(err, evaluation.ErrRetryNotAllowed) {
+		t.Fatalf("non-retryable failure retry = %v", err)
+	}
+}
+
 func TestStoreSessionAcousticsExposePendingFailedAndAssessed(t *testing.T) {
 	pool := evaluationTestDatabase(t)
 	insertEvaluationTestUser(t, pool, testUserA, "evaluation-acoustic@example.com")
@@ -421,6 +492,66 @@ func speechLane(maxAttempts int) evaluation.ClaimLane {
 	return evaluation.ClaimLane{
 		Kinds:         []evaluation.Kind{evaluation.KindPracticeTurnFeedback},
 		LeaseDuration: 30 * time.Second, MaxAttempts: maxAttempts,
+	}
+}
+
+func sessionLane(maxAttempts int) evaluation.ClaimLane {
+	return evaluation.ClaimLane{
+		Kinds:         []evaluation.Kind{evaluation.KindSessionReport},
+		LeaseDuration: 30 * time.Second, MaxAttempts: maxAttempts,
+	}
+}
+
+func sessionQueueCommand(
+	t *testing.T,
+	userID string,
+	sessionID string,
+) evaluation.QueueCommand {
+	t.Helper()
+	now := time.Now().UTC().Add(-time.Second)
+	input, inputHash, err := evaluation.EncodeStrict(evaluation.SessionInputSnapshot{
+		SchemaVersion:       evaluation.SessionInputSchemaVersion,
+		SessionID:           sessionID,
+		SessionVersion:      1,
+		EvaluationPolicyRef: evaluation.IELTSSpeakingPracticeEvaluationPolicyRef,
+		PracticeExperience:  "IELTS_SPEAKING",
+		SceneCategory:       "IELTS_SPEAKING",
+		PracticeMode:        "PART1",
+		CompletedAt:         now,
+		AcousticCapability:  evaluation.AcousticCapabilityNotConfigured,
+		PlanSnapshot:        []byte(`{}`),
+		Participants:        []byte(`[]`),
+		Questions: []evaluation.SessionEvidenceQuestion{{
+			ID: testQuestion, Position: 1, Text: "What music do you like?",
+			SpeakerParticipantID:    "examiner",
+			AddresseeParticipantIDs: []string{"candidate"},
+		}},
+		Turns: []evaluation.SessionEvidenceTurn{{
+			ID: testTurnA, Position: 1, QuestionID: testQuestion,
+			RespondentParticipantID: "candidate",
+			Transcript:              "I enjoy music.", Effective: true, ConfirmedAt: now,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage, lineageHash, err := evaluation.EncodeStrict(evaluation.ConfigLineage{
+		SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
+		StrategyRef:     evaluation.IELTSStrategyRef,
+		PipelineVersion: "session-evaluation/v1",
+		PromptVersion:   "ielts-speaking/v2",
+		ResultSchema:    "formal-report/v1",
+		Provider:        "qianwen", Model: "qwen-plus",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evaluation.QueueCommand{
+		UserID: userID, Kind: evaluation.KindSessionReport,
+		SourceID: sessionID, ContextID: sessionID,
+		InputSnapshot: input, InputHash: inputHash,
+		ConfigLineage: lineage, ConfigHash: lineageHash,
+		AvailableAt: now,
 	}
 }
 

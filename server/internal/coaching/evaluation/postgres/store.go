@@ -118,6 +118,63 @@ func (store *Store) GetRecordBySource(
 	return record, nil
 }
 
+// RetryFailedSessionReport atomically returns a retryable terminal Session
+// Report to the existing queue. Calls made after the first successful reset
+// replay the current resource instead of resetting its attempt counter again.
+func (store *Store) RetryFailedSessionReport(
+	ctx context.Context,
+	userID string,
+	sourceID string,
+) (evaluation.Record, bool, error) {
+	if store == nil || store.pool == nil || ctx == nil ||
+		!validUUID(userID) || !validUUID(sourceID) {
+		return evaluation.Record{}, false, evaluation.ErrInvalidRequest
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return evaluation.Record{}, false, fmt.Errorf("begin Evaluation retry: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockActiveUser(ctx, tx, userID); err != nil {
+		return evaluation.Record{}, false, err
+	}
+	record, err := scanRecord(tx.QueryRow(ctx, `SELECT `+evaluationColumns+`
+		FROM evaluations
+		WHERE user_id = $1 AND kind = 'SESSION_REPORT' AND source_id = $2
+		FOR UPDATE`, userID, sourceID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return evaluation.Record{}, false, evaluation.ErrNotFound
+	}
+	if err != nil {
+		return evaluation.Record{}, false, fmt.Errorf("lock Evaluation retry: %w", err)
+	}
+	if record.Status != evaluation.JobFailed {
+		if err := tx.Commit(ctx); err != nil {
+			return evaluation.Record{}, false, fmt.Errorf("commit Evaluation retry replay: %w", err)
+		}
+		return record, true, nil
+	}
+	if record.Error == nil || !record.Error.Retryable {
+		return evaluation.Record{}, false, evaluation.ErrRetryNotAllowed
+	}
+	record, err = scanRecord(tx.QueryRow(ctx, `UPDATE evaluations
+		SET status = 'QUEUED', attempt_count = 0,
+			lease_token = NULL, lease_expires_at = NULL,
+			result = NULL, error = NULL,
+			available_at = transaction_timestamp(),
+			updated_at = transaction_timestamp(),
+			started_at = NULL, finished_at = NULL
+		WHERE id = $1 AND user_id = $2
+		RETURNING `+evaluationColumns, record.ID, userID))
+	if err != nil {
+		return evaluation.Record{}, false, fmt.Errorf("reset Evaluation retry: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return evaluation.Record{}, false, fmt.Errorf("commit Evaluation retry: %w", err)
+	}
+	return record, false, nil
+}
+
 func (store *Store) ClaimNext(
 	ctx context.Context,
 	lane evaluation.ClaimLane,

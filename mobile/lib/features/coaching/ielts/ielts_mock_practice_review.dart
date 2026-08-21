@@ -297,7 +297,7 @@ class _Part1ReviewFailure extends StatelessWidget {
         Text(message, textAlign: TextAlign.center, style: SpeakUpDesign.body),
         if (canRetry) ...[
           const SizedBox(height: 24),
-          FilledButton(onPressed: onRetry, child: const Text('重新加载')),
+          FilledButton(onPressed: onRetry, child: const Text('重新生成报告')),
         ],
       ],
     );

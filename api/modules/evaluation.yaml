@@ -19,6 +19,35 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/evaluation/retry:
+    post:
+      tags: [Evaluation]
+      summary: Retry a failed practice-session evaluation
+      description: Atomically requeues an actor-owned, retryable FAILED SESSION_REPORT. Repeated calls replay the current evaluation resource.
+      operationId: retryPracticeSessionEvaluation
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: The evaluation was already queued, running, or ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResource'
+        '202':
+          description: The failed evaluation was accepted for retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResource'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-turns/{turn_id}/evaluation:
     get:
       tags: [Evaluation]

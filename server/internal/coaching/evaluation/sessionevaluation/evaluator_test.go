@@ -3,6 +3,7 @@ package sessionevaluation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,18 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
 )
+
+func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
+	var failure interface {
+		StableCategory() string
+		Retryable() bool
+	}
+	if !errors.As(ErrProviderResponse, &failure) ||
+		failure.StableCategory() != "PROVIDER_RESPONSE_INVALID" ||
+		!failure.Retryable() {
+		t.Fatalf("provider response failure = %#v", failure)
+	}
+}
 
 func TestIELTSEvaluatorUsesAssessedAcousticsForPronunciation(t *testing.T) {
 	generator := &reportGeneratorFake{}

@@ -1099,6 +1099,26 @@ for (const [operationKey, operationId] of [
   );
 }
 
+const retrySessionEvaluation = requireOperation(
+  'POST /v1/practice-sessions/{practice_session_id}/evaluation/retry',
+);
+assert.equal(
+  retrySessionEvaluation.operationId,
+  'retryPracticeSessionEvaluation',
+);
+assert.deepEqual(
+  retrySessionEvaluation.security ?? openApi.security,
+  bearerSecurity,
+  'Session Evaluation retry must derive the Actor from BearerSession.',
+);
+assert.equal(retrySessionEvaluation.requestBody, undefined);
+for (const status of ['200', '202', '401', '404', '409', 'default']) {
+  assert.ok(
+    retrySessionEvaluation.responses?.[status],
+    `Session Evaluation retry must declare ${status}.`,
+  );
+}
+
 const evaluationReportHistory = requireOperation('GET /v1/evaluation-reports');
 const evaluationReportHistoryParameters = Object.fromEntries(
   (evaluationReportHistory.parameters ?? []).map((parameterValue) => {

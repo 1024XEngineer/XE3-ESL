@@ -230,6 +230,7 @@ try {
   }
   for (const expected of [
     'GET /v1/practice-sessions/{practice_session_id}/evaluation',
+    'POST /v1/practice-sessions/{practice_session_id}/evaluation/retry',
     'GET /v1/practice-turns/{turn_id}/evaluation',
     'GET /v1/agent-messages/{message_id}/evaluation',
     'GET /v1/evaluation-reports',
@@ -237,6 +238,16 @@ try {
     'POST /v1/evaluation-feedback-items/{feedback_item_id}/retry-turns',
   ]) {
     assert.ok(operations.has(expected), `missing ${expected}`);
+  }
+  const retrySessionEvaluation = contract.paths[
+    '/v1/practice-sessions/{practice_session_id}/evaluation/retry'
+  ].post;
+  assert.equal(retrySessionEvaluation.requestBody, undefined);
+  for (const status of ['200', '202']) {
+    assert.equal(
+      retrySessionEvaluation.responses[status].content['application/json'].schema.$ref,
+      '#/components/schemas/EvaluationResource',
+    );
   }
   for (const retired of [
     'POST /v1/evaluations',
