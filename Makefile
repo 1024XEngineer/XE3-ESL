@@ -78,8 +78,35 @@ check-go-vet: check-go-format
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
 
+# discipline: Coverage gates use executed/not-executed statements, so merge
+# repeated cross-package counters by OR before publishing the profile.
 check-go-coverage: check-go-vet
-	cd server && go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+	@set -euo pipefail; \
+	cd server; \
+	cover_packages="$$(go list ./... | awk ' \
+		index($$0, "/server/test/") == 0 { \
+			if (count++ > 0) printf ","; \
+			printf "%s", $$0; \
+		} \
+	')"; \
+	go test -count=1 -covermode=atomic \
+		-coverpkg="$$cover_packages" \
+		-coverprofile=coverage.raw.out ./... 2>&1 | \
+		sed -E 's/(coverage: [^[:space:]]+ of statements) in .*/\1/'; \
+	{ \
+		printf '%s\n' 'mode: atomic'; \
+		awk ' \
+		NR > 1 { \
+			statements[$$1] = $$2; \
+			if ($$3 > 0) covered[$$1] = 1; \
+		} \
+		END { \
+			for (block in statements) \
+				print block, statements[block], covered[block] + 0; \
+		} \
+		' coverage.raw.out | LC_ALL=C sort; \
+	} > coverage.out; \
+	rm coverage.raw.out
 	cd server && go tool cover -func=coverage.out > coverage.txt && tail -n 1 coverage.txt
 
 check-oss-live:
